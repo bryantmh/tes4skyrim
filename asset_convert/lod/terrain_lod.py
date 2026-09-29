@@ -1479,10 +1479,6 @@ def _baked_sources(lod_source_dirs, worldspace_edid: str) -> dict:
     return {k: str(v) for k, v in tiles.items()}
 
 
-#: Cell image size (px) the filler colour match is fitted at; means barely depend on it.
-_FIT_PX = 16
-
-
 def _dry(world: dict, key) -> bool:
     """True when LAND cell `key` lies wholly above its water (or has none)."""
     wh = _cell_water_height(world['cell_water'], key, world['default_wh'])
@@ -1499,12 +1495,13 @@ def _fit_cell(world, key, textures, baked):
     if not quads or path is None or not _dry(world, key):
         return None
     tile = tuple((c // tb.TILE_CELLS) * tb.TILE_CELLS for c in key)
+    px = tb.FILLER.fit_px
     crop = tb.cell_crop(tb.load_tile_rgb(path), key[0] - tile[0],
-                        key[1] - tile[1], _FIT_PX).astype(np.float64)
+                        key[1] - tile[1], px).astype(np.float64)
     ours = tlt.composite_cell(land['layers'], land['colors'], textures[0],
-                              textures[1], key[0], key[1], cell_px=_FIT_PX)
+                              textures[1], key[0], key[1], cell_px=px)
     return tb.cell_offset(ours.astype(np.float64), crop, quads,
-                          tlt.quad_blocks(_FIT_PX))
+                          tlt.quad_blocks(px))
 
 
 def _filler_offsets(world: dict, textures, baked) -> dict:
@@ -1521,7 +1518,7 @@ def _filler_offsets(world: dict, textures, baked) -> dict:
         tlt.unpainted_quad(land['layers'], q) for q in range(4))]
     if not core:
         return {}
-    near = {nb for k in core for nb, _r in tb.window(k, tb.OFFSET_RADIUS)
+    near = {nb for k in core for nb, _r in tb.window(k, tb.FILLER.radius)
             if nb in lands}
     fitted = {k: v for k in near
               if (v := _fit_cell(world, k, textures, baked)) is not None}

@@ -47,6 +47,50 @@ def test_offsets_follow_nearby_fits_and_fall_back_to_the_worldspace_mean():
     assert np.allclose(got['cells'][(20, 20)], [10, 0, 0])
 
 
+def test_a_worldspace_wide_shift_is_not_clamped_but_a_local_outlier_is():
+    """A realm's whole bake 80 off our palette moves by 80; one cell 200 off moves by mean + clamp.
+
+    Oblivion's Cheydinhal realm fits a worldspace shift of -60.8 red; the old
+    absolute clamp at 60 cut it.
+    """
+    realm = {(x, 0): np.array([-80.0, 0, 0]) for x in range(10)}
+    got = tb.smooth_offsets(realm, [(5, 0), (50, 50)])
+    assert np.allclose(got['prior'], [-80, 0, 0])
+    assert np.allclose(got['cells'][(5, 0)], [-80, 0, 0])
+    assert np.allclose(got['cells'][(50, 50)], [-80, 0, 0])
+
+    spike = {(100 + x, 0): np.zeros(3) for x in range(10)}      # far away
+    spike[(0, 0)] = np.array([200.0, 0, 0])
+    got = tb.smooth_offsets(spike, [(0, 0)])
+    lim = got['prior'][0] + tb.FILLER.clamp
+    assert abs(got['cells'][(0, 0)][0] - lim) < 1e-6
+
+
+def test_the_tunables_can_be_replaced_as_one_value(monkeypatch):
+    """`FILLER` is read at call time: a zero radius sees only the cell itself."""
+    import dataclasses
+    fitted = {(0, 0): np.array([30.0, 0, 0]), (1, 0): np.array([0.0, 0, 0])}
+    monkeypatch.setattr(tb, 'FILLER', dataclasses.replace(tb.FILLER, radius=0,
+                                                          prior_weight=1e-9))
+
+    got = tb.smooth_offsets(fitted, [(0, 0)])
+
+    assert np.allclose(got['cells'][(0, 0)], [30, 0, 0], atol=1e-4)
+
+
+def test_the_edge_smoothing_box_scales_with_the_quadrant():
+    """5 px on a 32 px quadrant, 11 px on 64: a step spreads over the same share."""
+    def width(n):
+        """Samples strictly between the two plateaus of a smoothed step of length n."""
+        step = np.zeros((n, 3))
+        step[n // 2:] = 100.0
+        got = tb._smooth(step)[:, 0]
+        return int(((got > 1e-9) & (got < 100 - 1e-9)).sum())
+
+    assert width(32) == 4
+    assert width(64) == 10
+
+
 def test_neighbouring_offset_images_meet_without_a_step():
     """Cell (0,0)'s east column equals cell (1,0)'s west column, near enough."""
     offsets = {'prior': np.zeros(3),

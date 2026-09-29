@@ -15,6 +15,7 @@ See: docs/commentary/asset_convert_terrain.md#baked-lod-sources
 """
 
 import re
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -515,18 +516,29 @@ def load_tile_rgb(path: str) -> np.ndarray:
 # Matching the filler to the painted composite
 # ---------------------------------------------------------------------------
 
-#: Gaussian spread (cells) and window radius of the per-cell offset field.
-OFFSET_SIGMA = 1.5
-OFFSET_RADIUS = 4
+@dataclass(frozen=True)
+class FillerTunables:
+    """The filler colour match's knobs; each is in units of the data, not of one worldspace.
 
-#: Weight of the worldspace-wide offset in every cell's estimate.
-OFFSET_PRIOR_WEIGHT = 0.05
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler-tunables
+    """
 
-#: Largest per-channel offset applied, so one bad fit cannot repaint a region.
-OFFSET_CLAMP = 60.0
+    #: Gaussian spread of the offset field, in cells.
+    sigma: float = 1.5
+    #: Window half-width, in cells (edge weight under 3%).
+    radius: int = 4
+    #: Worldspace-mean weight against 1.0 for the cell itself.
+    prior_weight: float = 0.05
+    #: Largest per-channel departure of a cell's offset from the worldspace mean.
+    clamp: float = 60.0
+    #: Edge-profile box width as a share of the quadrant side (5 px of 32).
+    feather_smooth: float = 5 / 32
+    #: Cell image size (px) the offsets are fitted at.
+    fit_px: int = 16
 
-#: Box width (px) smoothing an edge's colour profile before it is feathered in.
-FEATHER_SMOOTH = 5
+
+#: The tunables in force; replace with `dataclasses.replace(FILLER, ...)` to experiment.
+FILLER = FillerTunables()
 
 
 def cell_offset(ours: np.ndarray, crop: np.ndarray, quads, blocks) -> np.ndarray:
@@ -548,19 +560,21 @@ def smooth_offsets(fitted: dict, targets) -> dict:
 
     Each estimate is pulled toward the worldspace-wide mean with a small
     weight, so a cell far from any painted cell takes that mean and the
-    field stays smooth where fitted cells run out. Clamped.
-    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler-match
+    field stays smooth where fitted cells run out. A cell departs from that
+    mean by at most `FILLER.clamp` per channel; the mean itself is not
+    clamped (a realm's whole bake can sit 60+ off our palette).
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-filler-tunables
     """
+    tun = FILLER
     prior = (np.mean(list(fitted.values()), 0) if fitted else np.zeros(3))
-    prior = np.clip(prior, -OFFSET_CLAMP, OFFSET_CLAMP)
     cells = {}
     for key in targets:
-        acc, weight = OFFSET_PRIOR_WEIGHT * prior, OFFSET_PRIOR_WEIGHT
-        for nb, r2 in window(key, OFFSET_RADIUS):
+        acc, weight = tun.prior_weight * prior, tun.prior_weight
+        for nb, r2 in window(key, tun.radius):
             if nb in fitted:
-                w = np.exp(-r2 / (2.0 * OFFSET_SIGMA ** 2))
+                w = np.exp(-r2 / (2.0 * tun.sigma ** 2))
                 acc, weight = acc + w * fitted[nb], weight + w
-        cells[key] = np.clip(acc / weight, -OFFSET_CLAMP, OFFSET_CLAMP)
+        cells[key] = prior + np.clip(acc / weight - prior, -tun.clamp, tun.clamp)
     return {'prior': prior, 'cells': cells}
 
 
@@ -583,8 +597,9 @@ def offset_image(offsets: dict, key, px: int) -> np.ndarray:
 
 
 def _smooth(profile: np.ndarray) -> np.ndarray:
-    """`profile` (n,3) box-filtered along n with edge padding."""
-    k = FEATHER_SMOOTH
+    """`profile` (n,3) box-filtered along n with edge padding, the box odd and sized to n."""
+    k = max(1, int(round(FILLER.feather_smooth * len(profile))))
+    k += 1 - k % 2
     pad = np.pad(profile, ((k // 2, k // 2), (0, 0)), mode='edge')
     ker = np.ones(k) / k
     return np.stack([np.convolve(pad[:, c], ker, mode='valid')

@@ -2105,7 +2105,8 @@ LOCALLY. Two local steps do:
    cell, the mean (composite - bake) over its painted quadrants, at 16 px.
    `smooth_offsets` Gaussian-weights those (sigma 1.5 cells) for every filler
    cell and its neighbours, pulled toward the worldspace-wide mean with weight
-   0.05 (so far regions and horizon cells take that mean), clamped to +-60.
+   0.05 (so far regions and horizon cells take that mean); a cell departs
+   from that mean by at most 60 per channel ([tunables](#terrain-lod-filler-tunables)).
    `offset_image` spreads each cell's offset bilinearly between its corners
    (a corner = mean of the four cells meeting there), so filler meets filler
    without a step. Offsets only: gains were no better per tile.
@@ -2137,4 +2138,42 @@ that (8 bytes per canvas byte): on four real Tamriel LOD32 tiles (13 to 2,327
 filler quadrants) `feather_filler` peaked at 113.6 MB over a 14.2 MB canvas
 and the whole tile composite at 146-160 MB (tracemalloc). Now it is
 0.1-0.2 MB and 45-59 MB, with byte-identical atlases.
+
+### <a id="terrain-lod-filler-tunables"></a>The filler tunables, their basis, and a second worldspace
+
+**Code:** `FillerTunables` / `FILLER` in `asset_convert/lod/terrain_lod_baked.py`
+(read at call time, so `dataclasses.replace(FILLER, ...)` changes a run).
+
+| tunable | value | basis |
+|---|---|---|
+| `sigma` | 1.5 cells | the bake's lighting drifts over a few cells; in cells, so any worldspace size |
+| `radius` | 4 cells | where the Gaussian edge weight falls under 3% (exp(-16/4.5)) |
+| `prior_weight` | 0.05 | against 1.0 for the cell itself: only decisive where no fit is near |
+| `clamp` | 60 per channel | a cell's departure from the worldspace-mean offset, so one bad fit cannot repaint a region |
+| `feather_smooth` | 5/32 of the quadrant | was a fixed 5 px; now scales with the cell image size |
+| `fit_px` | 16 px | fit image size; means over a quadrant barely depend on it |
+
+The clamp used to bound the offset itself (+-60) and so was Tamriel-shaped: a
+realm's bake is red where our composite is not, and Oblivion's Cheydinhal
+realm fits a worldspace shift of (-60.8, 3.5, 16.2), cut at -60. It now bounds
+only the departure from the worldspace mean.
+
+Measured with the strip method above (layers rebuilt from the export by the
+current builder; a quadrant counts when its own heights are above its water):
+
+| worldspace | edge | before | offsets only, old -> new | both, old -> new | painted control |
+|---|---|---|---|---|---|
+| Tamriel | in a cell (528) | 34.65 | 17.26 -> 17.26 | 1.67 -> 1.67 | 3.85 |
+| Tamriel | across cells (409) | 37.30 | 19.17 -> 19.16 | 2.75 -> 2.75 | 4.32 |
+| MS13CheydinhalOblivionWorld | in a cell (44) | 37.08 | 17.02 -> 13.94 | 0.43 -> 0.44 | 7.84 |
+| MS13CheydinhalOblivionWorld | across cells (41) | 32.15 | 11.61 -> 10.10 | 1.20 -> 1.21 | 8.24 |
+
+MS13CheydinhalOblivionWorld stands in for the SECOND worldspace: SEWorld has
+baked tiles, but all 10,288 of its unpainted quadrants are under water (none
+dry), so it has no dry filler seam to measure. Its underwater seams (both
+quadrants wet, murk on both sides): 2.49 / 1.53 before, 0.52 / 0.54 after,
+control 1.76 / 1.75. On MS13 a sweep (`sigma` 0.75 / 3, `radius` 2 / 8,
+`prior_weight` 0.01 / 0.25, `clamp` 30 / 120) moves the final step by at most
+0.04, so the feather, not those values, sets the result; none is tuned to one
+worldspace.
 
