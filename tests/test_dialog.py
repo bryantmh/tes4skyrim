@@ -2163,10 +2163,26 @@ class TestNpcConversationChains:
         assert psc.startswith('ScriptName TES4NPCConvTest extends Quest')
         assert 'Utility.Wait(TES4Polyfill.SayLine(Conv0A, Conv0T0, 4.00) + 0.6)' in psc
         assert 'TES4Polyfill.SayLine(Conv0B, Conv0T1, 3.00) + 0.6' in psc
-        assert 'TES4Polyfill.SayLine(Conv0A, Conv0T2, 4.00) + 0.6' in psc
+        assert 'Float _said0 = TES4Polyfill.SayLine(Conv0A, Conv0T2, 4.00)' in psc
+        assert 'Utility.Wait(_said0 + 0.6)' in psc
         assert '.Say(' not in psc
         assert 'Conv0Q0.GetStage() == 26' in psc
         assert 'Conv0T0 != None' in psc and 'Conv0Q0 != None' in psc
+
+    def test_chain_latches_only_when_the_payload_line_played(self):
+        """CharacterGen stage 26->27: the last line's INFO result sets the
+        stage. Latching after a DROPPED last line (SayLine 0, or 0.5 for a
+        held speaker) left the quest stuck with the chain retired."""
+        from tes5_import.dialogue.conversations import generate_driver_psc
+        psc = generate_driver_psc(self._plan(), {})
+        lines = [l.strip() for l in psc.splitlines()]
+        assert 'Int _tries0 = 0' in lines
+        gate = lines.index('if _said0 > 0.5 || _tries0 >= 3')
+        assert lines[gate - 1] == '_tries0 += 1'
+        assert lines[gate + 1] == '_done0 = True'
+        assert lines[gate + 2] == 'endif'
+        # the latch is set nowhere else
+        assert lines.count('_done0 = True') == 1
 
     def test_property_bindings_mirror_the_psc(self):
         """Every Conv* property the psc declares must be bound by

@@ -585,6 +585,8 @@ _CONVERSE_DISTANCE = 500.0
 _POLL_SECONDS = 4.0
 _FALLBACK_LINE_SECONDS = 4.0
 _LINE_BEAT = 0.6            # breath between lines, like Oblivion's scheduler
+_BUSY_RESULT = 0.5          # SayLine's "speaker held elsewhere" return: not played
+_CHAIN_TRIES = 3            # passes a chain may replay before it latches anyway
 
 
 def chain_property_bindings(chain, remap, resolve_hop_topic):
@@ -712,20 +714,31 @@ def _counter_chain_len(infos: list) -> int:
 
 
 def _chain_body(chain, i: int, cond: str, say) -> str:
-    """One chain's `if` block, latched only once the last line has played."""
-    done_sets = [f'        _done{i} = True']
-    done_sets += [f'        _done{j} = True'
-                  for j in chain.get('exclusive_with', ())]
+    """One chain's `if` block, latched only once the last line has played.
+
+    The last line is the payload: its INFO result is what advances the quest
+    (CharacterGen stage 27). SayLine returns 0 for a dropped line and 0.5 for
+    a speaker another caller holds, so a result above that means it played;
+    anything else leaves the chain open for the next poll, up to
+    _CHAIN_TRIES passes so a line that can never play does not loop forever.
+    """
+    done_sets = [f'            _done{j} = True'
+                 for j in [i, *chain.get('exclusive_with', ())]]
     body = [f'    ; {chain["owner_quest_edid"]}: head INFO '
             f'{chain["head_fid"]:08X}',
             f'    if {cond}']
-    body.append(say(f'Conv{i}A', f'Conv{i}T0', chain['head_fid'], 'HELLO'))
-    for k, hop in enumerate(chain['hops']):
-        spk = 'A' if hop['speaker'] == 'A' else 'B'
-        body.append(say(f'Conv{i}{spk}', f'Conv{i}T{k + 1}',
-                        hop['info_fid'], hop['topic_edid']))
-    body += done_sets
-    body.append('    endif')
+    lines = [(f'Conv{i}A', f'Conv{i}T0', chain['head_fid'], 'HELLO')]
+    lines += [(f'Conv{i}{"A" if hop["speaker"] == "A" else "B"}',
+               f'Conv{i}T{k + 1}', hop['info_fid'], hop['topic_edid'])
+              for k, hop in enumerate(chain['hops'])]
+    for line in lines[:-1]:
+        body.append(say(*line))
+    body.append(say(*lines[-1], result=f'_said{i}'))
+    body += [f'        _tries{i} += 1',
+             f'        if _said{i} > {_BUSY_RESULT} || _tries{i} >= {_CHAIN_TRIES}',
+             *done_sets,
+             '        endif',
+             '    endif']
     return '\n'.join(body)
 
 
@@ -747,10 +760,17 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
             return min(float(d), 10.0)
         return _FALLBACK_LINE_SECONDS
 
-    def _say(actor, topic, hop_or_head, topic_edid):
-        """One blocking SayLine, waited out; a drop returns 0 and moves on."""
-        return (f'        Utility.Wait(TES4Polyfill.SayLine({actor}, {topic}, '
-                f'{_fallback(hop_or_head, topic_edid):.2f}) + {_LINE_BEAT})')
+    def _say(actor, topic, hop_or_head, topic_edid, result=None):
+        """One blocking SayLine, waited out; a drop returns 0 and moves on.
+
+        With `result`, the returned length is kept in that local first.
+        """
+        call = (f'TES4Polyfill.SayLine({actor}, {topic}, '
+                f'{_fallback(hop_or_head, topic_edid):.2f})')
+        if result is None:
+            return f'        Utility.Wait({call} + {_LINE_BEAT})'
+        return (f'        Float {result} = {call}\n'
+                f'        Utility.Wait({result} + {_LINE_BEAT})')
 
     lines = [
         f'ScriptName {plan["script_name"]} extends Quest',
@@ -769,6 +789,7 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
         gdecls, terms = _gate_exprs(chain)
         decls += gdecls
         decls.append(f'Bool _done{i} = False')
+        decls.append(f'Int _tries{i} = 0')
         topic_guards = [f'Conv{i}T{k} != None'
                         for k in range(len(chain['hops']) + 1)]
         cond = ' && '.join([f'!_done{i}'] + topic_guards + terms
