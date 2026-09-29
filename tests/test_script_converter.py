@@ -1229,6 +1229,56 @@ class TestScroRefTyping:
         assert conv.get_property_refs()['myMS14'] == 'TES4_MS14Script'
 
 
+class TestScroRefBaseObjectGuard:
+    """add_scro_ref must NOT type a base-object item to its ObjectReference
+    script class -- the VM refuses the bind and the property reads None all
+    session (the quest property-binding class, ~42 item rows in Oblivion.esm).
+    It keeps the attached script class for actors (NPC_/CREA) and unique-placed
+    ACTI/LIGH, exactly the guard the body-resolver already applies
+    (resolve_name.script_type_binds).
+    """
+
+    @staticmethod
+    def _typed(rtype, extra=None):
+        """property_refs after add_scro_ref for one scripted record of `rtype`."""
+        from script_convert.scro_refs import add_scro_ref
+        x = CrossRefGraph()
+        x.formid_to_edid['0001FEF0'] = 'TheThing'
+        x.edid_to_formid['thething'] = '0001FEF0'
+        x.record_type['0001FEF0'] = rtype
+        x.record_scri['0001FEF0'] = '000AAAAA'
+        x.script_formid_to_edid['000AAAAA'] = 'TheThingScript'
+        x.script_formid_to_type['000AAAAA'] = 1
+        if extra:
+            extra(x)
+        conv = ScriptConverter(x)
+        add_scro_ref(conv, '0001FEF0', x)
+        return conv.get_property_refs()['TheThing']
+
+    def test_item_base_keeps_base_type_not_script(self):
+        # KEYM/BOOK/ARMO/WEAP/INGR bases are inventory handles: base Papyrus
+        # type, never the ObjectReference-derived script class.
+        assert self._typed('KEYM') == 'Key'
+        assert self._typed('BOOK') == 'Book'
+        assert self._typed('ARMO') == 'Armor'
+        assert self._typed('WEAP') == 'Weapon'
+        assert self._typed('INGR') == 'Ingredient'
+
+    def test_actor_base_keeps_script_type(self):
+        # NPC_/CREA resolve to Actor -> the script class still binds (the
+        # placed-reference redirect handles the base->ref rebinding elsewhere).
+        assert self._typed('NPC_') == 'TES4_TheThingScript'
+        assert self._typed('CREA') == 'TES4_TheThingScript'
+
+    def test_unique_placed_activator_keeps_script_type(self):
+        # An ACTI with exactly one placed ref keeps its script type (the ref the
+        # binder redirects to carries it).
+        def add_ref(x):
+            x.record_base['0002AAAA'] = '0001FEF0'
+            x.record_type['0002AAAA'] = 'REFR'
+        assert self._typed('ACTI', add_ref) == 'TES4_TheThingScript'
+
+
 # ===========================================================================
 # Stale source names recovered from the SCRO table
 # ===========================================================================

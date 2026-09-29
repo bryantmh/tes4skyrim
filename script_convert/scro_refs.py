@@ -14,6 +14,7 @@ import re
 from script_convert.command_rows import KNOWN_COMMANDS
 from script_convert.constants import record_type_to_papyrus, safe_property_name
 from script_convert.cross_ref import CrossRefGraph
+from script_convert.resolve_name import script_type_binds
 
 #: PlayerRef 0x14 and the player base NPC_ 0x07: both are the `player` keyword, never a bound property.
 _PLAYER_FORMIDS = frozenset({'00000014', '00000007'})
@@ -134,7 +135,16 @@ def add_scro_ref(conv, fid: str, xref: CrossRefGraph) -> None:
     rtype = xref.record_type.get(fid, '')
     ptype = record_type_to_papyrus(rtype)
     if rtype != 'QUST':
-        ptype = xref.get_record_script_type(edid) or ptype
+        # Prefer the attached script class ONLY where it can actually bind to
+        # this record -- the same guard the body-resolver applies
+        # (resolve_name.script_type_binds, converter.py:1643).  A base-object
+        # item (KEYM/BOOK/ARMO/WEAP/INGR/...) keeps its base Papyrus type: the
+        # VM refuses an ObjectReference-derived script class on a base form and
+        # the property then reads None all session.  An NPC_/CREA (Actor) or a
+        # unique-placed ACTI/LIGH still keeps its script type.
+        script_type = xref.get_record_script_type(edid)
+        if script_type and script_type_binds(xref, ptype, fid):
+            ptype = script_type
     key = safe_property_name(edid)
     cur = conv.sc.property_refs.get(key, '')
     if cur == 'ActorBase' or (cur and cur != 'Quest' and ptype == 'Quest'):
