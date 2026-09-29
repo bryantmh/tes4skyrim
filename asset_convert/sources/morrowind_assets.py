@@ -13,6 +13,7 @@ See: docs/commentary/tes4_export_morrowind.md#vanilla-assets
 import os
 from pathlib import Path
 
+from asset_convert import case_paths
 from asset_convert.sources import source_registry
 from asset_convert.sources.bsa_extract_morrowind import (is_morrowind_bsa,
                                                          read_entry,
@@ -56,8 +57,8 @@ def find_vanilla_mesh(export_root, rel: str):
     if not data_dir:
         return None
     rel = _normalize(rel)
-    loose = Path(data_dir) / _MESHES / rel
-    if loose.is_file():
+    loose = case_paths.resolve([data_dir], _MESHES + chr(92) + rel, 'morrowind_mesh')
+    if loose is not None:
         return loose
     cached = Path(export_root) / CACHE_DIR / _MESHES / rel
     if cached.is_file():
@@ -98,11 +99,8 @@ def find_archived_mesh(export_root, rel: str):
 def resolve_mesh(roots, rel: str, export_root):
     """The first mesh root holding `rel`, then the vanilla install; else None."""
     rel = _normalize(rel)
-    for root in roots:
-        path = Path(root) / rel
-        if path.is_file():
-            return path
-    return find_vanilla_mesh(export_root, rel)
+    path = case_paths.resolve(roots, rel, 'morrowind_mesh') if roots else None
+    return path if path is not None else find_vanilla_mesh(export_root, rel)
 
 
 def find_archived_file(export_root, rel: str):
@@ -122,8 +120,7 @@ def find_archived_file(export_root, rel: str):
         return cached
     entry = _archive_index(data_dir).get(rel)
     if entry is None:
-        loose = Path(data_dir) / rel
-        return loose if loose.is_file() else None
+        return case_paths.resolve([data_dir], rel, 'morrowind_file')
     cached.parent.mkdir(parents=True, exist_ok=True)
     cached.write_bytes(read_entry(*entry))
     return cached
