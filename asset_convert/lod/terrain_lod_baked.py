@@ -407,6 +407,45 @@ def seam_targets(lands, keys, heights, key) -> dict:
     return out
 
 
+_NEIGHBOURS = ((1, 0), (-1, 0), (0, 1), (0, -1))
+
+
+def _shows_water(world, key) -> bool:
+    """True when LAND cell `key` has water and its terrain dips below it."""
+    flag, height = world['cell_water'].get(key, (False, None))
+    wh = world['default_wh'] if height is None else height
+    return bool(flag) and float(world['lands'][key]['heights'].min()) < wh
+
+
+def connected_sea(world: dict, keys) -> set:
+    """The synthetic cells in `keys` that take worldspace-default LOD water.
+
+    A cell below the default water height gets it only when a 4-neighbour
+    path through such cells reaches a LAND cell whose own water shows, so the
+    source's sea continues past the map but a sunken plain nowhere near any
+    water stays dry. Needs the synthetic cells already in `world['lands']`.
+    See: docs/commentary/asset_convert_terrain.md#synthetic-cell-water
+    """
+    lands = world['lands']
+    below = {k for k in keys
+             if float(lands[k]['heights'].min()) < world['default_wh']}
+
+    def seed(k):
+        """True when `k` borders a real LAND cell showing water."""
+        return any((nb := (k[0] + dx, k[1] + dy)) in lands and nb not in keys
+                   and _shows_water(world, nb) for dx, dy in _NEIGHBOURS)
+    todo = [k for k in sorted(below) if seed(k)]
+    sea = set(todo)
+    while todo:
+        x, y = todo.pop()
+        for dx, dy in _NEIGHBOURS:
+            nb = (x + dx, y + dy)
+            if nb in below and nb not in sea:
+                sea.add(nb)
+                todo.append(nb)
+    return sea
+
+
 def synthesize(world: dict, heights: dict) -> set:
     """Add a cell for every baked-height cell with no LAND; return their keys.
 
@@ -414,11 +453,10 @@ def synthesize(world: dict, heights: dict) -> set:
     overlay deleted, which stay empty). A synthetic cell is heights only
     (white VCLR, no layers), bent to meet its LAND neighbours exactly and its
     synthetic neighbours on their mean edge (`seam_targets`); it takes
-    worldspace-default water when it dips below it and the worldspace has any.
+    worldspace-default water when `connected_sea` says so.
     See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
     """
     lands, water = world['lands'], world['cell_water']
-    wet = any(flag for flag, _h in water.values())
     keys = {k for k in heights
             if k not in lands and k not in world.get('deleted', ())}
     fitted = {key: fit_edges(heights[key], seam_targets(lands, keys, heights, key))
@@ -427,8 +465,8 @@ def synthesize(world: dict, heights: dict) -> set:
         lands[key] = {'heights': fitted[key],
                       'colors': np.full((CELL_VERTS, CELL_VERTS, 3), 255, np.uint8),
                       'layers': {'base': {}, 'alpha': {}}}
-        if wet and float(lands[key]['heights'].min()) < world['default_wh']:
-            water.setdefault(key, (True, None))
+    for key in sorted(connected_sea(world, keys)):
+        water.setdefault(key, (True, None))
     return keys
 
 

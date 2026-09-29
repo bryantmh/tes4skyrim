@@ -4,8 +4,8 @@ Oblivion's horizon mountains exist only in its shipped LOD meshes; the LOD
 tiles over them were never queued (no LAND), so the distance showed nothing.
 A full run now adds a synthetic cell for every baked-mesh cell with no LAND:
 heights feathered to meet real LAND exactly, LAND winning every shared vertex,
-water where it dips below the worldspace water, and never over a cell an
-overlay deleted.
+water where it dips below the worldspace water AND connects to LAND whose own
+water shows, and never over a cell an overlay deleted.
 
 See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
 """
@@ -76,20 +76,48 @@ def test_synthesize_fills_only_landless_cells_not_deleted_ones():
     assert lands[(2, 0)]['layers'] == {'base': {}, 'alpha': {}}
 
 
-def test_synthetic_cells_below_the_water_get_worldspace_water():
-    """Water only where the cell dips below it, and only in a watered worldspace."""
+def _wet_land(z):
+    """A LAND cell dict whose terrain dips to `z` at one vertex (below water at 0)."""
+    land = _land(50)
+    land['heights'][10, 10] = z
+    return land
+
+
+def test_synthetic_cells_below_the_water_connected_to_land_water_get_it():
+    """A below-water chain reaching LAND that shows water is wet; above-water is not."""
     world = _world(cell_water={(0, 0): (True, None)})
-    deep = _flat(10)
-    deep[5, 5] = -100.0
+    world['lands'][(0, 0)] = _wet_land(-100)
+    heights = {(1, 0): _flat(-200), (2, 0): _flat(-200), (3, 0): _flat(-200),
+               (1, 3): _flat(10)}
 
-    tb.synthesize(world, {(5, 5): deep, (6, 6): _flat(10)})
+    tb.synthesize(world, heights)
 
-    assert world['cell_water'][(5, 5)] == (True, None)
-    assert (6, 6) not in world['cell_water']
+    for key in ((1, 0), (2, 0), (3, 0)):
+        assert world['cell_water'][key] == (True, None), key
+    assert (1, 3) not in world['cell_water'], 'wholly above the water'
 
-    dry_world = _world()
-    tb.synthesize(dry_world, {(5, 5): deep})
-    assert dry_world['cell_water'] == {}, 'no water cell anywhere: add none'
+
+def test_a_sunken_plain_not_connected_to_any_shown_water_stays_dry():
+    """Pale Pass's case: LAND flagged with water but all above it; the fill plain is dry."""
+    world = _world(cell_water={(0, 0): (True, None)})
+    heights = {(1, 0): _flat(-512), (2, 0): _flat(-512)}
+
+    tb.synthesize(world, heights)
+
+    assert (1, 0) not in world['cell_water'] and (2, 0) not in world['cell_water']
+
+
+def test_a_basin_cut_off_by_higher_ground_stays_dry():
+    """(3,0) is below the water but (2,0), above it, separates it from the sea."""
+    world = _world(cell_water={(0, 0): (True, None)})
+    world['lands'][(0, 0)] = _land(-100)
+    heights = {(1, 0): _flat(-200), (2, 0): _flat(300), (3, 0): _flat(-200)}
+
+    tb.synthesize(world, heights)
+
+    assert world['cell_water'][(1, 0)] == (True, None)
+    assert (3, 0) not in world['cell_water']
+    assert (2, 0) not in world['cell_water']
 
 
 def test_land_wins_every_vertex_it_shares_with_a_synthetic_cell():

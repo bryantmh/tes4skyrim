@@ -1706,8 +1706,8 @@ edge-extends where neither exists.
   neighbours on their mean edge, every corner on one shared value
   ([seam stitch](#synthetic-seam-stitch)); `_assemble_tile` writes synthetic
   cells first, so a LAND always owns a shared vertex.
-- **Water** where a synthetic cell dips below the worldspace default and the
-  worldspace has any water cell (inference: the source's sea continues).
+- **Water** where a synthetic cell dips below the worldspace default AND
+  connects to LAND whose own water shows ([water](#synthetic-cell-water)).
 - **An overlay's deletion stands.** A VHGT-less overlay LAND is erased AND
   recorded in `deleted`; no baked cell refills it.
 
@@ -1770,6 +1770,47 @@ already agreeing, no LAND nearby) unchanged. SEWorld: 9 -> 0 corners; the 12
 left are LAND|LAND corners where the source LAND itself disagrees (-8 vs
 -1,040), which no synthetic cell can satisfy on both sides. Cost: 1.6 s for
 Tamriel's 22,178 cells (was 0.2 s).
+
+### <a id="synthetic-cell-water"></a>Synthetic cells take water only where the sea connects
+
+**Code:** `connected_sea` and `_shows_water` in
+`asset_convert/lod/terrain_lod_baked.py`.
+
+Every synthetic cell below the default water height used to get LOD water
+when the worldspace had any water cell. Oblivion flags EVERY exterior LAND
+cell as having water (Tamriel 14,686 of 14,686), so that only asked "is it
+low", and the editor's flat no-LAND fill ([fill](#baked-lod-fill)) is low
+everywhere: a 3,958-cell sea around Pale Pass, lava plains around the
+realms.
+
+Now a low synthetic cell is wet only when a 4-neighbour path through low
+synthetic cells reaches a LAND cell whose own terrain dips below its water
+(the flag alone says nothing). An authored CELL water entry on a LAND-less
+cell is kept as it is. Watered synthetic cells, old -> new (Oblivion.esm
+meshes; Tamriel with DLCFrostcrag + Knights + Frostcrag Reborn):
+
+| worldspace | synthetic | watered |
+|---|---|---|
+| Tamriel | 22,178 | 7,512 -> 7,465 (basins cut off from the sea) |
+| OblivionRD002 / RD003 / RD004 | 3,613 / 2,618 / 3,655 | all -> 0 |
+| DABoethiaRealm | 3,520 | 3,520 -> 0 |
+| MS37World | 4,050 | 4,050 -> 54 (authored CELL entries) |
+| PalePassWorld | 3,958 | 3,958 -> 3,958 |
+| OblivionMQKvatch | 3,997 | 3,997 -> 3,997 |
+| CamoranParadise | 3,710 | 3,710 -> 3,710 |
+| SEWorld | 75 | 75 -> 75 |
+
+Eight more keep every cell: MS14World, MS13CheydinhalOblivionWorld,
+DAPeryiteRealm, OblivionRD001/005/006/007 and MQ10BrumaOblivionGate. Their
+rim LAND dips below their water (lava, water type 00039D98, in the realms),
+and that reaches the fill plain.
+
+**Tripwire, Pale Pass:** the rule does NOT dry it. Four LAND cells, (-7,-2),
+(-7,-1), (-6,-2) and (-6,-1), dip 48-80 units below 0 at under 7% of their
+vertices, and they touch the -512 fill that surrounds the pass, so the whole
+plain floods. Telling that marginal dip from a real shoreline needs a depth or
+area threshold, which would be a constant tuned to one worldspace, so it is
+left for an in-game check (look out from the pass for a sea).
 
 ### Before: tiles edge-extended past the landmass
 
