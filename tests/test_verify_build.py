@@ -43,7 +43,7 @@ def _ctx(tmp_path, log_body='', **kw):
         mode='pre', sections=sections, start=dt.datetime(2026, 9, 2),
         output=out, export=tmp_path / 'export', lod=out / 'AutoConvertLOD',
         plugins=vb.plugins_in(sections), skyrim_data=None, source_esm=None,
-        worldspaces=['TES4Tamriel'],
+        worldspaces=['TES4Tamriel'], allow_missing=frozenset(),
         deploy=[], zips=[], min_bto={'TES4Tamriel': 2}, cache={})
     for k, v in kw.items():
         setattr(ctx, k, v)
@@ -242,27 +242,66 @@ class TestTextures:
         assert vb.texture_key('textures/tes4/b.dds') == 'tes4\\b.dds'
         assert vb.texture_key('meshes\\x.nif') == ''
 
-    def _run(self, monkeypatch, tmp_path, refs, table):
-        """check_textures over stubbed references and archive tables."""
+    def _run(self, monkeypatch, tmp_path, refs, table, allow=()):
+        """check_textures over stubbed references ({key: meshes}) and tables."""
+        if not isinstance(refs, dict):
+            refs = dict.fromkeys(refs, 1)
         monkeypatch.setattr(vb, 'mesh_texture_refs', lambda ctx: (refs, 7))
         monkeypatch.setattr(vb, 'texture_table', lambda ctx: table)
-        return vb.check_textures(_ctx(tmp_path))
+        return vb.check_textures(_ctx(tmp_path, allow_missing=frozenset(allow)))
 
-    def test_missing_texture_fails_and_known_absent_is_allowed(
+    def test_missing_texture_fails_and_allowed_key_passes(
             self, monkeypatch, tmp_path):
-        """G2: an unshipped texture fails; upstream-absent names pass."""
-        ctrl = 'tes4\\lod\\anmiddlehouselod01.dds'
-        refs = {ctrl, 'tes4\\a.dds', 'tes4\\cheydinhal\\cheydinhalstonewall.dds'}
-        r = self._run(monkeypatch, tmp_path, refs, {ctrl, 'tes4\\a.dds'})
-        assert r['status'] == vb.PASS
-        r = self._run(monkeypatch, tmp_path, refs | {'tes4\\b.dds'},
-                      {ctrl, 'tes4\\a.dds'})
+        """G2: an unshipped texture fails; a listed FULL key is allowed."""
+        refs = {'tes4\\a.dds': 5, 'tes4\\x\\black.dds': 1}
+        r = self._run(monkeypatch, tmp_path, refs, {'tes4\\a.dds'},
+                      allow={'tes4\\x\\black.dds'})
+        assert r['status'] == vb.PASS and r['data']['allowed'] == [
+            'tes4\\x\\black.dds']
+        r = self._run(monkeypatch, tmp_path, {**refs, 'tes4\\b.dds': 1},
+                      {'tes4\\a.dds'}, allow={'tes4\\x\\black.dds'})
         assert r['status'] == vb.FAIL and r['data']['missing'] == ['tes4\\b.dds']
 
-    def test_no_control_means_blind(self, monkeypatch, tmp_path):
-        """Without the control texture found, the check cannot pass."""
-        r = self._run(monkeypatch, tmp_path, {'tes4\\a.dds'}, {'tes4\\a.dds'})
+    def test_allow_list_is_by_full_key_not_basename(self, monkeypatch,
+                                                    tmp_path):
+        """Allowing one black.dds must not hide another folder's black.dds."""
+        refs = {'tes4\\a.dds': 5, 'tes4\\y\\black.dds': 1}
+        r = self._run(monkeypatch, tmp_path, refs, {'tes4\\a.dds'},
+                      allow={'tes4\\x\\black.dds'})
         assert r['status'] == vb.FAIL
+        assert r['data']['stale_allow'] == ['tes4\\x\\black.dds']
+
+    def test_allow_file_reads_full_keys(self, tmp_path):
+        """One key per line, comments and blank lines ignored, / folded to \\."""
+        f = tmp_path / 'allow.txt'
+        f.write_text('# source defects\nTES4/X/Black.dds  # absent\n\n',
+                     encoding='utf-8')
+        assert vb.read_allow_missing(f) == {'tes4\\x\\black.dds'}
+
+    def test_control_is_the_most_named_texture(self, monkeypatch, tmp_path):
+        """The control comes from the run: absent from every table -> blind."""
+        refs = {'tes4\\a.dds': 1, 'tes4\\common.dds': 9}
+        r = self._run(monkeypatch, tmp_path, refs,
+                      {'tes4\\a.dds', 'tes4\\common.dds'})
+        assert (r['status'], r['data']['control']) == (
+            vb.PASS, 'tes4\\common.dds')
+        r = self._run(monkeypatch, tmp_path, refs, {'tes4\\a.dds'},
+                      allow={'tes4\\common.dds'})
+        assert r['status'] == vb.FAIL
+
+    def test_node_name_is_not_a_texture_but_drive_paths_are_whole(
+            self, tmp_path):
+        """No separator -> a node name; a colon stays inside the key."""
+        ctx = _ctx(tmp_path)
+        objs = ctx.lod / 'meshes' / 'terrain'
+        objs.mkdir(parents=True)
+        (objs / 'W.4.0.0.bto').write_bytes(
+            b'\x11\x00\x00\x00CPStone01.dds.b:0\x00\x00\x00'
+            b'\x20\x00\x00\x00Textures\\tes4\\f:\\gg\\data\\x.dds'
+            b'\x14\x00\x00\x00textures\\tes4\\next.dds')
+        refs, _meshes = vb.mesh_texture_refs(ctx)
+        assert set(refs) == {'tes4\\f:\\gg\\data\\x.dds',
+                             'tes4\\next.dds'}
 
     def test_mesh_strings_are_read_from_loose_lod_tiles(self, tmp_path):
         """Texture paths inside a .bto are found by the string scan."""
@@ -273,7 +312,7 @@ class TestTextures:
             b'\x10\x00\x00\x00textures\\tes4\\a.dds\x00\x00'
             b'\x14\x00\x00\x00Textures\\TES4\\B_n.dds')
         refs, meshes = vb.mesh_texture_refs(ctx)
-        assert meshes == 1 and refs == {'tes4\\a.dds', 'tes4\\b_n.dds'}
+        assert meshes == 1 and set(refs) == {'tes4\\a.dds', 'tes4\\b_n.dds'}
 
 
 def _sub(sig, data):

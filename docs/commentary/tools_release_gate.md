@@ -92,7 +92,7 @@ on PASS.
 | id | what | passes when |
 |---|---|---|
 | G1 | case census of every output tree, zip and deploy folder (`case_paths.census`) | no two files share one lowercase archive path; folder twins only warn |
-| G2 | texture paths inside the packed mesh BSAs and the LOD mod's tiles vs every table (our BSAs, the LOD mod's loose textures, vanilla Skyrim BSAs) | all found except `KNOWN_ABSENT`, and the control `anmiddlehouselod01.dds` is referenced and found |
+| G2 | texture paths inside the packed mesh BSAs and the LOD mod's tiles vs every table (our BSAs, the LOD mod's loose textures, vanilla Skyrim BSAs) | all found except full keys listed in `--allow-missing FILE`, and the control (the texture the most meshes name) is found |
 | G3 | `Magic effect phase meshes` line; ARTO/EXPL records in the converted Oblivion.esm | every model converted, both record types present |
 | G4 | `Race skin tones: N races resolved`, one line per plugin | every N > 0 |
 | G5 | each plugin's `door_panel_axis_cache.json` | exists; FR's is written by this run and holds at least 37 doors |
@@ -104,9 +104,35 @@ on PASS.
 | G11 | final `create_lod` step: `NullReferenceException`, empty bakes; `.bto` per worldspace | none; at least `--min-bto` (TES4Tamriel 997) |
 | G12 | `[plugin] Compilation: ok/total succeeded, N failed` | every plugin present, N = 0 |
 
-G2 reads mesh bytes and scans for `.dds` paths with the LOD fill's own
-pattern (`lod_gen.TEXTURE_PATH_RE`); a mesh's sized strings are preceded by
-NUL bytes, so a match cannot swallow its length prefix.
+<a id="g2"></a>
+G2 reads mesh bytes and scans for `.dds` paths with its own pattern
+(`MESH_TEXTURE_RE`), not the LOD fill's, because it must see what the engine
+would be asked for:
+
+- A match must contain a path separator. A NIF's header string table also
+  holds node NAMES such as `CPStone01.dds.b:0`, which a bare `*.dds` pattern
+  reads as a texture; no texture slot holds a separator-free name.
+- `:` is allowed, so an authoring path left in a mesh
+  (`Textures\tes4\f:\gogames\...\x.dds`) is reported whole, as the key the
+  engine would look up, not cut at the colon.
+- There is no trailing lookahead: the next sized string's length byte often
+  follows `.dds` directly, and requiring a non-word byte there drops real
+  references.
+- A mesh's sized strings are preceded by NUL bytes, so a match cannot
+  swallow its length prefix.
+
+A header string that no block references (a stale string-table entry) is
+still read; the scan does not parse blocks. Such keys, and textures that are
+absent upstream too, belong in the `--allow-missing` file: one FULL key per
+line, exactly as G2 prints it (`tes4\architecture\anvil\lorgenburn.dds`),
+`#` for comments. Matching is by full key, never by file name, so allowing
+one `black.dds` cannot hide another folder's. Entries that are no longer
+missing are counted as stale. The list is data about one build's sources and
+lives with that build, not in the code.
+
+The control is picked from the run: the texture the most meshes name. If it
+is in no table, the key normalisation or the table read is broken and the
+check fails as blind.
 
 ## The terrain checks
 <a id="terrain-checks"></a>

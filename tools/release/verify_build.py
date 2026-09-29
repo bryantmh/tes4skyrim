@@ -454,34 +454,53 @@ def file_crc(path: Path) -> int:
 # G2: every texture a shipped mesh names is shipped by someone
 # ---------------------------------------------------------------------------
 
-#: Textures known to be absent upstream too (by file name).
-KNOWN_ABSENT = frozenset({'cheydinhalstonewall.dds', 'default.dds'})
-
-#: A texture that must be referenced AND found, or the check is blind.
-CONTROL_TEXTURE = 'anmiddlehouselod01.dds'
+#: A `.dds` path in mesh bytes: needs a separator, keeps `:` (docs/commentary/tools_release_gate.md#g2).
+MESH_TEXTURE_RE = re.compile(
+    rb'[A-Za-z0-9_ .:-]{0,200}[\\/][A-Za-z0-9_\\/ .:-]{0,200}?\.dds',
+    re.IGNORECASE)
 
 
 def check_textures(ctx) -> dict:
     """G2: texture paths in the packed meshes and LOD tiles vs every archive's table.
 
     Tables: our BSAs, the LOD mod's loose textures and the vanilla Skyrim
-    BSAs. Known upstream absentees are allowed; the control must be found.
+    BSAs. Keys listed in `--allow-missing` (full keys) are allowed. The
+    control is the texture the most meshes name: it must be found, or the
+    lookup itself is blind.
     """
     tables = texture_table(ctx)
     refs, meshes = mesh_texture_refs(ctx)
-    missing = sorted(r for r in refs if r not in tables
-                     and r.rsplit('\\', 1)[-1] not in KNOWN_ABSENT)
-    control = [r for r in refs if r.endswith(CONTROL_TEXTURE)]
-    blind = not control or not all(r in tables for r in control)
     if meshes == 0 or not tables:
         return result('G2', REFUSE, f'{meshes} meshes',
                       f'{len(tables)} table entries')
+    absent = sorted(r for r in refs if r not in tables)
+    allowed = [r for r in absent if r in ctx.allow_missing]
+    missing = [r for r in absent if r not in ctx.allow_missing]
+    control = max(sorted(refs), key=refs.get) if refs else None
+    blind = control is None or control not in tables
+    stale = sorted(ctx.allow_missing - set(absent))
     status = FAIL if missing or blind else PASS
     return result('G2', status,
-                  f'{len(refs) - len(missing)}/{len(refs)} textures '
+                  f'{len(refs) - len(absent)}/{len(refs)} textures '
                   f'from {meshes} meshes',
-                  f'control found: {not blind}; missing: {missing[:8]}',
-                  missing=missing)
+                  f'control {control} found: {not blind}; allowed '
+                  f'{len(allowed)} (stale allow entries {len(stale)}); '
+                  f'missing: {missing[:8]}',
+                  missing=missing, allowed=allowed, stale_allow=stale,
+                  control=control)
+
+
+def read_allow_missing(path) -> frozenset:
+    """Full texture keys (as G2 prints them) from `path`; `#` starts a comment."""
+    if not path:
+        return frozenset()
+    keys = set()
+    with open(path, encoding='utf-8') as fh:
+        for line in fh:
+            key = line.split('#', 1)[0].strip().lower().replace('/', '\\')
+            if key:
+                keys.add(key)
+    return frozenset(keys)
 
 
 def texture_table(ctx) -> set:
@@ -526,15 +545,14 @@ def vanilla_bsas(ctx) -> list:
 
 
 def mesh_texture_refs(ctx):
-    """(texture keys named by shipped meshes and LOD tiles, meshes read)."""
-    from asset_convert.lod.lod_gen import TEXTURE_PATH_RE
-    refs, meshes = set(), 0
+    """({texture key: meshes naming it} over shipped meshes and LOD tiles, meshes read)."""
+    refs, meshes = {}, 0
     for blob in shipped_mesh_blobs(ctx):
         meshes += 1
-        for m in TEXTURE_PATH_RE.findall(blob):
-            key = texture_key(m.decode('latin-1'))
-            if key:
-                refs.add(key)
+        keys = {texture_key(m.decode('latin-1'))
+                for m in MESH_TEXTURE_RE.findall(blob)}
+        for key in keys - {''}:
+            refs[key] = refs.get(key, 0) + 1
     return refs, meshes
 
 
@@ -609,6 +627,8 @@ def _parse_args(argv=None):
                     metavar='ZIP=MODDIR', help='post-deploy pairs (G10)')
     ap.add_argument('--min-bto', action='append', default=[],
                     metavar='WRLD=N', help='default TES4Tamriel=997')
+    ap.add_argument('--allow-missing', metavar='FILE',
+                    help='G2: full texture keys known absent upstream')
     ap.add_argument('--only', help='comma-separated check ids')
     ap.add_argument('--json', help='default: gate_<stamp>.json beside the log')
     return ap.parse_args(argv)
@@ -644,6 +664,7 @@ def build_context(args):
         export=Path(args.export or export_default),
         lod=output / LOD_DIR_NAME, plugins=plugins,
         worldspaces=worldspaces_in(sections),
+        allow_missing=read_allow_missing(args.allow_missing),
         skyrim_data=args.skyrim_data or find_skyrim_data(),
         source_esm=args.source_esm, deploy=deploy,
         zips=sorted(finished.glob('*.zip')) if finished.is_dir() else [],
