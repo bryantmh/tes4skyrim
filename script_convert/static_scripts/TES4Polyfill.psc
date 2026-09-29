@@ -1029,6 +1029,26 @@ EndFunction
 Float Function SAY_ACCEPT_WAIT() Global
   Return 0.4
 EndFunction
+
+; Hard cap on SayLine's pre-Say wait loop (6c).  The loop holds while the
+; speaker is busy: our own actor's line still playing (_IsSpeaking), the
+; player still in a dialogue menu with the actor (IsInDialogueWithPlayer), or
+; another actor mid-line (already capped at SAY_ACCEPT_WAIT).  Of these only
+; the FIRST is a legitimate long wait, and it is already self-bounding: a
+; tracked line counts as speaking only until its lost-End deadline
+; (Variable10 = line_length + 30 s of game time, stamped in LineBegan), which
+; for the longest converted line (~8 s) is ~38 s even under a starved VM whose
+; End fragment runs 11-24 s late.  So a wait past ~40 s can only be a LOST End
+; or a stuck IsInDialogueWithPlayer flag -- neither should pin a whole
+; conversation.  The old ceiling here was 600 s (ten minutes); 45 s sits above
+; the legitimate same-speaker maximum with margin yet cannot freeze a
+; conversation for minutes.  A pre-Say wait that hits this cap falls through
+; and issues the Say anyway; if the engine then drops it (actor genuinely
+; still mid-line) SayLine returns 0 and the caller's poll simply retries.
+Float Function SAY_MAX_PREWAIT() Global
+  Return 45.0
+EndFunction
+
 Float Function SAY_TAIL_MIN() Global
   Return 0.35
 EndFunction
@@ -1040,6 +1060,19 @@ Float Function SAY_TAIL_MARGIN() Global
 EndFunction
 Float Function SAY_TAIL_DEFAULT() Global
   Return 0.8       ; until anything has been measured
+EndFunction
+
+; The hold returned for a line the engine BEGAN but that has no measured voice
+; (6a): Variable09 lands in (0, 0.02) -- the Begin fragment ran, so a subtitle
+; shows if enabled, but no .fuz played (or it played silent).  Such a line is
+; effectively instantaneous, so returning the caller's authored fallback (the
+; topic's longest RESPONSE length, up to ~6-8 s) charges the caller's countdown
+; that whole span as pure DEAD AIR.  Instead return a short bounded hold: long
+; enough for the subtitle to flash and the Begin/End fragments to settle, short
+; enough that a voice-less line clears fast.  Only the no-voice case uses this;
+; a line that reports a real length returns its measured len untouched.
+Float Function SAY_SILENT_HOLD() Global
+  Return 0.5
 EndFunction
 
 ; The tail for this speaker's next line: its own measured End overhead if it
@@ -1147,7 +1180,7 @@ Float Function SayLine(ObjectReference akSpeaker, Topic akTopic, Float afFallbac
   ; and so one unrelated ambient line cannot hold up a whole conversation.
   Float otherCap = SAY_ACCEPT_WAIT()
   Float waited = 0.0
-  While waited < 600.0 && (a.IsInDialogueWithPlayer() || _IsSpeaking(a) \
+  While waited < SAY_MAX_PREWAIT() && (a.IsInDialogueWithPlayer() || _IsSpeaking(a) \
                            || (waited < otherCap && _OtherLineInProgress()))
     Utility.Wait(0.05)
     waited += 0.05
@@ -1188,7 +1221,14 @@ Float Function SayLine(ObjectReference akSpeaker, Topic akTopic, Float afFallbac
     Return 0.0   ; dropped: nothing under the topic qualified (or the engine refused it)
   EndIf
   If len < 0.02
-    len = afFallbackLength   ; began, but the line has no measured voice file
+    ; Began, but no measured voice (no .fuz, or the engine played it silent):
+    ; a SHORT bounded hold, never the caller's multi-second fallback (dead air).
+    ; Never LENGTHEN past what the caller authored, in case a fallback is
+    ; already shorter than the hold.
+    len = SAY_SILENT_HOLD()
+    If afFallbackLength < len
+      len = afFallbackLength
+    EndIf
   EndIf
   ; ð LENGTH ONLY -- no tail.  TES4's Say returned the line's length and
   ; nothing more, and the caller's countdown is meant to expire when the audio
