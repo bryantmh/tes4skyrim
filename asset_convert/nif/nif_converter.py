@@ -37,7 +37,7 @@ from pathlib import Path
 
 import numpy as np
 
-from asset_convert import paths
+from asset_convert import case_paths, paths
 from asset_convert.nif.geometry_sanitize import sanitize_geometry_data
 from asset_convert.nif.nif_materials_morrowind import carry_havok_material
 from asset_convert.nif.nif_converter_morrowind import (
@@ -1276,16 +1276,11 @@ def _output_root(dst_path):
 
 
 def _texture_out_path(out_root, rel):
-    """Where a texture pass writes `rel` (a `Textures\\...` path) under out_root.
+    """Where a texture pass writes `rel` under out_root, by the write rule.
 
-    The texture copy writes the lowercase `textures` folder and the packer reads
-    only that, so a shader path's `Textures` root must not open a second
-    folder on a case-sensitive filesystem.
+    See: docs/commentary/asset_convert_paths.md#write-rule
     """
-    parts = rel.replace('\\', os.sep).replace('/', os.sep).split(os.sep)
-    if parts and parts[0].lower() == 'textures':
-        parts[0] = 'textures'
-    return out_root + os.sep.join(parts)
+    return str(case_paths.write_path(out_root, rel))
 
 
 def _build_flip_atlases(stats, dst_path):

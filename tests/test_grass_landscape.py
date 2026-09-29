@@ -1,4 +1,5 @@
 """Tests for the grass shader profile and landscape normal-map fixes."""
+import os
 import struct
 from pathlib import Path
 
@@ -359,11 +360,27 @@ class TestLandscapeNormals:
         checked, written = landscape_normals.ensure_ltex_normals(
             export, mine, out)
         assert (checked, written) == (3, 2)
-        assert (mine / 'tes4' / 'Tx_none_n.dds').is_file()
+        assert (mine / 'tes4' / 'tx_none_n.dds').is_file()
         flat = (mine / 'tes4' / 'landscape' / 'dirt02_n.dds').read_bytes()
         assert flat[84:88] == b'DXT5' and flat[128] == landscape_normals.SPECULAR_ALPHA
         assert not (mine / 'tes4' / 'Tx_has_n.dds').exists()
         assert landscape_normals.ensure_ltex_normals(export, mine, out) == (3, 0)
+
+    def test_ensure_ltex_normals_reuses_the_existing_folder_spelling(self, tmp_path):
+        """An ICON naming `Oblivion\\` writes into the existing `oblivion/`, no twin."""
+        from asset_convert.game_paths import set_namespace
+        set_namespace('tes4')
+        export = tmp_path / 'export'
+        export.mkdir()
+        (export / 'LTEX.txt').write_text(
+            '---RECORD_BEGIN---\nICON=Oblivion\\\\Evil01.dds\n---RECORD_END---\n')
+        out = tmp_path / 'output'
+        land = out / 'Plugin.esp' / 'textures' / 'tes4' / 'landscape'
+        (land / 'oblivion').mkdir(parents=True)
+        (land / 'oblivion' / 'evil01.dds').write_bytes(b'DDS ')
+        landscape_normals.ensure_ltex_normals(export, out / 'Plugin.esp' / 'textures', out)
+        assert sorted(os.listdir(land)) == ['oblivion']
+        assert (land / 'oblivion' / 'evil01_n.dds').is_file()
 
 
 def _make_dds(fourcc, width, height, mip_count, blocks_per_mip):

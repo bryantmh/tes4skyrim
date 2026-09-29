@@ -39,6 +39,24 @@ def test_height_map_lands_in_lowercase_textures(tmp_path, monkeypatch):
     assert sorted(os.listdir(tmp_path)) == ['textures']
 
 
-def test_existing_lowercase_root_is_kept():
-    out = nif_converter._texture_out_path(os.sep.join(['', 'o', '']), 'textures\\a\\b.dds')
-    assert out == os.sep.join(['', 'o', 'textures', 'a', 'b.dds'])
+def test_existing_lowercase_root_is_kept(tmp_path):
+    """An existing lowercase tree is written into as it is."""
+    (tmp_path / 'textures' / 'a').mkdir(parents=True)
+    out = nif_converter._texture_out_path(str(tmp_path) + os.sep, 'textures\\a\\b.dds')
+    assert out == str(tmp_path / 'textures' / 'a' / 'b.dds')
+
+
+def test_mixed_case_shader_path_writes_lowercase_folders_and_name(tmp_path):
+    """No spelling on disk yet: every new folder and the file name are lowercase."""
+    out = nif_converter._texture_out_path(str(tmp_path) + os.sep,
+                                          'Textures\\tes4\\Fire\\A.dds')
+    assert out == str(tmp_path / 'textures' / 'tes4' / 'fire' / 'a.dds')
+
+
+def test_existing_folder_spelling_is_reused_not_twinned(tmp_path):
+    """A folder already on disk as `Fire/` is reused; no `fire/` twin opens."""
+    (tmp_path / 'textures' / 'tes4' / 'Fire').mkdir(parents=True)
+    out = nif_converter._texture_out_path(str(tmp_path) + os.sep,
+                                          'Textures\\tes4\\fire\\a.dds')
+    assert out == str(tmp_path / 'textures' / 'tes4' / 'Fire' / 'a.dds')
+    assert os.listdir(tmp_path / 'textures' / 'tes4') == ['Fire']

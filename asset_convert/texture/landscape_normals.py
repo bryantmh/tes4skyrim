@@ -21,6 +21,7 @@ CLI:
     python -m asset_convert.texture.landscape_normals <landscape_dir>
     python -m asset_convert.texture.landscape_normals <export_dir> <textures_root> <output_dir>
 """
+from asset_convert import case_paths
 from asset_convert.game_paths import current_namespace, namespace_for, set_namespace
 import os
 import struct
@@ -220,8 +221,7 @@ def ensure_ltex_normals(rec_dir, textures_root, output_dir,
         parts = (rel.rsplit('.', 1)[0] + '_n.dds').split('\\')
         if '/'.join(parts).lower() in existing:
             continue
-        dest = Path(textures_root).joinpath(*parts)
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest = case_paths.write_path(textures_root, '\\'.join(parts))
         with open(dest, 'wb') as f:
             f.write(_flat_normal_bytes(alpha))
         written += 1

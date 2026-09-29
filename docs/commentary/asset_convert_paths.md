@@ -48,7 +48,10 @@ terrain LOD, generic spell art, missing FR door axes and sounds. The LOD probe
 ## The write rule
 <a id="write-rule"></a>
 
-**Code:** `write_path` in `asset_convert/case_paths.py`
+**Code:** `write_path` in `asset_convert/case_paths.py`; its writers are
+`ensure_ltex_normals` (`asset_convert/texture/landscape_normals.py`) and
+`_texture_out_path` (`asset_convert/nif/nif_converter.py`: flipbook atlases and
+parallax height maps)
 
 A converter-written file goes to `write_path(root, rel)`: each segment reuses
 the one spelling already on disk (a live listing, never the cache), is created
