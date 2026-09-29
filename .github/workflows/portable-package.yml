@@ -1,0 +1,61 @@
+name: Portable package
+
+# Builds the portable Windows package (tools/release/build_portable.py) for one
+# release tag and attaches it to that tag's GitHub Release.
+#
+# Called by tag-on-push.yml right after it creates a release. It is also run by
+# hand (Actions > Portable package > Run workflow) to build a package for an
+# existing release or to retry a failed build; --clobber replaces an old asset.
+#
+# Why a reusable workflow and not `on: release`: a release created with the
+# workflow's own GITHUB_TOKEN does not trigger other workflows, so the release
+# job has to call this one directly.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build the package for (for example 0.666)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    # The package is a Windows Python, so it has to be built on Windows.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          # Full history and tags, so the builder can match HEAD to its tag.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Must match the ABI of the committed native/dist/*.pyd files; the
+          # builder refuses any other interpreter.
+          python-version: '3.14'
+          architecture: x64
+
+      - name: Build the package
+        run: python tools/release/build_portable.py
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        # The builder names the zip after the version it stamped. If HEAD was
+        # not exactly on the tag, the name differs and this upload fails
+        # rather than shipping a package that calls itself a dev build.
+        run: gh release upload "$env:TAG" "dist/TESAutoConvert-$env:TAG-win64.zip" --clobber

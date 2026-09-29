@@ -23,6 +23,9 @@ concurrency:
 jobs:
   tag:
     runs-on: ubuntu-latest
+    outputs:
+      # The tag this run created, or empty when HEAD was already tagged.
+      created: ${{ steps.tag.outputs.created }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -148,8 +151,9 @@ jobs:
           # later call got a 429.
           #
           # So a Release per tag is not cosmetic -- without it the app has no
-          # affordable way to read the checklists at all.  No assets are
-          # attached: the body IS the payload.
+          # affordable way to read the checklists at all.  The body IS that
+          # payload; the portable package the next job attaches is an asset
+          # beside it and never changes the body.
           gh release create "$TAG" \
             --title "$TAG" \
             --notes-file "$RUNNER_TEMP/release-body.txt" \
@@ -185,3 +189,14 @@ jobs:
             --notes "$RUNNER_TEMP/release-body.txt" \
             --tag "$TAG" \
             --repo "$REPO"
+
+  portable-package:
+    # Build the portable Windows package and attach it to the release just
+    # created.  A separate job, so a failed build never undoes the tag or the
+    # release: the app's upgrade check only needs those, and the package can
+    # be rebuilt by hand from the Portable package workflow.
+    needs: tag
+    if: needs.tag.outputs.created != ''
+    uses: ./.github/workflows/portable-package.yml
+    with:
+      tag: ${{ needs.tag.outputs.created }}
