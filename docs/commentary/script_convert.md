@@ -72,6 +72,8 @@
 - [Command families matched by PREFIX](#command-prefix-families)
 - [FO3/FNV commands that reach the compiler unrouted](#fnv-unrouted-commands)
 - [An unmapped AV command silently became a READ](#unmapped-av-command-became-a-read)
+- [FO3/FNV actor-value names](#fallout-actor-value-names)
+- [A negative comparand is still a number](#negative-comparand)
 - [A digit-leading member name swallowed its dot](#digit-leading-member-names)
 - [`Kill` takes only the killer](#kill-takes-only-the-killer)
 - [An inert read must never FIRE a guard](#an-inert-read-must-never-fire)
@@ -3689,6 +3691,64 @@ not the skill itself). Every other entry already agreed with its row, so no
 TES4 call site moves. `Actor.psc` declares both natives with exactly the TES4
 argument shape: `RestoreActorValue(string, float)`, `DamageActorValue(string,
 float)`.
+
+### <a id="fallout-actor-value-names"></a>FO3/FNV actor-value names
+
+**Code:** `constants_falloutnv.py` `FALLOUT_ATTRIBUTES`, `FALLOUT_ACTOR_VALUE_MAP`,
+`FALLOUT_UNMAPPED_ACTOR_VALUES`; merged in `constants.py` (`PRIMARY_STATS`,
+`AV_ARGUMENT_NAMES`); applied in `commands.py` `actor_value`.
+
+Scripts name actor values by string, so the AV argument went through
+Oblivion's `ACTOR_VALUE_MAP` and any name missing from it was emitted
+unchanged. Most of Fallout's are missing, and Skyrim's name table
+(`CreationKit.exe`, the strings from `Aggression` to `ReflectDamage`) lacks
+them, so each read returned 0 and each write was rejected
+([above](#skyrim-has-no-attributes)). Fallout's script names come from each
+GECK's own table (`Geck.exe`, from `Aggression` to `DamageThreshold`); FO3 has
+`SmallGuns` where New Vegas has `Guns` and `Survival`. Counted over the
+exports' `SCPT` text and the result scripts in `INFO`, `QUST`, `PACK`, `TERM`,
+`PERK` and `NOTE`, 144 of Fallout 3's 1,008 actor-value calls and 227 of New
+Vegas's 1,062 named a value Skyrim lacks.
+
+| Fallout name | Before | Now |
+|---|---|---|
+| Repair, Speech, Barter, Lockpick | unknown name, read 0 | `Smithing`, `Speechcraft`, `Speechcraft`, `Lockpicking`, as the condition side maps them ([conditions](tes5_import_conditions.md#fallout-actor-values)) |
+| Perception, Charisma | unknown name, read 0 | `100.0`, write dropped, like the five S.P.E.C.I.A.L. stats that share a name with an Oblivion attribute |
+| Karma, XP, Medicine, Science, Explosives, the weapon skills, Survival, Unarmed, RadiationRads, ActionPoints, BloodyMess, RadResist, EnergyResist, EmpResist, Turbo, DamageThreshold, the hardcore needs | unknown name, read 0 | inert read (`note`), write dropped |
+
+An inert read folds a comparison to `false`, or drops out of its `&&`/`||`
+chain ([comparing an inert operand](#comparing-an-inert-operand)), so neither
+direction of a skill or karma check is decided by a 0 nobody authored. The
+conditions drop the same values, which passes them; a script cannot pass a
+check it no longer evaluates, so it drops the term instead.
+
+The renames apply to the actor-value argument only, never to a bare name:
+`lockpick` is also Fallout's bobby-pin item, and `GetItemCount lockpick` must
+keep it.
+
+Names Skyrim has pass through unchanged, including some the conditions drop:
+the limb conditions (`PerceptionCondition` … `BrainCondition`), whose writes
+(`RestoreAV` after healing) a script reads back itself; `HealRate` and
+`DamageResist`, whose scale differs ([conditions](tes5_import_conditions.md#fallout-actor-values));
+and `Variable01`-`Variable10`, which scripts use as their own flags.
+
+Converted with `convert_standalone` over every `SCPT` in the exports, before
+and after: Oblivion 0 of 2,393 scripts changed, Fallout 3 65 of 1,257, New
+Vegas 84 of 2,576, every changed line an actor-value call or a property left
+unused by a dropped write.
+
+### <a id="negative-comparand"></a>A negative comparand is still a number
+
+**Code:** `emit/expr.py` `_numeric_cmp`, `_is_number`.
+
+`-250` parses as unary minus over the literal `250`, so `_numeric_cmp` did not
+recognize it as a number and the comparison took the plain path: an inert
+read compared against it stayed as `0 >= -250`, a decided answer, where
+against `250` it folds or drops out. Karma checks are where it shows
+(`AchievementScript` tests `>= -250` and `< -250`). A negated literal now
+takes the same path as any other number. No Oblivion script changed, since
+`_bool_literal_cmp` emits a non-inert comparison exactly as the plain path
+does.
 
 ### A digit-leading member name swallowed its dot
 <a id="digit-leading-member-names"></a>

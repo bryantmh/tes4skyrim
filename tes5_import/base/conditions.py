@@ -22,7 +22,8 @@ from .cell_family import expand_cell_families, or_groups
 from .constants import ENGINE_GLOBAL_FORMIDS
 from .ctda_bool import bool_outcomes
 from .equivalents import TES4_ITEM_FORMID_TO_SKYRIM
-from .conditions_falloutnv import (FALLOUT_CTDA_SIZE, fallout_function,
+from .conditions_falloutnv import (FALLOUT_CTDA_SIZE, fallout_actor_value,
+                                   fallout_ctda, fallout_function,
                                    fallout_run_on)
 from ..generated.ctda_param_types import CTDA_FORMID_PARAMS
 from .owned_records import MGEF_FAMILY_KEYWORDS
@@ -301,15 +302,17 @@ _TES4_AV_TO_TES5 = {
     68: 42,   # ResistShock     -> ResistShock
 }
 
-# Condition functions whose param1 is a ptActorValue in BOTH games. Every one
-# needs the index translated (or the whole condition dropped when it names an
-# attribute). Sourced from xEdit's wbConditionFunctions tables; TES4-only
-# entries (2571 GetBaseAV3, 2577 IsMajorRef, 1124 IsClassSkill) are already in
-# _FUNC_DROP or have no TES5 counterpart, so they never reach here.
-_AV_PARAM_FUNCS = frozenset({
-    14,    # GetActorValue
-    277,   # GetBaseActorValue
-})
+#: Skyrim condition functions taking an actor value. See: docs/commentary/tes5_import_conditions.md#av-param-funcs
+_AV_PARAM_FUNCTIONS = {
+    'GetActorValue': 14,
+    'IsWeaponSkillType': 109,
+    'GetBaseActorValue': 277,
+    'GetPermanentActorValue': 494,
+    'GetActorValuePercent': 640,
+}
+
+#: The indices of _AV_PARAM_FUNCTIONS, for membership tests.
+_AV_PARAM_FUNCS = frozenset(_AV_PARAM_FUNCTIONS.values())
 
 
 def _map_race_param(fid: int) -> 'int | None':
@@ -526,20 +529,34 @@ def _disposition_fields(type_byte: int, data: bytes) -> 'tuple | None':
     return comp_raw, GET_RELATIONSHIP_RANK, _PLAYER_REF_FORMID, 0
 
 
+def _actor_value_param(param1: int, fallout: bool) -> 'tuple | None':
+    """(Skyrim actor value, 0) for an actor-value parameter, or None to drop.
+
+    Fallout and TES4 number their actor values differently, so each source
+    uses its own table.
+    See: docs/commentary/tes5_import_conditions.md#fallout-actor-values
+    """
+    av = param1 if param1 < 0x80000000 else param1 - 0x100000000
+    if fallout:
+        tes5 = fallout_actor_value(av)
+        return None if tes5 is None else (tes5, 0)
+    if av in _TES4_AV_ATTRIBUTES or av not in _TES4_AV_TO_TES5:
+        return None
+    return _TES4_AV_TO_TES5[av], 0
+
+
 def _convert_params(func_idx: int, param1: int, param2: int,
-                    offset: int) -> 'tuple | None':
+                    offset: int, fallout: bool = False) -> 'tuple | None':
     """(param1, param2) with only FormID slots remapped, or None to drop.
 
     `func_idx` is the TES5 index.  Actor-value and race parameters are
-    translated between the games' tables rather than remapped.
+    translated between the games' tables rather than remapped; `fallout`
+    selects the FO3/FNV actor-value table.
     See: docs/commentary/tes5_import_conditions.md#formid-params
     """
     fid_slots = CTDA_FORMID_PARAMS.get(func_idx, frozenset())
     if func_idx in _AV_PARAM_FUNCS:
-        av = param1 if param1 < 0x80000000 else param1 - 0x100000000
-        if av in _TES4_AV_ATTRIBUTES or av not in _TES4_AV_TO_TES5:
-            return None
-        return _TES4_AV_TO_TES5[av], 0
+        return _actor_value_param(param1, fallout)
     if func_idx in _RACE_PARAM_FUNCS:
         param1 = _map_race_param(param1)
         if param1 is None:
@@ -653,13 +670,15 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
     """
     if offset is None:
         offset = get_formid_index_offset()
+    raw = fallout_ctda(raw)
     head = _ctda_head(raw, offset, in_speak_as_topic)
     if not isinstance(head, tuple):
         return head
     type_byte, comp_raw, func_idx, param1, param2, run_on, reference = head
     if type_byte & CTDA_USE_GLOBAL:
         comp_raw = _remap_global(comp_raw, offset)
-    params = _convert_params(func_idx, param1, param2, offset)
+    params = _convert_params(func_idx, param1, param2, offset,
+                             len(raw) >= FALLOUT_CTDA_SIZE)
     fields = _run_on_fields(type_byte, func_idx, run_on, reference,
                             run_on_target_ref, drop_run_on_target)
     if params is None or fields is None:

@@ -42,6 +42,7 @@ from tes5_import.dialogue.quest import (convert_QUST,
                                         set_assigned_var_names)
 from tes5_import.base.tes5_reader import records
 from tes5_import.base.text_reader import set_formid_index_offset
+from tes5_import.record_types import world_falloutnv
 
 
 # ---------------------------------------------------------------------------
@@ -1136,6 +1137,60 @@ class TestFalloutConditions:
                             '00000000')
         assert struct.unpack_from('<I', convert_ctda(raw), 20)[0] == 1
         assert convert_ctda(raw, drop_run_on_target=True) is None
+
+
+def _av_ctda(func: int, av: int, size: int = 28) -> bytes:
+    """A GetActorValue-family CTDA (Subject, `>= 50`) naming actor value `av`."""
+    full = struct.pack('<B3xfHHIIII', 0, 50.0, func, 0, av, 0, 0, 0)
+    return full[:size]
+
+
+def _av_param(out: bytes) -> int:
+    """The actor-value parameter of a converted TES5 CTDA."""
+    return struct.unpack_from('<I', out, 12)[0]
+
+
+class TestFalloutActorValues:
+    """A Fallout condition's actor value follows Fallout's table, not TES4's.
+
+    See docs/commentary/tes5_import_conditions.md#fallout-actor-values.
+    """
+
+    @pytest.mark.parametrize('fallout_av, skyrim_av', [(43, 17), (32, 17),
+                                                        (36, 14), (16, 24)])
+    def test_shared_values_translate(self, fallout_av, skyrim_av):
+        """Speech, Barter, Lockpick and Health read their Skyrim values."""
+        assert _av_param(convert_ctda(_av_ctda(14, fallout_av))) == skyrim_av
+
+    @pytest.mark.parametrize('fallout_av', [23, 8, 9, 37, 40, 29])
+    def test_values_skyrim_lacks_drop(self, fallout_av):
+        """Karma, Charisma, Intelligence, Medicine, Science and a limb condition.
+
+        Through TES4's table Karma, Charisma, Intelligence and the limb read
+        Illusion, Health, Magicka and Speech; all six must fail open.
+        """
+        assert convert_ctda(_av_ctda(14, fallout_av)) is None
+
+    def test_permanent_actor_value_is_translated_too(self):
+        """GetPermanentActorValue (FNV 495, Skyrim 494) carries an actor value."""
+        out = convert_ctda(_av_ctda(495, 43))
+        assert struct.unpack_from('<H', out, 8)[0] == 494
+        assert _av_param(out) == 17
+
+    @pytest.mark.parametrize('size', [20, 24])
+    def test_short_fallout_ctda_takes_the_fallout_path(self, size, monkeypatch):
+        """FO3/FNV masters also store 20- and 24-byte CTDAs; the source decides.
+
+        GetIsVoiceType is 427 in FNV and 426 in Skyrim; Speech is 43.
+        """
+        monkeypatch.setattr(world_falloutnv, '_IS_FALLOUT_SOURCE', [True])
+        voice = convert_ctda(_av_ctda(427, 0, size))
+        assert struct.unpack_from('<H', voice, 8)[0] == 426
+        assert _av_param(convert_ctda(_av_ctda(14, 43, size))) == 17
+
+    def test_short_ctda_stays_tes4_for_a_tes4_source(self):
+        """Without a Fallout source a 24-byte CTDA is TES4's: 43 is not Speech."""
+        assert convert_ctda(_av_ctda(14, 43, size=24)) is None
 
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import hashlib
 import re
 
 from asset_convert.game_paths import current_namespace
+from script_convert.constants_falloutnv import FALLOUT_ACTOR_VALUE_MAP, FALLOUT_ATTRIBUTES
 
 # ===========================================================================
 # Constants
@@ -154,6 +155,12 @@ ACTOR_VALUE_MAP = {
     'energy':       'Energy',
     'responsibility': 'Morality',
 }
+
+#: Primary stats Skyrim lacks, TES4's and FO3/FNV's: a read passes any threshold, a write drops.
+PRIMARY_STATS = TES4_ATTRIBUTES | FALLOUT_ATTRIBUTES
+
+#: Actor-value command argument -> Skyrim's name; FO3/FNV's renames apply to this argument only.
+AV_ARGUMENT_NAMES = {**ACTOR_VALUE_MAP, **FALLOUT_ACTOR_VALUE_MAP}
 
 
 # TES4 global variables that exist in Skyrim — these need GlobalVariable property access

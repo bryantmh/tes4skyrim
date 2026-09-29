@@ -572,6 +572,54 @@ class TestActorValueMap:
         assert result == 'Game.GetPlayer().GetActorValue("Smithing") >= 10'
 
 
+class TestFalloutActorValueNames:
+    """FO3/FNV actor-value names resolve to Skyrim's, stub like attributes, or go inert.
+
+    See: docs/commentary/script_convert.md#fallout-actor-value-names
+    """
+
+    @pytest.mark.parametrize('name, skyrim', [('Repair', 'Smithing'), ('Speech', 'Speechcraft'),
+                                              ('Barter', 'Speechcraft'), ('Lockpick', 'Lockpicking')])
+    def test_renamed_skill_reads_skyrim_name(self, converter, name, skyrim):
+        result = conv_expr(converter, f'player.getav {name} >= 50', 'Quest')
+        assert result == f'Game.GetPlayer().GetActorValue("{skyrim}") >= 50'
+
+    def test_renamed_skill_write(self, converter):
+        result = conv_line(converter, 'player.modav Speech 5', 'Quest')
+        assert 'ModActorValue("Speechcraft", 5)' in result
+
+    @pytest.mark.parametrize('name', ['Perception', 'Charisma', 'Strength'])
+    def test_special_read_is_stubbed_open(self, converter, name):
+        """All seven S.P.E.C.I.A.L. stats read alike, not five open and two shut."""
+        assert conv_expr(converter, f'player.getav {name} >= 6', 'Quest') == '100.0 >= 6'
+
+    def test_special_write_is_dropped(self, converter):
+        result = conv_line(converter, 'player.setav Charisma 7', 'Quest')
+        assert result.lstrip().startswith(';')
+        assert 'SetActorValue' not in result
+
+    def test_unmapped_read_is_inert(self, converter):
+        """Karma is no Skyrim actor value, so the read goes inert rather than naming it."""
+        result = conv_expr(converter, 'player.getav Karma < 0', 'Quest')
+        assert 'Karma"' not in result
+        assert any('Karma' in c for c in converter._line_comments)
+
+    def test_unmapped_write_is_dropped(self, converter):
+        result = conv_line(converter, 'player.modav Medicine 10', 'Quest')
+        assert result.lstrip().startswith(';')
+        assert 'ModActorValue' not in result
+
+    def test_rename_applies_to_the_actor_value_argument_only(self, converter):
+        """`lockpick` is also Fallout's bobby-pin item, which must keep its name."""
+        result = conv_expr(converter, 'player.GetItemCount lockpick < 1', 'Quest')
+        assert 'Lockpicking' not in result
+
+    def test_shared_name_passes_through(self, converter):
+        """A value Skyrim has under the same name is untouched."""
+        result = conv_expr(converter, 'player.getav CarryWeight > 200', 'Quest')
+        assert result == 'Game.GetPlayer().GetActorValue("CarryWeight") > 200'
+
+
 # ===========================================================================
 # Standalone script conversion tests
 # ===========================================================================

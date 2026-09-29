@@ -275,6 +275,24 @@ read a comparable number.
 Changing either to match the BOOK table would make the condition read a value
 the actor never trains, so it would compare against a constant.
 
+### <a id="av-param-funcs"></a>Which functions carry an actor value
+
+**Code:** `conditions.py` `_AV_PARAM_FUNCTIONS`.
+
+Every Skyrim condition function whose param1 is an actor value (xEdit
+`wbDefinitionsTES5.pas`, `ParamType1: ptActorValue`) needs that index
+translated, or dropped when the source value has no Skyrim counterpart:
+`GetActorValue` (14), `IsWeaponSkillType` (109), `GetBaseActorValue` (277),
+`GetPermanentActorValue` (494) and `GetActorValuePercent` (640). Before, only
+14 and 277 were listed, so a New Vegas `GetPermanentActorValue` (2 in
+FalloutNV.esm) passed Fallout's raw index straight through. TES4's own
+`GetWeaponSkillType` (109) is dropped earlier (`_FUNC_DROP`, semantics
+changed), and TES4-only functions (2571 GetBaseAV3, 2577 IsMajorRef, 1124
+IsClassSkill) are in `_FUNC_DROP` or have no TES5 counterpart, so neither
+reaches this table. `EPMagic_IsAdvanceSkill` (681) and
+`EPMagic_SpellHasSkill` (696) also take one, but only perk entry-point
+conditions use them and no source perk is converted yet.
+
 ## <a id="fallout-ctda"></a>A Fallout CTDA is 28 bytes and numbers its functions differently
 
 **Code:** `tes5_import/base/conditions_falloutnv.py`, applied by `convert_ctda`;
@@ -283,8 +301,8 @@ table: `tes5_import/generated/ctda_fnv_remap.py` from
 
 FO3/FNV write TES4's 20 shared bytes, then an explicit **Run On** u32 and a
 **Reference** u32 where TES4 has 4 unused bytes (xEdit `wbDefinitionsFNV.pas`
-`wbConditions`). The length is the format signal: a 28-byte raw is Fallout, a
-24-byte raw is TES4, so no per-game switch is needed.
+`wbConditions`). A 28-byte raw is always Fallout, but a shorter one is not
+always TES4: see [short Fallout CTDAs](#fallout-short-ctda).
 
 Census over FalloutNV.esm's 59,664 INFO conditions: Run On 0 (Subject) 55,872,
 1 (Target) 2,905, 2 (Reference) 821, 3 (Combat Target) 66. TES4's type-byte
@@ -315,6 +333,74 @@ Absent functions are dropped, failing open, the way TES4's `_FUNC_DROP` does.
 the disposition-tier evaluation applies. `GetScriptVariable` (53) and
 `GetQuestVariable` (79) keep TES4's treatment: the strings path rewrites them
 to the VM reads, every other path drops them.
+
+### <a id="fallout-short-ctda"></a>Short Fallout CTDAs: the source decides, not the length
+
+**Code:** `conditions_falloutnv.py` `fallout_ctda`, applied first in `convert_ctda`.
+
+xEdit marks everything from Run On onward optional (`wbConditions`
+`.SetOptionalFrom(7)`), and the masters use it. Census of the exports' INFO,
+QUST, PACK and IDLE conditions:
+
+| Master | 20 bytes | 24 bytes | 28 bytes |
+|---|---|---|---|
+| Fallout3.esm | 2,370 | 52 | 47,701 |
+| FalloutNV.esm | 123 | 2 | 65,830 |
+
+A 20-byte CTDA omits Run On and Reference, a 24-byte one Reference. Judged
+by length alone they took the TES4 path, which reads the function through
+TES4's numbering: of those 2,547, **90** (53 Fallout 3, 37 New Vegas) got the
+wrong function, among them `GetHitLocation` as `IsPC1stPerson` (68),
+`HasFriendDisposition` as `GetRelationshipRank` (6) and one `GetIsVoiceType`
+as `GetPlantedExplosive`. (`GetQuestVariable` and `GetScriptVariable` count
+too but are treated the same on both paths.)
+
+So a CTDA shorter than 28 bytes is Fallout's whenever the source plugin is
+(`is_fallout_source`, set once per plugin at import start), and is zero-padded
+to 28: Run On 0 is Subject, the omitted fields' meaning. A TES4 source keeps
+the length rule.
+
+### <a id="fallout-actor-values"></a>Actor values follow Fallout's table
+
+**Code:** `conditions_falloutnv.py` `fallout_actor_value`, called from
+`conditions.py` `_actor_value_param`.
+
+Fallout numbers its actor values its own way (xEdit `wbActorValueEnum`; FO3
+and FNV agree on every index below, differing only at 41 Small Guns/Guns, 44
+Throwing/Survival, 51 and 72 on). Before this, an actor-value parameter went
+through TES4's `_TES4_AV_TO_TES5` whatever the source, so each Fallout index
+read whatever TES4 kept at that number. Measured through `convert_ctda` over
+the exports' `GetActorValue` / `GetBaseActorValue` / `GetPermanentActorValue`
+conditions:
+
+| Fallout value | New Vegas | Fallout 3 | Read as before | Now |
+|---|---|---|---|---|
+| Speech (43) | 540 | 0 | dropped | Speech |
+| Barter (32) | 209 | 26 | Speech (by coincidence) | Speech |
+| Karma (23) | 42 | 277 | Illusion | dropped |
+| Intelligence (9) | 46 | 38 | Magicka | dropped |
+| Charisma (8) | 29 | 37 | Health | dropped |
+| Repair (39) | 14 | 3 | Infamy | Smithing |
+| limb conditions (25-31) | 293 | 153 | a skill: Speech, Lockpicking, Restoration, Stamina, Archery, Light Armor or Sneak | dropped |
+
+`_FALLOUT_AV` maps only values with the same meaning and scale in both
+games: the AI values (Aggression, Confidence, Energy, Mood, Assistance), the
+shared derived values (Health, Carry Weight, Inventory Weight, Critical
+Chance, Speed Multiplier, Melee and Unarmed Damage), the elemental and poison
+resistances, the status effects (Paralysis, Invisibility, Night Eye, Water
+Breathing), and the skills Skyrim has (Barter and Speech to Speech, Lockpick,
+Repair to Smithing, Sneak). Everything else drops, failing open as TES4's
+attributes do: S.P.E.C.I.A.L., Karma, XP, the limb conditions, and the skills
+Skyrim lacks. The weapon skills (Guns, Energy Weapons, Big Guns, Melee
+Weapons, Unarmed) are left out on purpose: whether they should read Skyrim's
+combat skills is a separate call. `Variable01`-`Variable10` stay dropped
+too: the converter's own dialogue timing uses Skyrim's `Variable03`-`09`.
+Scale caveat: Damage Resistance is a percentage in Fallout and an armor
+rating in Skyrim, and Heal Rate differs in units, so neither maps.
+
+With a source flagged Fallout, the same census comes out 773 kept and 708
+dropped for New Vegas, 35 kept and 834 dropped for Fallout 3, and no value
+maps to anything but its counterpart.
 
 ## <a id="convert-ctda-phases"></a>`convert_ctda`: the three phases and why each is shaped as it is
 
@@ -369,7 +455,8 @@ dialogue menu on every NPC. `CTDA_FORMID_PARAMS` is keyed by the POST-remap
 (TES5) index because that is the function the output invokes. Actor-value
 parameters are a raw index into each game's own table, which do not align:
 attributes have no Skyrim equivalent and drop (fail open); skills and shared
-derived values translate through `_TES4_AV_TO_TES5`. Race parameters translate
+derived values translate through `_TES4_AV_TO_TES5` for a TES4 source and
+`fallout_actor_value` for FO3/FNV ([Fallout actor values](#fallout-actor-values)). Race parameters translate
 to the Skyrim race the converted NPCs actually use (`_map_race_param`), except
 a plugin-authored race in `GetIsRace` (below).
 

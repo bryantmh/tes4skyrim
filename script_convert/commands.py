@@ -18,8 +18,8 @@ argument text -- so those are properties of the CALL and live on it.
 
 from script_convert import resolve_name as _resolve_name
 from script_convert.constants import (
-    ACTOR_VALUE_MAP, ANIM_GROUP_EVENTS, ATTRIBUTE_STUB_VALUE, CASTABLE,
-    FORCE_GREET_QUEST, PLACED_REF_SIGS, TES4_ASSAULT_BOUNTY, TES4_ATTRIBUTES,
+    ANIM_GROUP_EVENTS, ATTRIBUTE_STUB_VALUE, AV_ARGUMENT_NAMES, CASTABLE,
+    FORCE_GREET_QUEST, PLACED_REF_SIGS, PRIMARY_STATS, TES4_ASSAULT_BOUNTY,
     TES4_MISC_STAT_NAMES, TES4_MURDER_BOUNTY,
     TES4_STEAL_BOUNTY, is_generated_script_type, mgef_family_keyword_name,
     safe_property_name, papyrus_script_name
@@ -34,7 +34,8 @@ from script_convert.message_menus import PAGE_OPTIONS
 from script_convert.poll_motion import axis_key, rate_scale
 from script_convert.emit import expr as _expr
 from script_convert.constants import typed_already
-from script_convert.constants_falloutnv import FALLOUT_COMMAND_ALIASES
+from script_convert.constants_falloutnv import (FALLOUT_COMMAND_ALIASES,
+                                                FALLOUT_UNMAPPED_ACTOR_VALUES)
 from tes5_import.dialogue.say_topics import PLAYER_TOKENS
 
 #: TES4 command name (lowercase) -> handler `(ctx, call) -> str | None`.
@@ -1380,6 +1381,16 @@ _AV_READ = frozenset({'getactorvalue', 'getav'})
 _AV_SET_ONLY = frozenset({'aggression', 'confidence', 'morality', 'mood', 'assistance'})
 
 
+def _unmapped_actor_value(ctx, call, raw: str) -> str:
+    """An FO3/FNV actor value Skyrim's table lacks: an inert read, or a dropped write.
+
+    See: docs/commentary/script_convert.md#fallout-actor-value-names
+    """
+    if call.name in ACTOR_VALUE_READ_FUNCTIONS:
+        return ctx.note(f'{call.raw_name} {raw} - Skyrim has no {raw} actor value')
+    return f';Fallout actor value {raw} has no Skyrim equivalent -- write dropped'
+
+
 @command(*sorted(ACTOR_VALUE_FUNCTIONS))
 def actor_value(ctx, call) -> str:
     """Get/Set/Mod ActorValue -- the AV NAME is a quoted string in Papyrus.
@@ -1405,13 +1416,15 @@ def actor_value(ctx, call) -> str:
     if not len(call):
         return None
     raw = call.source(0).rstrip(',').strip('"\'')
-    if raw.lower() in TES4_ATTRIBUTES:
+    if raw.lower() in PRIMARY_STATS:
         if call.name in ACTOR_VALUE_READ_FUNCTIONS:
             return ATTRIBUTE_STUB_VALUE
         return (f';TES4 attribute {raw} has no Skyrim equivalent '
                 f'-- write dropped')
+    if raw.lower() in FALLOUT_UNMAPPED_ACTOR_VALUES:
+        return _unmapped_actor_value(ctx, call, raw)
 
-    av = ACTOR_VALUE_MAP.get(raw.lower(), raw)
+    av = AV_ARGUMENT_NAMES.get(raw.lower(), raw)
     # Oblivion's single Encumbrance AV is TWO in Skyrim: the current carried
     # weight is InventoryWeight, the maximum is CarryWeight.  TES4 splits them
     # the modified-vs-base way, so the over-encumbered idiom is
