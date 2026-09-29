@@ -678,6 +678,20 @@ stop colliding in the shared namespace, which is where
 FalloutNV and Oblivion.
 
 
+### <a id="plugin-names-compare-case-blind"></a>Plugin names compare case-blind
+
+**Code:** `_masters_in` in `asset_convert/lod/sibling_lod.py` (used by
+`master_chain`, `_master_rank`, `dependents_of`); `_select_plugins` in
+`tools/release/create_lod.py`
+
+A plugin header may list a master as `oblivion.esm` while the export folder,
+the converted output and the user's selection say `Oblivion.esm`. The file
+system decides nothing here (these are names inside records and on the
+command line), so exact comparison silently dropped the master from the
+chain: the dependent was no longer an overlay of the owner's worldspace, sorted
+before its master, and was not greyed when the master was deselected. Names are
+compared lowercased and returned in the selection's own spelling.
+
 ## <a id="lod-suppliers-vs-contributors"></a>Overlay scoping must not scope ASSETS
 
 **Code:** `_plan_jobs` in `tools/release/create_lod.py`

@@ -390,3 +390,39 @@ class TestChildWorldspaceLod:
         """A WRLD written before PNAM was emitted still counts as borrowing."""
         from asset_convert.lod.terrain_lod import _borrows_parent_lod
         assert _borrows_parent_lod(self._Rec(None)) is True
+
+
+class TestPluginNamesCompareCaseBlind:
+    """A header's `oblivion.esm` names the selection's `Oblivion.esm`.
+
+    Old: the lowercase header spelling matched nothing in the selection.
+    """
+
+    NAMES = ('Oblivion.esm', 'Tamriel.esp')
+
+    def test_master_chain(self, masters):
+        """The chain answers in the selection's spelling."""
+        masters['Tamriel.esp'] = ['oblivion.esm']
+        assert master_chain('Tamriel.esp', Path('.'), self.NAMES) == {
+            'Oblivion.esm'}
+
+    def test_dependents_of(self, masters):
+        """Deselecting the master greys its dependent."""
+        masters['Tamriel.esp'] = ['oblivion.esm']
+        assert dependents_of(self.NAMES, Path('.'))['Oblivion.esm'] == {
+            'Tamriel.esp'}
+
+    def test_master_rank(self, masters):
+        """The master sorts first."""
+        from asset_convert.lod.sibling_lod import _master_rank
+        masters['Tamriel.esp'] = ['oblivion.esm']
+        assert _master_rank(self.NAMES, Path('.')) == {'Oblivion.esm': 0,
+                                                       'Tamriel.esp': 1}
+
+    def test_plugins_argument(self):
+        """`--plugins oblivion.esm` selects the converted `Oblivion.esm`."""
+        from types import SimpleNamespace
+        from tools.release.create_lod import _select_plugins
+        args = SimpleNamespace(plugins=['oblivion.esm'])
+        assert _select_plugins(args, ['Oblivion.esm'], Path('.'),
+                               None) == ['Oblivion.esm']

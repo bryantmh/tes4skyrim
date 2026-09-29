@@ -229,6 +229,20 @@ def touched_worldspace_fids(plugin_esm: Path) -> set:
     return found
 
 
+def _masters_in(name: str, export_root: Path, known: dict) -> list[str]:
+    """`name`'s masters in `known` ({lower: spelling}), matched case-blind.
+
+    See: docs/commentary/asset_convert_terrain.md#plugin-names-compare-case-blind
+    """
+    listed = master_names(record_dir(export_root, name))
+    return [known[m.lower()] for m in listed if m.lower() in known]
+
+
+def _spellings(names) -> dict:
+    """{lowercase name: the caller's spelling} for `names`."""
+    return {n.lower(): n for n in names}
+
+
 def master_chain(name: str, export_root: Path, known: list[str]) -> set[str]:
     """Every plugin `name` depends on, directly or transitively.
 
@@ -236,12 +250,13 @@ def master_chain(name: str, export_root: Path, known: list[str]) -> set[str]:
     Translation.esp lists only Nehrim.esm, and whether it can touch a
     worldspace Nehrim owns is decided by walking through Nehrim.
     """
+    spelled = _spellings(known)
     seen: set[str] = set()
     stack = [name]
     while stack:
         cur = stack.pop()
-        for m in master_names(record_dir(export_root, cur)):
-            if m in seen or m not in known:
+        for m in _masters_in(cur, export_root, spelled):
+            if m in seen:
                 continue
             seen.add(m)
             stack.append(m)
@@ -324,6 +339,7 @@ def _master_rank(names: list[str], export_root: Path) -> dict[str, int]:
     than recursing forever.
     """
     depth: dict[str, int] = {}
+    spelled = _spellings(names)
 
     def d(name: str, seen: frozenset = frozenset()) -> int:
         if name in depth:
@@ -331,8 +347,8 @@ def _master_rank(names: list[str], export_root: Path) -> dict[str, int]:
         if name in seen:
             return 0
         val = 1 + max([d(m, seen | {name})
-                       for m in master_names(record_dir(export_root, name))
-                       if m in names], default=-1)
+                       for m in _masters_in(name, export_root, spelled)],
+                      default=-1)
         depth[name] = val
         return val
 
@@ -595,9 +611,9 @@ def dependents_of(names: list[str], export_root: Path) -> dict[str, set[str]]:
     Translation.esp lists only Nehrim.esm, so dropping Nehrim must drop
     Translation even though nothing names the two together.
     """
+    spelled = _spellings(names)
     direct: dict[str, list[str]] = {
-        n: [m for m in master_names(record_dir(export_root, n)) if m in names]
-        for n in names}
+        n: _masters_in(n, export_root, spelled) for n in names}
 
     out: dict[str, set[str]] = {n: set() for n in names}
     for n in names:
