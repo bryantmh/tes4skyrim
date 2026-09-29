@@ -26,10 +26,23 @@ def names_for(own_dir):
     bases (`--base` is load order too), last first -- a later master
     overrides an earlier one, so a first-match lookup must meet it first.
     `--base` lives in the MOD's `_source/`, one level above a nested record dir.
+    A nested MOD folder unions its plugins' names (`record_dirs_for_assets`).
     See: docs/commentary/tes5_import_mod_merge.md#base-order-nearest-first
     """
-    from output_layout import assets_for
+    from output_layout import record_dirs_for_assets
     own_dir = str(own_dir)
+    recs = [str(d) for d in record_dirs_for_assets(own_dir)]
+    if recs != [os.path.normpath(own_dir)]:
+        names = []
+        for rec in recs:
+            names += [n for n in _own_names(rec) if n not in names]
+        return names
+    return _own_names(own_dir)
+
+
+def _own_names(own_dir):
+    """`names_for` for one RECORD dir (or a flat plugin's folder)."""
+    from output_layout import assets_for
     header = [line.partition('=')[2].strip()
               for line in _lines(os.path.join(own_dir, '_HEADER.txt'))
               if line.startswith('Master[')]
@@ -86,6 +99,23 @@ def asset_dirs(own_dir):
         p = str(assets_for(d))
         if p not in out:
             out.append(p)
+    return out
+
+
+def record_chain_for_assets(asset_dir):
+    """Every RECORD folder serving the assets in `asset_dir`, nearest first.
+
+    The plugins' own (`output_layout.record_dirs_for_assets`: the folder itself
+    for a flat plugin, each plugin record dir of a nested mod), then their
+    bases (`export_dirs`). A first-match reader lets the own record win.
+    See: docs/commentary/tes5_import_mod_merge.md#export-root-resolution
+    """
+    from output_layout import record_dirs_for_assets
+    out = []
+    own = [os.path.abspath(str(r)) for r in record_dirs_for_assets(asset_dir)]
+    for d in own + export_dirs(asset_dir):
+        if d not in out:
+            out.append(d)
     return out
 
 

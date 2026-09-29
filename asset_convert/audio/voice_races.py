@@ -123,9 +123,27 @@ def master_race_dirs(export_dir: Path) -> list:
     return [d for d in dirs if d.is_dir() and d != export_dir]
 
 
+def _race_dirs(export_dir: Path) -> list:
+    """The RACE.txt folders for `export_dir`, masters first, the plugins' own last.
+
+    `export_dir` may be a nested mod's ASSET folder (the sound stage's
+    `source_dir`), which holds no records: it answers the record dirs of every
+    plugin it serves (`output_layout.record_dirs_for_assets`), their masters
+    first. A record dir or flat plugin answers itself, exactly as before.
+    See: docs/commentary/tes5_import_mod_merge.md#export-root-resolution
+    """
+    from output_layout import record_dirs_for_assets
+    own = [Path(d) for d in record_dirs_for_assets(export_dir)]
+    out = []
+    for d in [m for o in own for m in master_race_dirs(o)] + own:
+        if d not in out:
+            out.append(d)
+    return out
+
+
 def _iter_race_records(export_dir: Path):
     """Every RACE record affecting this plugin: masters first, then its own."""
-    for d in master_race_dirs(export_dir) + [export_dir]:
+    for d in _race_dirs(export_dir):
         yield from iter_records(d / 'RACE.txt')
 
 

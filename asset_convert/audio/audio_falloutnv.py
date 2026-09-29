@@ -53,16 +53,26 @@ def load_voice_type_edids(export_dir) -> dict:
     The folder on disk is lowercase while the record keeps its authored case,
     and the engine matches the folder to the actor's VTCK by EditorID, so both
     halves must spell it the way the record does.
+
+    `export_dir` may be a nested mod's ASSET folder: every plugin record dir it
+    serves is read (`output_layout.record_dirs_for_assets`), the first wins.
+    See: docs/commentary/tes5_import_mod_merge.md#export-root-resolution
     """
-    txt = Path(export_dir) / 'VTYP.txt'
-    if not txt.is_file():
-        return {}
+    from output_layout import record_dirs_for_assets
     out = {}
-    for line in txt.read_text(encoding='utf-8', errors='replace').splitlines():
-        if line.startswith('EditorID='):
-            edid = line[9:].strip()
-            if edid:
-                out[edid.lower()] = edid
+    for rec_dir in record_dirs_for_assets(export_dir):
+        txt = Path(rec_dir) / 'VTYP.txt'
+        if not txt.is_file():
+            continue
+        own = {}
+        for line in txt.read_text(encoding='utf-8',
+                                  errors='replace').splitlines():
+            if line.startswith('EditorID='):
+                edid = line[9:].strip()
+                if edid:
+                    own[edid.lower()] = edid
+        for low, edid in own.items():
+            out.setdefault(low, edid)
     return out
 
 

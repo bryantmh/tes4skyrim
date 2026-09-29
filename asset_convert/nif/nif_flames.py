@@ -20,39 +20,61 @@ _FLAME_STAT_RE = re.compile(
     r'EditorID=(FlameNode(\d+))\s.*?Model\.MODL=([^\r\n]+)', re.S)
 #: Socket names match the engine's table EXACTLY: "FlameNode0"/"12" but never a zero-padded "07".
 _FLAME_SOCKET_RE = re.compile(r'^FlameNode(0|[1-9][0-9]*)(?![0-9])')
-#: export_root_lower -> {socket index: 'firecandleflame.nif'}, parsed from the plugin's STAT records.
+#: asset_root_lower -> {socket index: 'firecandleflame.nif'}, parsed from the plugins' STAT records.
 _FLAME_SOCKET_MAP = {}
 
 
-def flame_socket_map(src_path):
-    """{socket index: flame nif basename} from the plugin's FlameNode STATs."""
+def _asset_root_of(src_path):
+    """(the folder above `meshes/`, that `meshes/` folder) for `src_path`, or (None, None)."""
     norm = str(src_path).replace('/', os.sep).replace(chr(92), os.sep)
     key = os.sep + 'meshes' + os.sep
     i = norm.lower().rfind(key)
     if i < 0:
-        return {}
-    export_root = norm[:i]
-    ck = export_root.lower()
-    cached = _FLAME_SOCKET_MAP.get(ck)
-    if cached is not None:
-        return cached
-    table = {}
-    stat_txt = os.path.join(export_root, 'STAT.txt')
+        return None, None
+    return norm[:i], norm[:i + len(key)]
+
+
+def _flame_stats(stat_txt):
+    """{socket index: flame nif basename} from one STAT.txt; {} when absent."""
     try:
         with open(stat_txt, 'r', encoding='latin1') as fh:
             blob = fh.read()
     except OSError:
-        blob = ''
-    if blob:
-        for rec in blob.split('---RECORD_BEGIN---'):
-            if 'FlameNode' not in rec:
-                continue
-            m = _FLAME_STAT_RE.search(rec)
-            if not m:
-                continue
-            model = m.group(3).strip().replace(chr(92)*2, os.sep)
-            model = model.replace('/', os.sep).replace(chr(92), os.sep)
-            table[int(m.group(2))] = os.path.basename(model).lower()
+        return {}
+    table = {}
+    for rec in blob.split('---RECORD_BEGIN---'):
+        if 'FlameNode' not in rec:
+            continue
+        m = _FLAME_STAT_RE.search(rec)
+        if not m:
+            continue
+        model = m.group(3).strip().replace(chr(92)*2, os.sep)
+        model = model.replace('/', os.sep).replace(chr(92), os.sep)
+        table[int(m.group(2))] = os.path.basename(model).lower()
+    return table
+
+
+def flame_socket_map(src_path):
+    """{socket index: flame nif basename} from the FlameNode STATs serving `src_path`.
+
+    Read from every record dir the mesh's asset folder serves, own first and
+    then the masters (`base_plugins.record_chain_for_assets`): a nested mod
+    folder holds no STAT.txt, and a mod's FlameNode STATs usually live in its
+    master. The nearest record wins a socket.
+    See: docs/commentary/tes5_import_mod_merge.md#export-root-resolution
+    """
+    from asset_convert.sources import base_plugins
+    asset_dir = _asset_root_of(src_path)[0]
+    if asset_dir is None:
+        return {}
+    ck = asset_dir.lower()
+    cached = _FLAME_SOCKET_MAP.get(ck)
+    if cached is not None:
+        return cached
+    table = {}
+    for rec_dir in base_plugins.record_chain_for_assets(asset_dir):
+        for index, flame in _flame_stats(os.path.join(rec_dir, 'STAT.txt')).items():
+            table.setdefault(index, flame)
     _FLAME_SOCKET_MAP[ck] = table
     return table
 
@@ -82,6 +104,20 @@ _FLAME_CACHE = {}
 _FLAME_ATLAS_JOBS = {}
 
 
+def _flame_source(asset_dir, flame_name):
+    """meshes/fire/<flame_name> in `asset_dir`, else in its masters' asset folders.
+
+    The flame NIF ships with whichever plugin owns the FlameNode STAT, usually
+    the master, so a mod that places a master's socket has no copy of its own.
+    """
+    from asset_convert import case_paths
+    from asset_convert.sources import base_plugins
+    roots = [os.path.join(d, 'meshes')
+             for d in [asset_dir] + base_plugins.asset_dirs(asset_dir)]
+    hit = case_paths.resolve(roots, 'fire' + os.sep + flame_name, 'nif_flames.flame')
+    return str(hit) if hit is not None else None
+
+
 def _load_converted_flame(src_path, flame_name, convert_nif):
     """Convert meshes/fire/<flame_name> once per worker -> Skyrim NIF bytes, or None.
 
@@ -89,18 +125,15 @@ def _load_converted_flame(src_path, flame_name, convert_nif):
     by the very converter that calls this, so importing it here would be circular.
     Callers deep-copy by re-reading the returned bytes.
     """
-    norm = str(src_path).replace('/', os.sep).replace(chr(92), os.sep)
-    key = os.sep + 'meshes' + os.sep
-    i = norm.lower().rfind(key)
-    if i < 0:
+    asset_dir, meshes_root = _asset_root_of(src_path)
+    if meshes_root is None:
         return None
-    meshes_root = norm[:i + len(key)]
     cache_key = (meshes_root.lower(), flame_name)
     if cache_key in _FLAME_CACHE:
         return _FLAME_CACHE[cache_key]
     result = None
-    flame_src = meshes_root + 'fire' + os.sep + flame_name
-    if os.path.isfile(flame_src):
+    flame_src = _flame_source(asset_dir, flame_name)
+    if flame_src is not None:
         try:
             fdata = NifFormat.Data()
             with open(flame_src, 'rb') as f:

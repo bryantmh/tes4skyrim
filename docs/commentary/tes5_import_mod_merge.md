@@ -247,16 +247,35 @@ already name every worn mesh it ships (0 of its 791 meshes change variant
 mask), and none of its masters' 97 grass models is in its tree. A nested mod
 that retextures its masters' armour or grass is the case this fixes.
 
-⚠ **Not fixed here — the sibling class, an ASSET root read as a record dir.**
-`audio_converter` passes the mod folder to `load_race_voices` and
-`load_voice_type_edids`, `nif_flames.flame_socket_map` reads `STAT.txt` from the
-folder above `meshes/`, and `names_for` of a mod folder without `--base` reads
-no header. For a nested mod all three find nothing: Frostcrag Reborn's
-`Avalonian Ayleid` voice folder resolves only through the `voice_key` fallback
-(same key by coincidence, logged as unmapped). A mod folder can hold several
-plugins, so which record dir answers is a design choice, not a join.
-Tripwire: a nested mod whose voices land in the wrong VTYP folder, or whose
-FlameNode meshes lose their flames.
+**The sibling class — an ASSET folder read as a record dir.** A mod folder
+holds no records, and it can hold several plugins, so "which records does this
+folder serve" is answered once: `output_layout.record_dirs_for_assets(folder)`
+returns the record dir of every registered plugin whose `asset_root` is that
+folder and that has been exported, and any other folder (a flat plugin, a
+record dir, a pre-registry tree) itself. `base_plugins.record_chain_for_assets`
+adds their bases, nearest first; a first-match reader lets the own record win.
+
+| reader | was | now |
+|---|---|---|
+| `nif_flames.flame_socket_map` | `STAT.txt` of the folder above `meshes/` only: `{}` for a nested mod, and for ANY plugin whose FlameNode STATs are its master's | own + masters' STATs; the flame NIF from `meshes/fire/` of the mod, else its masters' |
+| `voice_races.load_race_voices`, `audio_falloutnv.load_voice_type_edids` (the sound stage passes the mod folder) | no RACE/VTYP read, so every voice folder fell to the `voice_key` fallback, logged as unmapped | the mod's plugins' records, masters as before |
+| `base_plugins.names_for` (hence `export_dirs`/`asset_dirs`/`subdirs`, and `shaders.master_texture_roots`) of a mod folder | only `_source/.base_plugins`: no base without `--base` | the headers of the plugins inside, unioned |
+| `bsa_extract --organize-voice` | `extract_dir/<plugin>`, not a folder for a nested plugin | `asset_root` |
+
+Measured on the four-plugin build (Oblivion.esm, DLCFrostcrag.esp,
+Knights.esp, Frostcrag Reborn): two meshes gain flames, Frostcrag Reborn's
+`JGALlampsconce01` (FlameNode0 → `firecandleflame.nif`, read from
+Oblivion.esm) and DLCFrostcrag's `frostcragworkstationon` (three FlameNode0;
+its `FlameNode01` stays dark, as in the game). Frostcrag Reborn's races go from
+0 to 16 EditorIDs; `Avalonian Ayleid` still resolves to `AvalonianAyleid`, now
+from its RACE record. Oblivion.esm reads only its own STAT and races, as before.
+
+⚠ **Not fixed here — the reverse: ASSETS read from a record dir.**
+`terrain_lod.shipped_lod_worldspaces` (and `terrain_lod_falloutnv.edid_keyed_lod_tiles`)
+look for `meshes/landscape/lod` under the RECORD dir its callers pass, and match
+that folder's case exactly. Frostcrag Reborn ships `meshes/landscape/LOD/60.00.32.32.NIF`
+in its mod folder, so the tile is not counted. Tripwire: a nested mod, or a mod
+with a mixed-case `LOD` folder, whose shipped landscape LOD is reported absent.
 
 Three call sites relearned this the hard way, each with a silent failure:
 

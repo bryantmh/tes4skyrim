@@ -667,7 +667,8 @@ if __name__ == '__main__':
 
     if args.organize_voice:
         from asset_convert.audio.audio_converter import find_voice_map
-        source_dir = Path(args.extract_dir) / args.source_file
+        from output_layout import asset_root
+        source_dir = asset_root(args.extract_dir, args.source_file)
         dest_dir = Path(args.organize_voice)
         organize_voice_files(source_dir, dest_dir, args.source_file,
                              convert_audio=not args.no_convert_audio,

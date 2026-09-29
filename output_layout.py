@@ -307,6 +307,36 @@ def assets_for(export_subdir) -> Path:
     return d
 
 
+def record_dirs_for_assets(asset_dir) -> list:
+    """The RECORD folders whose plugins keep their assets in `asset_dir`.
+
+    The ONE answer: never read `STAT.txt` or `_HEADER.txt` from the folder
+    above `meshes/`, which for a nested `export/<Mod>/` holds no records. A
+    registered mod folder answers each exported plugin whose `asset_root` it
+    is, in registry order; any other folder answers itself.
+    See: docs/commentary/tes5_import_mod_merge.md#export-root-resolution
+    """
+    d = Path(os.path.normpath(str(asset_dir)))
+    root = export_root_of(d)
+    reg = _registry()
+    out = []
+    if reg is not None and _same_dir(d.parent, root):
+        for name in reg.plugins(root):
+            if not _same_dir(reg.asset_root(root, name), d):
+                continue
+            rec = Path(reg.record_dir(root, name))
+            if rec.is_dir() and not any(_same_dir(rec, o) for o in out):
+                out.append(rec)
+    return out or [d]
+
+
+def _same_dir(a, b) -> bool:
+    """True when `a` and `b` name one folder (normalised, platform case rule)."""
+    def norm(p):
+        return os.path.normcase(os.path.abspath(str(p)))
+    return norm(a) == norm(b)
+
+
 def export_root_of(export_subdir) -> Path:
     """The export ROOT that `export_subdir` (a record or asset folder) sits in.
 
