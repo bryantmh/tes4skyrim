@@ -149,7 +149,10 @@ Windows answers the same spelling. `record_dir`, `master_record_dir`,
 so does everything built on them: `nested.master_export_dir`,
 `pipeline.master_export_dirs`, `creature_projects`, `papyrus_compile` and
 `master_index`'s `paths(name).esm`. A plugin binary in a Data folder is found
-through `case_paths`. Name comparisons (`topological_order`, `_select_plugins`)
+through `case_paths`, and so is the file after `directory_for` answers its
+folder (`morrowind_sidecar_source.source_binary`, `morrowind_patch.source_paths`,
+`morrowind_body._master_records`): joining the asked spelling there named a
+file that does not exist. Name comparisons (`topological_order`, `_select_plugins`)
 lowercase both sides and keep the listed spelling.
 
 Not yet routed: `asset_convert/lod/sibling_lod.py` (`master_chain`,

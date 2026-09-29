@@ -29,6 +29,7 @@ import os
 import re
 import time
 
+from asset_convert import case_paths
 from asset_convert.sources.bsa_extract_morrowind import (is_morrowind_bsa,
                                                          read_index,
                                                          iter_bsa)
@@ -130,12 +131,12 @@ def patch_exists(export_dir: str) -> bool:
 
 
 def source_paths(data_dir: str, names) -> tuple:
-    """(present paths, missing names) for `names` in a Morrowind Data folder."""
+    """(present paths, missing names) for `names` in a Morrowind Data folder, any case."""
     found, missing = [], []
     for name in names:
-        path = os.path.join(data_dir or '', name)
-        if os.path.isfile(path):
-            found.append(path)
+        path = case_paths.resolve([data_dir or ''], name, 'plugin_source')
+        if path:
+            found.append(str(path))
         else:
             missing.append(name)
     return found, missing

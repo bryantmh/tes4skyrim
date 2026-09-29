@@ -13,13 +13,12 @@ See: docs/commentary/asset_convert_armor.md#morrowind-wrap-field
 See: docs/commentary/asset_convert_armor.md#morrowind-pose-cache
 """
 
-import os
 import struct
 from functools import partial
 
 import numpy as np
 
-from asset_convert import paths
+from asset_convert import case_paths, paths
 from asset_convert.character.morrowind_armor import (PART_ATTACH_NODES, SKELETON_NIFS,
                                                      assemble, bind_worlds,
                                                      rest_skeleton)
@@ -123,9 +122,10 @@ def _group_of(slot: int) -> str:
 def _master_records():
     """Every record of the registered Morrowind.esm."""
     data_dir = source_registry.directory_for(str(paths.EXPORT), _MASTER)
-    if not data_dir:
+    found = data_dir and case_paths.resolve([data_dir], _MASTER, 'plugin_source')
+    if not found:
         raise FileNotFoundError(f'{_MASTER} is not registered')
-    return read_file(os.path.join(data_dir, _MASTER))[1]
+    return read_file(str(found))[1]
 
 
 def bind_skeleton(female: bool) -> dict:

@@ -19,6 +19,7 @@ See: docs/commentary/morrowind_runtime.md#sidecar
 import os
 import struct
 
+from asset_convert import case_paths
 from asset_convert.sources import source_registry
 from core.plugin_masters import get_masters_from_binary
 from tes4_export.export_morrowind import format_record
@@ -65,12 +66,17 @@ _FADT_SKILLS_AT = 52
 
 
 def source_binary(root: str, plugin: str):
-    """Where `plugin`'s binary is: an imported mod's copy, else a game dir."""
+    """Where `plugin`'s binary is: an imported mod's copy, else a game dir.
+
+    `directory_for` matches the name case-blind, so the file is resolved the
+    same way: the caller's spelling may not be the one on disk.
+    """
     found = source_registry.plugin_binary(root, plugin)
     if found:
         return str(found)
     folder = source_registry.directory_for(root, plugin)
-    return os.path.join(folder, plugin) if folder else None
+    found = folder and case_paths.resolve([folder], plugin, 'plugin_source')
+    return str(found) if found else None
 
 
 def plugin_chain(root: str, plugin: str) -> list:
