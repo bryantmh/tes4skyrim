@@ -1068,7 +1068,9 @@ def set_ownership(ctx, call) -> str:
     """SetOwnership -- Skyrim splits ownership into ACTOR and FACTION owners.
 
     Which one this is depends on what the argument names, so the comparison
-    picks by record type; a bare call means the player.
+    picks by record type; a bare call means the player.  TES4 names an NPC
+    BASE as the owner (`SetOwnership Aurelinwae`); that is the ActorBase
+    itself, bound as one (see set_essential), not a reference to read it from.
     """
     ref = ctx._resolve_self_ref(call.ref, call.extends)
     if not len(call):
@@ -1076,6 +1078,9 @@ def set_ownership(ctx, call) -> str:
     arg = call.arg(0)
     if _is_faction(ctx, call, arg):
         return f'{ref}.SetFactionOwner({arg})'
+    if _record_type(ctx, call.source(0)) in ('NPC_', 'CREA'):
+        ctx.sc.property_refs[arg] = 'ActorBase'
+        return f'{ref}.SetActorOwner({arg})'
     return f'{ref}.SetActorOwner({arg}.GetActorBase())'
 
 

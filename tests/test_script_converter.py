@@ -2344,6 +2344,30 @@ End
         assert ';  x = 2' in result
 
 
+class TestSetOwnership:
+    """TES4 SetOwnership names an NPC base, a placed actor, or a faction."""
+
+    @staticmethod
+    def _conv(edid, sig):
+        x = CrossRefGraph()
+        x.edid_to_formid[edid.lower()] = '01001234'
+        x.formid_to_edid['01001234'] = edid
+        x.record_type['01001234'] = sig
+        return ScriptConverter(x)
+
+    def test_an_npc_base_owner_is_passed_as_the_actorbase(self):
+        """Frostcrag Reborn stage 10: `SetOwnership Aurelinwae` (an NPC_)."""
+        conv = self._conv('Aurelinwae', 'NPC_')
+        out = conv_line(conv, 'AddonsRef.SetOwnership Aurelinwae', 'Quest')
+        assert out.strip() == 'AddonsRef.SetActorOwner(Aurelinwae)'
+        assert conv.sc.property_refs['Aurelinwae'] == 'ActorBase'
+
+    def test_a_placed_actor_owner_reads_its_base(self):
+        conv = self._conv('AurelinwaeRef', 'ACHR')
+        out = conv_line(conv, 'AddonsRef.SetOwnership AurelinwaeRef', 'Quest')
+        assert 'SetActorOwner(AurelinwaeRef.GetActorBase())' in out
+
+
 class TestInfoFragmentVmadLayout:
     """Every INFO VMAD declares BOTH fragments: Fragment_1 (OnBegin) and
     Fragment_0 (OnEnd) -- the line hooks TES4Polyfill.SayLine relies on.
