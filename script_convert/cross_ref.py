@@ -71,7 +71,13 @@ def _export_dirs_with_masters(export_dir: str) -> list:
             return
         seen.add(key)
         for name in master_names(d):
-            visit(d.parent / name)
+            # A master's export sits beside a plain `export/<plugin>/`, but an
+            # imported mod that ships several plugins nests its records one
+            # level deeper (`export/<Mod>/<plugin>/`), so look beside the
+            # group folder too before giving up on the master.
+            cands = [d.parent / name, d.parent.parent / name]
+            visit(next((c for c in cands if (c / '_HEADER.txt').is_file()),
+                       cands[0]))
         ordered.append(str(d))
 
     visit(root)
