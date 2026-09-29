@@ -147,3 +147,17 @@ def test_mesh_stage_without_source_meshes_writes_an_empty_manifest(
     r = _pack(exp, out, exe, str(asset_root(exp, 'A.esp')))
     assert r['errors'] == []
     assert 'A.bsa' in staged
+
+
+def test_a_later_master_wins_the_carry(tmp_path):
+    """Two masters ship the key: the later one in header order is carried."""
+    exp, out, _exe = _nested_mod(tmp_path)
+    _put(record_dir(exp, 'A.esp') / '_HEADER.txt',
+         b'Master[0]=Base.esm\nMaster[1]=Patch.esp\n')
+    _put(out / 'Patch.esp' / 'textures' / 'tes4' / 'menus' / 'faders' / 'black.dds',
+         b'DDS patched')
+    entries, nowhere = bsa_pack._carry_from_masters(
+        {'tes4/menus/faders/black.dds'}, [], str(record_dir(exp, 'A.esp')),
+        str(out), str(exp))
+    assert nowhere == []
+    assert [e[0].read_bytes() for e in entries] == [b'DDS patched']
