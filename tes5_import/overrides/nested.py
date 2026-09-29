@@ -26,7 +26,8 @@ from .builder import (RECONVERT_KEYS, apply_changes, join_subrecords,
                       rebuild_sndr_override, soun_companion_changes,
                       split_subrecords)
 from .master_index import load_master_index
-from .ref_state import (REF_SIGS, merge_flags, record_flags, set_flags,
+from .ref_state import (PERSISTENT, REF_SIGS, merge_flags, placement_fault,
+                        record_flags, ref_chain, ref_path, set_flags,
                         take_mask)
 from ..actors.outfits import split_inventory
 from ..dialogue.converter import convert_INFO
@@ -68,10 +69,28 @@ OVERRIDE_UNMAPPABLE_TYPES = frozenset({'ROAD'})
 DELETED_FLAG = 0x20
 
 #: status is 'emitted'|'deleted'|'unchanged'|'no-base'|'no-path'|'reconvert'.
-Override = namedtuple('Override', ['status', 'out_fid', 'record_bytes'])
+Override = namedtuple('Override', ['status', 'out_fid', 'record_bytes', 'path'],
+                      defaults=(None,))
 
-#: The master record an override splices onto: output id, bytes, export baseline.
-_Base = namedtuple('_Base', ['out_fid', 'record', 'master_rec'])
+#: The master record an override splices onto: output id, bytes, export baseline, GRUP path.
+_Base = namedtuple('_Base', ['out_fid', 'record', 'master_rec', 'path'])
+
+#: Reference-state counters the run reports; the placement faults are expected to read 0.
+_REF_COUNTERS = ('ref-flags', 'renested', 'renest-unresolved',
+                 'renest-pers-in-block', 'renest-temp-in-persistent-cell')
+
+
+def _is_reference(rec: dict, record_bytes: bytes) -> bool:
+    """True for a placed reference whose output record is a REFR or ACHR."""
+    return (rec.get('Signature') in REF_SIGS
+            and record_bytes[:4] in (b'REFR', b'ACHR'))
+
+
+def _note(ctx, key: str) -> None:
+    """Count `key` in `ctx.stats` when both exist."""
+    stats = getattr(ctx, 'stats', None)
+    if key and stats is not None:
+        stats[key] += 1
 
 
 def export_master_names(export_dir: str) -> list:
@@ -385,7 +404,8 @@ class OverrideContext:
         if _signature_mismatch(sig or rec.get('Signature') or '', base[:4]):
             self.stats['no-base'] += 1
             return Override('no-base', 0, b'')
-        return _Base(out_fid, base, master_rec)
+        return _Base(out_fid, base, master_rec,
+                     self.master_index.group_path(out_fid))
 
     def _apply(self, rec: dict, sig: str, base):
         """The Override for the author's changes spliced onto `base`.
@@ -405,19 +425,19 @@ class OverrideContext:
         for key in unmapped:
             self.unmapped_keys[key] += 1
         record_bytes = self._ref_flags(rec, base, record_bytes)
-        if record_bytes == base.record:
+        path = self._ref_path(rec, base, record_bytes)
+        if record_bytes == base.record and path == base.path:
             self.stats['unchanged'] += 1
             return Override('unchanged', base.out_fid, b'')
         self.stats['emitted'] += 1
-        return Override('emitted', base.out_fid, record_bytes)
+        return Override('emitted', base.out_fid, record_bytes, path)
 
     def _ref_flags(self, rec: dict, base, record_bytes: bytes) -> bytes:
         """`record_bytes` with the reference header bits the author changed.
 
         See: docs/commentary/tes5_import_override.md#override-reference-state
         """
-        if (rec.get('Signature') not in REF_SIGS
-                or record_bytes[:4] not in (b'REFR', b'ACHR')):
+        if not _is_reference(rec, record_bytes):
             return record_bytes
         head = record_flags(record_bytes)
         take = take_mask(record_bytes[:4], self._places_light(rec))
@@ -430,10 +450,44 @@ class OverrideContext:
         self.stats['ref-flags'] += 1
         return set_flags(record_bytes, flags)
 
+    def _ref_path(self, rec: dict, base, record_bytes: bytes) -> tuple:
+        """The master's GRUP path, unless the author moved or re-flagged the reference.
+
+        See: docs/commentary/tes5_import_override.md#override-reference-state
+        """
+        if not _is_reference(rec, record_bytes) or not base.path:
+            return base.path
+        cell = (rec.get('ParentCELL') or '').upper()
+        persistent = record_flags(record_bytes) & PERSISTENT
+        if (cell == (base.master_rec.get('ParentCELL') or '').upper()
+                and persistent == record_flags(base.record) & PERSISTENT):
+            return base.path
+        path = ref_path(self.master_index,
+                        master_output_formid(cell, self.master_manifest),
+                        persistent)
+        if not path:
+            self.stats['renest-unresolved'] += 1
+            print(f"    WARNING: override {rec.get('FormID')} names parent "
+                  f"cell {cell}, which has no master nesting; kept the "
+                  f"master's placement")
+            return base.path
+        self.stats['renested'] += 1
+        _note(self, placement_fault(path))
+        return path
+
     def _places_light(self, rec: dict) -> bool:
         """True when this reference's base object is a master's LIGH."""
         base_obj = self.master_export.get((rec.get('NAME') or '').upper())
         return bool(base_obj) and base_obj.get('Signature') == 'LIGH'
+
+    def _report_ref_state(self):
+        """Print the reference counters; a nonzero placement fault is a WARNING.
+
+        See: docs/commentary/tes5_import_override.md#override-reference-state
+        """
+        faults = sum(self.stats[k] for k in _REF_COUNTERS if 'renest-' in k)
+        line = ', '.join(f'{k}={self.stats[k]}' for k in _REF_COUNTERS)
+        print(f"  {'WARNING: ' if faults else ''}Reference overrides: {line}")
 
     def build_soun_companion(self, rec: dict, writer) -> bytes:
         """Override of the master's SNDR when a SOUN's volume/falloff changed.
@@ -518,6 +572,8 @@ class OverrideContext:
         return sorted(fids - {0})
 
     def report(self):
+        """Print the override counts, reference-state counters and unmapped fields."""
+        self._report_ref_state()
         print(f"  Overrides: {self.stats['emitted']} emitted, "
               f"{self.stats['deleted']} deleted by the author, "
               f"{self.stats['reconverted']} reconverted (effect-list change), "
@@ -807,7 +863,7 @@ def build_nested_overrides(by_type: dict, sigs: tuple, ctx: OverrideContext,
             if sig == 'WRLD':
                 ctx.emitted_wrld[ov.out_fid] = ov.record_bytes
             pending.append((ov.out_fid, ov.record_bytes,
-                            ctx.master_index.group_path(ov.out_fid)))
+                            ov.path or ctx.master_index.group_path(ov.out_fid)))
 
     _append_relinked_navms(pending, ctx)
 
@@ -990,8 +1046,10 @@ def _convert_nested(sig: str, rec: dict, ctx: OverrideContext, parent_out: int,
     if sig == 'PGRD':
         return _attach_navmesh(rec, ctx, parent_out, parent_path, pending)
     conv = convert_ACHR if sig in ('ACHR', 'ACRE') else convert_REFR
-    gtype = 8 if get_int(rec, 'RecordFlags') & 0x400 else 9
-    return conv(rec), ((6, label), (gtype, label))
+    record_bytes = conv(rec)
+    chain = ref_chain(parent_out, get_int(rec, 'RecordFlags') & PERSISTENT)
+    _note(ctx, placement_fault(parent_path + chain))
+    return record_bytes, chain
 
 
 def _attach_new_records(new_records: list, ctx: OverrideContext,

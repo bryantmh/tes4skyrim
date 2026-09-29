@@ -50,3 +50,31 @@ def record_flags(record: bytes) -> int:
 def set_flags(record: bytes, flags: int) -> bytes:
     """`record` with its header flags replaced."""
     return record[:8] + struct.pack('<I', flags) + record[12:]
+
+
+def ref_chain(parent_out: int, persistent: bool) -> tuple:
+    """The (6, cell), (8|9, cell) groups a reference sits in under its cell."""
+    label = struct.pack('<I', parent_out)
+    return ((6, label), (8 if persistent else 9, label))
+
+
+def ref_path(master_index, parent_out: int, persistent: bool) -> tuple:
+    """A reference's full GRUP path under a master's cell; () if it has none."""
+    parent = master_index.group_path(parent_out) if parent_out else ()
+    return parent + ref_chain(parent_out, persistent) if parent else ()
+
+
+def placement_fault(path: tuple) -> str:
+    """The counter a reference path breaks, or ''.
+
+    A persistent reference belongs in its world's persistent cell, never in an
+    exterior block's cell; a temporary one never sits in the persistent cell.
+    """
+    if len(path) < 3:
+        return ''
+    parent, gtype = path[:-2], path[-1][0]
+    if gtype == 8 and any(step[0] == 4 for step in parent):
+        return 'renest-pers-in-block'
+    if gtype == 9 and parent[-1][0] == 1:
+        return 'renest-temp-in-persistent-cell'
+    return ''

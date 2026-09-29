@@ -879,6 +879,26 @@ the ND quest stages) were absent from its output.
   being ignored, so a persistence flip gains or loses XLCN exactly as a full
   conversion would. Non-reference types still ignore both (the only two
   measured, an ACTI +0x400 and a PACK +0x20, are a TES5 no-op and a deletion).
+- **Re-nesting only on an authored change.** An override stays at the
+  master's GRUP path unless the author changed `ParentCELL` (against the
+  effective master export) or the output's persistence differs from the base's.
+  A structural compare would undo the master run's re-homing of misplaced
+  exterior refs (`pipeline_records.py` re-homes by position), so the master's
+  path is kept byte-for-byte otherwise. The target is `ref_path`: the new
+  cell's master nesting plus `ref_chain` = `(6, cell), (8|9, cell)`, the same
+  chain `_convert_nested` uses for a new reference, so the two land in one
+  group. The record is emitted once, at the new path; ONAM follows from the
+  emitted type-9 groups (`writer.py`). Measured against the live master
+  export: FR 20 re-nests (11 cell moves, 9 persistence-only), Knights 20
+  (12 + 8), DLCFrostcrag 1; all targets are Oblivion.esm cells, with no
+  interior/exterior or cross-worldspace move. A target cell with no master
+  nesting keeps the master's path and counts `renest-unresolved` (0 measured;
+  a move into the plugin's OWN cell would land here).
+- **Placement counters, expected 0.** `renest-pers-in-block` (a persistent
+  ref under an exterior block's cell instead of the world's persistent cell)
+  and `renest-temp-in-persistent-cell` are counted for every re-nested
+  override and every new reference `_convert_nested` places, and printed on
+  the `Reference overrides:` line, prefixed WARNING when nonzero.
 - **Tripwire: subrecord order.** `_apply_generic` appends a signature the
   master lacked after DATA. xEdit declares REFR and ACHR `.SetUnordered`
   (`wbDefinitionsTES5.pas` ACHR :3204, REFR :9879), so this is legal for
