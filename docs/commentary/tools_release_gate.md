@@ -95,7 +95,7 @@ on PASS.
 | G2 | texture paths inside the packed mesh BSAs and the LOD mod's tiles vs every table (our BSAs, the LOD mod's loose textures, vanilla Skyrim BSAs) | all found except full keys listed in `--allow-missing FILE`, and the control (the texture the most meshes name) is found |
 | G3 | `Magic effect phase meshes` line; ARTO/EXPL records in the converted Oblivion.esm | every model converted, both record types present |
 | G4 | `Race skin tones: N races resolved`, one line per plugin | every N > 0 |
-| G5 | each plugin's `door_panel_axis_cache.json` | exists; FR's is written by this run and holds at least 37 doors |
+| G5 | each plugin's `door_panel_axis_cache.json`, for plugins with DOOR models that resolve and classify (see below) | current schema, holding every such model; plugins with none are N/A |
 | G6 | ATXT-only land quadrants (see below) | all keep an alpha layer |
 | G7 | terrain-LOD colour (see below) | MAE within bound, control worse, not grey |
 | G8 | tree-card tiles vs tiles carrying NiAlphaProperty, over every baked worldspace | informational: vanilla carries none |
@@ -133,6 +133,21 @@ lives with that build, not in the code.
 The control is picked from the run: the texture the most meshes name. If it
 is in no table, the key normalisation or the table read is broken and the
 check fails as blind.
+
+<a id="g5"></a>
+G5's expectation is derived from the plugin, never configured. The gate
+reruns the converter's own door resolution (`_door_axis_jobs`: every DOOR
+base's model that resolves in the export meshes) and classifier
+(`door_closed_geometry` on the original mesh) and requires the cache to be at
+`DOOR_AXIS_SCHEMA_VERSION` and to hold each model that classifies. Keys are
+compared with the namespace dropped. A model that does not classify (bad
+geometry) is not expected, because the scan cannot write it either. The
+check does not require the cache to be written by this run: the pipeline
+rescans only a missing or older-schema cache, so a current cache kept from
+the last run is valid. Its freshness is reported in the JSON.
+A stale cache is what this catches: `scan_door_axes` writes nothing for a
+plugin with no jobs, and a cache from an older schema survives until the
+next rescan.
 
 ## The terrain checks
 <a id="terrain-checks"></a>

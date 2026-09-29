@@ -202,20 +202,68 @@ class TestFileChecks:
         ctx.zips = [z]
         assert vb.check_census(ctx)['status'] == vb.FAIL
 
-    def test_door_axes_minimum_and_freshness(self, tmp_path, monkeypatch):
-        """G5: FR needs a fresh cache with at least its minimum doors."""
-        monkeypatch.setattr(vb, 'DOOR_AXIS_MINIMUM', {'FR.esp': 2})
-        ctx = _ctx(tmp_path, plugins=['Oblivion.esm', 'FR.esp'])
-        for name, n in (('Oblivion.esm', 1), ('FR.esp', 2)):
+    def _doors(self, tmp_path, monkeypatch, want, caches, alone=None):
+        """A context whose plugins classify `want` doors and hold `caches`."""
+        monkeypatch.setattr(vb, 'classifiable_doors', lambda rec: {
+            m: f'/m/{m}' for m in want[Path(rec).name]}, raising=False)
+        monkeypatch.setattr(vb, 'confirm_alone', lambda paths: set(paths)
+                            if alone is None else alone, raising=False)
+        tmp_path.mkdir(exist_ok=True)
+        ctx = _ctx(tmp_path, plugins=list(want))
+        for name, (schema, models) in caches.items():
             d = ctx.export / name
-            d.mkdir(parents=True)
-            data = {'__schema__': [1], **{f'd{i}.nif': ['X'] for i in range(n)}}
+            d.mkdir(parents=True, exist_ok=True)
+            data = {'__schema__': [schema],
+                    **{f'tes4/{m}': ['X'] for m in models}}
             (d / vb.DOOR_AXIS_CACHE).write_text(json.dumps(data))
-        assert vb.check_door_axes(ctx)['status'] == vb.PASS
-        old = dt.datetime(2026, 9, 1).timestamp()
-        os.utime(ctx.export / 'FR.esp' / vb.DOOR_AXIS_CACHE, (old, old))
-        r = vb.check_door_axes(ctx)
-        assert (r['status'], r['denominator']) == (vb.FAIL, '1/2 plugins')
+        return vb.check_door_axes(ctx)
+
+    def test_door_axes_cover_every_classifiable_model(self, tmp_path,
+                                                      monkeypatch):
+        """G5: a current cache holding each readable door passes; 0-door plugins are left out."""
+        from asset_convert.collision.collision_extract import (
+            DOOR_AXIS_SCHEMA_VERSION as V)
+        want = {'Oblivion.esm': {'a.nif', 'b.nif'}, 'Zero.esp': set(),
+                'FR.esp': {'c.nif'}}
+        good = {'Oblivion.esm': (V, ['a.nif', 'b.nif']), 'FR.esp': (V, ['c.nif'])}
+        r = self._doors(tmp_path, monkeypatch, want, good)
+        assert (r['status'], r['denominator']) == (
+            vb.PASS, '2/2 plugins with doors')
+
+    def test_door_axes_stale_schema_or_lost_model_fails(self, tmp_path,
+                                                        monkeypatch):
+        """An older-schema cache, or one missing a model, fails however full it looks."""
+        from asset_convert.collision.collision_extract import (
+            DOOR_AXIS_SCHEMA_VERSION as V)
+        want = {'Oblivion.esm': {'a.nif'}, 'FR.esp': {'c.nif', 'd.nif'}}
+        r = self._doors(tmp_path / 'old', monkeypatch, want, {
+            'Oblivion.esm': (V - 1, ['a.nif']), 'FR.esp': (V, ['c.nif', 'd.nif'])})
+        assert (r['status'], r['denominator']) == (
+            vb.FAIL, '1/2 plugins with doors')
+        r = self._doors(tmp_path / 'lost', monkeypatch, want, {
+            'Oblivion.esm': (V, ['a.nif']), 'FR.esp': (V, ['c.nif'])})
+        assert r['data']['plugins']['FR.esp']['lost'] == ['d.nif']
+        assert r['status'] == vb.FAIL
+
+    def test_door_that_fails_alone_is_not_lost(self, tmp_path, monkeypatch):
+        """A model that classifies only in a batch (reader state) is not held against the cache."""
+        from asset_convert.collision.collision_extract import (
+            DOOR_AXIS_SCHEMA_VERSION as V)
+        r = self._doors(tmp_path, monkeypatch, {'A.esp': {'a.nif', 'b.nif'}},
+                        {'A.esp': (V, ['a.nif'])}, alone=set())
+        assert (r['status'], r['denominator']) == (
+            vb.PASS, '1/1 plugins with doors')
+        assert r['data']['plugins']['A.esp']['want'] == 1
+
+    def test_door_axes_not_applicable_without_doors(self, tmp_path,
+                                                    monkeypatch):
+        """No plugin with a readable door model -> N/A, not a failure."""
+        r = self._doors(tmp_path, monkeypatch, {'A.esp': set()}, {})
+        assert r['status'] == vb.NA
+
+    def test_classifiable_doors_without_door_records(self, tmp_path):
+        """No DOOR.txt -> nothing to classify."""
+        assert vb.classifiable_doors(tmp_path) == {}
 
     def test_deploy_compares_crc(self, tmp_path):
         """G10: a changed or missing deployed file fails."""

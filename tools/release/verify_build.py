@@ -367,34 +367,108 @@ def zip_census(path: Path):
 
 
 def check_door_axes(ctx) -> dict:
-    """G5: each plugin's door-axis cache exists; where a minimum is set, it is fresh and full."""
+    """G5: each plugin with readable DOOR models has a current cache holding every one.
+
+    The expectation is derived, never configured: the DOOR models in the
+    plugin's export that resolve AND that the classifier reads, recounted
+    from the original meshes. A plugin with none is left out; a cache at an
+    older schema, or one missing any of those models, fails.
+    See: docs/commentary/tools_release_gate.md#g5
+    """
     from output_layout import assets_for, record_dir
-    good, notes = 0, []
+    good, rows = 0, {}
     for plugin in ctx.plugins:
-        cache = assets_for(record_dir(ctx.export, plugin)) / DOOR_AXIS_CACHE
-        doors, fresh = door_axis_entries(cache), _newer(cache, ctx.start)
-        need = DOOR_AXIS_MINIMUM.get(plugin)
-        ok = doors is not None and (need is None or (fresh and doors >= need))
-        good += ok
-        notes.append(f'{plugin}: {doors if doors is not None else "no cache"}'
-                     + (f' (need {need}, fresh {fresh})' if need else ''))
-    return ratio('G5', good, len(ctx.plugins), 'plugins', '; '.join(notes))
+        rec = record_dir(ctx.export, plugin)
+        want = classifiable_doors(rec)
+        if not want:
+            continue
+        rows[plugin] = _door_row(assets_for(rec) / DOOR_AXIS_CACHE, want,
+                                 ctx.start)
+        good += rows[plugin]['ok']
+    if not rows:
+        return not_applicable('G5', 'no plugin has a door model that resolves')
+    notes = '; '.join(f"{p}: {r['cached']}/{r['want']} current {r['current']}"
+                      f" fresh {r['fresh']}" for p, r in rows.items())
+    return ratio('G5', good, len(rows), 'plugins with doors', notes,
+                 plugins=rows)
+
+
+def _door_row(cache: Path, want: dict, start) -> dict:
+    """How one plugin's door-axis cache covers the models it should hold ({model: path})."""
+    from asset_convert.collision.collision_extract import (
+        door_axis_cache_is_current)
+    have = door_axis_models(cache)
+    alone = confirm_alone(want[m] for m in sorted(set(want) - have))
+    lost = sorted(m for m in set(want) - have if want[m] in alone)
+    current = door_axis_cache_is_current(str(cache))
+    return {'want': len(want) - len(set(want) - have) + len(lost),
+            'cached': len(set(want) & have), 'lost': lost[:10],
+            'current': current, 'fresh': _newer(cache, start),
+            'ok': current and not lost}
 
 
 #: The door-axis cache written beside a plugin's export assets.
 DOOR_AXIS_CACHE = 'door_panel_axis_cache.json'
 
-#: Doors a plugin's cache must hold (FR: 37 of its 57 door models resolve).
-DOOR_AXIS_MINIMUM = {'DLCFrostcragReborn.esp': 37}
+
+def classifiable_doors(record_dir) -> dict:
+    """{model: mesh path} of the plugin's DOOR bases that resolve and classify (the gate's own recount).
+
+    Same inputs as the converter's scan: the DOOR records' models, resolved
+    case-blind in the plugin's export meshes, read at the closed pose.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+    from asset_convert.nif.door_plan import build_door_models
+    from output_layout import assets_for
+    root = assets_for(record_dir) / 'meshes'
+    found = [(m, case_paths.resolve([root], m, 'gate_doors'))
+             for m in sorted(build_door_models(record_dir))]
+    found = [(m, str(p)) for m, p in found if p]
+    if not found:
+        return {}
+    with ProcessPoolExecutor() as ex:
+        ok = list(ex.map(door_classifies, [p for _m, p in found], chunksize=8))
+    return {m: p for (m, p), good in zip(found, ok) if good}
 
 
-def door_axis_entries(path: Path):
-    """Door models in a door-axis cache (its schema key excluded), else None."""
+def confirm_alone(paths) -> set:
+    """The `paths` that still classify when each is read in a fresh process.
+
+    pyffi's reader keeps state between files, so one model can classify in
+    one batch and not in another; a model the scan may have missed for that
+    reason is re-read alone before it counts as lost.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+    paths = list(paths)
+    if not paths:
+        return set()
+    with ProcessPoolExecutor(max_tasks_per_child=1) as ex:
+        return {p for p, good in zip(paths, ex.map(door_classifies, paths))
+                if good}
+
+
+def door_classifies(path: str) -> bool:
+    """True when the door classifier reads a closed-pose geometry from `path`."""
+    from asset_convert.collision.collision_extract import (
+        door_closed_geometry, read_nif_data)
+    try:
+        return door_closed_geometry(read_nif_data(path)) is not None
+    except Exception:
+        return False
+
+
+def _model(key: str) -> str:
+    """`tes4/architecture/x.nif` -> `architecture/x.nif` (namespace dropped)."""
+    return key.split('/', 1)[-1]
+
+
+def door_axis_models(path: Path) -> set:
+    """Models (namespace dropped) a door-axis cache holds; empty when unreadable."""
     try:
         data = json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, ValueError):
-        return None
-    return sum(1 for k in data if not k.startswith('__'))
+        return set()
+    return {_model(k) for k in data if not k.startswith('__')}
 
 
 def _newer(path: Path, start) -> bool:
