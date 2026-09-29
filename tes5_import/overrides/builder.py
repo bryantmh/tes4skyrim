@@ -204,6 +204,24 @@ def join_subrecords(header: bytes, subs: list) -> bytes:
             + header[8:RECORD_HEADER_SIZE] + body)
 
 
+def replace_vmad(record: bytes, vmad: bytes) -> bytes:
+    """`record` with its VMAD payload set to `vmad`, or b'' if unparseable.
+
+    An absent VMAD goes right after EDID, where the record layout puts it.
+    """
+    subs = split_subrecords(record)
+    if not subs:
+        return b''
+    for i, (sig, _) in enumerate(subs):
+        if sig == b'VMAD':
+            subs[i] = (b'VMAD', vmad)
+            break
+    else:
+        at = 1 if subs[0][0] == b'EDID' else 0
+        subs.insert(at, (b'VMAD', vmad))
+    return join_subrecords(record[:RECORD_HEADER_SIZE], subs)
+
+
 def _encode_string(value: str) -> bytes:
     return (value or '').encode('cp1252', errors='replace') + b'\x00'
 

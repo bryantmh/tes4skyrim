@@ -328,6 +328,16 @@ class OverrideContext:
         src_fid = (rec.get('FormID') or '').upper()
         return self.master_export.get(src_fid)
 
+    def edits_master_script(self, scpt_rec: dict) -> bool:
+        """Does this plugin change the source of one of its masters' scripts?
+
+        A record the plugin leaves alone still runs the edited script, so its
+        VMAD must bind the PLUGIN's property list, not the master's.
+        """
+        master = self.master_record(scpt_rec) if scpt_rec else None
+        return (master is not None
+                and master.get('SCTX') != scpt_rec.get('SCTX'))
+
     def build(self, rec: dict, sig: str = None):
         """Build the override for one plugin record.
 

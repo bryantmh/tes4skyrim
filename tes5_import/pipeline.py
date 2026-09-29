@@ -111,7 +111,7 @@ class ImportState:
     See: docs/reference/tes5_import_architecture.md#4-invariants
     """
 
-    __slots__ = ('all_skip', 'output_path', 'plugin_out_dir', 'num_tes4_masters', 'ctx', 'output_root', 'by_type', 'writer', 'npc_to_vtyp', 'unlock_plan', 'unlock_globals', 'fid_to_edid', 'xref', '_script_vars', 'pack_plan', 'pack_ctx', 'converted', 'errors', 't2', 'sge_quest_fids', 'navm_cache', 'navm_metas', 'base_model_by_fid', 'door_fids')
+    __slots__ = ('all_skip', 'output_path', 'plugin_out_dir', 'num_tes4_masters', 'ctx', 'output_root', 'by_type', 'writer', 'npc_to_vtyp', 'unlock_plan', 'unlock_globals', 'fid_to_edid', 'xref', '_script_vars', 'pack_plan', 'pack_ctx', 'converted', 'errors', 't2', 'sge_quest_fids', 'navm_cache', 'navm_metas', 'base_model_by_fid', 'door_fids', '_scpt_by_fid')
 
     def __init__(self, **kw):
         """Every field starts None; the caller supplies the run's inputs."""

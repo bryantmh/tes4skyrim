@@ -39,6 +39,7 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
 from .registry import IMPORT_DISPATCH, TYPE_MAP
+from .overrides.builder import replace_vmad, split_subrecords
 from .overrides.nested import (build_nested_overrides)
 from .dialogue.quest import compute_quest_priorities, convert_QUST
 from .dialogue.morrowind_sidecar import write_morrowind_sidecar
@@ -268,22 +269,57 @@ def _convert_qust(st, export_dir: str, phase_done, skip_types) -> None:
             try:
                 ov = st.ctx.build(rec, 'QUST') if st.ctx else None
                 if ov is not None:
-                    if ov.record_bytes:
-                        st.writer.add_record('QUST', ov.record_bytes)
+                    qust_bytes = (_rebind_edited_script(st, rec, ov)
+                                  or ov.record_bytes)
+                    if qust_bytes:
+                        st.writer.add_record('QUST', qust_bytes)
                         st.converted += 1
                     continue
 
-                qust_bytes = convert_QUST(rec, fid_to_edid=st.fid_to_edid,
-                                          well_known_props=WELL_KNOWN_PROPERTIES,
-                                          unlock_plan=st.unlock_plan,
-                                          unlock_globals=st.unlock_globals,
-                                          pack_plan=st.pack_plan, xref=st.xref,
-                                          script_vars=st._script_vars)
+                qust_bytes = _convert_qust_record(st, rec)
                 st.writer.add_record('QUST', qust_bytes)
                 st.converted += 1
             except Exception as e:
                 print(f"  ERROR converting QUST '{get_str(rec, 'EditorID', '?')}': {e}")
                 st.errors += 1
+
+
+def _convert_qust_record(st, rec) -> bytes:
+    """One QUST through the full converter, with this run's state."""
+    return convert_QUST(rec, fid_to_edid=st.fid_to_edid,
+                        well_known_props=WELL_KNOWN_PROPERTIES,
+                        unlock_plan=st.unlock_plan,
+                        unlock_globals=st.unlock_globals,
+                        pack_plan=st.pack_plan, xref=st.xref,
+                        script_vars=st._script_vars)
+
+
+def _rebind_edited_script(st, rec, ov) -> bytes:
+    """A quest override carrying THIS run's VMAD, or b'' to keep the master's.
+
+    An override is the master's bytes plus the authored field changes, so its
+    VMAD binds the master's script properties. When the plugin edits the
+    quest's script itself, the script's properties are the plugin's (Frostcrag
+    Reborn's DLCFrostcragSpireScript adds MagesGuild and DLCFrostcragLevel),
+    and the master's VMAD leaves them None.
+    """
+    if ov.status not in ('emitted', 'unchanged'):
+        return b''
+    if st._scpt_by_fid is None:
+        st._scpt_by_fid = {(r.get('FormID') or '').upper(): r
+                           for r in st.by_type.get('SCPT', [])}
+    scpt = st._scpt_by_fid.get((rec.get('SCRI') or '').upper())
+    if not st.ctx.edits_master_script(scpt):
+        return b''
+    vmad = next((p for sig, p in split_subrecords(_convert_qust_record(st, rec))
+                 if sig == b'VMAD'), None)
+    base = ov.record_bytes or st.ctx.master_index.record(ov.out_fid)
+    out = replace_vmad(base, vmad) if vmad is not None and base else b''
+    if out:
+        st.ctx.stats['script-rebound'] += 1
+        print(f"  Rebound VMAD of QUST '{get_str(rec, 'EditorID', '?')}' "
+              f"to this plugin's edited script")
+    return out
 
 
 def _convert_pack(st, export_dir: str, phase_done, skip_types) -> None:
