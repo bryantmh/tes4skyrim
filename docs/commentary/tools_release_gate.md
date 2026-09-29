@@ -157,6 +157,10 @@ one `black.dds` cannot hide another folder's. Entries that are no longer
 missing are counted as stale. The list is data about one build's sources and
 lives with that build, not in the code.
 
+The vanilla tables come from `--skyrim-data`, else the install config's
+Skyrim Data folder; with no vanilla BSA found the check REFUSES, because
+every vanilla texture (body, sky, default) would otherwise read as missing.
+
 The control is picked from the run: the texture the most meshes name. If it
 is in no table, the key normalisation or the table read is broken and the
 check fails as blind.

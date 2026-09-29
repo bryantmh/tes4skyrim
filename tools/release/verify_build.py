@@ -671,11 +671,15 @@ def check_textures(ctx) -> dict:
     """G2: texture paths in the packed meshes and LOD tiles vs every archive's table.
 
     Tables: our BSAs, the LOD mod's loose textures and the vanilla Skyrim
-    BSAs. Keys listed in `--allow-missing` (full keys), or already absent
-    in the `--baseline` run, are allowed: only a NEW absence fails. The
-    control is the texture the most meshes name: it must be found, or the
-    lookup itself is blind.
+    BSAs (none found: REFUSE). Keys in `--allow-missing` (full keys), or
+    absent in the `--baseline` run too, are allowed: only a NEW absence
+    fails. The control, the texture the most meshes name, must be found.
+    See: docs/commentary/tools_release_gate.md#g2
     """
+    if not vanilla_bsas(ctx):
+        return result('G2', REFUSE, '0 vanilla archives',
+                      f'no Skyrim Data BSAs ({ctx.skyrim_data}); pass '
+                      '--skyrim-data')
     tables = texture_table(ctx)
     refs, meshes = mesh_texture_refs(ctx)
     if meshes == 0 or not tables:

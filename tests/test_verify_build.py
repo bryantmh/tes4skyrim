@@ -396,7 +396,16 @@ class TestTextures:
             refs = dict.fromkeys(refs, 1)
         monkeypatch.setattr(vb, 'mesh_texture_refs', lambda ctx: (refs, 7))
         monkeypatch.setattr(vb, 'texture_table', lambda ctx: table)
+        monkeypatch.setattr(vb, 'vanilla_bsas', lambda ctx: ['Skyrim.bsa'])
         return vb.check_textures(_ctx(tmp_path, allow_missing=frozenset(allow)))
+
+    def test_no_vanilla_archives_refuses(self, monkeypatch, tmp_path):
+        """Without Skyrim's BSAs every vanilla texture would read as missing."""
+        monkeypatch.setattr(vb, 'mesh_texture_refs',
+                            lambda ctx: ({'tes4\\a.dds': 1}, 7))
+        monkeypatch.setattr(vb, 'texture_table', lambda ctx: {'tes4\\a.dds'})
+        r = vb.check_textures(_ctx(tmp_path))
+        assert r['status'] == vb.REFUSE and 'skyrim-data' in r['detail']
 
     def test_missing_texture_fails_and_allowed_key_passes(
             self, monkeypatch, tmp_path):
@@ -425,6 +434,7 @@ class TestTextures:
         monkeypatch.setattr(vb, 'mesh_texture_refs', lambda ctx: (
             {'tes4\\a.dds': 5, 'tes4\\old.dds': 1}, 7))
         monkeypatch.setattr(vb, 'texture_table', lambda ctx: {'tes4\\a.dds'})
+        monkeypatch.setattr(vb, 'vanilla_bsas', lambda ctx: ['Skyrim.bsa'])
         r = vb.check_textures(_ctx(tmp_path, baseline=base))
         assert r['status'] == vb.PASS and r['data']['absent'] == [
             'tes4\\old.dds']
