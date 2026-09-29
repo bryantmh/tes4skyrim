@@ -1,5 +1,6 @@
 """Item/object converters: STAT, ACTI, MISC, KEYM, DOOR, FLOR, FURN, GRAS, TREE, LIGH, SLGM, ANIO, CONT."""
 
+from asset_convert.audio.door_sounds import scan_door_models
 from asset_convert.game_paths import current_namespace
 import os
 import struct
@@ -89,6 +90,10 @@ def convert_KEYM(rec: dict) -> bytes:
     return _simple_object(rec, 'KEYM', extra_subs=extra)
 
 
+# ---------------------------------------------------------------------------
+# DOOR sounds and sound-descriptor slots
+# ---------------------------------------------------------------------------
+
 #: MESH-authored door sounds: path -> {'open'/'close'/'loop': SOUN FormID}.
 _DOOR_MODEL_SOUNDS: dict = {}
 
@@ -97,76 +102,61 @@ def _door_model_key(modl: str) -> str:
     return modl.lower().replace('\\', '/').lstrip('/')
 
 
-def load_door_model_sounds(meshes_dir, by_type) -> int:
-    """Resolve every DOOR model's authored `sound:` text keys to SOUN FormIDs.
+def _wanted_door_models(doors) -> set:
+    """Model keys of the DOORs whose record lacks an open or a close sound."""
+    return {_door_model_key(modl) for rec in doors
+            if (modl := get_str(rec, 'Model.MODL'))
+            and not (get_formid(rec, 'SNAM.Open') and get_formid(rec, 'ANAM.Close'))}
 
-    meshes_dir: <export_dir>/meshes (source Oblivion NIFs from BSA extraction).
 
-    Oblivion doors take their audio from the record's SNAM/ANAM OR from
-    `sound: <SOUN EditorID>` keys on the model's Open/Close sequences; Skyrim
-    has only the record channel, so the mesh-authored names have to be lifted
-    onto it or those doors convert silent (see asset_convert.audio.door_sounds).
+def _soun_by_edid(by_type, master_export) -> tuple:
+    """({lowercase EditorID: SOUN id}, EditorIDs only a master defines).
 
-    The EditorID is resolved against this plugin's own SOUN records, so an
-    unknown name simply yields no sound rather than a dangling reference.
-    Returns the number of models that contributed a sound.
+    A master's SOUN is keyed by its `master_export` key (this plugin's index
+    space); this plugin's own SOUN of the same name wins.
     """
-    import os
-    _DOOR_MODEL_SOUNDS.clear()
-    doors = by_type.get('DOOR', [])
-    if not doors:
-        return 0
-    try:
-        from asset_convert.audio.door_sounds import scan_door_models
-    except ImportError as exc:
-        print(f"  Door sounds: asset_convert unavailable ({exc}), skipping")
-        return 0
-    if not os.path.isdir(meshes_dir):
-        print(f"  Door sounds: meshes dir not found ({meshes_dir}), skipping")
-        return 0
+    table = {}
+    for key, rec in (master_export or {}).items():
+        edid = rec.get('Signature') == 'SOUN' and get_str(rec, 'EditorID')
+        if edid:
+            table[edid.lower()] = int(key, 16)
+    master_only = set(table)
+    for rec in by_type.get('SOUN', []):
+        edid = get_str(rec, 'EditorID').lower()
+        if edid:
+            table[edid] = get_formid(rec, 'FormID')
+            master_only.discard(edid)
+    return table, master_only
 
-    # Only doors that need the fallback are worth parsing: a record naming its
-    # own open AND close sound already has everything TES5 can express.
-    wanted = set()
-    for rec in doors:
-        modl = get_str(rec, 'Model.MODL')
-        if not modl:
-            continue
-        if get_formid(rec, 'SNAM.Open') and get_formid(rec, 'ANAM.Close'):
-            continue
-        wanted.add(_door_model_key(modl))
+
+def load_door_model_sounds(mesh_roots, by_type, master_export=None) -> int:
+    """Lift DOOR models' `sound: <SOUN EditorID>` keys onto SNAM/ANAM/BNAM; the models that gave one.
+
+    Only doors whose record lacks an open or close sound are read.  A model
+    is found in the first of *mesh_roots* holding it (own tree, then the
+    masters'), and a name resolves to this plugin's SOUN, else a master's.
+    See: docs/commentary/asset_convert_audio.md#mesh-door-sounds
+    """
+    _DOOR_MODEL_SOUNDS.clear()
+    wanted = _wanted_door_models(by_type.get('DOOR', []))
     if not wanted:
         return 0
-
-    found, errors = scan_door_models(meshes_dir, wanted)
+    found, errors = scan_door_models(mesh_roots, wanted)
     for key, err in errors:
         print(f"  Door sounds: failed to read {key}: {err}")
-
-    soun_by_edid = {}
-    for rec in by_type.get('SOUN', []):
-        edid = get_str(rec, 'EditorID')
-        if edid:
-            soun_by_edid[edid.lower()] = get_formid(rec, 'FormID')
-
-    resolved = 0
-    unknown = set()
+    table, master_only = _soun_by_edid(by_type, master_export)
+    names = {e.lower() for slots in found.values() for e in slots.values()}
     for key, slots in found.items():
-        mapped = {}
-        for slot, edid in slots.items():
-            fid = soun_by_edid.get(edid.lower())
-            if fid:
-                mapped[slot] = fid
-            else:
-                unknown.add(edid)
+        mapped = {slot: table[e.lower()] for slot, e in slots.items() if e.lower() in table}
         if mapped:
             _DOOR_MODEL_SOUNDS[key] = mapped
-            resolved += 1
+    unknown = sorted(names - set(table))
     if unknown:
-        print(f"  Door sounds: {len(unknown)} mesh sound name(s) match no SOUN "
-              f"(e.g. {sorted(unknown)[0]})")
-    print(f"  Door sounds: {resolved} door model(s) supply open/close sound "
-          f"from the mesh")
-    return resolved
+        print(f"  Door sounds: {len(unknown)} mesh sound name(s) match no SOUN: "
+              f"{', '.join(unknown)}")
+    print(f"  Door sounds: {len(_DOOR_MODEL_SOUNDS)} door model(s) supply open/close "
+          f"sound from the mesh ({len(names & master_only)} name(s) via master SOUN)")
+    return len(_DOOR_MODEL_SOUNDS)
 
 
 def _door_model_sounds(rec: dict) -> dict:

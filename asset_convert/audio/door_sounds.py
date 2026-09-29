@@ -30,8 +30,9 @@ its sequence.  Sequence names are Oblivion's engine-fixed animation groups, so
 the mapping is exact, not a guess.
 """
 
-import os
 import re
+
+from asset_convert import case_paths
 
 # Text key form Oblivion uses: `sound: <SOUN EditorID>`.  Matched
 # case-insensitively with optional whitespace, exactly as
@@ -124,18 +125,19 @@ def has_sound_key(path):
     return b'sound:' in blob.lower()
 
 
-def scan_door_models(meshes_dir, model_keys):
+def scan_door_models(mesh_roots, model_keys):
     """{model key: {slot: SOUN EditorID}} for the given door models.
 
-    *model_keys* are lowercase forward-slash paths relative to *meshes_dir*
-    (e.g. ``architecture/stonewall/stonewallgatedoor01.nif``) — only door
-    models are handed in, so this never walks the whole mesh tree.
+    *model_keys* are lowercase forward-slash paths (e.g.
+    ``architecture/stonewall/stonewallgatedoor01.nif``), each found in the
+    first of *mesh_roots* holding it, in any case; only door models are
+    handed in, so this never walks the whole mesh tree.
     """
     jobs = []
     for key in sorted(model_keys):
-        path = os.path.join(meshes_dir, key.replace('/', os.sep))
-        if os.path.isfile(path) and has_sound_key(path):
-            jobs.append((key, path))
+        path = case_paths.resolve(mesh_roots, key, 'door_sounds')
+        if path and has_sound_key(path):
+            jobs.append((key, str(path)))
 
     out = {}
     errors = []

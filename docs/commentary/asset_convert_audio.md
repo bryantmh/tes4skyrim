@@ -586,3 +586,30 @@ source format decodes nothing rather than falling back -- FO3/FNV voice is Ogg
 Vorbis where Oblivion's is MP3, and without this every one of FalloutNV.esm's
 52,896 `.ogg` lines failed with "Invalid data found when processing input".
 The codec check lets such a run fall through to a PATH ffmpeg that can read it.
+
+## <a id="mesh-door-sounds"></a>Door sounds authored in the mesh
+
+**Code:** `asset_convert/audio/door_sounds.py` (`scan_door_models`),
+`tes5_import/record_types/items.py` (`load_door_model_sounds`)
+
+A DOOR record without an open or close SOUN gets one from its model's
+`sound: <SOUN EditorID>` text keys (the module docstring of `door_sounds.py`
+has the engine side). Two things a plugin with masters needs:
+
+- **The model can live in a master's tree.** A plugin reusing a master's door
+  mesh ships no copy, so the scan looks in the plugin's own mesh tree first,
+  then each master's (in `_HEADER.txt` order), ignoring case
+  (`case_paths.resolve`). Frostcrag Reborn's `brudoorupperfull02` is only in a
+  master tree.
+- **The name can be a master's SOUN.** Master SOUNs load first, keyed by their
+  `master_export` key (this plugin's index space); the plugin's own SOUN of the
+  same EditorID wins. The placeholder then resolves through
+  `patch_sound_descriptor_slots` to the SNDR the master's conversion wrote.
+  That patcher tells own from master ids by the low 24 bits, so a master SOUN
+  sharing its low 24 bits with an own SOUN would be misread; measured on
+  Frostcrag Reborn: 0 such ids.
+
+Measured on Frostcrag Reborn: 0 door models before (case miss and own-only
+SOUNs), 26 after, 15 names via a master SOUN, 1 name matching no SOUN
+(`trpchainsslowlp02`, listed in the log). Oblivion.esm's 34 models are
+unchanged.

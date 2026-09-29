@@ -16,7 +16,7 @@ from .creature_races import build_creature_death_piles, build_creature_races
 from .starts_dead import index_starts_dead
 from ..record_types.actors_falloutnv import flatten_actor_templates
 from ..record_types.common import reset_emitted_regions
-from ..record_types.items import load_door_model_sounds
+from ..record_types.items import load_door_model_sounds, master_mesh_dirs
 from ..record_types.sound import (load_soun_identity, reset_sound_descriptors,
                                  reset_soun_identity)
 from ..record_types.projectile_falloutnv import index_gun_projectiles
@@ -26,9 +26,10 @@ from ..record_types.world_morrowind import register_tes3_locks
 from ..registry import IMPORT_DISPATCH, SKIP_TYPES
 
 
-def _load_door_sounds(by_type: dict, export_dir: str) -> None:
-    """Lift door open/close sounds the MESH authors onto SNAM/ANAM."""
-    load_door_model_sounds(str(assets_for(export_dir) / 'meshes'), by_type)
+def _load_door_sounds(by_type: dict, export_dir: str, ctx) -> None:
+    """Lift mesh-authored door sounds onto SNAM/ANAM; own meshes, then masters'."""
+    roots = [str(assets_for(export_dir) / 'meshes'), *master_mesh_dirs(ctx)]
+    load_door_model_sounds(roots, by_type, ctx.master_export if ctx else None)
 
 
 def _load_sound_identity(by_type: dict, master_export: dict) -> None:
@@ -46,7 +47,7 @@ def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
     """Populate every actor and creature index, in dependency order."""
     master_export = ctx.master_export if ctx else None
 
-    _load_door_sounds(by_type, export_dir)
+    _load_door_sounds(by_type, export_dir, ctx)
     step_done('door mesh sounds')
 
     _load_sound_identity(by_type, master_export)
