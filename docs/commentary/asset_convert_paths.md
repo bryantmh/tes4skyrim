@@ -78,7 +78,10 @@ a miss re-reads the folder (the stale check above), so an unchanged ancestor
 is listed once per process rather than once per write, which matters on
 Windows, where listing a large folder is slow. A folder that gains a new entry
 through `write_path` is dropped from the cache; an overwrite leaves it cached.
-`root` is normalised, so `out/` and `out` are one cache key.
+`root` is normalised, so `out/` and `out` are one cache key. With
+`create=False` it only names the path: `_fill_missing_lod_textures` asks for
+every missing texture before it knows one can be made, and creating folders
+then left empty ones behind; its writers make the folder when they write.
 
 Mirror copiers (`nif_batch` destination, `asset_pipeline._copy_tree`,
 `mod_ingest._place_payload`) keep the SOURCE case on purpose: lowercasing them

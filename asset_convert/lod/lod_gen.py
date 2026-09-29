@@ -1730,7 +1730,7 @@ def _fill_missing_lod_textures(bto_dir: Path, tex_root: Path,
     synth = 0
     unresolved = []
     for rel in missing:
-        dest = case_paths.write_path(tex_root, rel)
+        dest = case_paths.write_path(tex_root, rel, create=False)
         if not rel.endswith('_n.dds'):
             if _copy_lod_destem(rel, dest, tex_root, master_tex_roots):
                 synth += 1

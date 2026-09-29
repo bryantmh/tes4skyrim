@@ -178,6 +178,21 @@ class TestCaseBlindLookups:
         assert [p for p in lod_tex.rglob('*') if p.is_file()] == []
         assert 'Synthesized' not in capsys.readouterr().out
 
+    def test_an_unmakeable_texture_leaves_no_empty_folders(self, gen, tmp_path,
+                                                          capsys):
+        """A missing diffuse with no source creates nothing (old: its folders)."""
+        bto_dir = tmp_path / 'bto'
+        bto_dir.mkdir()
+        (bto_dir / 'W.4.0.0.bto').write_bytes(
+            b'\x00textures\\tes4\\lodonly\\gone.dds\x00')
+        lod_tex = tmp_path / 'AutoConvertLOD' / 'textures'
+        lod_tex.mkdir(parents=True)
+
+        gen._fill_missing_lod_textures(bto_dir, lod_tex)
+
+        assert list(lod_tex.rglob('*')) == []
+        assert '1 LOD textures missing' in capsys.readouterr().out
+
 
 class TestAuthoredFarFromAnyPlugin:
     """A later plugin's hand-made `_far` beats deriving one from the owner's model."""

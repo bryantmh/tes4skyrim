@@ -231,8 +231,8 @@ def _spelling(parent, seg, want_dir) -> tuple:
     return os.path.basename(ranked[0]), False
 
 
-def write_path(root, rel) -> Path:
-    """Where to write `rel` under `root`, creating its parent folders.
+def write_path(root, rel, create=True) -> Path:
+    """Where to write `rel` under `root`, creating its parent folders unless not `create`.
 
     Each segment reuses the one spelling already on disk, is lowercase when
     none exists, and takes the lowercase one when several do. Listings are
@@ -247,7 +247,8 @@ def write_path(root, rel) -> Path:
             grown.append(path)
         path = os.path.join(path, name)
     out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
+    if create:
+        out.parent.mkdir(parents=True, exist_ok=True)
     for folder in grown:
         _LISTINGS.pop(folder, None)
     return out
