@@ -619,13 +619,15 @@ class ChainedMasterIndex:
     def persistent_cell(self, wrld_formid: int) -> int:
         """A worldspace's persistent CELL from the newest file holding it, in the child's space.
 
+        The answering file may name a cell one of ITS masters defines, under
+        that master's slot in its own list; the index map restates both kinds.
+
         See: docs/commentary/tes5_import_override.md#full-lod-refs
         """
         for idx, own in self._candidates(wrld_formid):
             fid = idx.persistent_cell(own)
             if fid:
-                return (self._to_child(idx, fid)
-                        if (fid >> 24) == idx.own_index else fid)
+                return _shift_formid(fid, self._index_maps.get(id(idx), {}))
         return 0
 
     def navms(self, cell_formid: int) -> list:
