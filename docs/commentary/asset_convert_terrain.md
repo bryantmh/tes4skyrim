@@ -1721,10 +1721,16 @@ in-game loading is still to be confirmed.
 Tripwires: a partial (`only_cells`) run synthesizes nothing, so its tiles lack
 horizon cells a full run has. The engine only loads tiles inside the
 worldspace's `.lod` extents; Oblivion's -96 column needs the SW corner at -96
-(owned by `lod_gen.py`). `_queue_tiles` computes a level's last tile as
-`((max + level - 1) // level) * level`, which drops the last row/column when
-the inclusive max cell is an exact multiple of the level (not hit by Tamriel:
--96..95).
+(owned by `lod_gen.py`).
+
+`_queue_tiles` used to end a level at `((max + level - 1) // level) * level`,
+dropping the last tile row/column whenever the INCLUSIVE max cell was an exact
+multiple of the level; it now ends at `(max // level + 1) * level`. On LAND
+alone it cost LOD4 tiles in four Oblivion.esm worldspaces:
+MS13CheydinhalOblivionWorld 11 (110 -> 121), DABoethiaRealm 7, OblivionRD006
+3, MS14World 2. With synthetic cells every Oblivion.esm LOD worldspace ends at
+a baked tile edge (max 31, Tamriel 95), so none hits it; it still matters for
+a worldspace with no baked LOD or a partial run.
 
 ### Before: tiles edge-extended past the landmass
 

@@ -1290,8 +1290,8 @@ def _queue_tiles(lands, bounds, worldspace_edid, only_cells):
     for level in LOD_LEVELS:
         tx_start = (min_x // level) * level
         ty_start = (min_y // level) * level
-        tx_end   = ((max_x + level - 1) // level) * level
-        ty_end   = ((max_y + level - 1) // level) * level
+        tx_end   = (max_x // level + 1) * level
+        ty_end   = (max_y // level + 1) * level
 
         n_level = 0
         for ty in range(ty_start, ty_end, level):

@@ -143,3 +143,14 @@ def test_an_overlay_deleting_a_cell_records_it():
     terrain_lod._take_land(_Rec(), (4, 4), lands, False, False, None, deleted)
 
     assert (4, 4) not in lands and deleted == {(4, 4)}
+
+
+def test_a_max_cell_on_a_tile_boundary_still_gets_its_tile():
+    """Bounds are inclusive: a cell at x = 32 needs the tile starting at 32."""
+    lands = {(0, 0): _land(1), (32, 32): _land(1), (4, 0): _land(1)}
+
+    work = terrain_lod._queue_tiles(lands, (0, 0, 32, 32), 'W', None)
+
+    assert (32, 32, 32, 'W') in work
+    assert (4, 0, 4, 'W') in work and (32, 32, 4, 'W') in work
+    assert (0, 0, 32, 'W') in work
