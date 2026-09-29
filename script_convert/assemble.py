@@ -16,7 +16,8 @@ from dataclasses import replace
 from script_convert.blocks import (BLOCK_MAP, COMBAT_STATE_GUARDS,
                                    block_filter_guard)
 from script_convert.constants import (
-    LAST_ACTIVATOR_VAR, MENU_ID_NAMES, UDF_CALLER_PARAM, UDF_RESULT_VAR,
+    LAST_ACTIVATOR_VAR, MENU_ID_NAMES, SLEEP_WAIT_MENU_ID,
+    UDF_CALLER_PARAM, UDF_RESULT_VAR,
     POLL_BLOCKS, REF_SPECIFICITY, TYPE_MAP, is_generated_script_type,
     safe_property_name, papyrus_script_name
 )
@@ -1144,7 +1145,8 @@ def _menumode_kind(block) -> str:
     frames where isPCSleeping is 1 are sleep-menu frames, so those bodies are
     self-gated and exist purely to observe sleep (Rufio's murder, vampirism
     onset, MG04's inn ambush).  Skyrim's native equivalent is
-    RegisterForSleep().
+    RegisterForSleep().  `begin MenuMode 1012` (the Sleep/Wait menu) reading
+    isPCSleeping is the same idiom with the menu named.
 
     A bare block that does NOT read it is time-and-inventory bookkeeping that
     Oblivion ran on the frames GameMode did not -- wait/sleep and inventory
@@ -1154,7 +1156,11 @@ def _menumode_kind(block) -> str:
     the poll reproduces the union of frames rather than half of it; they are
     all idempotent state machines guarded by their own doonce variables.
     """
-    if str(block.filter or '').strip():
+    menu_id = str(block.filter or '').strip()
+    if menu_id == SLEEP_WAIT_MENU_ID and _reads_sleep_state(block.body):
+        # Only the sleep half of the Sleep/Wait menu is observable in Skyrim.
+        return 'sleep'
+    if menu_id:
         return 'menu'
     return 'sleep' if _reads_sleep_state(block.body) else 'poll'
 

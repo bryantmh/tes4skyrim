@@ -2271,6 +2271,30 @@ End
         assert 'OnSleepStart' not in result
         assert 'RegisterForSleep' not in result
 
+    def test_sleep_wait_menu_reading_sleep_becomes_sleep_events(self, converter):
+        """Frostcrag Reborn's start latch: `begin MenuMode 1012` (Sleep/Wait)
+        gated on isPCSleeping. Commented out, the quest never starts."""
+        src = ('Scriptname TestSleepWait\n\nshort doonce\n\n'
+               'begin gamemode\nset doonce to doonce\nend\n\n'
+               'begin MenuMode 1012\nif isPCSleeping == 1\n'
+               'set doonce to 1\nendif\nend\n')
+        result = converter.convert_standalone('TestSleepWait', src, 'Quest',
+                                              'TestSleepWait')
+        assert 'Event OnSleepStart(float afSleepStartTime, float afDesiredSleepEndTime)' in result
+        assert 'RegisterForSleep()' in result
+        assert 'If TES4_PCSleeping == 1' in result
+        assert 'NOT executed' not in result
+
+    def test_sleep_wait_menu_without_sleep_read_stays_commented(self, converter):
+        """A 1012 body that never reads isPCSleeping may be wait-only."""
+        src = ('Scriptname TestWaitOnly\n\nshort x\n\n'
+               'begin gamemode\nset x to 1\nend\n\n'
+               'begin MenuMode 1012\nset x to 2\nend\n')
+        result = converter.convert_standalone('TestWaitOnly', src, 'Quest',
+                                              'TestWaitOnly')
+        assert 'OnSleepStart' not in result
+        assert ';  x = 2' in result
+
 
 class TestInfoFragmentVmadLayout:
     """Every INFO VMAD declares BOTH fragments: Fragment_1 (OnBegin) and

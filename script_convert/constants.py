@@ -673,6 +673,9 @@ MENU_ID_NAMES = {
     '1036': 'RaceSex Menu',
 }
 
+#: `begin MenuMode 1012` -- the Sleep/Wait menu.
+SLEEP_WAIT_MENU_ID = '1012'
+
 
 #: Reference types, WIDEST first: the later one is the more specific.
 REF_SPECIFICITY = ('Form', 'ObjectReference', 'Actor')
