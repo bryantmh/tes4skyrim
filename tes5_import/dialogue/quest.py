@@ -589,7 +589,8 @@ def _quest_vmad_properties(rec, edid, fid_to_edid, well_known_props,
         else:
             prop_vals[name] = fid
     if xref is not None:
-        _bind_placed_references(prop_vals, declared, xref)
+        _bind_placed_references(prop_vals, declared, xref,
+                               _scro_property_types(rec, xref))
     if unlock_plan and unlock_globals:
         ql = edid.lower()
         for (qkey, _stage), gnames in unlock_plan['stage_reveals'].items():
@@ -608,14 +609,68 @@ def _drop_case_variants(prop_vals: dict, name: str) -> None:
         del prop_vals[k]
 
 
-def _bind_placed_references(prop_vals: dict, declared: dict, xref) -> None:
+def _scro_property_types(rec: dict, xref) -> dict:
+    """{safe property name: Papyrus type} for every SCRO this quest binds.
+
+    The result-script pass (`_quest_well_known_refs`) only sees properties a
+    result-script body USES, so a SCRO reached only as a command argument
+    (`SetQuestObject Hridi 1` registers no ref property) is absent from
+    `declared` and never redirected.  These are typed exactly as the converter's
+    preload types them, so `_bind_placed_references` can redirect them too.
+    """
+    from script_convert.converter import ScriptConverter
+    from script_convert.scro_refs import (preload_scro_refs,
+                                           preload_stage_scro_refs)
+    conv = ScriptConverter(xref)
+    preload_scro_refs(conv, rec, xref)
+    for i in range(get_int(rec, 'StageCount')):
+        for j in range(get_int(rec, f'Stage[{i}].LogCount')):
+            preload_stage_scro_refs(conv, rec, xref, i, j)
+    return dict(conv._property_refs)
+
+
+def _placed_ref_carrying_script(xref, base_fid: str, ptype: str) -> str:
+    """The single placed ref of `base_fid` whose OWN attached script is the
+    Papyrus class `ptype`, or '' when none -- or more than one -- qualifies.
+
+    Disambiguates a base with several placements (one scripted actor among
+    otherwise-identical copies).  Copies that share a single BASE script carry
+    no own SCRI, so none qualifies and the base binding is left as residue.
+    """
+    from script_convert.constants import papyrus_script_name
+    base_up = (base_fid or '').upper()
+    matches = []
+    for ref_fid, b in xref.record_base.items():
+        if (b or '').upper() != base_up:
+            continue
+        scri_fid = xref.record_scri.get(ref_fid, '')
+        if not scri_fid:
+            continue
+        script_edid = xref.script_formid_to_edid.get(scri_fid, '')
+        if script_edid and papyrus_script_name(script_edid) == ptype:
+            matches.append(ref_fid)
+    return matches[0] if len(matches) == 1 else ''
+
+
+def _bind_placed_references(prop_vals: dict, declared: dict, xref,
+                            scro_types: dict = None) -> None:
     """Rebind reference-typed properties from an actor BASE to its placed ref.
+
+    Covers the quest's declared (result-script) properties AND the SCRO-sourced
+    properties in `prop_vals` typed via `scro_types` -- the latter never reach
+    `declared` (e.g. Hridi enters only through the QUST SCRO table), so their
+    base->ACHR redirect happens only here.
 
     See: docs/commentary/tes5_import_quest.md#vmad-property-binding
     """
     from script_convert.constants import wants_placed_reference
     offset = get_formid_index_offset()
-    for name, ptype in declared.items():
+    typed = dict(declared)
+    if scro_types:
+        for name, ptype in scro_types.items():
+            if name in prop_vals and name not in typed:
+                typed[name] = ptype
+    for name, ptype in typed.items():
         if not wants_placed_reference(ptype):
             continue
         if name.lower() in ('player', 'playerref'):
@@ -625,6 +680,10 @@ def _bind_placed_references(prop_vals: dict, declared: dict, xref) -> None:
                 'NPC_', 'CREA', 'ACTI', 'LIGH'):
             continue
         ref_hex = xref.unique_placed_ref(raw_hex)
+        if not ref_hex:
+            # 0 or >1 placements: redirect only if exactly one placed ref
+            # CARRIES this declared script; else leave the base bind (residue).
+            ref_hex = _placed_ref_carrying_script(xref, raw_hex, ptype)
         if not ref_hex:
             continue
         try:
