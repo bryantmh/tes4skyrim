@@ -117,6 +117,12 @@ def record_dir(export_dir, plugin: str) -> Path:
     return reg.record_dir(export_dir, plugin)
 
 
+def plugin_name(export_dir, plugin: str) -> str:
+    """`plugin` as the registry or export folder spells it; unchanged without one."""
+    reg = _registry() if export_dir else None
+    return reg.canonical_plugin_name(export_dir, plugin) if reg else plugin
+
+
 def plugin_out_root(out_root, plugin: str, export_dir=None) -> Path:
     """The folder in `out_root` holding `plugin`'s converted artefacts.
 
@@ -141,7 +147,7 @@ def plugin_esm(out_root, plugin: str, export_dir=None) -> Path:
     for an imported mod, whose plugins share one folder named for the MOD, and
     every copy of it had to be found and fixed by hand. Call this instead.
     """
-    return plugin_out_root(out_root, plugin, export_dir) / plugin
+    return plugin_out_root(out_root, plugin, export_dir) / plugin_name(export_dir, plugin)
 
 
 def master_record_dir(export_dir, master: str) -> Path:
@@ -224,7 +230,7 @@ class PluginPaths:
     @property
     def esm(self) -> Path:
         """`output/<group>/<plugin>` — the converted plugin file itself."""
-        return self.out / self.plugin
+        return self.out / plugin_name(self.export_root, self.plugin)
 
     def master(self, master: str) -> "PluginPaths":
         """The same handle for one of this plugin's MASTERS.

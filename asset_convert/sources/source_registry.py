@@ -47,6 +47,8 @@ import json
 import os
 from pathlib import Path
 
+from asset_convert import case_paths
+
 REGISTRY_NAME = 'sources.json'
 REGISTRY_VERSION = 2
 
@@ -294,7 +296,7 @@ def directory_for(export_dir, plugin: str):
                   home_directory(export_dir, plugin)]
     candidates += [row['path'] for row in directories(export_dir)]
     return next((d for d in candidates
-                 if d and os.path.isfile(os.path.join(d, plugin))), None)
+                 if d and case_paths.exists([d], plugin, 'plugin_source')), None)
 
 
 def variant_folder(export_dir, plugin: str):
@@ -319,7 +321,7 @@ def copies(export_dir, plugin: str) -> list:
     out = []
     try:
         for row in directories(export_dir):
-            if os.path.isfile(os.path.join(row['path'], plugin)):
+            if case_paths.exists([row['path']], plugin, 'plugin_source'):
                 select_directory(row['path'])
                 out.append((row['path'], asset_root_name(export_dir, plugin)))
     finally:
@@ -518,6 +520,29 @@ def _sanitize_folder(name: str) -> str:
     return cleaned
 
 
+def canonical_plugin_name(export_dir, name: str) -> str:
+    """`name` as the registry or the export folder spells it.
+
+    The registered name, else the one folder of `export_dir` matching it in
+    any case (the exact spelling first), else `name`. Two folders differing
+    only by case raise ValueError. Listed on every platform, so Windows
+    answers the same spelling.
+    See: docs/commentary/asset_convert_paths.md#plugin-names
+    """
+    entry = get(export_dir, name)
+    if entry:
+        return entry.get('plugin') or name
+    try:
+        hits = [n for n in os.listdir(export_dir) if n.lower() == name.lower()]
+    except (OSError, TypeError, AttributeError):
+        return name
+    if name in hits or not hits:
+        return name
+    if len(hits) > 1:
+        raise ValueError(f'export folders differ only by case: {sorted(hits)}')
+    return hits[0]
+
+
 def asset_root_name(export_dir, plugin: str) -> str:
     """The folder name holding `plugin`'s ASSETS.
 
@@ -529,9 +554,10 @@ def asset_root_name(export_dir, plugin: str) -> str:
     """
     entry = get(export_dir, plugin)
     if not entry:
-        return variant_folder(export_dir, plugin) or plugin
+        name = canonical_plugin_name(export_dir, plugin)
+        return variant_folder(export_dir, name) or name
     label = _sanitize_folder(entry.get('group_label') or '')
-    return label or plugin
+    return label or entry.get('plugin') or plugin
 
 
 def asset_root(export_dir, plugin: str) -> Path:
@@ -559,7 +585,9 @@ def record_dir(export_dir, plugin: str) -> Path:
     every later stage to report "No export directory" and skip.
     """
     root = asset_root(export_dir, plugin)
-    return root / plugin if _ships_multiple_plugins(export_dir, plugin) else root
+    if not _ships_multiple_plugins(export_dir, plugin):
+        return root
+    return root / canonical_plugin_name(export_dir, plugin)
 
 
 def _ships_multiple_plugins(export_dir, plugin: str) -> bool:

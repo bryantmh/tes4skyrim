@@ -85,14 +85,17 @@ def topological_order(files: list, resolve) -> list:
     """Plugin names sorted so every master precedes what depends on it.
 
     `resolve` maps a plugin name to its binary path; passing it in keeps this
-    module free of the pipeline's path resolution.
+    module free of the pipeline's path resolution.  A header's master name
+    matches a listed plugin in any case and takes the listed spelling.
     """
     names = [f if isinstance(f, str) else f['name'] for f in files]
+    spelled = {n.lower(): n for n in names}
     deps = {}
     for name in names:
         source = resolve(name)
-        deps[name] = (get_masters_from_binary(source)
-                      if source and os.path.isfile(source) else [])
+        masters = (get_masters_from_binary(source)
+                   if source and os.path.isfile(source) else [])
+        deps[name] = [spelled.get(m.lower(), m) for m in masters]
 
     order, visited = [], set()
     for name in names:

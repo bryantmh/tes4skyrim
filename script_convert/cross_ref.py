@@ -17,6 +17,7 @@ from tes5_import.base.text_reader import parse_export_file
 from asset_convert.game_paths import current_namespace
 from core.worker_budget import worker_count
 from core.worldspace_names import converted_worldspace_edid, renames_for
+from output_layout import assets_for, master_record_dir
 
 # ===========================================================================
 # Cross-reference graph builder
@@ -59,25 +60,22 @@ def _export_dirs_with_masters(export_dir: str) -> list:
     Masters come FIRST so the last-wins merge lets an overriding plugin's own
     version of a record win.  The walk is transitive (a plugin's master may
     itself have masters) and cycle-safe; masters with no export directory are
-    skipped silently, which degrades to the old single-directory behaviour.
+    skipped silently.  A master resolves through `master_record_dir`, so a
+    nested mod's plugin and a lowercase header name both find it.
+    See: docs/commentary/asset_convert_paths.md#plugin-names
     """
     root = Path(export_dir)
     ordered: list = []
     seen: set = set()
 
     def visit(d: Path):
+        """Append `d` after every master it (transitively) names."""
         key = str(d).lower()
         if key in seen or not d.is_dir():
             return
         seen.add(key)
         for name in master_names(d):
-            # A master's export sits beside a plain `export/<plugin>/`, but an
-            # imported mod that ships several plugins nests its records one
-            # level deeper (`export/<Mod>/<plugin>/`), so look beside the
-            # group folder too before giving up on the master.
-            cands = [d.parent / name, d.parent.parent / name]
-            visit(next((c for c in cands if (c / '_HEADER.txt').is_file()),
-                       cands[0]))
+            visit(Path(master_record_dir(assets_for(d).parent, name)))
         ordered.append(str(d))
 
     visit(root)

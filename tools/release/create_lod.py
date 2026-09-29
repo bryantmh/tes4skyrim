@@ -231,12 +231,14 @@ def _select_plugins(args, available, export_root, create_lod_order) -> list:
     An explicit `--plugins` order is honoured verbatim: it IS the conflict
     resolution, and the GUI dialog lets the user arrange it by hand. Names with
     no converted output are dropped rather than failing the run, so a stale
-    saved selection never blocks the plugins that ARE built.
+    saved selection never blocks the plugins that ARE built.  A name matches
+    in any case and takes the converted plugin's spelling.
     """
     if not args.plugins:
         return create_lod_order(available, export_root)
-    plugins = [p for p in args.plugins if p in available]
-    missing = [p for p in args.plugins if p not in available]
+    spelled = {a.lower(): a for a in available}
+    plugins = [spelled[p.lower()] for p in args.plugins if p.lower() in spelled]
+    missing = [p for p in args.plugins if p.lower() not in spelled]
     if missing:
         print(f"  Not converted, skipping: {', '.join(missing)}")
     return plugins

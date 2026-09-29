@@ -10,6 +10,8 @@ import json
 import os
 from pathlib import Path
 
+from asset_convert import case_paths
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 #: Game -> the conversion_config.json key overriding its auto-detected path.
@@ -103,7 +105,7 @@ def _registered_source(export_dir: str, file_name: str,
                  if search_directories else None)
     except Exception:
         return ""
-    return os.path.join(owner, file_name) if owner else ""
+    return str(case_paths.resolve([owner], file_name, 'plugin_source')) if owner else ""
 
 
 def resolve_plugin_path(file_name: str, tes4_data: str,
@@ -116,9 +118,9 @@ def resolve_plugin_path(file_name: str, tes4_data: str,
     See: docs/reference/pipeline.md#plugin-source-resolution
     """
     export_dir = export_dir or str(SCRIPT_DIR / "export")
-    selected = os.path.join(tes4_data or "", file_name)
-    in_selected = bool(tes4_data) and os.path.isfile(selected)
-    return (_registered_source(export_dir, file_name, not in_selected)
+    found = tes4_data and case_paths.resolve([tes4_data], file_name, 'plugin_source')
+    selected = str(found) if found else os.path.join(tes4_data or "", file_name)
+    return (_registered_source(export_dir, file_name, not found)
             or selected)
 
 

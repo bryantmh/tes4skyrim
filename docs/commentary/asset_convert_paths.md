@@ -8,6 +8,7 @@
 - [The write rule](#write-rule)
 - [The case census](#census)
 - [The pack gate](#pack-gate)
+- [Plugin names in any case](#plugin-names)
 
 ## The case resolver
 <a id="case-resolver"></a>
@@ -107,3 +108,32 @@ packer merges it into, so `Textures/` beside `textures/` is not itself a twin.
 - `convert_meshes` ends with a census line for the plugin's output folder and
   the per-site `Case paths:` counts, so a case problem shows up at conversion
   time rather than at pack time.
+
+## Plugin names in any case
+<a id="plugin-names"></a>
+
+**Code:** `canonical_plugin_name`, `asset_root_name`, `record_dir`,
+`directory_for`, `copies` in `asset_convert/sources/source_registry.py`;
+`plugin_name`, `plugin_esm`, `PluginPaths.esm` in `output_layout.py`;
+`resolve_plugin_path` in `source_paths.py`; `_export_dirs_with_masters` in
+`script_convert/cross_ref.py`; `topological_order` in `core/plugin_masters.py`;
+`_select_plugins` in `tools/release/create_lod.py`
+
+A plugin's header can name its master in any case (`oblivion.esm`), and so can
+a `-f` or `--plugins` argument. Every folder and file built from the name
+resolves it first: `canonical_plugin_name(export_dir, name)` answers the
+registered name for an imported mod, else the one folder of `export/` spelling
+it in any case (the exact spelling wins), else the name unchanged; two folders
+differing only by case raise. It lists the folder on every platform, so
+Windows answers the same spelling. `record_dir`, `master_record_dir`,
+`asset_root_name`, `plugin_out_root` and `plugin_esm` all go through it, and
+so does everything built on them: `nested.master_export_dir`,
+`pipeline.master_export_dirs`, `creature_projects`, `papyrus_compile` and
+`master_index`'s `paths(name).esm`. A plugin binary in a Data folder is found
+through `case_paths`. Name comparisons (`topological_order`, `_select_plugins`)
+lowercase both sides and keep the listed spelling.
+
+Not yet routed: `asset_convert/lod/sibling_lod.py` (`master_chain`,
+`_master_rank`, `dependents_of`) compares header master names to the plugin
+list case-sensitively, so a lowercase master is dropped from the LOD order.
+Tripwire: fix it with the object-LOD stream that owns that file.
