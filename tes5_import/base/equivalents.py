@@ -78,12 +78,12 @@ _SKY_MUDCRAB         = 0x000BA545   # MudcrabRace
 _SKY_SABRECAT        = 0x00013200  # SabreCatRace
 _SKY_SKEEVER         = 0x00013201  # SkeeverRace
 _SKY_SPIDER          = 0x000131F8  # FrostbiteSpiderRace
-_SKY_WOLF            = 0x000131EB  # WolfRace
+_SKY_WOLF            = 0x0001320A  # WolfRace
 _SKY_WEREWOLF        = 0x000CDD84  # WerewolfBeastRace (Dawnguard.esm 0x000CDD84)
-_SKY_CHAURUS         = 0x000131F3  # ChaurusRace
-_SKY_MAMMOTH         = 0x0001320A  # MammothRace (Skyrim.esm)
-_SKY_RABBIT          = 0x00059339  # RabbitRace (Skyrim.esm)
-_SKY_FOX             = 0x000A0EB2  # FoxRace (Skyrim.esm)
+_SKY_CHAURUS         = 0x000131EB  # ChaurusRace
+_SKY_MAMMOTH         = 0x000131FF  # MammothRace (Skyrim.esm)
+_SKY_RABBIT          = 0x0006DC99  # HareRace (Skyrim.esm)
+_SKY_FOX             = 0x00109C7C  # FoxRace (Skyrim.esm)
 _SKY_DEER            = 0x000131ED  # ElkRace (closest for deer)
 _SKY_DEFAULT         = 0x000B7998  # SkeletonRace (last-resort fallback)
 #   CC ESLs — file-local FormIDs (prefix 05 is placeholder load-order byte)
@@ -132,8 +132,8 @@ CREA_RACE_PATTERNS = [
     ('gnarl',         _SKY_SPRIGGAN,       'Skyrim.esm 0x00013204 SprigganRace (closest to Gnarl)', None),
     ('hunger',        _SKY_DREMORA,        'Skyrim.esm 0x000131F0 DremoraRace (Hunger)', None),
     ('shambles',      _SKY_DRAUGR,         'Skyrim.esm 0x00000D53 DraugrRace (closest to Shambles)', None),
-    ('scalon',        _SKY_CHAURUS,        'Skyrim.esm 0x000131F3 ChaurusRace (closest to Scalon)', None),
-    ('baliwog',       _SKY_CHAURUS,        'Skyrim.esm 0x000131F3 ChaurusRace (closest to Baliwog)', None),
+    ('scalon',        _SKY_CHAURUS,        'Skyrim.esm 0x000131EB ChaurusRace (closest to Scalon)', None),
+    ('baliwog',       _SKY_CHAURUS,        'Skyrim.esm 0x000131EB ChaurusRace (closest to Baliwog)', None),
     ('skinned hound', _SKY_SKELETON,       'Skyrim.esm 0x000B7998 SkeletonRace (Skinned Hound)', None),
     ('skinnedh',      _SKY_SKELETON,       'Skyrim.esm 0x000B7998 SkeletonRace (Skinned Hound)', None),
     # ---- Atronachs ----
@@ -159,22 +159,22 @@ CREA_RACE_PATTERNS = [
     ('undead',        _SKY_DRAUGR,         'Skyrim.esm 0x00000D53 DraugrRace',          None),
     # ---- Wildlife ----
     ('bear',          _SKY_BEAR_BROWN,     'Skyrim.esm 0x000131E7 BearBrownRace',       'Skyrim.esm 0x000131E8 BearBlackRace / 0x000131E9 BearSnowRace'),
-    ('wolf',          _SKY_WOLF,           'Skyrim.esm 0x000131EB WolfRace',            None),
-    ('timber wolf',   _SKY_WOLF,           'Skyrim.esm 0x000131EB WolfRace',            None),
+    ('wolf',          _SKY_WOLF,           'Skyrim.esm 0x0001320A WolfRace',            None),
+    ('timber wolf',   _SKY_WOLF,           'Skyrim.esm 0x0001320A WolfRace',            None),
     ('mountain lion', _SKY_SABRECAT,       'Skyrim.esm 0x00013200 SabreCatRace (Mountain Lion)', None),
     ('mountainlion',  _SKY_SABRECAT,       'Skyrim.esm 0x00013200 SabreCatRace (Mountain Lion)', None),
     ('muontain',      _SKY_SABRECAT,       'Skyrim.esm 0x00013200 SabreCatRace (Mountain Lion typo)', None),
     ('deer',          _SKY_DEER,           'Skyrim.esm 0x000131ED ElkRace (closest to Deer)', None),
     ('horse',         _SKY_HORSE,          'Skyrim.esm 0x000131FD HorseRace',           None),
     ('unicorn',       _SKY_HORSE,          'Skyrim.esm 0x000131FD HorseRace (Unicorn)', None),
-    ('dog',           _SKY_WOLF,           'Skyrim.esm 0x000131EB WolfRace (Dog)',      None),
+    ('dog',           _SKY_WOLF,           'Skyrim.esm 0x0001320A WolfRace (Dog)',      None),
     ('rat',           _SKY_SKEEVER,        'Skyrim.esm 0x00013201 SkeeverRace (Rat)',   None),
     ('sheep',         _SKY_GOAT,           'Skyrim.esm 0x000131FA GoatRace (Sheep)',    None),
     ('boar',          _SKY_GOAT,           'Skyrim.esm 0x000131FA GoatRace (Boar)',     None),
     ('mudcrab',       _SKY_MUDCRAB,        'Skyrim.esm 0x000BA545 MudcrabRace',          None),
     ('mud crab',      _SKY_MUDCRAB,        'Skyrim.esm 0x000BA545 MudcrabRace',          None),
     ('slaughterfish', _SKY_MUDCRAB,        'Skyrim.esm 0x000BA545 MudcrabRace (Slaughterfish—no fish race)', None),
-    ('dreugh',        _SKY_CHAURUS,        'Skyrim.esm 0x000131F3 ChaurusRace (Land Dreugh)', None),
+    ('dreugh',        _SKY_CHAURUS,        'Skyrim.esm 0x000131EB ChaurusRace (Land Dreugh)', None),
     ('spriggan',      _SKY_SPRIGGAN,       'Skyrim.esm 0x00013204 SprigganRace',        None),
     ('troll',         _SKY_TROLL,          'Skyrim.esm 0x00013205 TrollRace',           'BSHeartland.esm 0x0208BB68 CYRTrollRiverRace / Skyrim.esm 0x00013206 TrollFrostRace'),
     ('wisp',          _SKY_WISP,           'Skyrim.esm 0x00013208 WispRace',            'BSHeartland.esm 0x0207822E CYRWillotheWispRace'),
