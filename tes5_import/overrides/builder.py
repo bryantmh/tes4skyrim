@@ -1347,15 +1347,24 @@ _INTERLEAVED_FAMILIES = (
 def _append_interleaved_surplus(result: list, substitutions: dict,
                                 interleaved: tuple, taken: dict,
                                 claimed: set) -> None:
-    """Append the plugin's entries past the master's count, paired A B A B in struct order.
+    """Insert the plugin's entries past the master's count, paired A B A B in struct order.
+
+    Each family's go right after its last entry in `result`, so the run
+    stays contiguous; a family `result` lacks is appended at the end.
 
     See: docs/commentary/tes5_import_override.md#interleaved-subrecords
     """
-    runs = [[(sig, p) for p in substitutions[sig][taken.get(sig, 0):]]
-            for sig in interleaved
-            if sig in substitutions and sig not in claimed]
-    for row in zip_longest(*runs):
-        result.extend(item for item in row if item is not None)
+    for family in _INTERLEAVED_FAMILIES:
+        if not set(family) <= set(interleaved):
+            continue
+        runs = [[(sig, p) for p in substitutions[sig][taken.get(sig, 0):]]
+                for sig in family
+                if sig in substitutions and sig not in claimed]
+        surplus = [item for row in zip_longest(*runs) for item in row
+                   if item is not None]
+        last = [i for i, (sig, _p) in enumerate(result) if sig in family]
+        at = last[-1] + 1 if last else len(result)
+        result[at:at] = surplus
 
 
 def _apply_generic(out: list, substitutions: dict, claimed: set) -> list:

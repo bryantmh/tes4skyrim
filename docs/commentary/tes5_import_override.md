@@ -636,6 +636,11 @@ that is the same unchecked assumption this function exists to remove.
     That loop also appended a family the master lacked twice (the final
     append pass did not know it was done). Guarded by
     `tests/test_interleaved_determinism.py` under PYTHONHASHSEED 0..7.
+  - **The surplus goes right after the family's last entry, not at the end
+    of the record.** Appending at the end left FR's REGN 02014E9F as `EDID
+    RCLR WNAM RPLI RPLD RDAT RDAT RDMO RDWT RPLI RPLD`, a split run that
+    none of Oblivion.esm's 133 REGNs has. Only a family the master lacks is
+    appended at the end.
 - <a id="achr-base-must-be-an-actor"></a>🛑 **AN ACHR'S BASE MUST BE AN NPC_,
   NEVER A LEVELLED LIST — THIS CRASHES THE GAME ON STARTUP.** A TES4 REFR that
   places an LVLC becomes `ACHR → shell NPC_ → LVLN` (see `leveled_actors`), and
