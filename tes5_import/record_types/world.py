@@ -1175,22 +1175,24 @@ def _land_layer_vtxt(rec: dict, pfx: str) -> dict:
             for vi in range(get_int(rec, f'{pfx}.VTXTCount'))}
 
 
-def _merge_alpha(layers: list, tex: int, vtxt: dict) -> None:
-    """Add an alpha layer to a quadrant, folding a repeated texture in by max opacity."""
+def _merge_alpha(layers: list, tex: int, vtxt: dict, order: int) -> None:
+    """Add an alpha layer at source blend `order`; a repeated texture folds in by max opacity."""
     existing = next((e for e in layers if e[0] == tex), None)
     if existing is None:
-        layers.append([tex, vtxt])
+        layers.append([tex, vtxt, order])
         return
+    existing[2] = min(existing[2], order)
     for pos, op in vtxt.items():
         if op > existing[1].get(pos, 0.0):
             existing[1][pos] = op
 
 
 def _collect_land_layers(rec: dict) -> tuple:
-    """({quad: base texture}, {quad: [[texture, {pos: opacity}], ...]}) from Layer[].
+    """({quad: base texture}, {quad: [[texture, {pos: opacity}, order], ...]}) from Layer[].
 
-    The first BASE per quadrant wins; alpha layers keep source order, a
-    repeated texture merged into its first appearance.
+    The first BASE per quadrant wins. `order` is the source ATXT layer index
+    (the blend order; file position when absent), the lowest for a repeated
+    texture, which merges into its first appearance.
     """
     base, alpha = {}, {}
     for i in range(get_int(rec, 'LayerCount')):
@@ -1204,18 +1206,28 @@ def _collect_land_layers(rec: dict) -> tuple:
             if tex:
                 _merge_alpha(alpha.setdefault(
                     get_int(rec, f'{pfx}.ATXT.Quadrant'), []),
-                    tex, _land_layer_vtxt(rec, pfx))
+                    tex, _land_layer_vtxt(rec, pfx),
+                    get_int(rec, f'{pfx}.ATXT.Layer', i))
     return base, alpha
 
 
+def _blend_order(kept: list) -> list:
+    """The kept alpha layers in the author's blend order (source ATXT layer index)."""
+    return sorted(kept, key=lambda e: e[2])
+
+
 def _emit_quad(quad: int, base, layers: list) -> bytes:
-    """One quadrant's BTXT (`base` None: none) and its top alpha layers by coverage."""
+    """One quadrant's BTXT (`base` None: none) and its top alpha layers by coverage.
+
+    Coverage picks WHICH layers survive the cap; they are written in the
+    source blend order, so the near terrain blends as the author painted.
+    """
     subs = b''
     if base is not None:
         subs += pack_subrecord('BTXT', struct.pack('<IBBxx', base, quad, 0))
     kept = sorted(layers, key=lambda e: sum(e[1].values()),
                   reverse=True)[:_MAX_ALPHA_LAYERS]
-    for idx, (tex, vtxt) in enumerate(kept):
+    for idx, (tex, vtxt, _order) in enumerate(_blend_order(kept)):
         subs += pack_subrecord('ATXT', struct.pack('<IBBH', tex, quad, 0, idx))
         if vtxt:
             subs += pack_subrecord('VTXT', b''.join(
@@ -1229,7 +1241,7 @@ def build_land_layers(rec: dict) -> bytes:
 
     A quadrant with alpha layers but no BASE is kept (ATXT-only, as vanilla
     ships 4,237 of them). Same-texture layers merge; the top 5 by coverage
-    survive. Shared with the override path (override_builder
+    survive, written in source blend order. Shared with the override path (override_builder
     _RUN_LAND_LAYERS): a second implementation would disagree and re-texture
     terrain on every unrelated edit.
     See: docs/commentary/asset_convert_terrain.md#land-layer-run

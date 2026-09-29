@@ -100,3 +100,33 @@ def test_repeated_texture_merges_by_max_opacity():
     [(tex, grid)] = decode_land_layers(build_land_layers(rec))['alpha'][0]
 
     assert grid[0, 1] == 0.6 and abs(grid[0, 2] - 0.9) < 1e-6
+
+
+def test_kept_layers_are_written_in_source_blend_order():
+    """Coverage picks the survivors; the author's ATXT layer order blends them.
+
+    Re-sorting by coverage changed the blend order of 92% of Oblivion's
+    multi-layer quadrants.
+    """
+    cover = [0.1, 0.9, 0.5, 0.05, 0.7, 0.3, 0.2]
+    rec = _rec([('BASE', 0, 0x1000, {})] + [
+        ('ALPHA', 0, 0x2000 + i, {p: c for p in range(10)})
+        for i, c in enumerate(cover)])
+
+    subs = _subs(build_land_layers(rec))
+
+    order = [struct.unpack('<IBBH', p)[0] for t, p in subs if t == b'ATXT']
+    assert order == [remap_formid(0x2000 + i) for i in (1, 2, 4, 5, 6)]
+
+
+def test_a_merged_texture_blends_at_its_first_layer():
+    """A texture painted twice keeps the lower of its two layer indices."""
+    rec = _rec([('BASE', 0, 0x1, {}),
+                ('ALPHA', 0, 0x3A00, {1: 0.9}),
+                ('ALPHA', 0, 0x3B00, {1: 0.9, 2: 0.9, 5: 0.9}),
+                ('ALPHA', 0, 0x3A00, {3: 0.9})])
+
+    subs = _subs(build_land_layers(rec))
+
+    order = [struct.unpack('<IBBH', p)[0] for t, p in subs if t == b'ATXT']
+    assert order == [remap_formid(0x3A00), remap_formid(0x3B00)]

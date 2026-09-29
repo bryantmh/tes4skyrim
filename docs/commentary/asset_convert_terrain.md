@@ -1825,6 +1825,15 @@ carry alpha layers and NO BTXT, with layer indices 0..n-1.
   carry 7 textures, and the engine dropped one it chose; the top 5 by coverage
   are now kept here.
 - Same-texture layers in a quadrant merge by max opacity per vertex.
+- **Coverage picks, the author orders.** Coverage chooses which layers survive
+  the cap; `_blend_order` writes them in the source ATXT layer index (a merged
+  texture at its lowest). Oblivion's file order equals its layer index in
+  77,557/77,557 ATXT, and re-sorting by coverage had changed the blend order of
+  66,572 of 72,208 multi-layer quadrants (92%) -- a visible near-terrain change
+  now reverted to the authored look. Paired LOD MAE on 11 Tamriel tiles (7,315
+  cells, same cap-5 selection both ways): coverage order 16.148, source order
+  16.121. That Skyrim blends by ATXT layer index is inference (our own decoder
+  assumes it).
 
 Tripwires, not built: dropped layers are not merged into a kept one (0.54% of
 opacity mass, but 7,543 quadrants lose a layer peaking above 0.5; needs texture

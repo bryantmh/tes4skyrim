@@ -851,9 +851,9 @@ def _rebuild_land_layers(plugin_rec, master_rec, old_subs):
     preserve here: every BTXT/ATXT/VTXT comes from the export's Layer[] list,
     so the author's list is the whole truth. The run is rebuilt wholesale
     through convert_LAND's OWN builder (build_land_layers) because the mapping
-    is lossy — same-texture layers merge, the top 5 alpha layers by coverage
-    survive per quadrant — and a second implementation would disagree with
-    the master's for unchanged layers.
+    is lossy — same-texture layers merge, the top 5 by coverage survive, in
+    source order — and a second implementation would disagree with the
+    master's for unchanged layers.
     """
     from ..record_types.world import build_land_layers
     return subrecords(build_land_layers(plugin_rec))
