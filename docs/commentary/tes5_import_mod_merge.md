@@ -106,7 +106,9 @@ Two carriers, because a mod declares its base two different ways:
 
 * a **plugin** mod names its masters in `_HEADER.txt`;
 * an **asset-only** mod has no plugin and no header, so the base is recorded at
-  import time — `--base Nehrim.esm`, into `_source/.base_plugins`.
+  import time — `--base Nehrim.esm`, into `_source/.base_plugins`. That file
+  lives in the MOD's `_source/`; a nested plugin's record dir reads it from
+  there too.
 
 Both are returned [nearest first](#base-order-nearest-first).
 
@@ -126,7 +128,7 @@ merge per entry, own flags winning.
 ### Bases are listed nearest first
 <a id="base-order-nearest-first"></a>
 
-**Code:** `names_for`, `export_dirs`, `subdirs` in
+**Code:** `names_for`, `export_dirs`, `asset_dirs`, `subdirs` in
 `asset_convert/sources/base_plugins.py`; `master_export_dirs` in
 `tes5_import/pipeline.py`
 
@@ -139,6 +141,11 @@ silently, because both copies exist and nothing warns. The recorded
 `_source/.base_plugins` names (`--base A B`) are read in load order too — the
 same later-wins convention as an ordered merge's source list — after the header
 masters, and reversed with them.
+
+`export_dirs` returns the bases' RECORD folders; a consumer reading meshes or
+textures takes `asset_dirs` (`master_texture_roots` via `subdirs`,
+`morrowind_armor`, `creature_split_morrowind`, `morroblivion_pairs`), because a
+nested base keeps its assets one level above its records.
 
 A consumer picks its direction by its merge shape, never by accident:
 
@@ -205,16 +212,51 @@ mod's real specular map can never be overwritten.
 ## Resolving a master's export directory
 <a id="master-export-resolution"></a>
 
-**Code:** `tes5_import/overrides/nested.py` — `export_root`,
-`master_export_dir`.
+**Code:** `export_root_of`, `master_record_dir` in `output_layout.py`;
+`tes5_import/overrides/nested.py` — `export_root`, `master_export_dir`.
 
 🛑 **Never derive the export root as `dirname(export_dir)` + the master's
 name.** `export_dir` is a RECORD directory, and an **imported mod nests its
 plugins inside the mod's own folder**, so the parent is the mod rather than
 the export root and the join finds nothing.
 
-Every consumer resolves through these two helpers instead, so the master's
+Every consumer resolves through these helpers instead, so the master's
 own run and the dependent plugin's adoption of it read the SAME `RACE.txt`.
+
+### One resolver for the export root
+<a id="export-root-resolution"></a>
+
+`output_layout.export_root_of` is the only place the root is derived: the
+folder, its parent or its grandparent that holds `sources.json` (the deepest
+shape is `<root>/<mod>/<plugin>`, so a stray marker further up is never
+taken), else the parent. Four modules had each written their own copy —
+`nested.export_root`, `morrowind_sidecar.export_root`, `game_paths._export_root`,
+`terrain_lod._master_record_dir` — and they now delegate to it.
+
+Four callers still took `dirname` and went blind for every nested mod:
+
+| caller | symptom | measured on Frostcrag Reborn (`export/Frostcrag Reborn 4.1.5 noUOP/DLCFrostcragReborn.esp`) |
+|---|---|---|
+| `base_plugins.export_dirs` | no base at all: the wearable plan, grass profile and Morrowind mesh roots saw only the mod's own records | 0 instead of 3 masters; wearable plan 84 instead of 1070 entries, base GRAS models 0 instead of 97 |
+| `voice_races.master_race_dirs` | the masters' RACE records unread | 2 instead of 16 race EditorIDs |
+| the importer's music-manifest scan (`pipeline._prescan_music_records`) | on a first build, before the sound stage has written `music_tracks.json`, the scan looked for `<Mod>/<plugin>/music` and found none, so no MUST/MUSC | 10 tracks in `<Mod>/music` missed |
+| `tools/esm/cell_meshes.build_master_aware_index` | every master-owned base `<unresolved>` | `FrostcragSpire07`: 0 instead of 39 mesh paths |
+
+For Frostcrag Reborn itself the output does not change: its own ARMO/CLOT
+already name every worn mesh it ships (0 of its 791 meshes change variant
+mask), and none of its masters' 97 grass models is in its tree. A nested mod
+that retextures its masters' armour or grass is the case this fixes.
+
+⚠ **Not fixed here — the sibling class, an ASSET root read as a record dir.**
+`audio_converter` passes the mod folder to `load_race_voices` and
+`load_voice_type_edids`, `nif_flames.flame_socket_map` reads `STAT.txt` from the
+folder above `meshes/`, and `names_for` of a mod folder without `--base` reads
+no header. For a nested mod all three find nothing: Frostcrag Reborn's
+`Avalonian Ayleid` voice folder resolves only through the `voice_key` fallback
+(same key by coincidence, logged as unmapped). A mod folder can hold several
+plugins, so which record dir answers is a design choice, not a join.
+Tripwire: a nested mod whose voices land in the wrong VTYP folder, or whose
+FlameNode meshes lose their flames.
 
 Three call sites relearned this the hard way, each with a silent failure:
 

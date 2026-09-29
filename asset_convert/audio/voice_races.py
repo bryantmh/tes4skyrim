@@ -99,11 +99,16 @@ def iter_records(txt: Path):
 
 
 def master_race_dirs(export_dir: Path) -> list:
-    """Sibling export directories of each master named in `_HEADER.txt`.
+    """Record directories of each master named in `_HEADER.txt`, load order.
 
-    Mirrors how the importer resolves masters, so both halves of the voice
-    pipeline read the same RACE.txt and cannot disagree on a voice type.
+    Mirrors how the importer resolves masters (`export_root_of` +
+    `master_record_dir`), so both halves of the voice pipeline read the same
+    RACE.txt and cannot disagree on a voice type. `export_dir.parent / name`
+    missed every master of a nested mod, whose parent is its MOD folder.
+    See: docs/commentary/tes5_import_mod_merge.md#export-root-resolution
     """
+    from output_layout import export_root_of, master_record_dir
+    export_dir = Path(export_dir)
     header = export_dir / '_HEADER.txt'
     if not header.is_file():
         return []
@@ -113,7 +118,8 @@ def master_race_dirs(export_dir: Path) -> list:
         return []
     names = [ln.partition('=')[2].strip() for ln in lines
              if ln.startswith('Master[')]
-    dirs = [export_dir.parent / n for n in names]
+    root = export_root_of(export_dir)
+    dirs = [Path(master_record_dir(root, n)) for n in names]
     return [d for d in dirs if d.is_dir() and d != export_dir]
 
 

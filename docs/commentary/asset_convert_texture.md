@@ -829,9 +829,11 @@ It therefore wrote WRLD MODL `morrowindob\worldmapclouds\wrldmorrowind.nif`
 while Morrowind_ob, Tamriel_Data and TR_Mainland all wrote `tes4\...`. No mesh
 is ever generated under `morrowindob\`, and the grass ESP loads last and wins
 the override, so WrldMorrowind got a dangling cloud model and the world map
-drew NO clouds. `_export_root` walks up to `output_layout.REGISTRY_FILENAME`
-(`sources.json`, which marks the export root and exists for exactly this
-distinction) and falls back to `.parent` only when no marker is found.
+drew NO clouds. `_export_root` now delegates to `output_layout.export_root_of`,
+which finds `output_layout.REGISTRY_FILENAME` (`sources.json`, which marks the
+export root and exists for exactly this distinction) at the folder, its parent
+or its grandparent, and falls back to `.parent` only when no marker is found.
+See [the one resolver](tes5_import_mod_merge.md#export-root-resolution).
 
 ## The namespace crosses process boundaries through the environment
 <a id="namespace-crosses-process-boundaries"></a>

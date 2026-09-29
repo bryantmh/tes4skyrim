@@ -15,8 +15,8 @@ from typing import NamedTuple
 from asset_convert.character.hand_pairs import split_models
 from asset_convert.character.morrowind_coverage import SIDED_SLOTS
 from asset_convert.character.skyrim_overrides import SBP_33_HANDS, SBP_59_RIGHT_HAND
-from asset_convert.sources.base_plugins import export_dirs
-from output_layout import record_dir
+from asset_convert.sources.base_plugins import asset_dirs
+from output_layout import assets_for, record_dir
 from tes5_import.base.text_reader import parse_export_file
 
 from .morrowind_cell import parse_cell
@@ -79,10 +79,15 @@ def find_pairs(esms, index, export_dir: str, morroblivion, gaps) -> list:
 
 
 def split_pairs(pairs, out_meshes, log=print) -> list:
-    """The `pairs` whose pair item's worn models split into two hands, each with its halves."""
+    """The `pairs` whose pair item's worn models split into two hands, each with its halves.
+
+    Meshes resolve from ASSET roots, the pair's own first: `source` is a record
+    folder, and a nested mod keeps its meshes one level above it.
+    """
     out = []
     for pair in pairs:
-        roots = [os.path.join(d, 'meshes') for d in [pair.source] + export_dirs(pair.source)]
+        own = str(assets_for(pair.source))
+        roots = [os.path.join(d, 'meshes') for d in [own] + asset_dirs(pair.source)]
         models = split_models(pair.item, roots, out_meshes, log)
         if models:
             out.append(pair._replace(models=models))

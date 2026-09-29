@@ -35,19 +35,12 @@ _ACTIVE = {'ns': (os.environ.get(NAMESPACE_ENV) or DEFAULT_NAMESPACE).lower()}
 
 
 def _export_root(export_dir: Path) -> Path:
-    """The export ROOT above `export_dir`, found by its `sources.json` marker.
+    """The export ROOT above `export_dir` (`export_root_of`), never `.parent`.
 
-    An imported mod nests its plugins as `export/<mod>/<plugin>/`, so the
-    parent of an export dir is the MOD folder, not the root every master is
-    resolved against. Walk up to the marker instead; without one, fall back to
-    the parent, which is correct for a plain `export/<plugin>/`.
-    See: docs/commentary/asset_convert_texture.md#per-game-asset-namespace
+    See: docs/commentary/asset_convert_texture.md#export-root-by-marker
     """
-    from output_layout import REGISTRY_FILENAME
-    for cand in export_dir.parents:
-        if (cand / REGISTRY_FILENAME).is_file():
-            return cand
-    return export_dir.parent
+    from output_layout import export_root_of
+    return export_root_of(export_dir)
 
 
 def _chain_root(export_dir: Path) -> Path:

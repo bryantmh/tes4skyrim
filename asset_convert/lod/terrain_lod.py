@@ -269,20 +269,11 @@ def _master_record_dir(export_dir, master: str):
     export root.
     """
     import os as _os
-    from pathlib import Path as _Path
-    d = _Path(export_dir).parent
-    root = d
-    for cand in (d, d.parent):
-        if cand and (cand / 'sources.json').is_file():
-            root = cand
-            break
-    try:
-        from output_layout import record_dir as _rd
-        got = _rd(root, master)
-        if _os.path.isdir(got):
-            return got
-    except ImportError:
-        pass
+    from output_layout import export_root_of, record_dir as _rd
+    root = export_root_of(export_dir)
+    got = _rd(root, master)
+    if _os.path.isdir(got):
+        return got
     return root / master
 
 

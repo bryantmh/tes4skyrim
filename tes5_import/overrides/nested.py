@@ -112,19 +112,12 @@ def export_master_names(export_dir: str) -> list:
 
 
 def export_root(export_dir: str) -> str:
-    """The `export/` root, given any plugin's record folder.
+    """The `export/` root, given any plugin's record folder (`export_root_of`).
 
-    A game-Data plugin sits directly under it (`export/Oblivion.esm/`), but an
-    imported mod's plugins are nested inside their mod's shared folder
-    (`export/<Mod>/<plugin>/`), so the parent of a record dir is not reliably
-    the root. The registry file marks the real one.
+    See: docs/commentary/tes5_import_mod_merge.md#export-root-resolution
     """
-    d = os.path.dirname(os.path.normpath(export_dir))
-    # At most two levels: <root>/<mod>/<plugin> is the deepest shape there is.
-    for cand in (d, os.path.dirname(d)):
-        if cand and os.path.isfile(os.path.join(cand, 'sources.json')):
-            return cand
-    return d
+    from output_layout import export_root_of
+    return str(export_root_of(export_dir))
 
 
 def master_export_dir(root: str, name: str) -> str:

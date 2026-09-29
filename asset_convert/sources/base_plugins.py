@@ -25,14 +25,18 @@ def names_for(own_dir):
     Load order reversed: the header's `Master[i]` lines, then the recorded
     bases (`--base` is load order too), last first -- a later master
     overrides an earlier one, so a first-match lookup must meet it first.
+    `--base` lives in the MOD's `_source/`, one level above a nested record dir.
     See: docs/commentary/tes5_import_mod_merge.md#base-order-nearest-first
     """
+    from output_layout import assets_for
     own_dir = str(own_dir)
     header = [line.partition('=')[2].strip()
               for line in _lines(os.path.join(own_dir, '_HEADER.txt'))
               if line.startswith('Master[')]
-    recorded = [line.strip()
-                for line in _lines(os.path.join(own_dir, '_source', FILE_NAME))]
+    recorded = []
+    for d in dict.fromkeys((own_dir, str(assets_for(own_dir)))):
+        recorded += [line.strip()
+                     for line in _lines(os.path.join(d, '_source', FILE_NAME))]
     names = []
     for n in header + recorded:
         if n and n not in names:
@@ -49,19 +53,18 @@ def _lines(path):
 
 
 def export_dirs(own_dir):
-    """Sibling export trees for the bases of `own_dir` that exist, nearest first.
+    """The bases' RECORD folders that exist, nearest first.
 
-    Resolved through `record_dir`: an imported mod's plugins share ONE folder
-    named for the MOD, so joining the master's own name onto the export root
-    misses it and the base is silently lost (`Tamriel_Data.esm` lives in
-    `Tamriel Data (HD)`).
+    Resolved through `record_dir` against `export_root_of`, never against
+    `dirname(own_dir)`, which is the MOD folder for a nested plugin.
+    See: docs/commentary/tes5_import_mod_merge.md#export-root-resolution
 
     `output_layout` is imported here, not at module scope: it reaches back into
     this package for `source_registry`, so a top-level import is a cycle.
     """
-    from output_layout import record_dir
+    from output_layout import export_root_of, record_dir
     own_dir = os.path.abspath(str(own_dir))
-    export_root = os.path.dirname(own_dir)
+    export_root = str(export_root_of(own_dir))
     out = []
     for n in names_for(own_dir):
         p = str(record_dir(export_root, n))
@@ -70,10 +73,26 @@ def export_dirs(own_dir):
     return out
 
 
-def subdirs(own_dir, sub):
-    """`export_dirs` narrowed to an existing subfolder (e.g. 'textures')."""
+def asset_dirs(own_dir):
+    """The bases' ASSET folders (meshes/, textures/), nearest first.
+
+    A nested base keeps its records one level below its assets, so a caller
+    joining 'meshes' onto an `export_dirs` entry looks in a folder that does
+    not exist. Read assets from these instead.
+    """
+    from output_layout import assets_for
     out = []
     for d in export_dirs(own_dir):
+        p = str(assets_for(d))
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def subdirs(own_dir, sub):
+    """`asset_dirs` narrowed to an existing subfolder (e.g. 'textures')."""
+    out = []
+    for d in asset_dirs(own_dir):
         p = os.path.join(d, sub)
         if os.path.isdir(p):
             out.append(p)

@@ -154,9 +154,6 @@ _SCRIPT_EXPORT = 'SCPT.txt'
 _CELL_EXPORT = 'CELL.txt'
 _RECORD_MARK = '---RECORD_BEGIN---'
 
-#: What marks the export ROOT, as opposed to a record dir beneath it.
-_REGISTRY_FILE = 'sources.json'
-
 #: A local declaration in MWScript source: `short name`, `long name`, `float name`.
 _DECLARATION = re.compile(r'^\s*(short|long|float)\s+([A-Za-z_][A-Za-z0-9_]*)',
                           re.IGNORECASE)
@@ -211,14 +208,9 @@ def _actor_index(export_dir: str) -> str:
 
 
 def export_root(export_dir: str) -> str:
-    """The folder holding the source registry, at or above `export_dir`."""
-    path = os.path.abspath(export_dir)
-    while not os.path.isfile(os.path.join(path, _REGISTRY_FILE)):
-        parent = os.path.dirname(path)
-        if parent == path:
-            return os.path.dirname(os.path.abspath(export_dir))
-        path = parent
-    return path
+    """The export root above `export_dir`, absolute (`export_root_of`)."""
+    from output_layout import export_root_of
+    return str(export_root_of(os.path.abspath(export_dir)))
 
 
 def table_dirs(export_dir: str, plugin_name: str) -> list:

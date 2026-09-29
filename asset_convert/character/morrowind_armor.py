@@ -679,7 +679,7 @@ def assemble_armor(rec_dir, meshes_root, log=print) -> int:
     if not specs:
         return 0
     roots = [Path(meshes_root)] + [Path(d) / 'meshes'
-                                   for d in base_plugins.export_dirs(rec_dir)]
+                                   for d in base_plugins.asset_dirs(rec_dir)]
     skeletons = _skeletons(roots)
     if not skeletons:
         log(f'  Morrowind armor: {SKELETON_NIFS[False]} not found; '

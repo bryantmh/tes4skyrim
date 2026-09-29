@@ -27,6 +27,7 @@ and a loose .esp but no manifest, so it still satisfies neither test and is
 never mistaken for a converted plugin.
 """
 
+import os
 import zipfile
 from pathlib import Path
 
@@ -304,4 +305,19 @@ def assets_for(export_subdir) -> Path:
             return d          # d is directly under the root: not nested
         return parent
     return d
+
+
+def export_root_of(export_subdir) -> Path:
+    """The export ROOT that `export_subdir` (a record or asset folder) sits in.
+
+    The ONE resolver: never `dirname(record_dir)`, which is the MOD folder for
+    a nested `export/<Mod>/<plugin>/`. The folder, its parent or grandparent
+    holding the registry file, else the parent (pre-registry layout).
+    See: docs/commentary/tes5_import_mod_merge.md#export-root-resolution
+    """
+    d = Path(os.path.normpath(str(export_subdir)))
+    for cand in (d, d.parent, d.parent.parent):
+        if (cand / REGISTRY_FILENAME).is_file():
+            return cand
+    return d.parent
 

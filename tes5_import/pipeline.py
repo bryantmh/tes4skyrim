@@ -983,9 +983,10 @@ def _prescan_music_records(by_type: dict, writer, export_dir: str, plugin_out_di
             _gf(_w, 'FormID'): _gi(_w, 'SNAM.Music', None)
             for _w in by_type.get('WRLD', [])
             if _gi(_w, 'SNAM.Music', None) is not None})
+        from output_layout import export_root_of
         _music_manifest = load_music_manifest(
             plugin_out_dir,
-            export_dir=os.path.dirname(os.path.normpath(export_dir)),
+            export_dir=str(export_root_of(export_dir)),
             plugin=os.path.basename(output_path))
         _by_enum = master_music_types(writer)
         if _music_manifest.get('tracks'):

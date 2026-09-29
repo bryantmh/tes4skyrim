@@ -11,11 +11,16 @@ Usage:
 Options:
     --intersect X   Also list the second cell and print the intersection of mesh sets.
     --meshes-only   Print only unique mesh paths (one per line), no base record info.
+
+Run as a script, so the repo root is put on `sys.path` for `output_layout`.
 """
 import argparse
 import os
 import re
+import sys
 from collections import defaultdict
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 PLACED_FILES = ("REFR.txt", "ACHR.txt", "ACRE.txt")
 
@@ -77,13 +82,16 @@ def read_masters(export_dir):
 def build_master_aware_index(export_dir, wanted_fids):
     """build_base_index over the plugin AND its masters, keyed by the plugin's own FormIDs.
 
-    A base whose index byte names master k is looked up in export/<master k>
+    A base whose index byte names master k is looked up in master k's record
+    dir (resolved from the export root, so a nested mod's masters are found)
     under that master's own index byte (its master count).
     """
+    from output_layout import export_root_of, master_record_dir
+    root = export_root_of(export_dir)
     masters = read_masters(export_dir)
     index = build_base_index(export_dir, wanted_fids)
     for k, master in enumerate(masters):
-        master_dir = os.path.join(os.path.dirname(os.path.abspath(export_dir)), master)
+        master_dir = str(master_record_dir(root, master))
         if not os.path.isdir(master_dir):
             continue
         own = len(read_masters(master_dir))

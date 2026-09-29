@@ -537,7 +537,7 @@ def split_creatures(rec_dir, meshes_root, log=print, workers: int = None) -> int
     if not sources:
         return 0
     roots = [Path(meshes_root)] + [Path(d) / 'meshes'
-                                   for d in base_plugins.export_dirs(rec_dir)]
+                                   for d in base_plugins.asset_dirs(rec_dir)]
     base = None
     if any(biped for _f, _b, biped in sources.values()):
         base = resolve_mesh(roots, BASE_ANIM, paths.EXPORT)
