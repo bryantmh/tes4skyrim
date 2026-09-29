@@ -119,7 +119,7 @@ on PASS.
 |---|---|---|
 | G1 | case census of every output tree, zip and deploy folder (`case_paths.census`) | no two files share one lowercase archive path; folder twins only warn |
 | G2 | texture paths inside the packed mesh BSAs and the LOD mod's tiles vs every table (our BSAs, the LOD mod's loose textures, vanilla Skyrim BSAs) | all found except full keys listed in `--allow-missing FILE`, and the control (the texture the most meshes name) is found |
-| G3 | `Magic effect phase meshes` line; ARTO/EXPL records in the converted Oblivion.esm | every model converted, both record types present |
+| G3 | `Magic effect phase meshes` lines, per `convert <plugin>` section; ARTO/EXPL records in that plugin's converted file | every model converted, both record types present, in each plugin that had models; none anywhere is N/A, no line at all refuses |
 | G4 | `Race skin tones: N races resolved`, one line per plugin | every N > 0 |
 | G5 | each plugin's `door_panel_axis_cache.json`, for plugins with DOOR models that resolve and classify (see below) | current schema, holding every such model; plugins with none are N/A |
 | G6 | ATXT-only land quadrants (see below) | all keep an alpha layer |

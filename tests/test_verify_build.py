@@ -562,6 +562,31 @@ class TestMain:
 
 class TestMagicArt:
 
+    def test_records_are_counted_in_each_plugins_own_file(self, tmp_path,
+                                                         monkeypatch):
+        """G3 reads ARTO/EXPL from the plugin that had the models, not a fixed Oblivion.esm."""
+        seen = []
+        monkeypatch.setattr(vb, 'record_counts', lambda esm, sigs: (
+            seen.append(Path(esm).name) or {'ARTO': 1, 'EXPL': 1}))
+        ctx = _ctx(tmp_path)
+        ctx.sections[1].lines[1] = ('  Magic effect phase meshes: 0 written '
+                                    'from 0 models (0 not converted)')
+        ctx.sections[2].lines.append('  Magic effect phase meshes: 4 written '
+                                     'from 2 models (0 not converted)')
+        r = vb.check_magic_art(ctx)
+        assert (r['status'], r['denominator'], seen) == (
+            vb.PASS, '2/2 models', ['Knights.esp'])
+
+    def test_no_models_anywhere_is_not_applicable(self, tmp_path, monkeypatch):
+        """Every plugin reports 0 models -> N/A; no line at all -> REFUSE."""
+        monkeypatch.setattr(vb, 'record_counts', lambda esm, sigs: {})
+        ctx = _ctx(tmp_path)
+        ctx.sections[1].lines[1] = ('  Magic effect phase meshes: 0 written '
+                                    'from 0 models (0 not converted)')
+        assert vb.check_magic_art(ctx)['status'] == vb.NA
+        del ctx.sections[1].lines[1]
+        assert vb.check_magic_art(ctx)['status'] == vb.REFUSE
+
     def test_unconverted_models_fail(self, tmp_path, monkeypatch):
         """G3: '0 written from 0 models (21 not converted)' is 0/21, a FAIL."""
         monkeypatch.setattr(vb, 'record_counts',

@@ -197,19 +197,44 @@ _COMPILE = re.compile(r'^\[(.+?)\] Compilation: (\d+)/(\d+) succeeded, '
 
 
 def check_magic_art(ctx) -> dict:
-    """G3: every magic-effect model split into phases, and ARTO/EXPL records exist."""
-    hits = [tuple(int(x) for x in m.groups()) for line in all_lines(ctx.sections)
-            for m in [_MAGIC.search(line)] if m]
-    written = sum(h[0] for h in hits)
-    done = sum(h[1] for h in hits)
-    total = done + sum(h[2] for h in hits)
-    counts = record_counts(ctx.output / 'Oblivion.esm' / 'Oblivion.esm',
-                           (b'ARTO', b'EXPL'))
+    """G3: in each plugin that had magic-effect models, every one split into phases, and ARTO/EXPL exist.
+
+    Per `convert <plugin>` section; the records are counted in that
+    plugin's own converted file. A plugin with no such model is left out.
+    """
+    from output_layout import plugin_esm
+    per = magic_lines(ctx.sections)
+    if not per:
+        return result('G3', REFUSE, '0 models',
+                      'no "Magic effect phase meshes" line')
+    rows = {p: h for p, h in per.items() if h[1] + h[2] > 0}
+    if not rows:
+        return not_applicable('G3', 'no plugin has magic-effect models')
+    records = {p: record_counts(plugin_esm(ctx.output, p, ctx.export),
+                                (b'ARTO', b'EXPL')) for p in rows}
+    done = sum(h[1] for h in rows.values())
+    total = sum(h[1] + h[2] for h in rows.values())
     r = ratio('G3', done, total, 'models',
-              f'{written} phase meshes; records {counts}', records=counts)
-    if r['status'] == PASS and not all(counts.values()):
+              f'{sum(h[0] for h in rows.values())} phase meshes; records '
+              f'{records}', records=records)
+    if r['status'] == PASS and not all(all(c.values())
+                                       for c in records.values()):
         r['status'] = FAIL
     return r
+
+
+def magic_lines(sections) -> dict:
+    """{plugin: (written, models, not converted)} summed over its LAST convert section."""
+    out = {}
+    for sec in sections:
+        if not sec.label.startswith('convert '):
+            continue
+        hits = [tuple(int(x) for x in m.groups()) for line in sec.lines
+                for m in [_MAGIC.search(line)] if m]
+        if hits:
+            out[sec.label[len('convert '):].split()[0]] = tuple(
+                sum(h[i] for h in hits) for i in range(3))
+    return out
 
 
 def record_counts(esm: Path, sigs) -> dict:
