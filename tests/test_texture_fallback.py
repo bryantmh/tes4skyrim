@@ -100,6 +100,44 @@ class TestResolutionThroughTheFallback:
             shaders.master_texture_roots(mod / 'meshes')) is None
 
 
+class TestCaseBlindResolution:
+    """NIFs keep Oblivion's mixed case; extracted files are lowercase.
+
+    On a case-sensitive filesystem an exact join missed 35,552 of 40,337
+    Oblivion shapes' normal maps, and they fell back to the flat default.
+    """
+
+    def test_a_mixed_case_path_finds_the_lowercase_file(self, tmp_path):
+        mod = _tree(tmp_path, 'Base.esm', textures=['architecture/arstone02_n.dds'])
+        got = shaders.resolve_source_texture(
+            'textures\\tes4\\Architecture\\ARStone02_n.dds',
+            str(mod / 'meshes' / 'a.nif'))
+        assert got == str(mod / 'textures' / 'architecture' / 'arstone02_n.dds')
+
+    def test_the_base_is_searched_case_blind_too(self, tmp_path):
+        base = _tree(tmp_path, 'Base.esm', textures=['rock/stone.dds'])
+        mod = _tree(tmp_path, 'Mod.esp', header_masters=['Base.esm'])
+        got = shaders.resolve_source_texture(
+            'textures\\tes4\\Rock\\Stone.DDS', str(mod / 'meshes' / 'a.nif'),
+            shaders.master_texture_roots(mod / 'meshes'))
+        assert got is not None and str(base) in got
+
+    def test_a_mod_folder_named_Textures_is_found(self, tmp_path):
+        d = tmp_path / 'Loose.esp'
+        (d / 'Meshes').mkdir(parents=True)
+        (d / 'Textures' / 'Tower').mkdir(parents=True)
+        (d / 'Textures' / 'Tower' / 'Wall.dds').write_bytes(b'DDS ')
+        got = shaders.resolve_source_texture(
+            'textures\\tes4\\tower\\wall.dds', str(d / 'Meshes' / 'a.nif'))
+        assert got == str(d / 'Textures' / 'Tower' / 'Wall.dds')
+
+    def test_a_name_differing_beyond_case_still_misses(self, tmp_path):
+        mod = _tree(tmp_path, 'Base.esm', textures=['rock/stone.dds'])
+        assert shaders.resolve_source_texture(
+            'textures\\tes4\\Rock\\Stone_n.dds',
+            str(mod / 'meshes' / 'a.nif')) is None
+
+
 class TestWearablePlanThroughTheBase:
     """An asset-only tree inherits its base's ARMO/CLOT records.
 

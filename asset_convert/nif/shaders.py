@@ -8,6 +8,7 @@ See: docs/commentary/asset_convert_shader.md
 """
 
 from asset_convert.game_paths import current_namespace
+import functools
 import os
 
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
@@ -122,14 +123,44 @@ def resolve_source_texture(tex_rel, src_nif_path, fallback_roots=()):
         if low.startswith(prefix):
             rel = rel[len(prefix):]
             break
-    cand = tex_root + rel.replace('\\', os.sep)
+    parts = [p for p in rel.split('\\') if p]
+    cand = tex_root + os.sep.join(parts)
     if os.path.isfile(cand):
         return cand
+    # NIFs keep the author's casing ('ARStone02.dds') but extracted files are
+    # lowercase, so a case-sensitive filesystem needs a case-blind match.
+    cand = _join_nocase(norm[:i], ['textures', *parts])
+    if cand:
+        return cand
     for root in (fallback_roots or ()):
-        cand = os.path.join(root, rel.replace('\\', os.sep))
+        cand = os.path.join(root, *parts)
         if os.path.isfile(cand):
             return cand
+        cand = _join_nocase(root, parts)
+        if cand:
+            return cand
     return None
+
+
+@functools.lru_cache(maxsize=None)
+def _dir_names(path):
+    """`path`'s entries keyed by lowercase name, or None when unreadable."""
+    try:
+        return {n.lower(): n for n in os.listdir(path)}
+    except OSError:
+        return None
+
+
+def _join_nocase(root, parts):
+    """The existing file at `root/parts...` matched case-insensitively, or None."""
+    p = root
+    for seg in parts:
+        names = _dir_names(p)
+        match = names.get(seg.lower()) if names else None
+        if match is None:
+            return None
+        p = os.path.join(p, match)
+    return p if os.path.isfile(p) else None
 
 
 def master_texture_roots(mesh_dir):
