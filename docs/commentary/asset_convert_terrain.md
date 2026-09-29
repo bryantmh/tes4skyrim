@@ -1701,10 +1701,11 @@ edge-extends where neither exists.
   no LAND: heights only, white VCLR, no layers (so the diffuse is the baked
   image, [filler](#terrain-lod-filler)). They join `lands`, so the queue, the
   solid mask and the water quads treat them as terrain.
-- **Seams: LAND wins.** Each synthetic cell is bent to meet its LAND
-  neighbours' edges exactly, the delta fading linearly across the cell (west,
-  east, south, north in turn); `_assemble_tile` writes synthetic cells first,
-  so a LAND always owns a shared vertex.
+- **Seams: LAND wins, synthetic cells meet halfway.** Each synthetic cell is
+  bent to meet its LAND neighbours' edges exactly and its synthetic
+  neighbours on their mean edge, every corner on one shared value
+  ([seam stitch](#synthetic-seam-stitch)); `_assemble_tile` writes synthetic
+  cells first, so a LAND always owns a shared vertex.
 - **Water** where a synthetic cell dips below the worldspace default and the
   worldspace has any water cell (inference: the source's sea continues).
 - **An overlay's deletion stands.** A VHGT-less overlay LAND is erased AND
@@ -1733,6 +1734,42 @@ MS13CheydinhalOblivionWorld 11 (110 -> 121), DABoethiaRealm 7, OblivionRD006
 3, MS14World 2. With synthetic cells every Oblivion.esm LOD worldspace ends at
 a baked tile edge (max 31, Tamriel 95), so none hits it; it still matters for
 a worldspace with no baked LOD or a partial run.
+
+### <a id="synthetic-seam-stitch"></a>Synthetic cells are stitched to each other, corners included
+
+**Code:** `synthesize`, `seam_targets`, `vertex_height`, `fit_edges` and
+`coons` in `asset_convert/lod/terrain_lod_baked.py`.
+
+Neighbouring baked meshes disagree on the border they share: on Oblivion
+Tamriel 583 of the 989 synthetic|synthetic edges on a 32-cell tile seam
+differed (median 126, max 1,968 units), and the LOD4 tiles meeting there
+cracked (no skirts). The old feather bent a cell to its LAND edges one side at
+a time, moving the ends of its other edges without telling the synthetic cell
+across them: corners disagreed by up to 7,592.
+
+- **Every corner vertex gets one height** (`vertex_height`): the mean of the
+  real LAND cells meeting there, else the mean of the synthetic cells' raw
+  values. A LAND that touches only diagonally still pins it.
+- **Every edge gets one target** (`seam_targets`): a LAND neighbour's edge
+  verbatim; for a synthetic neighbour the mean of both raw edges; with no
+  neighbour the cell's own edge. Non-LAND targets are shifted linearly so
+  their ends sit on the corner heights, so both cells of a seam compute the
+  same numbers.
+- **Coons blend** (`fit_edges`): each edge correction fades linearly across
+  the cell minus the bilinear of the corners, which meets all four edges at
+  once (one edge alone reduces to the old linear feather), then the targets
+  are written verbatim. Cells whose edges already agree are left
+  bit-identical.
+
+Measured on Oblivion Tamriel (Oblivion.esm + DLCFrostcrag + Knights +
+Frostcrag Reborn meshes, after the [fill rule](#baked-lod-fill)): synthetic
+edges over 1 unit 589 -> 0 (on 32-cell seams 583 -> 0 of 989); corner
+vertices touching a synthetic cell with a spread over 1 unit 199 -> 0 of
+22,821; synthetic|LAND edges stay exact (526); 20,544 control cells (edges
+already agreeing, no LAND nearby) unchanged. SEWorld: 9 -> 0 corners; the 12
+left are LAND|LAND corners where the source LAND itself disagrees (-8 vs
+-1,040), which no synthetic cell can satisfy on both sides. Cost: 1.6 s for
+Tamriel's 22,178 cells (was 0.2 s).
 
 ### Before: tiles edge-extended past the landmass
 
@@ -1970,7 +2007,7 @@ Measured (Oblivion.esm + DLCFrostcrag + Knights + Frostcrag Reborn meshes,
 Tamriel): tile 0.32 goes from FR 1,024 cells to FR 896 + Oblivion.esm 128; its
 128 synthetic cells go from 96 flat at -512 (min -512) to 0 flat (min 12,320);
 the raw y=64 seam step over x 0..31 falls from max 44,416 / median 18,584 to
-432 / 112. With UOP in
+432 / 112 (then closed by the [seam stitch](#synthetic-seam-stitch)). With UOP in
 the sources the same 128 cells change and no other cell does.
 
 Measured (Oblivion.esm meshes vs Oblivion.esm LAND, cell-mean |dz|): tile 0.0

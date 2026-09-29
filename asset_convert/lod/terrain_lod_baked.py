@@ -295,37 +295,115 @@ def baked_heights(meshes: dict, log=print) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def feather_edges(h, west=None, east=None, south=None, north=None) -> np.ndarray:
-    """`h` (33x33, row 0 south) bent to meet each given LAND edge exactly.
+def coons(dw, de, ds, dn) -> np.ndarray:
+    """The 33x33 field (row 0 south) meeting four edge corrections exactly.
 
-    Each correction is the edge delta, fading linearly to 0 at the opposite
-    edge; applied west, east, south, north in turn, so a corner the two LAND
-    neighbours agree on stays put.
-    See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
+    Transfinite (Coons) blend: each edge's correction fades linearly across
+    the cell, minus the bilinear of the corners so none counts twice. Corners
+    are read from `ds` / `dn`; `dw` / `de` must agree with them there.
+    See: docs/commentary/asset_convert_terrain.md#synthetic-seam-stitch
     """
-    out = np.asarray(h, dtype=np.float64).copy()
-    fade = np.linspace(1.0, 0.0, CELL_VERTS)
-    if west is not None:
-        out += (west - out[:, 0])[:, None] * fade[None, :]
-    if east is not None:
-        out += (east - out[:, -1])[:, None] * fade[::-1][None, :]
-    if south is not None:
-        out += (south - out[0, :])[None, :] * fade[:, None]
-    if north is not None:
-        out += (north - out[-1, :])[None, :] * fade[::-1][:, None]
+    t = np.linspace(0.0, 1.0, CELL_VERTS)
+    u, v = t[None, :], t[:, None]
+    corners = ((1 - u) * (1 - v) * ds[0] + u * (1 - v) * ds[-1]
+               + (1 - u) * v * dn[0] + u * v * dn[-1])
+    return ((1 - u) * np.asarray(dw)[:, None] + u * np.asarray(de)[:, None]
+            + (1 - v) * np.asarray(ds)[None, :] + v * np.asarray(dn)[None, :]
+            - corners)
+
+
+def _ramp(a, b) -> np.ndarray:
+    """CELL_VERTS values from `a` to `b`, linearly."""
+    return np.linspace(a, b, CELL_VERTS)
+
+
+#: side: (neighbour offset, own edge, neighbour's edge, own corners (row, col) at its two ends).
+_EDGES = {'west': ((-1, 0), np.s_[:, 0], np.s_[:, -1], ((0, 0), (-1, 0))),
+          'east': ((1, 0), np.s_[:, -1], np.s_[:, 0], ((0, -1), (-1, -1))),
+          'south': ((0, -1), np.s_[0, :], np.s_[-1, :], ((0, 0), (0, -1))),
+          'north': ((0, 1), np.s_[-1, :], np.s_[0, :], ((-1, 0), (-1, -1)))}
+
+
+def fit_edges(h, targets: dict) -> np.ndarray:
+    """`h` (33x33, row 0 south) bent to meet `targets` {side: 33 heights} exactly.
+
+    A side with no target keeps its shape, shifted linearly between whatever
+    its two end corners become; the corrections blend across the cell by
+    `coons`, and the targets are then written verbatim on the edges.
+    See: docs/commentary/asset_convert_terrain.md#synthetic-seam-stitch
+    """
+    raw = np.asarray(h, dtype=np.float64)
+    corner = {}
+    for side, (_d, own, _o, ends) in _EDGES.items():
+        if side in targets:
+            delta = np.asarray(targets[side], np.float64) - raw[own]
+            corner.setdefault(ends[0], delta[0])
+            corner.setdefault(ends[1], delta[-1])
+    deltas = {}
+    for side, (_d, own, _o, ends) in _EDGES.items():
+        deltas[side] = (np.asarray(targets[side], np.float64) - raw[own]
+                        if side in targets else
+                        _ramp(corner.get(ends[0], 0.0), corner.get(ends[1], 0.0)))
+    out = raw + coons(deltas['west'], deltas['east'], deltas['south'],
+                      deltas['north'])
+    for side, edge in targets.items():
+        out[_EDGES[side][1]] = edge
     return out.astype(np.float32)
 
 
-def _land_edges(lands, synthetic, key) -> dict:
-    """The LAND edges bordering cell `key`, as `feather_edges` keywords."""
-    x, y = key
-    spec = {'west': ((x - 1, y), np.s_[:, -1]), 'east': ((x + 1, y), np.s_[:, 0]),
-            'south': ((x, y - 1), np.s_[-1, :]), 'north': ((x, y + 1), np.s_[0, :])}
+def feather_edges(h, west=None, east=None, south=None, north=None) -> np.ndarray:
+    """`fit_edges` for keyword edges: `h` bent to meet each given LAND edge exactly."""
+    given = {'west': west, 'east': east, 'south': south, 'north': north}
+    return fit_edges(h, {k: v for k, v in given.items() if v is not None})
+
+
+#: (cell offset from a vertex, that cell's (row, col) at the vertex) for the four cells meeting there.
+_AROUND = (((-1, -1), (-1, -1)), ((0, -1), (-1, 0)), ((-1, 0), (0, -1)), ((0, 0), (0, 0)))
+
+
+def vertex_height(lands, keys, heights, vertex) -> float:
+    """The height every cell meeting at cell corner `vertex` must share.
+
+    Real LAND there wins (their mean); else the synthetic cells' raw mean.
+    See: docs/commentary/asset_convert_terrain.md#synthetic-seam-stitch
+    """
+    real, syn = [], []
+    for (dx, dy), at in _AROUND:
+        nb = (vertex[0] + dx, vertex[1] + dy)
+        if nb in keys:
+            syn.append(float(heights[nb][at]))
+        elif nb in lands:
+            real.append(float(lands[nb]['heights'][at]))
+    return float(np.mean(real or syn))
+
+
+def _vertex_of(key, at) -> tuple:
+    """The vertex (cell-corner coordinates) at (row, col) corner `at` of cell `key`."""
+    return (key[0] + (at[1] == -1), key[1] + (at[0] == -1))
+
+
+def seam_targets(lands, keys, heights, key) -> dict:
+    """{side: 33 heights} synthetic cell `key` must meet.
+
+    A LAND side: that LAND's edge. A synthetic side: the mean of both raw
+    edges. A free side: its own raw edge. Every synthetic or free target is
+    then shifted linearly so its ends sit on `vertex_height`, so neighbours
+    that share an edge or only a corner compute one value there.
+    See: docs/commentary/asset_convert_terrain.md#synthetic-seam-stitch
+    """
+    raw = heights[key]
     out = {}
-    for side, (nb, edge) in spec.items():
-        land = lands.get(nb)
-        if land is not None and nb not in synthetic:
-            out[side] = land['heights'][edge]
+    for side, ((dx, dy), own, other, ends) in _EDGES.items():
+        nb = (key[0] + dx, key[1] + dy)
+        if nb not in keys and nb in lands:
+            out[side] = np.asarray(lands[nb]['heights'][other], np.float64)
+            continue
+        base = np.asarray(raw[own], np.float64)
+        if nb in keys:
+            base = (base + np.asarray(heights[nb][other], np.float64)) / 2.0
+        a, b = (vertex_height(lands, keys, heights, _vertex_of(key, e))
+                for e in ends)
+        out[side] = base + _ramp(a - base[0], b - base[-1])
     return out
 
 
@@ -334,7 +412,8 @@ def synthesize(world: dict, heights: dict) -> set:
 
     `world` holds 'lands', 'cell_water', 'default_wh' and 'deleted' (cells an
     overlay deleted, which stay empty). A synthetic cell is heights only
-    (white VCLR, no layers), feathered to meet its LAND neighbours; it takes
+    (white VCLR, no layers), bent to meet its LAND neighbours exactly and its
+    synthetic neighbours on their mean edge (`seam_targets`); it takes
     worldspace-default water when it dips below it and the worldspace has any.
     See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
     """
@@ -342,9 +421,10 @@ def synthesize(world: dict, heights: dict) -> set:
     wet = any(flag for flag, _h in water.values())
     keys = {k for k in heights
             if k not in lands and k not in world.get('deleted', ())}
+    fitted = {key: fit_edges(heights[key], seam_targets(lands, keys, heights, key))
+              for key in sorted(keys)}
     for key in sorted(keys):
-        lands[key] = {'heights': feather_edges(heights[key], **_land_edges(
-                          lands, keys, key)),
+        lands[key] = {'heights': fitted[key],
                       'colors': np.full((CELL_VERTS, CELL_VERTS, 3), 255, np.uint8),
                       'layers': {'base': {}, 'alpha': {}}}
         if wet and float(lands[key]['heights'].min()) < world['default_wh']:
