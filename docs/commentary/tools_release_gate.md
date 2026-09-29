@@ -102,7 +102,7 @@ on PASS.
 | G9 | each worldspace's LODGen input: rows on disk vs the printed `LODGen input` count vs the `Object-LOD selection` line | all equal; a mismatch after a NullReference retry (which rewrites the file) warns; a file not written inside the final `create_lod` step's window (its stamp to the next stamp, or to the log's last write, plus one second for whole-second stamps) fails: older is another run's, newer is a LATER run's |
 | G10 | CRC-32 of every zip member vs the deployed file | all equal |
 | G11 | final `create_lod` step: `NullReferenceException`, empty bakes; `.bto` per worldspace | none; at least `--min-bto` (TES4Tamriel 997) |
-| G12 | `[plugin] Compilation: ok/total succeeded, N failed` | every plugin present, N = 0 |
+| G12 | `[plugin] Compilation: ok/total succeeded, N failed` plus the plugin's `scripts/compile_errors.log` | every plugin with scripts has the line, and every failing script file is allowed (see below) |
 
 <a id="g2"></a>
 G2 reads mesh bytes and scans for `.dds` paths with its own pattern
@@ -148,6 +148,23 @@ the last run is valid. Its freshness is reported in the JSON.
 A stale cache is what this catches: `scan_door_axes` writes nothing for a
 plugin with no jobs, and a cache from an older schema survives until the
 next rescan.
+
+<a id="g12"></a>
+G12 keys failures by (plugin, script file), never by count. For a plugin
+that printed N > 0 failures it reads `compile_errors.log` beside the
+compiled scripts (one `Script.psc: message` entry per error, written by the
+compile step and deleted when nothing fails):
+
+- the log must be from this run (not older than the run start), or the
+  check REFUSES, because it cannot see which scripts failed;
+- its entry count must equal N, or the check fails;
+- every failing script must be allowed: in the `--baseline` run's failed
+  set for that plugin (stored in the JSON as `failed`), or named by
+  `--allow-compile-fail PLUGIN:SCRIPT`.
+
+A count-only baseline is not enough: a different script failing in the same
+slot would pass. A plugin that printed `No .psc scripts found` is left out;
+when every plugin is, the check is N/A.
 
 ## The terrain checks
 <a id="terrain-checks"></a>

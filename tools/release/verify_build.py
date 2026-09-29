@@ -223,6 +223,19 @@ def record_counts(esm: Path, sigs) -> dict:
     return counts
 
 
+def read_baseline(path) -> dict:
+    """{check id: data} from a previous run's gate JSON; {} without one."""
+    if not path:
+        return {}
+    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    return {c['id']: c.get('data') or {} for c in data.get('checks', [])}
+
+
+def baseline(ctx, cid: str, key: str, default=None):
+    """One measured value of check `cid` in the baseline run, else `default`."""
+    return ctx.baseline.get(cid, {}).get(key, default)
+
+
 def check_races(ctx) -> dict:
     """G4: each converted plugin resolved at least one race skin tone."""
     found = [int(m.group(1)) for line in all_lines(ctx.sections)
@@ -231,20 +244,78 @@ def check_races(ctx) -> dict:
                  'plugin lines', f'races resolved per plugin: {found}')
 
 
+_NO_SCRIPTS = re.compile(r'^\[(.+?)\] No \.psc scripts found')
+
+
 def check_compile(ctx) -> dict:
-    """G12: every plugin's scripts compiled with none failing."""
-    rows = {}
+    """G12: no plugin fails a script that the baseline did not already fail.
+
+    Failures are keyed by (plugin, script file), read from each plugin's
+    `compile_errors.log`, never by count: a count would hide a different
+    script failing in the same slot. The allowed set is the `--baseline`
+    run's failed set plus `--allow-compile-fail PLUGIN:SCRIPT`. A plugin
+    with no scripts is left out.
+    See: docs/commentary/tools_release_gate.md#g12
+    """
+    rows, bare = {}, set()
     for line in all_lines(ctx.sections):
-        m = _COMPILE.match(line)
+        m, none = _COMPILE.match(line), _NO_SCRIPTS.match(line)
         if m:
             rows[m.group(1)] = tuple(int(x) for x in m.groups()[1:])
-    want = ctx.plugins or sorted(rows)
-    good = [p for p in want if p in rows and rows[p][2] == 0
-            and rows[p][0] == rows[p][1] > 0]
-    absent = [p for p in want if p not in rows]
-    return ratio('G12', len(good), len(want), 'plugins',
-                 f'no Compilation line: {absent}' if absent else '',
-                 rows={p: list(v) for p, v in rows.items()})
+        elif none:
+            bare.add(none.group(1))
+    want = [p for p in (ctx.plugins or sorted(rows))
+            if p in rows or p not in bare]
+    if not want:
+        return not_applicable('G12', 'no plugin has scripts')
+    judged = {p: _compile_row(ctx, p, rows.get(p)) for p in want}
+    good = [p for p, j in judged.items() if j['status'] == PASS]
+    r = ratio('G12', len(good), len(want), 'plugins with scripts',
+              '; '.join(f"{p}: {j['why']}" for p, j in judged.items()
+                        if j['status'] != PASS),
+              rows={p: list(v) for p, v in rows.items()},
+              failed={p: j['failed'] for p, j in judged.items()})
+    if any(j['status'] == REFUSE for j in judged.values()):
+        r['status'] = REFUSE
+    return r
+
+
+def _compile_row(ctx, plugin, row) -> dict:
+    """{'status', 'why', 'failed'} for one plugin's compile summary."""
+    if row is None:
+        return {'status': FAIL, 'why': 'no Compilation line', 'failed': []}
+    failed_n = row[2]
+    if failed_n == 0:
+        return {'status': PASS, 'why': '', 'failed': []}
+    entries = compile_errors(ctx, plugin)
+    if entries is None:
+        return {'status': REFUSE, 'failed': [],
+                'why': f'{failed_n} failed but no compile_errors.log from '
+                       'this run'}
+    failed = sorted({e.split(': ', 1)[0] for e in entries})
+    new = sorted(set(failed) - allowed_failures(ctx, plugin))
+    if len(entries) != failed_n:
+        return {'status': FAIL, 'failed': failed,
+                'why': f'log holds {len(entries)} entries, printed {failed_n}'}
+    return {'status': FAIL if new else PASS, 'failed': failed,
+            'why': f'new failures {new}' if new else ''}
+
+
+def compile_errors(ctx, plugin):
+    """Entries of `plugin`'s compile_errors.log from this run, else None."""
+    from output_layout import plugin_out_root
+    log = plugin_out_root(ctx.output, plugin, ctx.export) / 'scripts' / \
+        'compile_errors.log'
+    if not log.is_file() or not _newer(log, ctx.start):
+        return None
+    return [t for t in log.read_text(encoding='utf-8',
+                                     errors='replace').splitlines() if t]
+
+
+def allowed_failures(ctx, plugin) -> set:
+    """Script files `plugin` may fail: the baseline's failed set plus the CLI's."""
+    base = baseline(ctx, 'G12', 'failed', {}).get(plugin, [])
+    return set(base) | {s for p, s in ctx.allow_compile_fail if p == plugin}
 
 
 _SELECTION = re.compile(r'Object-LOD selection: (\d+) reference')
@@ -719,9 +790,22 @@ def _parse_args(argv=None):
                     metavar='WRLD=N', help='default TES4Tamriel=997')
     ap.add_argument('--allow-missing', metavar='FILE',
                     help='G2: full texture keys known absent upstream')
+    ap.add_argument('--baseline', metavar='GATE.json',
+                    help="the previous run's gate JSON: no regression vs it")
+    ap.add_argument('--allow-compile-fail', action='append', default=[],
+                    type=_plugin_script, metavar='PLUGIN:SCRIPT',
+                    help='G12: a known failing script')
     ap.add_argument('--only', help='comma-separated check ids')
     ap.add_argument('--json', help='default: gate_<stamp>.json beside the log')
     return ap.parse_args(argv)
+
+
+def _plugin_script(text: str) -> tuple:
+    """`Plugin.esp:Script.psc` -> ('Plugin.esp', 'Script.psc')."""
+    plugin, sep, script = text.partition(':')
+    if not (sep and plugin and script):
+        raise argparse.ArgumentTypeError(f'want PLUGIN:SCRIPT, got {text!r}')
+    return plugin, script
 
 
 def _stamp_time(text: str):
@@ -756,6 +840,8 @@ def build_context(args):
         lod=output / LOD_DIR_NAME, plugins=plugins,
         worldspaces=worldspaces_in(sections),
         allow_missing=read_allow_missing(args.allow_missing),
+        baseline=read_baseline(args.baseline),
+        allow_compile_fail=args.allow_compile_fail,
         skyrim_data=args.skyrim_data or find_skyrim_data(),
         source_esm=args.source_esm, deploy=deploy,
         zips=sorted(finished.glob('*.zip')) if finished.is_dir() else [],
@@ -787,6 +873,7 @@ def main(argv=None) -> int:
     out.write_text(json.dumps({'mode': ctx.mode, 'log': str(args.log),
                                'run_start': str(ctx.start), 'verdict': final,
                                'plugins': ctx.plugins,
+                               'baseline': args.baseline,
                                'worldspaces': ctx.worldspaces,
                                'checks': results}, indent=1, default=str),
                    encoding='utf-8')

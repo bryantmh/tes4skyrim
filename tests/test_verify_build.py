@@ -34,6 +34,7 @@ NullReferenceException in an early per-plugin bake
 
 def _ctx(tmp_path, log_body='', **kw):
     """A context over a log in tmp_path, empty trees, a run start of 2026-09-02."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     log = tmp_path / 'rebuild.out'
     log.write_text(LOG.format(body=log_body), encoding='utf-8')
     sections = vb.read_log(log)
@@ -44,6 +45,7 @@ def _ctx(tmp_path, log_body='', **kw):
         output=out, export=tmp_path / 'export', lod=out / 'AutoConvertLOD',
         plugins=vb.plugins_in(sections), skyrim_data=None, source_esm=None,
         worldspaces=['TES4Tamriel'], allow_missing=frozenset(),
+        baseline={}, allow_compile_fail=[],
         deploy=[], zips=[], min_bto={'TES4Tamriel': 2}, cache={})
     for k, v in kw.items():
         setattr(ctx, k, v)
@@ -138,7 +140,71 @@ class TestLogChecks:
         assert vb.check_compile(_ctx(tmp_path))['status'] == vb.PASS
         ctx = _ctx(tmp_path, plugins=['Oblivion.esm', 'Knights.esp', 'FR.esp'])
         r = vb.check_compile(ctx)
-        assert (r['status'], r['denominator']) == (vb.FAIL, '2/3 plugins')
+        assert (r['status'], r['denominator']) == (
+            vb.FAIL, '2/3 plugins with scripts')
+
+    def _fr(self, tmp_path, entries, printed=None, **kw):
+        """A context where FR.esp compiled with `entries` in its error log."""
+        ctx = _ctx(tmp_path, plugins=['Oblivion.esm', 'Knights.esp', 'FR.esp'],
+                   **kw)
+        n = len(entries) if printed is None else printed
+        ctx.sections[2].lines.append(
+            f'[FR.esp] Compilation: {9 - n}/9 succeeded, {n} failed')
+        if entries is not None:
+            d = ctx.output / 'FR.esp' / 'scripts'
+            d.mkdir(parents=True)
+            (d / 'compile_errors.log').write_text(
+                ''.join(f'{e}: {e}:18:5: Checker error\n' for e in entries))
+        return ctx
+
+    def test_compile_failure_keyed_by_script_against_baseline(self, tmp_path):
+        """G12: a failure the baseline had passes; a DIFFERENT script in the same slot fails."""
+        assert vb.check_compile(self._fr(tmp_path / 'a', ['A.psc']))[
+            'status'] == vb.FAIL
+        base = {'G12': {'failed': {'FR.esp': ['A.psc']}}}
+        r = vb.check_compile(self._fr(tmp_path / 'b', ['A.psc'], baseline=base))
+        assert r['status'] == vb.PASS and r['data']['failed']['FR.esp'] == [
+            'A.psc']
+        r = vb.check_compile(self._fr(tmp_path / 'c', ['B.psc'], baseline=base))
+        assert r['status'] == vb.FAIL and 'B.psc' in r['detail']
+
+    def test_compile_allow_flag_and_log_agreement(self, tmp_path):
+        """--allow-compile-fail names a script; a log disagreeing with the count fails."""
+        allow = [('FR.esp', 'A.psc')]
+        assert vb.check_compile(self._fr(
+            tmp_path / 'a', ['A.psc'], allow_compile_fail=allow))[
+                'status'] == vb.PASS
+        assert vb.check_compile(self._fr(
+            tmp_path / 'b', ['A.psc'], printed=2, allow_compile_fail=allow))[
+                'status'] == vb.FAIL
+
+    def test_compile_failure_without_this_runs_log_refuses(self, tmp_path):
+        """Failures printed but no fresh compile_errors.log: the check cannot see them."""
+        assert vb.check_compile(self._fr(tmp_path / 'a', None, printed=1))[
+            'status'] == vb.REFUSE
+        ctx = self._fr(tmp_path / 'b', ['A.psc'],
+                       allow_compile_fail=[('FR.esp', 'A.psc')])
+        ctx.start = dt.datetime(2100, 1, 1)
+        assert vb.check_compile(ctx)['status'] == vb.REFUSE
+
+    def test_plugins_without_scripts_are_left_out(self, tmp_path):
+        """'No .psc scripts found' drops a plugin; all dropped -> N/A."""
+        ctx = _ctx(tmp_path, plugins=['Oblivion.esm', 'Knights.esp', 'Bare.esp'])
+        ctx.sections[2].lines.append('[Bare.esp] No .psc scripts found, '
+                                     'skipping compile')
+        r = vb.check_compile(ctx)
+        assert (r['status'], r['denominator']) == (
+            vb.PASS, '2/2 plugins with scripts')
+        ctx.plugins = ['Bare.esp']
+        assert vb.check_compile(ctx)['status'] == vb.NA
+
+    def test_baseline_reads_a_previous_gate_json(self, tmp_path):
+        """--baseline: each check's data, keyed by id."""
+        f = tmp_path / 'gate.json'
+        f.write_text(json.dumps({'checks': [
+            {'id': 'G12', 'data': {'failed': {'FR.esp': ['A.psc']}}}]}))
+        assert vb.read_baseline(f) == {'G12': {'failed': {'FR.esp': ['A.psc']}}}
+        assert vb.read_baseline(None) == {}
 
     def test_lodgen_reads_only_the_final_bake(self, tmp_path):
         """G11: the early NullReference does not count; tile minimum does."""
@@ -228,7 +294,6 @@ class TestFileChecks:
             m: f'/m/{m}' for m in want[Path(rec).name]}, raising=False)
         monkeypatch.setattr(vb, 'confirm_alone', lambda paths: set(paths)
                             if alone is None else alone, raising=False)
-        tmp_path.mkdir(exist_ok=True)
         ctx = _ctx(tmp_path, plugins=list(want))
         for name, (schema, models) in caches.items():
             d = ctx.export / name
