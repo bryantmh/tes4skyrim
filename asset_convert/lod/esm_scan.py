@@ -135,12 +135,24 @@ def _read_base_object(rec) -> dict:
     }
 
 
+def _read_xesp(xesp: bytes, g):
+    """`(parent FormID normalized, flags)` of an XESP enable parent, else None.
+
+    Flags bit 0 = Set Enable State to Opposite of Parent.
+    See: docs/commentary/asset_convert_terrain.md#object-lod-selection
+    """
+    if not xesp or len(xesp) < 8:
+        return None
+    parent, flags = struct.unpack_from('<II', xesp)
+    return g(parent), flags
+
+
 def _read_ref(rec, fid: int, pw: int, pc: int, g) -> dict:
     """One placed reference, with every float clamped by `finite`.
 
     NAME points at the placed base object, which very often lives in a MASTER
     -- the most collision-prone field in the merge, and the one deciding which
-    mesh a distant object draws.
+    mesh a distant object draws. `xesp` is its enable parent (`_read_xesp`).
     """
     subs = rec.sub_map()
     name = subs.get(b'NAME')
@@ -157,6 +169,7 @@ def _read_ref(rec, fid: int, pw: int, pc: int, g) -> dict:
         'x': x, 'y': y, 'z': z, 'rx': rx, 'ry': ry, 'rz': rz,
         'scale': (finite(struct.unpack_from('<f', xscl)[0], 1.0)
                   if xscl and len(xscl) >= 4 else 1.0),
+        'xesp': _read_xesp(subs.get(b'XESP'), g),
     }
 
 
@@ -167,7 +180,7 @@ def parse_esm(esm_path: Path):
     cells:       {fid: {parent_wrld, grid_x, grid_y}}
     stats:       {fid: {edid, sig, flags, model, obnd, lod4, lod8, lod16}}
     refs:        [{form_id, flags, base_fid, parent_wrld, parent_cell,
-                   x, y, z, rx, ry, rz, scale}]
+                   x, y, z, rx, ry, rz, scale, xesp}]
 
     Every FormID is normalized into the global index space.
     """

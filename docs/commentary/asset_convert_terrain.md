@@ -409,6 +409,18 @@ backslash or LODGen joins without a separator. `CellSW` must equal the SW
 stored in `LODSettings/<WRLD>.lod`.
 
 
+### <a id="object-lod-selection"></a>Which references get object LOD
+
+**Code:** `asset_convert/lod/esm_scan.py` (`_read_xesp`),
+`asset_convert/lod/lod_gen.py` (`_lod_exclusion`)
+
+A base qualifies by its distant-LOD flag (0x8000, set at import for any
+object at least `LOD_SIZE_THRESHOLD` units across). Each REFERENCE is then
+judged by its own state, which needs its enable parent: `esm_scan` reads a
+REFR's XESP as `(parent, flags)`, the parent normalized into the same global
+FormID space as `form_id` so a chain can cross plugins; flags bit 0 is "Set
+Enable State to Opposite of Parent".
+
 ## <a id="prescreening-the-lodgen-input"></a>Prescreening the LODGen input
 
 **Code:** `asset_convert/lod/lod_gen.py` (`_prescreen_meshes`,
