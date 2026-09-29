@@ -1044,7 +1044,8 @@ across, the wraith's ~92. `_pile_mesh_bounds` reads the emitted NIF;
 are symmetric there and carry the real Z range. Only when the mesh cannot be
 read does the record fall back to the `(-24,-24,-4)→(24,24,16)` box. The
 project's `body_dir` is a record path (`Actors\tes4\oblivion\ghost`), so the
-mesh is found through `case_paths.resolve` across the output plugin folders;
+mesh is found through `case_paths.resolve` across the plugin folders of the
+run's configured output root (not the install's `output/`);
 joined with `os.path.join` it matched nothing on a case-sensitive filesystem
 and both piles (ghost, wraith) shipped the fallback box.
 

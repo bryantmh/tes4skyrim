@@ -43,8 +43,11 @@ def _load_sound_identity(by_type: dict, master_export: dict) -> None:
 
 
 def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
-                        step_done) -> None:
-    """Populate every actor and creature index, in dependency order."""
+                        step_done, out_root) -> None:
+    """Populate every actor and creature index, in dependency order.
+
+    `out_root` is the run's output root, holding every plugin's converted meshes.
+    """
     master_export = ctx.master_export if ctx else None
 
     _load_door_sounds(by_type, export_dir, ctx)
@@ -71,7 +74,7 @@ def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
         print(f'  Starts Dead: {n_dead} placed corpse(s) with a 0 health pool')
 
     build_creature_races(by_type, writer, export_dir, master_export)
-    n_piles = build_creature_death_piles(writer)
+    n_piles = build_creature_death_piles(writer, out_root)
     if n_piles:
         print(f'  Creature death piles: {n_piles} ACTI '
               f'(authored ectoplasm, replaces the vanilla ash pile)')

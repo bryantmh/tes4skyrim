@@ -3,6 +3,7 @@
 See: docs/commentary/asset_convert_creature.md#pile-acti-record-fields
 """
 
+import struct
 import time
 
 if not hasattr(time, 'clock'):
@@ -40,7 +41,23 @@ def test_pile_under_a_backslash_body_dir_is_measured(tmp_path, monkeypatch):
     """body_dir `tes4\\creatures\\Ghost` finds output/<plugin>/meshes/tes4/creatures/ghost/."""
     _write_pile(tmp_path / 'Oblivion.esm' / 'meshes' / 'tes4' / 'creatures' / 'ghost'
                 / 'ghostdeathpile.nif')
-    monkeypatch.setattr(creature_races, 'DEFAULT_OUTPUT', tmp_path)
     proj = {'body_dir': 'tes4\\creatures\\Ghost'}
-    assert creature_races._pile_mesh_bounds(proj, 'ghostdeathpile.nif') == (
-        [-10, -20, 0], [10, 20, 5])
+    assert creature_races._pile_mesh_bounds(proj, 'ghostdeathpile.nif',
+                                            tmp_path) == ([-10, -20, 0], [10, 20, 5])
+
+
+def test_the_pile_acti_reads_the_runs_output_root(tmp_path, monkeypatch):
+    """The OBND comes from the configured output root, not the install's output/."""
+    _write_pile(tmp_path / 'out' / 'Oblivion.esm' / 'meshes' / 'ghost'
+                / 'ghostdeathpile.nif')
+    monkeypatch.setattr(creature_races, '_PROJECTS', {'ghost': {
+        'dissolves_on_death': True, 'death_pile': 'ghostdeathpile.nif',
+        'body_dir': 'ghost'}})
+    monkeypatch.setattr(creature_races, 'generated_formid', lambda *a: 0x800)
+    records = []
+    writer = type('W', (), {'add_record': lambda self, sig, rec: records.append(rec)})()
+
+    assert creature_races.build_creature_death_piles(writer, tmp_path / 'out') == 1
+
+    obnd = records[0][records[0].index(b'OBND') + 6:][:12]
+    assert struct.unpack('<6h', obnd) == (-10, -20, 0, 10, 20, 5)

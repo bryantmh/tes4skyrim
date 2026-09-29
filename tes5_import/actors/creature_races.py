@@ -34,8 +34,7 @@ from asset_convert import case_paths
 from asset_convert.havok.behavior_vocabulary import movement_type_names
 import os
 import struct
-
-from output_layout import DEFAULT_OUTPUT
+from pathlib import Path
 
 from ..base.writer import (pack_record, pack_subrecord, pack_string_subrecord,
                      pack_formid_subrecord, pack_obnd)
@@ -260,16 +259,22 @@ DEFAULT_ASH_PILE_GHOST = 0x00101048
 _CREA_PILE_ACTI = {}
 
 
-def _pile_mesh_bounds(proj, pile_name):
-    """Integer OBND bounds of an emitted death-pile NIF, or None.
+def _pile_mesh_path(proj, pile_name, out_root):
+    """The emitted pile NIF in any plugin folder under the run's `out_root`, or None."""
+    root = Path(out_root)
+    plugins = sorted(root.iterdir()) if root.is_dir() else []
+    rel = '\\'.join(('meshes', proj.get('body_dir', ''), pile_name))
+    return case_paths.resolve(plugins, rel, 'death_pile')
+
+
+def _pile_mesh_bounds(proj, pile_name, out_root):
+    """Integer OBND bounds of an emitted death-pile NIF under `out_root`, or None.
 
     Read from the shipped mesh rather than assumed: the two piles differ by
     4x in size, and the activation target the engine builds from OBND has to
     cover the geometry the player is looking at.
     """
-    plugins = sorted(DEFAULT_OUTPUT.iterdir()) if DEFAULT_OUTPUT.is_dir() else []
-    rel = '\\'.join(('meshes', proj.get('body_dir', ''), pile_name))
-    path = case_paths.resolve(plugins, rel, 'death_pile')
+    path = _pile_mesh_path(proj, pile_name, out_root)
     if path is None:
         return None
     try:
@@ -313,7 +318,7 @@ def _pile_mesh_bounds(proj, pile_name):
             [int(math.ceil(v)) for v in hi])
 
 
-def build_creature_death_piles(writer) -> int:
+def build_creature_death_piles(writer, out_root) -> int:
     """One ACTI per dissolving creature, pointing at its EXTRACTED pile mesh.
 
     The pile an Oblivion ghost leaves is authored geometry inside its own
@@ -325,7 +330,7 @@ def build_creature_death_piles(writer) -> int:
     ACTI, NOT STAT: a static cannot be activated.  All six `DefaultAshPile*`
     records in Skyrim.esm are ACTI.  Layout copied from DefaultAshPileGhost
     (0x00101048): EDID OBND FULL MODL PNAM FNAM.  OBND is read from the
-    shipped mesh (`_pile_mesh_bounds`) because the ghost's pile is ~21 units
+    shipped mesh under `out_root` because the ghost's pile is ~21 units
     across and the wraith's ~92; FULL is the crosshair prompt, PNAM the
     marker color (xEdit: SetRequired) and FNAM a zero U16 flag word.
 
@@ -344,7 +349,7 @@ def build_creature_death_piles(writer) -> int:
         edid = f'TES4Cr{folder.capitalize()}DeathPile'
         fid = generated_formid(writer, 'ACTI', edid, 'CREA_PILE', folder)
         subs = pack_string_subrecord('EDID', edid)
-        bounds = _pile_mesh_bounds(proj, pile)
+        bounds = _pile_mesh_bounds(proj, pile, out_root)
         if bounds is None:
             subs += pack_obnd(-24, -24, -4, 24, 24, 16)
         else:

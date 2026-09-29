@@ -782,7 +782,8 @@ def _prescan_mesh_caches(export_dir: str, plugin_out_dir: str, _step_done):
     _step_done('mesh bounds + collision caches')
 
 
-def _prescan_furniture_and_actors(by_type: dict, ctx, writer, export_dir: str, _step_done):
+def _prescan_furniture_and_actors(by_type: dict, ctx, writer, export_dir: str, _step_done,
+                                  out_root):
     """Load furniture seat lists, objective text and the actor indexes.
 
     FURN MNAM/FNPR must index the converted NIF's clustered seat
@@ -799,7 +800,7 @@ def _prescan_furniture_and_actors(by_type: dict, ctx, writer, export_dir: str, _
     _step_done('objective text')
 
     from .actors.indexes import build_actor_indexes
-    build_actor_indexes(by_type, writer, export_dir, ctx, _step_done)
+    build_actor_indexes(by_type, writer, export_dir, ctx, _step_done, out_root)
 
 
 def _prescan_package_plan(by_type: dict, ctx, writer, fid_to_edid: dict, _step_done):
@@ -1159,8 +1160,9 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
     _prescan_vendor_trainer(by_type, ctx, writer, export_dir,
                             os.path.basename(st.output_path), _step_done)
     _prescan_mesh_caches(export_dir, st.plugin_out_dir, _step_done)
+    out_root = st.output_root or os.path.dirname(st.plugin_out_dir) or '.'
     _prescan_furniture_and_actors(by_type, ctx, writer, export_dir,
-                                  _step_done)
+                                  _step_done, out_root)
     st.pack_plan, st.pack_ctx, st._script_vars = _prescan_package_plan(
         by_type, ctx, writer, st.fid_to_edid, _step_done)
     _prescan_leveled_actors(by_type, ctx, writer, _step_done)
