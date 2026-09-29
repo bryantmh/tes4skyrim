@@ -688,7 +688,7 @@ def _decode_land(body, _sub, remap=None):
         colors = np.frombuffer(vclr[:VERTS_SIDE*VERTS_SIDE*3], dtype=np.uint8
                                ).reshape(VERTS_SIDE, VERTS_SIDE, 3).copy()
     else:
-        colors = np.full((VERTS_SIDE, VERTS_SIDE, 3), 128, dtype=np.uint8)
+        colors = np.full((VERTS_SIDE, VERTS_SIDE, 3), 255, dtype=np.uint8)
 
     # Full per-quadrant texture layer structure (BTXT/ATXT/VTXT) for the
     # diffuse compositor.  decode_land_layers takes the raw record body.

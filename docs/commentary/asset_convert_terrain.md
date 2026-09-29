@@ -1779,3 +1779,27 @@ reported, not fatal. Measured over Oblivion.esm's 166 distinct LTEX diffuses:
 `oblivion\terrainhdoblivionevilsymbol01.dds` nowhere (only the latter's `_n`),
 `chrock01.dds` only under `tes4\rocks\`, not `landscape\`.
 
+### <a id="terrain-lod-vclr-hue"></a>VCLR tints the LOD diffuse by hue only
+
+Community Shaders' LANDSCAPE path (`Lighting.hlsl:2517`) divides the
+interpolated vertex colour by its largest channel, so near terrain uses VCLR as
+a TINT and never darkens by it. The LOD used `1 + (2*lum - 1) * 0.4`, which
+brightened a white VCLR 1.4x, and `_decode_land` filled a LAND with no VCLR at
+128. `_apply_vclr_shading` now interpolates the 33x33 VCLR to the cell image
+and divides each pixel by its own peak channel (floor 1e-3), the same order as
+the shader; a missing VCLR is 255 (no tint).
+
+Measured on Oblivion.esm Tamriel, 11 LOD32 tiles (7,190 dry cells with every
+quadrant painted), cell-mean MAE against Oblivion's own baked LOD tiles read
+north-up (the DDS is stored south-up): 16.10; the same tiles read unflipped
+score 19.09. The MAE cannot see hue, so a second check divides the composite by
+the same composite without VCLR on the 300 highest-chroma cells and compares
+the per-channel ratio to the tint computed straight from the raw VCLR
+(per-vertex normalise, then average): median error 0.0019, max 0.016, where the
+old formula is off by 0.295. Oblivion's VCLR is nearly grey (99.9th percentile
+chroma 0.097), so the tint is subtle.
+
+Tripwire: a player without Community Shaders gets vanilla's `/255` VCLR near
+terrain, ~9-12% darker than this LOD; revisit before a non-CS release, and if
+CS linear lighting is enabled.
+

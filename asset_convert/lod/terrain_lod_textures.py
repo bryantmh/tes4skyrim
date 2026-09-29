@@ -22,7 +22,8 @@ We render each cell to an RGB image by:
     ground textures were authored to tile the same way),
   * starting from the base layer, then compositing each alpha layer using its
     bilinearly-upsampled opacity grid,
-  * multiplying by the vertex-color luminance (VCLR) for baked terrain shading.
+  * tinting by the vertex-color hue (VCLR over its largest channel), as the
+    near landscape shader does.
 
 The result is downsampled per LOD level into the tile diffuse atlas.
 """
@@ -53,9 +54,6 @@ CELL_PX = 64
 MURK_COLOR = np.array([54.0, 66.0, 62.0], dtype=np.float32)
 MURK_FULL_DEPTH = 512.0    # game units below water at which murk saturates
 MURK_MAX = 0.9             # never fully hide the ground texture
-
-#: Fraction of the VCLR light map applied (0=off, 1=full x2 range).
-VCLR_SHADE_STRENGTH = 0.4
 
 
 # ---------------------------------------------------------------------------
@@ -359,20 +357,20 @@ def _sample_tiled(rgb_tile: np.ndarray, us: np.ndarray, vs: np.ndarray) -> np.nd
 
 def _apply_vclr_shading(out: np.ndarray, colors: np.ndarray,
                         cell_px: int) -> np.ndarray:
-    """Modulate `out` by the cell's VCLR luminance (baked AO / lighting).
+    """Tint `out` by the cell's VCLR hue: each colour over its largest channel.
 
-    `colors` is 33x33 with row 0 = south, flipped here to image orientation.
-    VCLR is a light map centered on ~0.5 = neutral (x2 = unshaded); the full
-    x2 range produced hard cell seams (per-cell VCLR discontinuities) and
-    crushed shadows, so the shading is blended only partway toward neutral.
+    `colors` is 33x33 with row 0 = south, flipped to image orientation and
+    interpolated BEFORE the per-pixel normalise, the order Community Shaders
+    uses for near terrain, so distant and near land share one tint and a
+    white VCLR leaves the texture unchanged.
+    See: docs/commentary/asset_convert_terrain.md#terrain-lod-vclr-hue
     """
     from PIL import Image
     shade = Image.fromarray(np.flipud(colors).copy(), 'RGB').resize(
         (cell_px, cell_px), Image.BILINEAR)
     shade = np.asarray(shade, dtype=np.float32) / 255.0
-    lum = shade.mean(axis=2, keepdims=True) * 2.0
-    mult = 1.0 + (lum - 1.0) * VCLR_SHADE_STRENGTH
-    return np.clip(out * mult, 0, 255)
+    peak = np.maximum(shade.max(axis=2, keepdims=True), 1e-3)
+    return np.clip(out * (shade / peak), 0, 255)
 
 
 def composite_cell(layers: dict, colors: np.ndarray, ltex_map: dict,
