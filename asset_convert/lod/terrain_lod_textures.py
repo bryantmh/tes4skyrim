@@ -22,8 +22,9 @@ We render each cell to an RGB image by:
     ground textures were authored to tile the same way),
   * starting from the base layer, then compositing each alpha layer using its
     bilinearly-upsampled opacity grid,
-  * tinting by the vertex-color hue (VCLR over its largest channel), as the
-    near landscape shader does.
+  * tinting by the vertex colors: by default their hue (VCLR over its largest
+    channel), as Community Shaders' near landscape does; `terrainLodVclrTint`
+    selects vanilla's plain multiply instead.
 
 The result is downsampled per LOD level into the tile diffuse atlas.
 """
@@ -55,6 +56,16 @@ CELL_PX = 64
 MURK_COLOR = np.array([54.0, 66.0, 62.0], dtype=np.float32)
 MURK_FULL_DEPTH = 512.0    # game units below water at which murk saturates
 MURK_MAX = 0.9             # never fully hide the ground texture
+
+#: VCLR tint modes: 'hue' (Community Shaders' near terrain) or 'multiply' (vanilla's x VCLR/255).
+VCLR_TINT_MODES = ('hue', 'multiply')
+VCLR_TINT_DEFAULT = 'hue'
+
+#: conversion_config.json key choosing the VCLR tint mode.
+VCLR_TINT_CONFIG_KEY = 'terrainLodVclrTint'
+
+#: This process's tint mode; None until `set_vclr_tint` or first use.
+_vclr_tint = None
 
 
 # ---------------------------------------------------------------------------
@@ -348,20 +359,53 @@ def _sample_tiled(rgb_tile: np.ndarray, us: np.ndarray, vs: np.ndarray) -> np.nd
     return rgb_tile[np.ix_(py, px)]
 
 
+def configured_vclr_tint() -> str:
+    """`terrainLodVclrTint` from conversion_config.json, else the default."""
+    from source_paths import load_config
+    try:
+        mode = str(load_config().get(VCLR_TINT_CONFIG_KEY, VCLR_TINT_DEFAULT))
+    except (OSError, ValueError):
+        return VCLR_TINT_DEFAULT
+    mode = mode.strip().lower()
+    if mode not in VCLR_TINT_MODES:
+        print(f"  WARNING: {VCLR_TINT_CONFIG_KEY}={mode!r} is not one of "
+              f"{', '.join(VCLR_TINT_MODES)}; using {VCLR_TINT_DEFAULT}")
+        return VCLR_TINT_DEFAULT
+    return mode
+
+
+def set_vclr_tint(mode: str = None) -> str:
+    """Make `mode` (None = the configured one) this process's tint; returns it."""
+    global _vclr_tint
+    mode = mode or configured_vclr_tint()
+    if mode not in VCLR_TINT_MODES:
+        raise ValueError(f"VCLR tint {mode!r} is not one of {VCLR_TINT_MODES}")
+    _vclr_tint = mode
+    return mode
+
+
+def vclr_tint() -> str:
+    """This process's VCLR tint mode, read from the config on first use."""
+    return _vclr_tint or set_vclr_tint()
+
+
 def _apply_vclr_shading(out: np.ndarray, colors: np.ndarray,
-                        cell_px: int) -> np.ndarray:
-    """Tint `out` by the cell's VCLR hue: each colour over its largest channel.
+                        cell_px: int, mode: str = VCLR_TINT_DEFAULT) -> np.ndarray:
+    """Tint `out` by the cell's VCLR: its hue, or the plain x VCLR/255 product.
 
     `colors` is 33x33 with row 0 = south, flipped to image orientation and
-    interpolated BEFORE the per-pixel normalise, the order Community Shaders
-    uses for near terrain, so distant and near land share one tint and a
-    white VCLR leaves the texture unchanged.
+    interpolated BEFORE the per-pixel step, the order Community Shaders uses
+    for near terrain. 'hue' divides each colour by its largest channel, so
+    distant and near land share one tint and a white VCLR leaves the texture
+    unchanged; 'multiply' darkens by VCLR as vanilla's shader does.
     See: docs/commentary/asset_convert_terrain.md#terrain-lod-vclr-hue
     """
     from PIL import Image
     shade = Image.fromarray(np.flipud(colors).copy(), 'RGB').resize(
         (cell_px, cell_px), Image.BILINEAR)
     shade = np.asarray(shade, dtype=np.float32) / 255.0
+    if mode == 'multiply':
+        return np.clip(out * shade, 0, 255)
     peak = np.maximum(shade.max(axis=2, keepdims=True), 1e-3)
     return np.clip(out * (shade / peak), 0, 255)
 
@@ -460,7 +504,8 @@ def composite_cell(layers: dict, colors: np.ndarray, ltex_map: dict,
         if empty:
             _FILLER['baked' if baked is not None else 'default'] += 1
     if colors is not None:
-        out = np.where(filler, out, _apply_vclr_shading(out, colors, cell_px))
+        out = np.where(filler, out, _apply_vclr_shading(out, colors, cell_px,
+                                                        vclr_tint()))
     if water_height is not None and heights is not None:
         out = _bake_murk(out, heights, water_height, cell_px)
     return np.clip(out, 0, 255).astype(np.uint8)

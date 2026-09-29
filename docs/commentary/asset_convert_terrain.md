@@ -1789,6 +1789,10 @@ only_cells, extra_texture_roots)`:
 - `extra_texture_roots` are further `textures/` roots searched when a landscape
   texture is not in the plugin's own output. Every converted tree belongs here,
   not only the masters' (see [the texture lookup note](#terrain-lod-texture-lookup)).
+- `lod_source_dirs` are the export record dirs whose shipped LOD fills
+  unpainted ground (see [the filler note](#terrain-lod-filler)).
+- `vclr_tint` is `hue` or `multiply`; None reads `terrainLodVclrTint` from
+  `conversion_config.json` (see [the VCLR note](#terrain-lod-vclr-hue)).
 
 The body runs as named phases: parse, bounds, tile dirs, texture setup, queue,
 bake, report.
@@ -1848,9 +1852,25 @@ the per-channel ratio to the tint computed straight from the raw VCLR
 old formula is off by 0.295. Oblivion's VCLR is nearly grey (99.9th percentile
 chroma 0.097), so the tint is subtle.
 
-Tripwire: a player without Community Shaders gets vanilla's `/255` VCLR near
-terrain, ~9-12% darker than this LOD; revisit before a non-CS release, and if
-CS linear lighting is enabled.
+**The mode is a setting.** `terrainLodVclrTint` in `conversion_config.json`,
+or `create_lod.py --vclr-tint`, picks `hue` (the default, above) or `multiply`,
+vanilla's `x VCLR/255`. The trade-off: `hue` matches near terrain under
+Community Shaders, whose landscape path normalises VCLR; `multiply` matches
+near terrain in an unmodded game, whose shader multiplies by it, and is
+~9-12% darker on Oblivion's near-grey VCLR. The choice depends on the player's
+renderer, not on the source data, so neither is universally right. The
+converter's default follows Community Shaders because that is the setup it is
+tested with; a build for players without it should pick `multiply`. The tint
+is resolved once per run and handed to every worker, and it is part of the
+per-cell image cache key.
+
+Same 11 tiles and 7,190 cells as above, per mode: `hue` 16.10 (unflipped
+control 19.09), `multiply` 12.78 (16.71). Oblivion baked its own LOD with the
+vanilla multiply, so its tiles favour `multiply`; that score measures
+agreement with the SOURCE game's distant land, not with near terrain in
+Skyrim, which is what the mode is chosen for.
+
+Tripwire: revisit the default if CS linear lighting is enabled.
 
 ## <a id="land-layer-run"></a>The LAND texture-layer run
 

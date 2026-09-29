@@ -202,6 +202,7 @@ def _bake_worldspace(job, ctx) -> bool:
         extra_texture_roots=[ctx['lod_textures_root'](Path(d))
                              for d in texture_dirs],
         lod_source_dirs=ctx['supplier_record_dirs']([owner] + suppliers),
+        vclr_tint=ctx.get('vclr_tint'),
     )
     print()
     return bool(ok and ok_terrain)
@@ -224,6 +225,13 @@ def _parse_args():
                          "worldspace the source shipped LOD for)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Print the plan and generate nothing")
+    from asset_convert.lod.terrain_lod_textures import (VCLR_TINT_CONFIG_KEY,
+                                                        VCLR_TINT_MODES)
+    ap.add_argument("--vclr-tint", choices=VCLR_TINT_MODES,
+                    help="How vertex colour tints the terrain-LOD diffuse: "
+                         "hue (Community Shaders' near terrain) or multiply "
+                         "(vanilla). Default: " + VCLR_TINT_CONFIG_KEY +
+                         " in conversion_config.json, else hue")
     return ap.parse_args()
 
 
@@ -358,6 +366,7 @@ def main() -> int:
         'lod_dir': lod_dir, 'out_root': out_root, 'export_root': export_root,
         'generate_lod': generate_lod,
         'generate_terrain_lod': generate_terrain_lod,
+        'vclr_tint': args.vclr_tint,
         'merge_cloud_bank': merge_cloud_bank,
         'lod_textures_root': _lod_textures_root,
         'supplier_asset_dirs': lambda names: _supplier_asset_dirs(

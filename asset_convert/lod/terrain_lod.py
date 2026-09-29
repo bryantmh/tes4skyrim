@@ -871,9 +871,9 @@ def _cell_image(lands, key, ctx, h33, wh):
     `ctx` is (ltex_map, tex_root, baked_tiles, offsets). A cell recurs in one
     tile per LOD level; the key carries the only per-tile inputs.
     """
-    from asset_convert.lod.terrain_lod_textures import composite_cell
+    from asset_convert.lod.terrain_lod_textures import composite_cell, vclr_tint
     ltex_map, tex_root, baked_tiles, offsets = ctx
-    ck = (key, wh, h33.tobytes())
+    ck = (key, wh, h33.tobytes(), vclr_tint())
     img = _CELL_IMG_CACHE.get(ck)
     if img is not None:
         return img
@@ -1180,13 +1180,16 @@ _worker_offsets    = None
 
 def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
                  cell_water, default_wh, baked_tiles=None,
-                 synthetic=frozenset(), offsets=None):
+                 synthetic=frozenset(), offsets=None, vclr_tint=None):
     """Called once per worker process to stash shared read-only data.
 
     `lands` is either a plain dict (single-process fallback) or the tuple
     `(shm_name, nbytes, index)`, in which case the buffer is MAPPED rather than
-    copied — see the SharedLands comment above.
+    copied — see the SharedLands comment above. `vclr_tint` is the parent's
+    resolved mode, so a spawned worker never re-reads the config.
     """
+    from asset_convert.lod.terrain_lod_textures import set_vclr_tint
+    set_vclr_tint(vclr_tint)
     global _worker_lands, _worker_mesh_dir, _worker_tex_dir
     global _worker_ltex_map, _worker_tex_root
     global _worker_cell_water, _worker_default_wh, _worker_shm, _worker_baked
@@ -1555,19 +1558,23 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
                          overlay_paths=None,
                          only_cells=None,
                          extra_texture_roots=None,
-                         lod_source_dirs=None) -> bool:
+                         lod_source_dirs=None,
+                         vclr_tint=None) -> bool:
     """Generate terrain LOD (.btr + .dds) for every tile of one worldspace.
 
     `overlay_paths` apply on top of `esm_path` in load order; `only_cells`
     restricts output to tiles covering those cells (heights are still parsed
     worldspace-wide); `extra_texture_roots` are further textures/ roots for
     the compositor; `lod_source_dirs` are the owner's and suppliers' export
-    record dirs, in load order, whose shipped LOD fills unpainted ground.
-    Returns True on success.
+    record dirs, in load order, whose shipped LOD fills unpainted ground;
+    `vclr_tint` names the VCLR mode. True on success.
     See: docs/commentary/asset_convert_terrain.md#generate-terrain-lod-arguments
     """
     if not _deps_ok():
         return False
+    from asset_convert.lod.terrain_lod_textures import set_vclr_tint
+    tint = set_vclr_tint(vclr_tint)
+    print(f"  VCLR tint: {tint}")
     world = _parse_world(esm_path, worldspace_edid, overlay_paths)
     if world is None:
         return False
@@ -1586,7 +1593,7 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     baked = _baked_sources(lod_source_dirs, worldspace_edid)
     init = (str(mesh_dir), str(tex_dir), ltex_map, [str(r) for r in tex_roots],
             world['cell_water'], world['default_wh'], baked, synthetic,
-            _filler_offsets(world, (ltex_map, tex_roots), baked))
+            _filler_offsets(world, (ltex_map, tex_roots), baked), tint)
     return _report_bake(*_bake_tiles(world, work, init))
 
 
