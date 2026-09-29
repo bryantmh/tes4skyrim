@@ -174,7 +174,7 @@ def run(landscape_dir, alpha=SPECULAR_ALPHA):
     checked = fixed = 0
     if not landscape_dir.exists():
         return checked, fixed
-    for path in sorted(landscape_dir.rglob('*_n.dds')):
+    for path in case_paths.rglob(landscape_dir, '*_n.dds'):
         checked += 1
         if not _has_constant_alpha(path, alpha) \
                 and set_constant_alpha(path, alpha):
@@ -338,7 +338,7 @@ def normalize_specular_alpha(tex_dir, alpha=DEFAULT_MASK_ALPHA, skip=()):
     checked = fixed = 0
     if not tex_dir.exists():
         return checked, fixed, counts
-    paths = [p for p in sorted(tex_dir.rglob('*_n.dds'))
+    paths = [p for p in case_paths.rglob(tex_dir, '*_n.dds')
              if not any(s in str(p).lower() for s in skip)]
 
     def _classify(path):

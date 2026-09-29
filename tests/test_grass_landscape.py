@@ -334,6 +334,12 @@ class TestLandscapeNormals:
         assert data[128] == landscape_normals.SPECULAR_ALPHA
         assert data[128 + 8:128 + 16] == blk[8:]
 
+    def test_uppercase_suffix_is_found(self, tmp_path):
+        """A mod's `ArStone01_N.DDS` is a landscape normal like any `_n.dds`."""
+        (tmp_path / 'ArStone01_N.DDS').write_bytes(
+            _make_dxt1_dds(4, 4, 1, [[_opaque_block(0xF800, 0x001F, 0)]]))
+        assert landscape_normals.run(tmp_path) == (1, 1)
+
     def test_idempotent(self, tmp_path):
         top = [_opaque_block(0xF800, 0x001F, 0)]
         path = tmp_path / 'idem_n.dds'
@@ -504,6 +510,13 @@ class TestConstantSpecularAlpha:
             bits |= (i % 8) << (3 * i)
         return (bytes([255, 0]) + bits.to_bytes(6, 'little')
                 + _opaque_block(self.RED, self.BLUE, 0x1B1B1B1B))
+
+    def test_uppercase_suffix_is_swept(self, tmp_path):
+        """`Poster_N.DDS` is checked like `poster_n.dds`."""
+        (tmp_path / 'Poster_N.DDS').write_bytes(
+            _make_dds(b'DXT3', 4, 4, 1, [[self._dxt3(0xFF)]]))
+        checked, fixed, _ = landscape_normals.normalize_specular_alpha(tmp_path)
+        assert (checked, fixed) == (1, 1)
 
     def test_authored_mask_is_left_alone(self, tmp_path):
         """The sweep must never touch a real per-texel mask."""
