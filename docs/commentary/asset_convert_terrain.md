@@ -11,7 +11,7 @@
 - [Object LOD: `_lod` in FO3/FNV, `_far` in Oblivion](#object-lod-suffix-differs-by-game)
 - [Prescreening the LODGen input](#prescreening-the-lodgen-input)
 - [`write_lodgen_input`: master modes and `only_cells`](#write-lodgen-input-master-modes)
-- [Terrain LOD invents ground over cells that own no LAND](#lod-invents-terrain-over-cells-with-no-land)
+- [No terrain without an authored source](#no-terrain-without-an-authored-source)
 - [Terrain LOD: arguments, shared cells, texture counts](#generate-terrain-lod-arguments)
 - [The LAND texture-layer run](#land-layer-run)
 - [The source game's baked LOD: tiles and height meshes](#baked-lod-sources)
@@ -1684,10 +1684,49 @@ vanilla source mesh is unavailable, None is returned: the caller omits MODL and
 the engine falls back to its own default, never a broken model reference.
 
 
-## <a id="lod-invents-terrain-over-cells-with-no-land"></a>Terrain LOD invents ground over cells that own no LAND
+## <a id="no-terrain-without-an-authored-source"></a><a id="lod-invents-terrain-over-cells-with-no-land"></a>No terrain without an authored source
 
-**Code:** the tile queue in `generate_terrain_lod`, `_assemble_tile` and
-`fill_missing` in `asset_convert/lod/terrain_lod.py`.
+**Code:** `_queue_tiles`, `_assemble_tile`, `_horizon_cells` and `fill_missing` in
+`asset_convert/lod/terrain_lod.py`; `synthesize` and `feather_edges` in
+`asset_convert/lod/terrain_lod_baked.py`; the `deleted` set from `_take_land`.
+
+Every cell a terrain-LOD tile shows is either a LAND record or the source
+game's own baked LOD mesh ([sources](#baked-lod-sources)); `fill_missing` only
+edge-extends where neither exists.
+
+- **Synthetic horizon cells.** A full run (`only_cells is None`) rasters the
+  owner's and suppliers' LOD meshes and adds a cell for every baked cell with
+  no LAND: heights only, white VCLR, no layers (so the diffuse is the baked
+  image, [filler](#terrain-lod-filler)). They join `lands`, so the queue, the
+  solid mask and the water quads treat them as terrain.
+- **Seams: LAND wins.** Each synthetic cell is bent to meet its LAND
+  neighbours' edges exactly, the delta fading linearly across the cell (west,
+  east, south, north in turn); `_assemble_tile` writes synthetic cells first,
+  so a LAND always owns a shared vertex.
+- **Water** where a synthetic cell dips below the worldspace default and the
+  worldspace has any water cell (inference: the source's sea continues).
+- **An overlay's deletion stands.** A VHGT-less overlay LAND is erased AND
+  recorded in `deleted`; no baked cell refills it.
+
+Measured on Oblivion.esm Tamriel with the Oblivion.esm + UOP + Frostcrag Reborn
+meshes: 22,178 synthetic cells (9,666 with water); tiles queued 962/249/69/21
+-> 2,304/576/144/36 at LOD 4/8/16/32 (1,301 -> 3,060); the 526
+synthetic|LAND shared edges match exactly; tile 32.0.64 now spans z 32..46,032
+(the northern mountains). Cost: the parent rasters 36 tiles in ~39 s before
+the pool; the shared LAND block grows 329 -> 498 MB; tile textures ~289 ->
+~604 MB (inferred from the per-level sizes, DXT1 + BC5 with mips). The
+vanilla precedent for LAND-less tiles is 20 of 36 vanilla Tamriel LOD32 BTRs;
+in-game loading is still to be confirmed.
+
+Tripwires: a partial (`only_cells`) run synthesizes nothing, so its tiles lack
+horizon cells a full run has. The engine only loads tiles inside the
+worldspace's `.lod` extents; Oblivion's -96 column needs the SW corner at -96
+(owned by `lod_gen.py`). `_queue_tiles` computes a level's last tile as
+`((max + level - 1) // level) * level`, which drops the last row/column when
+the inclusive max cell is an exact multiple of the level (not hit by Tamriel:
+-96..95).
+
+### Before: tiles edge-extended past the landmass
 
 A tile is queued when `any(c in lands for c in cells)` — ONE real cell anywhere
 in a `level x level` footprint builds the whole tile. `_assemble_tile` leaves
@@ -1721,7 +1760,9 @@ vertically disjointed terrain seen in-game. `WrldMorrowind.4.28.-64.btr` is
 
 `fill_missing` is right for a hole INSIDE the landmass, where a Z=0 crater
 between real cells would be worse. It is wrong past the coastline, where absent
-LAND means "no ground here". The two cases are not distinguished today.
+LAND means "no ground here". Where the source ships baked LOD meshes the land
+past the coast is now authored (above); a worldspace without them (TR's
+WrldMorrowind) still edge-extends.
 
 ## <a id="generate-terrain-lod-arguments"></a>Terrain LOD: arguments, shared cells, texture counts
 

@@ -472,7 +472,7 @@ def shipped_lod_worldspaces(export_dir: Path):
 
 
 def parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel',
-                        overlay_paths=None):
+                        overlay_paths=None, deleted=None):
     """Parse LAND + CELL water data for one worldspace from the output ESM.
 
     `overlay_paths` are plugins to apply ON TOP, in load order; everything is
@@ -510,7 +510,7 @@ def parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel',
         scan_land_file(Path(_path), worldspace_edid, lands, cell_water,
                         wrld_water, cell_coords,
                         allow_unscoped=(_i == 0),
-                        known_wrld_fid=base_wrld_fid)
+                        known_wrld_fid=base_wrld_fid, deleted=deleted)
     default_wh = (wrld_water['default']
                   if wrld_water['default'] is not None else 0.0)
     return lands, cell_water, default_wh
@@ -519,7 +519,8 @@ def parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel',
 def scan_land_file(esm_path: Path, worldspace_edid: str,
                     lands: dict, cell_water: dict, wrld_water: dict,
                     cell_coords: dict, count_only: bool = False,
-                    allow_unscoped: bool = True, known_wrld_fid=None):
+                    allow_unscoped: bool = True, known_wrld_fid=None,
+                    deleted=None):
     """Scan one plugin's LAND/CELL/WRLD data into the shared accumulators.
 
     `known_wrld_fid` scopes the scan to a worldspace an override edits without
@@ -580,7 +581,8 @@ def scan_land_file(esm_path: Path, worldspace_edid: str,
             cell = stack.cell
             coords = cell_coords.get(None if cell is None else g(cell))
             if coords is not None:
-                _take_land(rec, coords, lands, count_only, allow_unscoped, g)
+                _take_land(rec, coords, lands, count_only, allow_unscoped, g,
+                           deleted)
 
 
 def _take_cell(rec, fid: int, cell_coords: dict, cell_water) -> None:
@@ -616,15 +618,14 @@ def _take_cell(rec, fid: int, cell_coords: dict, cell_water) -> None:
 
 
 def _take_land(rec, coords, lands: dict, count_only: bool,
-               allow_unscoped: bool, remap) -> None:
+               allow_unscoped: bool, remap, deleted=None) -> None:
     """Decode one LAND into `lands`, or erase the cell it deletes.
 
-    An OVERLAY's LAND with no VHGT is the author DELETING that cell's terrain;
-    skipping it left the MASTER's heightmap in the dict, so distant terrain
-    kept rendering ground the plugin removed.  That fires for overlays only.
-    With `count_only` the VHGT presence check keeps the count matching what a
-    real parse would store. `remap` re-stamps the layer LTEX ids into
-    load-order space.
+    An OVERLAY's LAND with no VHGT is the author DELETING that cell's terrain
+    (overlays only); it is erased and added to `deleted`, so no baked LOD
+    refills it. `count_only` stores presence as a real parse would; `remap`
+    re-stamps the layer LTEX ids into load-order space.
+    See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
     """
     if count_only:
         if rec.sub(b'VHGT') is not None:
@@ -635,6 +636,8 @@ def _take_land(rec, coords, lands: dict, count_only: bool,
         lands[coords] = land
     elif not allow_unscoped:
         lands.pop(coords, None)
+        if deleted is not None:
+            deleted.add(coords)
 
 
 def _decode_land(body, _sub, remap=None):
@@ -702,57 +705,29 @@ def _decode_land(body, _sub, remap=None):
 # Tile assembly
 # ---------------------------------------------------------------------------
 
-def _assemble_tile(lands, tile_x, tile_y, level):
-    """Merge level×level cells into a ((level*32+1) × (level*32+1)) height+color grid.
+def _assemble_tile(lands, tile_x, tile_y, level, synthetic=frozenset()):
+    """Merge level x level cells into ((level*32+1)^2) height + colour grids.
 
-    tile_x, tile_y: SW cell coordinates of this tile.
-
-    Each cell contributes exactly VERTS_SIDE (33) vertices per side with 32
-    intervals.  Adjacent cells share their boundary vertex, so:
-      total verts per side = level * 32 + 1
-
-    Vertex mapping for cell (cx, cy) within the tile:
-      destination column range: [cx*32 .. cx*32+32]  (inclusive both ends)
-      destination row    range: [cy*32 .. cy*32+32]
-
-    Missing cells (world edges, water areas) are filled by edge-extending from
-    the nearest row/column that has real data, preventing flat Z=0 holes.
-
-    Returns (heights ndarray (tv×tv) float32,
-             colors  ndarray (tv×tv×3) uint8)
-    where tv = level*32+1.
+    tile_x, tile_y: the tile's SW cell. Cell (cx, cy) fills rows cy*32..+32
+    and columns cx*32..+32, sharing its boundary with each neighbour; cells in
+    `synthetic` are written first so a real LAND wins every shared vertex.
+    Missing cells are edge-extended from the nearest real row/column.
+    Returns (heights (tv,tv) float32, colors (tv,tv,3) uint8), tv = level*32+1.
+    See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
     """
-    tv = level * 32 + 1   # verts per tile side
-
-    # Use NaN as sentinel so we can distinguish "no data" from "height=0"
+    tv = level * 32 + 1
     out_h = np.full((tv, tv), np.nan, dtype=np.float32)
     out_c = np.full((tv, tv, 3), 100, dtype=np.uint8)
-
-    for cy in range(level):
-        for cx in range(level):
-            cell_key = (tile_x + cx, tile_y + cy)
-            land = lands.get(cell_key)
-            if land is None:
-                continue
-            h = land['heights']   # (33,33) float32
-            c = land['colors']    # (33,33,3) uint8
-
-            # Destination start in tile grid (SW = row/col 0, NE = row/col tv-1)
-            dst_x0 = cx * 32
-            dst_y0 = cy * 32
-
-            # Copy all 33×33 source verts into their destination positions.
-            # The boundary column/row (src col 32 / row 32) overlaps with the
-            # next cell's column/row 0; we write it here and the neighbor will
-            # overwrite it with the same value (heights must agree at boundaries).
-            out_h[dst_y0:dst_y0+33, dst_x0:dst_x0+33] = h
-            out_c[dst_y0:dst_y0+33, dst_x0:dst_x0+33] = c
-
-    # Fill NaN regions (missing cells) by edge-extending from nearest real data.
-    # Process row-by-row then column-by-column with forward/backward fill.
+    cells = sorted(((cx, cy) for cy in range(level) for cx in range(level)),
+                   key=lambda c: (tile_x + c[0], tile_y + c[1]) not in synthetic)
+    for cx, cy in cells:
+        land = lands.get((tile_x + cx, tile_y + cy))
+        if land is None:
+            continue
+        out_h[cy*32:cy*32+33, cx*32:cx*32+33] = land['heights']
+        out_c[cy*32:cy*32+33, cx*32:cx*32+33] = land['colors']
     if np.any(np.isnan(out_h)):
         fill_missing(out_h, out_c)
-
     return out_h, out_c
 
 
@@ -1137,10 +1112,12 @@ _worker_tex_root   = None
 _worker_cell_water = None
 _worker_default_wh = 0.0
 _worker_baked      = None
+_worker_synthetic  = frozenset()
 
 
 def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
-                 cell_water, default_wh, baked_tiles=None):
+                 cell_water, default_wh, baked_tiles=None,
+                 synthetic=frozenset()):
     """Called once per worker process to stash shared read-only data.
 
     `lands` is either a plain dict (single-process fallback) or the tuple
@@ -1150,6 +1127,7 @@ def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
     global _worker_lands, _worker_mesh_dir, _worker_tex_dir
     global _worker_ltex_map, _worker_tex_root
     global _worker_cell_water, _worker_default_wh, _worker_shm, _worker_baked
+    global _worker_synthetic
     if isinstance(lands, tuple):
         from multiprocessing import shared_memory
         shm_name, nbytes, index = lands
@@ -1171,6 +1149,7 @@ def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
     _worker_cell_water = cell_water
     _worker_default_wh = default_wh
     _worker_baked      = baked_tiles
+    _worker_synthetic  = synthetic
 
 
 def _worker_stats() -> dict:
@@ -1190,7 +1169,8 @@ def _process_tile(args):
     tag = f'{worldspace_edid}.{level}.{tile_x}.{tile_y}'
 
     try:
-        heights, colors = _assemble_tile(_worker_lands, tile_x, tile_y, level)
+        heights, colors = _assemble_tile(_worker_lands, tile_x, tile_y, level,
+                                         _worker_synthetic)
 
         water_quads = _tile_water_quads(_worker_lands, _worker_cell_water,
                                         tile_x, tile_y, level, _worker_default_wh)
@@ -1233,12 +1213,12 @@ def _process_tile(args):
 def _queue_tiles(lands, bounds, worldspace_edid, only_cells):
     """The (tx, ty, level, edid) tile tasks to bake.
 
-    A tile is queued only when a cell it covers owns a LAND record, so no tile
-    is baked purely from heights edge-extended past the landmass.  `only_cells`
-    restricts an override plugin to the tiles its edits touch, counting a tile
-    as touched when ANY cell it composites changed -- an edit at a boundary
-    alters the neighbouring tile's edge too.
-    See: docs/commentary/asset_convert_terrain.md#lod-invents-terrain-over-cells-with-no-land
+    A tile is queued only when a cell it covers is in `lands` (LAND or a
+    synthetic cell from the baked LOD), so no tile is baked purely from
+    edge-extended heights. `only_cells` restricts an override to the tiles its
+    edits touch. Tripwire: only full runs synthesize, so a partial run's tiles
+    lack horizon cells a full run has.
+    See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
     """
     min_x, min_y, max_x, max_y = bounds
     work = []
@@ -1278,12 +1258,13 @@ def _deps_ok() -> bool:
 
 
 def _parse_world(esm_path: Path, worldspace_edid: str, overlay_paths):
-    """{'lands', 'cell_water', 'default_wh'} for one worldspace, or None with no LAND."""
+    """{'lands', 'cell_water', 'default_wh', 'deleted'} for a worldspace; None without LAND."""
     srcs = ', '.join([esm_path.name] + [Path(p).name
                                         for p in (overlay_paths or [])])
     print(f"\n[TerrainLOD] Parsing LAND records from {srcs}...")
+    deleted = set()
     lands, cell_water, default_wh = parse_land_records(
-        esm_path, worldspace_edid, overlay_paths)
+        esm_path, worldspace_edid, overlay_paths, deleted)
     if not lands:
         print("  No LAND records found.")
         return None
@@ -1291,7 +1272,26 @@ def _parse_world(esm_path: Path, worldspace_edid: str, overlay_paths):
     print(f"  Found {len(lands)} LAND records; {n_water} water cells "
           f"(default water height {default_wh}).")
     return {'lands': lands, 'cell_water': cell_water,
-            'default_wh': default_wh}
+            'default_wh': default_wh, 'deleted': deleted}
+
+
+def _horizon_cells(world: dict, lod_source_dirs, worldspace_edid: str,
+                   only_cells) -> frozenset:
+    """Synthesize cells from the baked LOD meshes where no LAND is; their keys.
+
+    Full runs only: a partial run keeps the tiles it touches as they were.
+    See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
+    """
+    if only_cells is not None or not lod_source_dirs:
+        return frozenset()
+    from asset_convert.lod import terrain_lod_baked as tb
+    heights = tb.baked_heights(tb.lod_meshes(lod_source_dirs, worldspace_edid))
+    keys = tb.synthesize(world, heights)
+    wet = sum(1 for k in keys if k in world['cell_water'])
+    print(f"  Synthetic horizon cells: {len(keys)} from the baked LOD meshes "
+          f"({len(world['deleted'])} overlay-deleted cells kept empty; "
+          f"{wet} with water).")
+    return frozenset(keys)
 
 
 def _cell_bounds(lands) -> tuple:
@@ -1450,6 +1450,8 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     world = _parse_world(esm_path, worldspace_edid, overlay_paths)
     if world is None:
         return False
+    synthetic = _horizon_cells(world, lod_source_dirs, worldspace_edid,
+                               only_cells)
     bounds = _cell_bounds(world['lands'])
     mesh_dir, tex_dir = _tile_dirs(output_dir, worldspace_edid)
     ltex_map, tex_roots = _texture_setup(esm_path, overlay_paths, output_dir,
@@ -1462,7 +1464,7 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     _drop_plugin_bytes()
     init = (str(mesh_dir), str(tex_dir), ltex_map, [str(r) for r in tex_roots],
             world['cell_water'], world['default_wh'],
-            _baked_sources(lod_source_dirs, worldspace_edid))
+            _baked_sources(lod_source_dirs, worldspace_edid), synthetic)
     return _report_bake(*_bake_tiles(world, work, init))
 
 

@@ -226,6 +226,68 @@ def baked_heights(meshes: dict, log=print) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Synthetic horizon cells
+# ---------------------------------------------------------------------------
+
+
+def feather_edges(h, west=None, east=None, south=None, north=None) -> np.ndarray:
+    """`h` (33x33, row 0 south) bent to meet each given LAND edge exactly.
+
+    Each correction is the edge delta, fading linearly to 0 at the opposite
+    edge; applied west, east, south, north in turn, so a corner the two LAND
+    neighbours agree on stays put.
+    See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
+    """
+    out = np.asarray(h, dtype=np.float64).copy()
+    fade = np.linspace(1.0, 0.0, CELL_VERTS)
+    if west is not None:
+        out += (west - out[:, 0])[:, None] * fade[None, :]
+    if east is not None:
+        out += (east - out[:, -1])[:, None] * fade[::-1][None, :]
+    if south is not None:
+        out += (south - out[0, :])[None, :] * fade[:, None]
+    if north is not None:
+        out += (north - out[-1, :])[None, :] * fade[::-1][:, None]
+    return out.astype(np.float32)
+
+
+def _land_edges(lands, synthetic, key) -> dict:
+    """The LAND edges bordering cell `key`, as `feather_edges` keywords."""
+    x, y = key
+    spec = {'west': ((x - 1, y), np.s_[:, -1]), 'east': ((x + 1, y), np.s_[:, 0]),
+            'south': ((x, y - 1), np.s_[-1, :]), 'north': ((x, y + 1), np.s_[0, :])}
+    out = {}
+    for side, (nb, edge) in spec.items():
+        land = lands.get(nb)
+        if land is not None and nb not in synthetic:
+            out[side] = land['heights'][edge]
+    return out
+
+
+def synthesize(world: dict, heights: dict) -> set:
+    """Add a cell for every baked-height cell with no LAND; return their keys.
+
+    `world` holds 'lands', 'cell_water', 'default_wh' and 'deleted' (cells an
+    overlay deleted, which stay empty). A synthetic cell is heights only
+    (white VCLR, no layers), feathered to meet its LAND neighbours; it takes
+    worldspace-default water when it dips below it and the worldspace has any.
+    See: docs/commentary/asset_convert_terrain.md#no-terrain-without-an-authored-source
+    """
+    lands, water = world['lands'], world['cell_water']
+    wet = any(flag for flag, _h in water.values())
+    keys = {k for k in heights
+            if k not in lands and k not in world.get('deleted', ())}
+    for key in sorted(keys):
+        lands[key] = {'heights': feather_edges(heights[key], **_land_edges(
+                          lands, keys, key)),
+                      'colors': np.full((CELL_VERTS, CELL_VERTS, 3), 255, np.uint8),
+                      'layers': {'base': {}, 'alpha': {}}}
+        if wet and float(lands[key]['heights'].min()) < world['default_wh']:
+            water.setdefault(key, (True, None))
+    return keys
+
+
+# ---------------------------------------------------------------------------
 # Baked diffuse
 # ---------------------------------------------------------------------------
 
