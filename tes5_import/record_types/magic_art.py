@@ -9,9 +9,11 @@ authored key, so effects sharing a mesh share the companion.  Values with
 no Oblivion source copy vanilla FireboltProjectile01 and FireBallExp01.
 """
 
+import ntpath
 import os
 import struct
 
+from asset_convert import case_paths
 from asset_convert.nif.magic_art import (PHASE_AREA, PHASE_CAST, PHASE_HIT,
                                          PHASE_PROJECTILE, PHASE_SUMMON,
                                          effect_phases, phase_mesh)
@@ -69,8 +71,8 @@ def phases_for(model: str) -> tuple:
     """Phases the model's source NIF authors (none when it is not in this plugin)."""
     key = model.lower()
     if key not in _phases:
-        path = os.path.join(_state['mesh_root'], model.replace('/', '\\'))
-        if model and os.path.isfile(path):
+        path = model and case_paths.resolve([_state['mesh_root']], model, 'magic_art.phases')
+        if path:
             with open(path, 'rb') as f:
                 _phases[key] = effect_phases(f.read())
         else:
@@ -105,7 +107,7 @@ def _sndr(rec: dict, key: str) -> int:
 
 def _edid(model: str, what: str) -> str:
     """EditorID stem for a companion of ``model``."""
-    return f'TES4{os.path.splitext(os.path.basename(model.replace("/", chr(92))))[0]}{what}'
+    return f'TES4{os.path.splitext(ntpath.basename(model))[0]}{what}'
 
 
 def _art_object(model: str, phase: str, art_type: int) -> int:

@@ -26,6 +26,7 @@ from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from pyffi.formats.nif import NifFormat
 
+from asset_convert import case_paths
 from asset_convert.nif.nif_passes import add_animobject_bged
 from asset_convert.nif.sequences import CYCLE_CLAMP, CYCLE_LOOP, clone_sequence_as
 
@@ -215,10 +216,9 @@ def split_effect_meshes(rec_dir, src_meshes, dst_meshes) -> dict:
     """
     stats = {'sources': 0, 'written': 0, 'missing': 0}
     for model in effect_models(rec_dir):
-        rel = model.replace('/', '\\')
-        src = os.path.join(str(src_meshes), rel)
-        dst = os.path.join(str(dst_meshes), rel.lower())
-        if not (os.path.isfile(src) and os.path.isfile(dst)):
+        src = case_paths.resolve([src_meshes], model, 'magic_art.src')
+        dst = src and case_paths.resolve([dst_meshes], model, 'magic_art.dst')
+        if not dst:
             stats['missing'] += 1
             continue
         with open(src, 'rb') as f:
