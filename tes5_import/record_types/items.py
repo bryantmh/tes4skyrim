@@ -401,11 +401,15 @@ def _scan_marker_models(mesh_dirs, scan_marker_nifs) -> list:
     for mdir in mesh_dirs:
         if not os.path.isdir(mdir):
             continue
+        # Keys are lowercase but a mod's loose files keep their author's
+        # casing, so map each key back to its real path on disk.
+        real = {os.path.relpath(os.path.join(r, f), mdir).lower().replace(os.sep, '/'):
+                os.path.join(r, f) for r, _, fs in os.walk(mdir) for f in fs}
         for key in sorted(scan_marker_nifs(mdir)):
             if key in seen:
                 continue
             seen.add(key)
-            jobs.append((key, os.path.join(mdir, key.replace('/', os.sep))))
+            jobs.append((key, real.get(key, os.path.join(mdir, key.replace('/', os.sep)))))
     return jobs
 
 
