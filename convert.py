@@ -61,9 +61,9 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
 
-from output_layout import (BODY_SLOTS_PATCH, configured_output, finished_dir,
-                           plugin_out_root, record_dir, tree_members,
-                           write_mod_zip)
+from output_layout import (BODY_SLOTS_PATCH, asset_root, configured_output,
+                           finished_dir, plugin_out_root, record_dir,
+                           tree_members, write_mod_zip)
 from papyrus_compile import phase_compile
 from tes4_export.tes3_reader import is_tes3
 from core.plugin_masters import (get_masters_from_binary, is_master_export,
@@ -934,8 +934,10 @@ def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
 def phase_pack(file_name: str, config: dict, output_dir: str = None):
     """Pack converted output assets into Skyrim SE BSA archives.
 
-    Textures nothing references are filtered out as the archive is staged, so
-    output/ keeps the full loose tree for testing (see bsa_pack).
+    Three roots, never interchangeable: the RECORD dir names the masters, the
+    ASSET dir holds the texture manifest, and the export ROOT resolves which
+    output folder this plugin converted into.
+    See: docs/commentary/asset_convert_bsa.md#pack-bsas
     """
     from asset_convert.sources.bsa_pack import pack_bsas
 
@@ -949,11 +951,9 @@ def phase_pack(file_name: str, config: dict, output_dir: str = None):
         source_file=file_name,
         output_dir=out_dir,
         bsarch_path=bsarch,
-        # Two different roots, and they must not be confused: the RECORD dir
-        # drives the texture keep-set, the export ROOT resolves which output
-        # folder this plugin converted into.
         export_dir=str(export_dir) if export_dir.is_dir() else None,
         export_root=export_root,
+        manifest_dir=str(asset_root(export_root, file_name)),
     )
     packed  = len(results['packed'])
     skipped = len(results['skipped'])

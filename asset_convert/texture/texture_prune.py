@@ -7,8 +7,9 @@ copying the texture tree wholesale ships all of it.  `bsa_pack` applies
 
 This is a BLACKLIST of asset categories Skyrim can never load, not a keep-set
 reconstructed from references: a blacklist can only ship a file nothing needs,
-where a keep-set can withhold one something does.  Every rule drops zero of
-the paths named by 36,128 converted meshes.
+where a keep-set can withhold one something does.  A converted mesh CAN name a
+file in a blacklisted folder (a book page or a fader under `menus`), so the
+keys a plugin's own manifest references are exempted (`pruned_refs`).
 
 `MANIFEST_NAME` lives in the EXPORT dir because output/<plugin>/ is a Data
 root, where every plugin would write the same filename and collide on install.
@@ -31,17 +32,33 @@ _EXCLUDED_DIRS = frozenset({
 _TEXTURE_SUFFIXES = frozenset({'.dds', '.tga'})
 
 
-def is_excluded(key: str) -> bool:
-    """True if this textures-root-relative key is kept out of the archive.
+def is_excluded(key: str, keep=frozenset()) -> bool:
+    """True if `key` stays out of the archive; `keep` escapes the folder rule.
 
-    `key` is lowercased and posix-separated, as `bsa_pack` derives it:
-    `tes4/faces/oblivion.esm/0001a2b3_0.dds`.  Anything that is not a texture
-    is excluded too -- mods ship build junk under `textures/`, one of them an
-    entire 1.1 GB Oblivion `Data` folder nested under an architecture path.
+    See: docs/commentary/asset_convert_texture.md#the-blacklist-prune
     """
-    dot = key.rfind('.')
-    if dot < 0 or key[dot:] not in _TEXTURE_SUFFIXES:
+    if not _is_texture(key):
         return True
+    return key not in keep and _in_excluded_dir(key)
+
+
+def pruned_refs(manifest) -> frozenset:
+    """The manifest's texture keys that sit in an excluded folder.
+
+    See: docs/commentary/asset_convert_texture.md#pruned-dir-references
+    """
+    return frozenset(k for k in manifest
+                     if _is_texture(k) and _in_excluded_dir(k))
+
+
+def _is_texture(key: str) -> bool:
+    """True when `key` ends in an extension the engine loads from a textures archive."""
+    dot = key.rfind('.')
+    return dot >= 0 and key[dot:] in _TEXTURE_SUFFIXES
+
+
+def _in_excluded_dir(key: str) -> bool:
+    """True when `key`'s second segment names an excluded folder."""
     parts = key.split('/')
     return len(parts) > 1 and parts[1] in _EXCLUDED_DIRS
 

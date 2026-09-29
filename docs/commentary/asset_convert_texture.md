@@ -13,6 +13,7 @@
     - [...and the ROOT it resolves against is found by marker, not by `.parent`](#export-root-by-marker)
 - [Loose .tga/.bmp textures are transcoded, not just copied](#loose-tgabmp-textures)
 - [The blacklist prune](#the-blacklist-prune)
+  - [A referenced texture in a pruned folder still ships](#pruned-dir-references)
 - [Texture repairs write in place, never by rename](#texture-repairs-write-in-place)
 
 ## Oblivion parallax → Skyrim height maps (`asset_convert/texture/parallax.py`, opt-in, 2026-08-15)
@@ -910,7 +911,8 @@ wrongly-dropped one had nowhere to stand out.
 ### The rules
 
 Each excludes a whole second-level subtree (below the game namespace), plus a
-non-texture extension rule. Verified against every path named by 36,128
+non-texture extension rule. A key is lowercased and posix-separated, as
+`bsa_pack` derives it: `tes4/faces/oblivion.esm/0001a2b3_0.dds`. Verified against every path named by 36,128
 converted meshes across 8 plugins -- **zero** of the files these rules drop is
 named by any mesh:
 
@@ -957,6 +959,48 @@ dumping ground of `bell.dds`, `cube.dds`, `elevator01.dds`) is genuinely dead,
 but the rule to catch it would name one plugin's folder. Both are accepted
 dead weight: shipping a few hundred MB nothing reads is strictly cheaper than
 one texture that fails to ship.
+
+<a id="pruned-dir-references"></a>
+### A referenced texture in a pruned folder still ships
+
+**Code:** `pruned_refs` in `asset_convert/texture/texture_prune.py`;
+`_pruned_keep`, `_carry_from_masters` in `asset_convert/sources/bsa_pack.py`
+
+The "zero false positives" table above no longer holds. Frostcrag Reborn's
+meshes name 5 textures under `menus`:
+- `menus\book\parchmentmixed{,_n}.dds`
+- `menus\book\tyrasrules{,_n}.dds`
+- `menus\faders\black.dds`
+
+The mesh stage harvests them into its `textures_used.txt`, and they sit in the
+loose output. The folder rule then cut them from the archive, so an installed
+BSA rendered those shapes untextured.
+
+The blacklist stays, and a plugin's pack exempts the keys that its **own**
+manifest references:
+1. **Own tree.** Every manifest key under an excluded folder (`pruned_refs`)
+   escapes the folder rule. It never escapes the texture-extension rule.
+2. **Master-carried.** A referenced key missing from the plugin's own output
+   tree is looked up case-blind in its masters' output `textures` trees, in
+   `_HEADER.txt` order, and packed into the dependent's archive. FR references
+   Oblivion's `menus\faders\black.dds`, which only Oblivion's tree holds. The
+   dependent carries what it references, and no plugin or file is named in code.
+3. **Found nowhere.** A key found in no tree is printed as a `WARN` line.
+
+The pack prints
+`pruned-dir exempted: N (own …, carried from masters …, found nowhere …)`.
+
+**The manifest lives in the ASSET dir** (`export/<mod group>/`), beside the
+shared meshes it indexes (`asset_pipeline._persist_mesh_manifests`). It is NOT
+in the record dir. `phase_pack` therefore passes `manifest_dir` explicitly,
+separate from `export_dir` (the record dir, which names the masters).
+
+The pack REFUSES loudly when an `export_dir` is given and the plugin has
+converted meshes, but no manifest is found. A mesh-less plugin never writes a
+manifest and packs without one.
+
+`textures_used.txt` had no reader in the build before this; the exemption is
+its reader.
 
 <a id="loose-tgabmp-textures"></a>
 ## Loose .tga/.bmp textures are transcoded, not just copied

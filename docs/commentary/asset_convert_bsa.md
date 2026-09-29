@@ -5,6 +5,7 @@
 ## Contents
 
 - [Staging past the Windows path limit](#staging-past-the-path-limit)
+- [What `pack_bsas` packs, and from which roots](#pack-bsas)
 
 ## Staging past the Windows path limit
 <a id="staging-past-the-path-limit"></a>
@@ -69,3 +70,36 @@ carries the prefix.
 whose length the USER controls through both the repo location and the plugin
 folder name. That is a reprieve, not a fix: the next long plugin name fails
 again, and the failure mode is the disguised one above.
+
+## What `pack_bsas` packs, and from which roots
+<a id="pack-bsas"></a>
+
+**Code:** `pack_bsas`, `_plugin_dir`, `_pack_spec`, `_pack_bin` in
+`asset_convert/sources/bsa_pack.py`; `phase_pack` in `convert.py`
+
+`pack_bsas` builds these inside the plugin's output folder:
+- `<stem>.bsa` from `meshes/` plus every other non-texture folder (the misc
+  dirs; `LOOSE_ONLY_DIRS` stay loose);
+- `<stem> - Textures.bsa` from `textures/`.
+
+Content past the 2 GiB budget spills into overflow bins. Bin 0 keeps the name
+the plugin auto-mounts. Bin N lands in `<stem>_loader[_N]`, mounted by a
+generated record-free ESL of the same stem.
+
+The texture prune is a pack-time FILTER, not a delete. `output/<plugin>/textures/`
+keeps the full tree, so loose-file testing is unaffected and re-packing is
+idempotent. The source folders are never modified.
+
+Three roots reach it, and they are not interchangeable:
+
+| argument | is | used for |
+|---|---|---|
+| `export_root` | the export ROOT (`export/`, holding `sources.json`) | which output folder the plugin converted into |
+| `export_dir` | the plugin's RECORD dir (`export/<plugin>` or `export/<mod>/<plugin>`) | the master names in `_HEADER.txt` |
+| `manifest_dir` | the plugin's ASSET dir (`export/<mod group>/`) | `textures_used.txt`; see [pruned-dir references](asset_convert_texture.md#pruned-dir-references) |
+
+An imported mod's plugins all convert into their MOD's folder, so the output
+folder must be resolved from the export root. Resolving it from a record dir
+reads no registry, falls back to `output/<plugin>/`, and aborts the pack with
+"output directory not found". Without an `export_root`, the repo's own
+`export/` is used.
