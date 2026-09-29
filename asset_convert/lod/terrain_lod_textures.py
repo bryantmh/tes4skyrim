@@ -36,6 +36,7 @@ from pathlib import Path
 import numpy as np
 
 from asset_convert.case_paths import resolve, split_rel
+from asset_convert.nif.tex_paths import authored_rel
 from output_layout import plugin_out_root
 from tes5_import.base.tes5_reader import masters, records
 
@@ -243,14 +244,6 @@ _TEX_USES = Counter()
 _TEX_SITE = 'terrain_lod_texture'
 
 
-def _texture_rel(rel_path: str) -> str:
-    """`rel_path` relative to a textures/ root, backslash form."""
-    rp = (rel_path or '').replace('/', '\\').lstrip('\\')
-    if rp.lower().startswith('textures\\'):
-        rp = rp[len('textures\\'):]
-    return rp
-
-
 def _find_texture(rp: str, roots) -> tuple:
     """(path, 'exact'|'resolved') for `rp`, roots searched in order; (None, 'missing')."""
     hit = resolve(roots, rp, site=_TEX_SITE)
@@ -273,7 +266,7 @@ def _decode_rgb(fpath, size: int):
 
 def _load_uncached(rel_path: str, roots, size: int) -> tuple:
     """(RGB tile, outcome, lowercase path); a miss or bad file is neutral grey."""
-    rp = _texture_rel(rel_path)
+    rp = authored_rel(rel_path)[0]
     if not rp:
         return np.full((size, size, 3), 128, dtype=np.uint8), None, ''
     fpath, outcome = _find_texture(rp, roots)

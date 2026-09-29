@@ -5,6 +5,7 @@ Shared helper functions for TES5 record converters.
 import struct
 
 from asset_convert.game_paths import current_namespace
+from asset_convert.nif.tex_paths import asset_anchor, authored_rel, names_anchor
 from ..base.mesh_bounds import get_mesh_obnd
 from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..base.writer import (
@@ -26,19 +27,13 @@ from ..base.writer import (
 
 
 def prefix_path(path: str) -> str:
-    """Prefix an AUTHORED asset path with the ACTIVE game namespace, always.
+    """Namespaced `authored_rel` of an AUTHORED path; MUST match rewrite_tex_path.
 
-    Strips a leading 'textures\\' since Skyrim auto-prefixes it. MUST agree
-    with asset_convert's rewrite_tex_path: if the record side and the asset
-    copy disagree, every record names a path no archive ships.
     See: docs/commentary/asset_convert_texture.md#per-game-asset-namespace
     """
     if not path:
         return path
-    p = path
-    if p.lower().startswith('textures\\') or p.lower().startswith('textures/'):
-        p = p[9:]
-    return current_namespace() + '\\' + p
+    return current_namespace() + '\\' + authored_rel(path, asset_anchor(path))[0]
 
 
 def landscape_texture_path(icon_path: str) -> str:
@@ -50,11 +45,11 @@ def landscape_texture_path(icon_path: str) -> str:
     does not exist, and all 107 terrain textures resolved to nothing.
     See: docs/commentary/tes4_export_morrowind.md#land-terrain
     """
-    lowered = icon_path.lower().replace('/', '\\')
-    if not (lowered.startswith('textures\\')
-            or lowered.startswith('landscape\\')):
-        icon_path = 'landscape\\' + icon_path
-    return prefix_path(icon_path)
+    rel = authored_rel(icon_path)[0]
+    if not (names_anchor(icon_path)
+            or rel.lower().startswith('landscape\\')):
+        rel = 'landscape\\' + rel
+    return prefix_path(rel)
 
 
 def _common_header_subs(rec: dict, need_obnd: bool = True, need_full: bool = True,

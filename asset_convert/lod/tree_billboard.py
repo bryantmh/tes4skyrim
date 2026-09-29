@@ -34,6 +34,7 @@ from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from pyffi.formats.nif import NifFormat
 from asset_convert.game_paths import current_namespace, win_join
+from asset_convert.nif.tex_paths import authored_rel
 
 BS = chr(92)
 
@@ -148,13 +149,7 @@ def _load_texture(rel, tex_roots):
     """Load a game-relative diffuse as RGBA, or None."""
     if not rel:
         return None
-    r = str(rel).replace('/', BS)
-    low = r.lower()
-    if low.startswith('data' + BS):
-        r = r[5:]
-        low = r.lower()
-    if low.startswith('textures' + BS):
-        r = r[9:]
+    r = authored_rel(str(rel))[0]
     for root in tex_roots:
         p = win_join(root, r)
         if p.exists():

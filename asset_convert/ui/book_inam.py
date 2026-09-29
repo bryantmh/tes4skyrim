@@ -40,6 +40,7 @@ Templates are auto-extracted from the SSE BSAs by default (skyrim_assets).
 
 from asset_convert import case_paths
 from asset_convert.game_paths import current_namespace
+from asset_convert.nif.tex_paths import authored_rel
 from asset_convert.sources import base_plugins, skyrim_assets
 import argparse
 import os
@@ -671,9 +672,7 @@ def _find_source_texture(extract_roots, tex_rel):
     silently shipped no inventory art for them."""
     if not tex_rel:
         return None
-    rel = tex_rel.lower().replace('/', '\\')
-    if not rel.startswith('textures\\'):
-        rel = 'textures\\' + rel
+    rel = 'textures\\' + authored_rel(tex_rel)[0].lower()
     roots = _as_roots(extract_roots)
     for candidate in _texture_names(rel):
         found = case_paths.resolve(roots, candidate, 'book_inam.texture')

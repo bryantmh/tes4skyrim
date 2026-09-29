@@ -376,6 +376,34 @@ Every repair is returned by name (`drive`, `rooted`, `separator`,
 `authoring_prefix`, `double_dot`), so the caller can count it. A clean path
 comes back byte-identical, with no repairs.
 
+**Every reader of an authored string shares it.** The record side's
+`prefix_path` (`tes5_import/record_types/common.py`, used for MODL, MODT, ICON,
+sounds and weather textures) MUST name the same file as the asset copy. It
+picks the anchor from the extension (`asset_anchor`):
+- `.dds/.tga/.bmp` anchor at `textures`;
+- `.nif/.kf/.tri/.egm/.spt` anchor at `meshes`;
+- audio anchors at `sound`.
+
+`landscape_texture_path` asks `names_anchor` whether the ICON named its
+`textures\` folder. The private copies that read NIF strings route through it
+too: `tree_billboard._load_texture`, `book_inam._find_source_texture` and
+`terrain_lod_textures._load_uncached`.
+
+`hair_pipeline` is left alone, because it reads REWRITTEN strings.
+
+Measured over the 41,826 asset-valued fields of 5 exported plugins (Oblivion,
+Knights, DLCFrostcrag, Frostcrag Reborn, UOP), 143 change and every clean
+string stays byte-identical:
+- 142 are the TREE MODLs `\X.spt`. They lose the leading separator that used to
+  give `tes4\\X.spt`. That is harmless, because the speedtree path rebuilds the
+  model name itself (`items.py`).
+- 1 is an ACTI MODL authored as `meshes\clutter\metalsmith\anvil01.nif`. It used
+  to name `tes4\meshes\clutter\…`, which no tree ships. It now names the
+  converted master mesh `tes4\clutter\metalsmith\anvil01.nif`.
+
+These record-side repairs are not counted anywhere. Only the NIF batch reports
+its counts.
+
 ## Resolving a source texture through the master's tree
 <a id="texture-fallback-roots"></a>
 

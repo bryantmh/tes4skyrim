@@ -4,8 +4,12 @@ See: docs/commentary/asset_convert_shader.md#authored-rel
 """
 
 import pytest
+from PIL import Image
 
+from asset_convert.lod import terrain_lod_textures, tree_billboard
 from asset_convert.nif.tex_paths import authored_rel, rewrite_tex_path
+from asset_convert.ui import book_inam
+from tes5_import.record_types.common import landscape_texture_path, prefix_path
 
 
 #: Real-shaped clean paths; each must come back byte-identical, no repairs.
@@ -79,3 +83,81 @@ def test_anchor_is_a_parameter():
                         'meshes')[0] == r'trees\oak.spt'
     assert authored_rel(r'\trees\oak.spt', 'meshes')[0] == r'trees\oak.spt'
     assert authored_rel(r'data\sound\fx\hit.wav', 'sound')[0] == r'fx\hit.wav'
+
+
+# ---------------------------------------------------------------------------
+# The record side and the sibling readers share the normaliser
+# ---------------------------------------------------------------------------
+
+#: Texture strings for the record/asset parity check, clean and slipped alike.
+PARITY = [
+    'armor\\iron\\cuirass.dds',
+    'textures\\armor\\iron\\cuirass.dds',
+    'Data/Textures/dwarven/rock01.dds',
+    '\\textures\\effects\\minigateflame.dds',
+    'f:\\gogames\\oblivion\\data\\textures\\castlesky\\alternatelavax.dds',
+    'textures\\mod\\textures\\x.dds',
+    'textures\\kvatch\\KvatchDunWall01..dds',
+]
+
+
+@pytest.mark.parametrize('raw', PARITY)
+def test_record_path_agrees_with_the_asset_copy(raw):
+    """prefix_path and rewrite_tex_path name the same file below the namespace."""
+    assert ('Textures\\' + prefix_path(raw)
+            == rewrite_tex_path(raw.encode()))
+
+
+@pytest.mark.parametrize('raw, want', [
+    ('\\trees\\oak.spt', 'tes4\\trees\\oak.spt'),
+    ('d:\\oblivion\\data\\meshes\\clutter\\cup.nif', 'tes4\\clutter\\cup.nif'),
+    ('Clutter\\Cup.NIF', 'tes4\\Clutter\\Cup.NIF'),
+    ('meshes\\clutter\\cup.nif', 'tes4\\clutter\\cup.nif'),
+    ('d:\\oblivion\\data\\sound\\fx\\hit.wav', 'tes4\\fx\\hit.wav'),
+    ('fx\\ui\\click.wav', 'tes4\\fx\\ui\\click.wav'),
+])
+def test_record_path_anchor_follows_the_extension(raw, want):
+    """A model cuts at `meshes`, a sound at `sound`, a clean path is untouched."""
+    assert prefix_path(raw) == want
+
+
+@pytest.mark.parametrize('icon, want', [
+    ('TerrainHDRock01.dds', 'tes4\\landscape\\TerrainHDRock01.dds'),
+    ('textures\\tx_ash_01.dds', 'tes4\\tx_ash_01.dds'),
+    ('Landscape\\Road.dds', 'tes4\\Landscape\\Road.dds'),
+    ('f:\\game\\data\\textures\\landscape\\grass.dds',
+     'tes4\\landscape\\grass.dds'),
+])
+def test_landscape_icon_uses_the_normaliser(icon, want):
+    """A bare ICON gains `landscape\\`; one naming its folder does not."""
+    assert landscape_texture_path(icon) == want
+
+
+def _png(path):
+    """A 2x2 image at `path` (PIL reads it whatever the extension says)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new('RGB', (2, 2), (10, 20, 30)).save(path, format='PNG')
+
+
+def test_billboard_texture_loads_through_a_drive_path(tmp_path):
+    """tree_billboard finds a diffuse authored with the author's drive path."""
+    _png(tmp_path / 'trees' / 'bark.dds')
+    got = tree_billboard._load_texture('f:\\game\\data\\textures\\trees\\bark.dds',
+                                       [tmp_path])
+    assert got is not None
+
+
+def test_book_texture_resolves_through_a_drive_path(tmp_path):
+    """book_inam finds a cover authored with the author's drive path."""
+    _png(tmp_path / 'textures' / 'clutter' / 'books' / 'cover.dds')
+    got = book_inam._find_source_texture(
+        [tmp_path], 'e:\\my mod\\textures\\clutter\\books\\cover.dds')
+    assert got is not None
+
+
+def test_terrain_texture_resolves_through_a_drive_path(tmp_path):
+    """terrain LOD finds a landscape texture authored with a drive path."""
+    _png(tmp_path / 'landscape' / 'grass.dds')
+    _img, outcome, key = terrain_lod_textures._load_uncached(
+        'f:\\game\\data\\textures\\landscape\\grass.dds', [tmp_path], 4)
+    assert (outcome, key) == ('exact', 'landscape\\grass.dds')

@@ -71,6 +71,24 @@ def authored_rel(path: str, anchor: str = 'textures') -> tuple:
     return rel, tuple(fixes)
 
 
+#: Data-root folder an asset path is relative to, by lowercase extension.
+_ANCHOR_BY_EXT = {
+    **dict.fromkeys(('dds', 'tga', 'bmp'), 'textures'),
+    **dict.fromkeys(('nif', 'kf', 'tri', 'egm', 'spt'), 'meshes'),
+    **dict.fromkeys(('wav', 'mp3', 'ogg', 'xwm', 'fuz', 'lip'), 'sound'),
+}
+
+
+def asset_anchor(path: str) -> str:
+    """The data-root folder (`textures`/`meshes`/`sound`) `path`'s extension names."""
+    return _ANCHOR_BY_EXT.get(path.rpartition('.')[2].lower(), 'textures')
+
+
+def names_anchor(path: str, anchor: str = 'textures') -> bool:
+    """True when `authored_rel` drops an `anchor` folder from `path`."""
+    return authored_rel(path, anchor)[0] != authored_rel(path, '')[0]
+
+
 def _drop_prefix(segs, anchor, absolute):
     """(`segs` below the anchor folder, whether an authoring prefix was cut).
 
