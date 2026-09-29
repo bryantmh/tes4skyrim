@@ -36,9 +36,9 @@ def test_clean_path_is_unchanged(rel):
 @pytest.mark.parametrize('raw, want', [
     (rb'\textures\effects\minigateflame.dds',
      r'Textures\tes4\effects\minigateflame.dds'),
-    (rb'f:\gogames\oblivion\data\textures\castlesky\alternatelavax.dds',
+    (rb'd:\games\oblivion\data\textures\castlesky\alternatelavax.dds',
      r'Textures\tes4\castlesky\alternatelavax.dds'),
-    (b'F:/GOGames/Oblivion/Data/Textures/castlesky/alternatelavax.dds',
+    (b'D:/Games/Oblivion/Data/Textures/castlesky/alternatelavax.dds',
      r'Textures\tes4\castlesky\alternatelavax.dds'),
     (rb'e:\modding\my mod 3.0\textures\mymod\clutter\screen01.dds',
      r'Textures\tes4\mymod\clutter\screen01.dds'),
@@ -96,7 +96,7 @@ PARITY = [
     'textures\\armor\\iron\\cuirass.dds',
     'Data/Textures/dwarven/rock01.dds',
     '\\textures\\effects\\minigateflame.dds',
-    'f:\\gogames\\oblivion\\data\\textures\\castlesky\\alternatelavax.dds',
+    'd:\\games\\oblivion\\data\\textures\\castlesky\\alternatelavax.dds',
     'textures\\mod\\textures\\x.dds',
     'textures\\kvatch\\KvatchDunWall01..dds',
 ]

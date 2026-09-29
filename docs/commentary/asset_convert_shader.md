@@ -349,10 +349,10 @@ real texture, because the manifest key never matched the shipped path.
 
 **Code:** `authored_rel` in `asset_convert/nif/tex_paths.py`
 
-An authored path can carry the author's own machine: `f:\gogames\oblivion\data\textures\…`,
+An authored path can carry the author's own machine: `d:\games\oblivion\data\textures\…`,
 `e:\…\my mod 3.0\textures\…`, a leading `\textures\…`, or `name..dds`.
 Oblivion's resolver tolerated these, but Skyrim does not, and the old rewrite
-prefixed them verbatim: `Textures\tes4\f:\gogames\…` and `Textures\tes4\\textures\…`.
+prefixed them verbatim: `Textures\tes4\d:\games\…` and `Textures\tes4\\textures\…`.
 Across 11,849 source NIFs there are 48,766 texture strings. Of those, 47 carry a
 drive letter, 12 a leading separator and 3 a `..dds` ending. In the G2 dry run
 they cost 21 missing keys (plus 2 `..dds`), and every one of those keys was
