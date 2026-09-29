@@ -1601,7 +1601,8 @@ def textures_root(plugin_out_dir: Path) -> Path:
     return plugin_out_dir / 'textures'
 
 
-_BTO_TEX_RE = _re.compile(rb'[A-Za-z0-9_\\/ .-]{3,200}?\.dds', _re.IGNORECASE)
+#: A `.dds` path inside a mesh's bytes (its sized strings end in NUL-padded lengths).
+TEXTURE_PATH_RE = _re.compile(rb'[A-Za-z0-9_\\/ .-]{3,200}?\.dds', _re.IGNORECASE)
 
 
 def _bto_texture_refs(bto_dir: Path) -> set:
@@ -1612,7 +1613,7 @@ def _bto_texture_refs(bto_dir: Path) -> set:
     """
     refs = set()
     for bto in bto_dir.glob('*.bto'):
-        for m in _BTO_TEX_RE.finditer(bto.read_bytes()):
+        for m in TEXTURE_PATH_RE.finditer(bto.read_bytes()):
             s = m.group(0).decode('latin-1').lower().replace('/', '\\')
             for prefix in ('data\\textures\\', 'textures\\'):
                 if s.startswith(prefix):

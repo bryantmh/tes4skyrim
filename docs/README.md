@@ -109,6 +109,7 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [tes_runtime_guns.md](commentary/tes_runtime_guns.md) | tes_runtime/fallout/fire.cpp - the gun shot, reload key and ammo restriction in FalloutRuntime |
 | [tes_runtime_journal.md](commentary/tes_runtime_journal.md) | tes_runtime/tes/journal_objectives.cpp, asset_convert/ui/journal_patch.py - a clicked quest objective shows its stage's text |
 | [tools_portable_build.md](commentary/tools_portable_build.md) | tools/release/build_portable.py - the portable Windows package with its own Python |
+| [tools_release_gate.md](commentary/tools_release_gate.md) | tools/release/verify_build.py - the release gate run after each rebuild and deploy |
 | [version_upgrade_planning.md](commentary/version_upgrade_planning.md) | version.py - which steps a new release owes |
 
 ## `plans/`
