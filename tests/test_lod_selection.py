@@ -293,3 +293,49 @@ class TestSelectionRules:
         paths = gen._screenable_mesh_paths(refs, stats, scope)
         assert 'tes4\\rocks\\rock02.nif' in paths
         assert 'tes4\\rocks\\rock01.nif' not in paths
+
+
+class TestEnableParentChain:
+    """The game-start state of a chain is the same whichever ref is asked first.
+
+    A depth cap measured from the entry point memoised None for a ref deep in
+    one walk that a shorter walk would have answered: in a 21-ref chain R17
+    alone was True, but None once R0 had been walked. The walk now has no
+    cap; only a missing parent or a cycle is unknown.
+    """
+
+    @staticmethod
+    def _chain(gen, n, opposite=0):
+        """A scope over refs 0x100..0x100+n-1, each enabled by the next; the last plain."""
+        refs = [_ref(0x100 + i, 0x10, xesp=(0x101 + i, opposite))
+                for i in range(n - 1)] + [_ref(0x100 + n - 1, 0x10)]
+        return gen._Scope({CELL: WRLD}, WRLD, None,
+                          {r['form_id']: r for r in refs}, {})
+
+    def test_walk_order_does_not_change_a_deep_refs_state(self, gen):
+        """R17 is True asked alone and after R0 (old: None after R0)."""
+        alone = self._chain(gen, 21)
+        after = self._chain(gen, 21)
+
+        gen._initially_enabled(0x100, after)
+
+        assert gen._initially_enabled(0x111, alone) is True
+        assert gen._initially_enabled(0x111, after) is True
+
+    def test_a_long_chain_is_resolved(self, gen):
+        """40 links with the opposite bit alternate the state all the way down."""
+        scope = self._chain(gen, 40, opposite=1)
+
+        assert gen._initially_enabled(0x100, scope) is (39 % 2 == 0)
+        assert gen._initially_enabled(0x101, scope) is (38 % 2 == 0)
+
+    def test_a_cycle_is_unknown_from_every_entry(self, gen):
+        """A -> B -> A never terminates; both, and a ref hanging off them, are None."""
+        refs = [_ref(0x201, 0x10, xesp=(0x202, 0)), _ref(0x202, 0x10, xesp=(0x201, 1)),
+                _ref(0x203, 0x10, xesp=(0x201, 0))]
+        for first in (0x201, 0x202, 0x203):
+            scope = gen._Scope({CELL: WRLD}, WRLD, None,
+                               {r['form_id']: r for r in refs}, {})
+            gen._initially_enabled(first, scope)
+            assert [gen._initially_enabled(f, scope)
+                    for f in (0x201, 0x202, 0x203)] == [None, None, None]

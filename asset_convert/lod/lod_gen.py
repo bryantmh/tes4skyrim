@@ -696,9 +696,6 @@ FLAG_FULL_LOD = 0x00010000
 #: The player's local FormID: an enable parent that is always enabled.
 _PLAYER_REF = 0x000014
 
-#: Longest enable-parent chain walked before the state counts as unknown.
-_MAX_XESP_DEPTH = 16
-
 #: Model folders holding effect meshes (cloud decks, ground mist), not objects.
 _EFFECT_DIRS = frozenset({'effects', 'fx'})
 
@@ -782,28 +779,34 @@ def _is_effect_mesh(model: str) -> bool:
     return bool(_EFFECT_DIRS & set(_meshes_rel(model).split('\\')[:-1]))
 
 
-def _initially_enabled(fid, scope, depth=0):
+def _initially_enabled(fid, scope):
     """True/False: is `fid` enabled at game start; None when it cannot be known.
 
     A ref with an enable parent takes the parent's state, inverted by the
     XESP opposite bit, and ignores its own Initially Disabled flag; the
-    player is always enabled; an unscanned parent or an over-long chain is
-    unknown.
+    player is always enabled; an unscanned parent or a parent cycle is
+    unknown. Walked iteratively with no depth cap, so the answer does not
+    depend on which ref of a chain is asked first.
     See: docs/commentary/asset_convert_terrain.md#object-lod-selection
     """
-    if fid in scope.state:
-        return scope.state[fid]
-    ref = scope.ref_index.get(fid)
-    if fid & 0x00FFFFFF == _PLAYER_REF:
-        state = True
-    elif ref is None or depth > _MAX_XESP_DEPTH:
-        state = None
-    elif ref.get('xesp'):
-        parent = _initially_enabled(ref['xesp'][0], scope, depth + 1)
-        state = None if parent is None else parent != bool(ref['xesp'][1] & 1)
-    else:
-        state = not ref['flags'] & FLAG_INITIALLY_DISABLED
-    scope.state[fid] = state
+    chain, state = [], None
+    while fid not in scope.state:
+        ref = scope.ref_index.get(fid)
+        if fid & 0x00FFFFFF == _PLAYER_REF:
+            state = True
+        elif ref is not None and ref.get('xesp') and fid not in chain:
+            chain.append(fid)
+            fid = ref['xesp'][0]
+            continue
+        elif ref is not None and not ref.get('xesp'):
+            state = not ref['flags'] & FLAG_INITIALLY_DISABLED
+        scope.state.setdefault(fid, state)
+        break
+    state = scope.state[fid] if fid not in chain else None
+    for child in reversed(chain):
+        if state is not None:
+            state = state != bool(scope.ref_index[child]['xesp'][1] & 1)
+        scope.state[child] = state
     return state
 
 

@@ -441,9 +441,11 @@ Static LOD cannot follow enable state, so it shows the state at GAME START.
   ref with an enable parent takes the parent's state, inverted when its opposite
   bit is set, and its own Initially Disabled flag does not count; a ref without
   one is OFF when Initially Disabled. The player (local id 0x14) is always ON.
-  A parent that is not a scanned REFR (an actor) or a chain deeper than 16 is
-  UNKNOWN, and the ref is KEPT (today's behaviour) and counted as `enable parent
-  not scanned (kept)`.
+  A parent that is not a scanned REFR (an actor) or a parent cycle is UNKNOWN,
+  and the ref is KEPT (today's behaviour) and counted as `enable parent not
+  scanned (kept)`. The walk has no depth cap: a cap counted from the ref first
+  asked memoised UNKNOWN for a deep ref that a shorter walk would have
+  answered, so the result depended on reference order.
 - **full-lod** -- it is persistent (0x400) AND "Is Full LOD" (0x10000): the
   engine draws it itself at any distance, so baking it too draws it twice.
 - **effects** -- the ref is not VWD and its model sits in an `effects` or `fx`
