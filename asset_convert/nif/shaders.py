@@ -7,8 +7,8 @@ masks, flip-book atlases and the UV-transform controllers that drive them.
 See: docs/commentary/asset_convert_shader.md
 """
 
+from asset_convert import case_paths
 from asset_convert.game_paths import current_namespace
-import functools
 import os
 
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
@@ -105,7 +105,7 @@ def resolve_source_texture(tex_rel, src_nif_path, fallback_roots=()):
 
     Maps textures\\tes4\\fire\\x\\y.dds back to
     export/<esm>/textures/fire/x/y.dds beside the source mesh tree, falling
-    back to the master's roots.
+    back to the master's roots; every root is searched case-blind.
     See: docs/commentary/asset_convert_shader.md#texture-fallback-roots
     """
     if not src_nif_path:
@@ -115,7 +115,6 @@ def resolve_source_texture(tex_rel, src_nif_path, fallback_roots=()):
     i = norm.lower().rfind(key)
     if i < 0:
         return None
-    tex_root = norm[:i] + os.sep + 'textures' + os.sep
     rel = tex_rel.replace('/', '\\')
     low = rel.lower()
     for prefix in ('textures\\' + current_namespace() + '\\',
@@ -123,44 +122,9 @@ def resolve_source_texture(tex_rel, src_nif_path, fallback_roots=()):
         if low.startswith(prefix):
             rel = rel[len(prefix):]
             break
-    parts = [p for p in rel.split('\\') if p]
-    cand = tex_root + os.sep.join(parts)
-    if os.path.isfile(cand):
-        return cand
-    # NIFs keep the author's casing ('ARStone02.dds') but extracted files are
-    # lowercase, so a case-sensitive filesystem needs a case-blind match.
-    cand = _join_nocase(norm[:i], ['textures', *parts])
-    if cand:
-        return cand
-    for root in (fallback_roots or ()):
-        cand = os.path.join(root, *parts)
-        if os.path.isfile(cand):
-            return cand
-        cand = _join_nocase(root, parts)
-        if cand:
-            return cand
-    return None
-
-
-@functools.lru_cache(maxsize=None)
-def _dir_names(path):
-    """`path`'s entries keyed by lowercase name, or None when unreadable."""
-    try:
-        return {n.lower(): n for n in os.listdir(path)}
-    except OSError:
-        return None
-
-
-def _join_nocase(root, parts):
-    """The existing file at `root/parts...` matched case-insensitively, or None."""
-    p = root
-    for seg in parts:
-        names = _dir_names(p)
-        match = names.get(seg.lower()) if names else None
-        if match is None:
-            return None
-        p = os.path.join(p, match)
-    return p if os.path.isfile(p) else None
+    roots = [*case_paths.variants(norm[:i], 'textures'), *(fallback_roots or ())]
+    found = case_paths.resolve(roots, rel, 'shaders.texture')
+    return str(found) if found else None
 
 
 def master_texture_roots(mesh_dir):

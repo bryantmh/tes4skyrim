@@ -16,6 +16,7 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 
+from asset_convert import case_paths
 from asset_convert.collision.mesh_scan_fragments import set_fragment_dir
 from asset_convert.nif.fixture_plan import FIXTURE_KEY
 from asset_convert.nif.nif_converter import convert_nif
@@ -188,6 +189,7 @@ def _merge_result(stats, skipped_list, mesh_path, nif_str, r):
     stats['parallax'].update(r.get('parallax') or {})
     stats['alpha_opacity_diffuse'].update(r.get('alpha_opacity_diffuse') or ())
     stats['overlay_diffuses'].update(r.get('overlay_diffuses', ()))
+    case_paths.merge_counts(r.get('case_counts'))
     rel = str(Path(nif_str).relative_to(mesh_path))
     if r.get('error'):
         stats['errors'] += 1
@@ -405,6 +407,7 @@ def _batch_worker(args):
                         textures_only=textures_only,
                         tex_fallback=tex_fallback)
         r['warn_counts'] = _categorize_pyffi_warnings(worker_warn_log)
+        r['case_counts'] = case_paths.snapshot_counts()
         return ('ok', nif_str, r)
     except Exception as e:
         return ('error', nif_str, str(e))

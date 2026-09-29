@@ -38,6 +38,7 @@ CLI:
 Templates are auto-extracted from the SSE BSAs by default (skyrim_assets).
 """
 
+from asset_convert import case_paths
 from asset_convert.game_paths import current_namespace
 from asset_convert.sources import base_plugins, skyrim_assets
 import argparse
@@ -705,33 +706,9 @@ def _as_roots(roots):
 
 def find_source_mesh(extract_roots, model):
     """Locate BOOK MODL `model` across this plugin's asset root then its masters'."""
-    parts = model.replace('/', '\\').strip('\\').split('\\')
-    for root in _as_roots(extract_roots):
-        p = os.path.join(root, 'meshes', *parts)
-        if os.path.isfile(p):
-            return p
-        # MODL keeps TES4's mixed case ('Clutter\\Books\\Scroll07.NIF') while
-        # an extracted tree is lowercase; on a case-sensitive filesystem walk
-        # the path one segment at a time, ignoring case.
-        p = _join_nocase(root, ['meshes', *parts])
-        if p is not None:
-            return p
-    return None
-
-
-def _join_nocase(root, parts):
-    """The existing file at `root/parts...` matched case-insensitively, or None."""
-    p = root
-    for seg in parts:
-        try:
-            names = os.listdir(p)
-        except OSError:
-            return None
-        match = next((n for n in names if n.lower() == seg.lower()), None)
-        if match is None:
-            return None
-        p = os.path.join(p, match)
-    return p if os.path.isfile(p) else None
+    found = case_paths.resolve(_as_roots(extract_roots), 'meshes\\' + model,
+                               'book_inam.mesh')
+    return str(found) if found else None
 
 
 def _normal_sibling(tex_path):
