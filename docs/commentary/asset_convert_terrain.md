@@ -14,6 +14,7 @@
 - [Terrain LOD invents ground over cells that own no LAND](#lod-invents-terrain-over-cells-with-no-land)
 - [Terrain LOD: arguments, shared cells, texture counts](#generate-terrain-lod-arguments)
 - [The LAND texture-layer run](#land-layer-run)
+- [The source game's baked LOD: tiles and height meshes](#baked-lod-sources)
 - [GENERATED `_far.nif` belong to the LOD mod](#generated-far-nif-belong-to-the-lod-mod)
   - [Why one LOD folder, not one per plugin](#one-lod-folder-not-one-per-plugin)
 
@@ -1839,4 +1840,45 @@ Tripwires, not built: dropped layers are not merged into a kept one (0.54% of
 opacity mass, but 7,543 quadrants lose a layer peaking above 0.5; needs texture
 colours at import) -- revisit if small wrong-texture patches show in game.
 Vanilla's BTXT layer field is 0xFFFF; we write 0.
+
+## <a id="baked-lod-sources"></a>The source game's baked LOD: tiles and height meshes
+
+**Code:** `asset_convert/lod/terrain_lod_baked.py`.
+
+Oblivion ships, per worldspace (named by its DECIMAL FormID, 60 for Tamriel),
+32-cell tiles: `textures\landscapelod\generated\<fid>.<x>.<y>.32.dds` (1024^2
+DXT1, stored SOUTH-UP, 32 px per cell) and `meshes\landscape\lod\<fid>.<x>.<y>.32.nif`
+(a NiTriStrips heightfield, no UVs, irregular 128-1024 unit spacing). They are
+the only authored source for land past the LAND records -- the horizon
+mountains -- and for quadrants no layer paints.
+
+- **Discovery ignores case and keeps load order.** The export dirs of the owner
+  and its suppliers are listed with `case_paths.list_prefix`: UOP ships
+  `meshes\Landscape\LOD\60.*.NIF` and Frostcrag Reborn `meshes\landscape\LOD\`,
+  which an exact-case listing never sees. A plugin's worldspace FormIDs come
+  from its export's (and masters') WRLD.txt, matched on the source or converted
+  EditorID. Textures: the last plugin wins a tile. Meshes: every plugin's copy
+  is kept, in order.
+- **Rasterise in WORLD space.** Vertices go through every node transform, then
+  the tile origin is subtracted and triangles are clipped to the tile, one
+  sample per LAND vertex (128 units, 1025^2 per tile), NaN where uncovered.
+  Oblivion.esm's meshes carry the tile origin as translation; UOP's 60.64.00 has
+  T = 0 and world coordinates, covering only x 64..68 (160 cells, all LAND).
+- **Per cell, the last plugin covering all 33x33 vertices wins**, and each
+  tile logs which plugin supplied how many cells. This is not cosmetic:
+  Oblivion.esm's own 60.00.-64 is off from LAND by mean |dz| 3,423, UOP's
+  replacement by 59. With Oblivion.esm + UOP + Frostcrag Reborn, UOP supplies
+  most southern and central tiles, FR all of 0.32, Oblivion.esm the northern
+  row.
+
+Measured (Oblivion.esm meshes vs Oblivion.esm LAND, cell-mean |dz|): tile 0.0
+161, tile 0.32 172; the same rasters flipped north-south 6,685 / 6,724. A tile
+rasters in ~0.7 s; all 36 Tamriel tiles, every source, 39 s in one process.
+pyffi prints "End of file not reached" for 8 of Oblivion.esm's shipped LOD
+meshes (trailing bytes); their geometry reads and matches LAND.
+
+`cell_crop` takes a cell out of a south-up baked tile: flip to north-up, take
+rows (31-cy)*n and columns cx*n, and resize that crop ONCE to the target size
+(slicing first and resizing each quadrant separately blurs across the quadrant
+seams).
 
