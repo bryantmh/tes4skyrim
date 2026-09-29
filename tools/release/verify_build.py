@@ -143,6 +143,18 @@ def all_lines(sections):
     return [line for s in sections for line in s.lines]
 
 
+def section_window(sections, sec, log_path) -> tuple:
+    """(start, end) epoch seconds of step `sec`: its stamp to the next stamp, or to the log's last write.
+
+    Stamps have whole seconds, so the end gets one second of slack.
+    See: docs/commentary/tools_release_gate.md#stamps
+    """
+    later = [s.start for s in sections[sections.index(sec) + 1:]
+             if s.start is not None]
+    end = later[0].timestamp() if later else Path(log_path).stat().st_mtime
+    return sec.start.timestamp(), end + 1.0
+
+
 def worldspaces_in(sections) -> list:
     """Worldspaces the final `create_lod` step baked, from its `LODGen input` lines."""
     sec = final_section(sections, 'create_lod')
@@ -250,12 +262,13 @@ def check_lod_rows(ctx) -> dict:
     if sec is None:
         return result('G9', REFUSE, '0 worldspaces', 'no create_lod step')
     rows, problems = [], []
+    window = section_window(ctx.sections, sec, ctx.log)
     at = [i for i, line in enumerate(sec.lines) if _LOD_INPUT.search(line)]
     for i, nxt in zip(at, at[1:] + [len(sec.lines)]):
         m = _LOD_INPUT.search(sec.lines[i])
         rows.append(_lod_row(Path(m.group(1)), int(m.group(2)),
                              sec.lines[max(0, i - 12):nxt], min(i, 12),
-                             ctx.start, problems))
+                             window, problems))
     listed = sum(r['listed'] for r in rows)
     if not rows:
         return result('G9', REFUSE, '0 worldspaces', 'no "LODGen input" line')
@@ -265,20 +278,23 @@ def check_lod_rows(ctx) -> dict:
                   '; '.join(p[0] for p in problems[:5]), worldspaces=rows)
 
 
-def _lod_row(path: Path, listed: int, lines, at: int, start, problems) -> dict:
+def _lod_row(path: Path, listed: int, lines, at: int, window, problems) -> dict:
     """Recount one LODGen input file; add (message, severity) to `problems`.
 
     `lines` runs from just before its `LODGen input` line (`lines[at]`) to
     the next one, so a retry or selection line is this worldspace's own.
+    The file must have been written inside the step's `window`: older is
+    someone else's, newer is a LATER run's.
     """
     recount = count_lodgen_rows(path)
     retried = any(_RETRY.search(t) for t in lines[at:])
     sel = [int(m.group(1)) for t in lines[:at]
            for m in [_SELECTION.search(t)] if m]
-    stale = (path.is_file() and start is not None
-             and path.stat().st_mtime < start.timestamp())
-    if recount is None or stale:
-        problems.append((f'{path.name}: missing or older than the run', FAIL))
+    outside = path.is_file() and not (
+        window[0] <= path.stat().st_mtime <= window[1])
+    if recount is None or outside:
+        problems.append((f'{path.name}: missing or not written inside the '
+                         'create_lod step', FAIL))
     elif recount != listed:
         problems.append((f'{path.name}: {recount} rows, printed {listed}',
                          WARN if retried else FAIL))
@@ -735,6 +751,7 @@ def build_context(args):
     ctx = argparse.Namespace(
         mode='post' if args.post_deploy else 'pre',
         sections=sections, start=run_start(sections), output=output,
+        log=Path(args.log),
         export=Path(args.export or export_default),
         lod=output / LOD_DIR_NAME, plugins=plugins,
         worldspaces=worldspaces_in(sections),

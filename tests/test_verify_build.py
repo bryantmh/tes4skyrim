@@ -40,7 +40,7 @@ def _ctx(tmp_path, log_body='', **kw):
     out = tmp_path / 'output'
     out.mkdir(exist_ok=True)
     ctx = argparse.Namespace(
-        mode='pre', sections=sections, start=dt.datetime(2026, 9, 2),
+        mode='pre', sections=sections, start=dt.datetime(2026, 9, 2), log=log,
         output=out, export=tmp_path / 'export', lod=out / 'AutoConvertLOD',
         plugins=vb.plugins_in(sections), skyrim_data=None, source_esm=None,
         worldspaces=['TES4Tamriel'], allow_missing=frozenset(),
@@ -57,6 +57,8 @@ def _lodgen_file(tmp_path, rows: int) -> Path:
             'PathData=x\\', 'PathOutput=y']
     p.write_text('\n'.join(head + ['\t'.join(['0'] * 16)] * rows) + '\n',
                  encoding='utf-8')
+    inside = dt.datetime(2026, 9, 29, 10, 35).timestamp()
+    os.utime(p, (inside, inside))
     return p
 
 
@@ -172,6 +174,24 @@ class TestLogChecks:
         os.utime(f, (old, old))
         ctx = _ctx(tmp_path, f'  LODGen input: {f} (3 references)')
         assert vb.check_lod_rows(ctx)['status'] == vb.FAIL
+
+    def test_lod_rows_file_from_a_later_run_fails(self, tmp_path):
+        """Written after the create_lod step ended (the next stamp) -> a later run's file."""
+        f = _lodgen_file(tmp_path, 3)
+        ctx = _ctx(tmp_path, f'  LODGen input: {f} (3 references)')
+        assert vb.check_lod_rows(ctx)['status'] == vb.PASS
+        later = dt.datetime(2026, 9, 29, 10, 40, 2).timestamp()
+        os.utime(f, (later, later))
+        assert vb.check_lod_rows(ctx)['status'] == vb.FAIL
+
+    def test_last_step_window_ends_at_the_log_write(self, tmp_path):
+        """The final step has no next stamp: its window ends at the log's mtime."""
+        ctx = _ctx(tmp_path)
+        end = dt.datetime(2026, 9, 29, 11, 0).timestamp()
+        os.utime(ctx.log, (end, end))
+        last = ctx.sections[-1]
+        assert vb.section_window(ctx.sections, last, ctx.log) == (
+            last.start.timestamp(), end + 1.0)
 
 
 class TestFileChecks:

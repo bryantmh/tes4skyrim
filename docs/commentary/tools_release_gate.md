@@ -99,7 +99,7 @@ on PASS.
 | G6 | ATXT-only land quadrants (see below) | all keep an alpha layer |
 | G7 | terrain-LOD colour (see below) | MAE within bound, control worse, not grey |
 | G8 | tree-card tiles vs tiles carrying NiAlphaProperty, over every baked worldspace | informational: vanilla carries none |
-| G9 | each worldspace's LODGen input: rows on disk vs the printed `LODGen input` count vs the `Object-LOD selection` line | all equal; a mismatch after a NullReference retry (which rewrites the file) warns; a file older than the run fails |
+| G9 | each worldspace's LODGen input: rows on disk vs the printed `LODGen input` count vs the `Object-LOD selection` line | all equal; a mismatch after a NullReference retry (which rewrites the file) warns; a file not written inside the final `create_lod` step's window (its stamp to the next stamp, or to the log's last write, plus one second for whole-second stamps) fails: older is another run's, newer is a LATER run's |
 | G10 | CRC-32 of every zip member vs the deployed file | all equal |
 | G11 | final `create_lod` step: `NullReferenceException`, empty bakes; `.bto` per worldspace | none; at least `--min-bto` (TES4Tamriel 997) |
 | G12 | `[plugin] Compilation: ok/total succeeded, N failed` | every plugin present, N = 0 |
