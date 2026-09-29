@@ -259,7 +259,8 @@ def _emit_navm_deltas(lines: list, rec: Record):
 
     FO3/FNV ship real navmeshes where TES4 has only pathgrids, so this is
     authored data to repack rather than geometry to generate. NVVX/NVTR/NVDP
-    are dumped verbatim; the importer reinterprets them into TES5's NVNM blob.
+    and the NVEX edge links are dumped verbatim; the importer reinterprets
+    them into TES5's NVNM blob.
 
     See: docs/commentary/tes4_export_falloutnv.md#navmesh-authored-not-generated
     """
@@ -274,7 +275,7 @@ def _emit_navm_deltas(lines: list, rec: Record):
         lines.append(f"DATA.CoverTriangleCount={ncover}")
         lines.append(f"DATA.DoorLinkCount={ndoor}")
 
-    for sig in ("NVVX", "NVTR", "NVDP"):
+    for sig in ("NVVX", "NVTR", "NVDP", "NVEX"):
         emit_raw_hex(lines, sig, get_subrecord(rec, sig))
 
 

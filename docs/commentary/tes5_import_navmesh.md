@@ -226,6 +226,36 @@ navmesh link at all.
 Note `build_edge_links` only appends edge links to *exterior* meshes and never
 reorders triangles, so indices captured before it stay valid.
 
+<a id="fallout-edge-links"></a>**FO3/FNV edge links are authored, so they are
+carried, not stitched** (`navm_falloutnv`). A Fallout navmesh names its
+neighbours in NVEX (xEdit `wbRecord(NAVM)`: u32 type, NAVM FormID, u16
+triangle; 10 bytes, the same as Skyrim's), and a triangle whose flag bit 0, 1
+or 2 is set holds an NVEX index in that edge, not a neighbour triangle (xEdit
+`wbNVTREdgeToStr`). The exporter dropped NVEX and the parser ignored the flag,
+so a linked edge either vanished or, when its index was below the triangle
+count, joined an unrelated triangle; the geometric seam pass then linked only
+241 of 2,727 exterior meshes (9%), though FalloutNV.esm authors links on
+2,105 navmeshes. NPCs could not cross an exterior cell border: Sunny
+Smiles's `VCG02SunnyTravelToWell1` started and she never moved. Each authored
+link is now written after the mesh is packed, through `NavMeshView.add_link`
+with the source link type, to the target's output FormID
+(`derive_formid('NAVM', (cell, source FormID))`, mapped for every navmesh
+before any is converted). `build_edge_links` only fills border edges that
+carry no link, so it adds to them and never duplicates one. This lives in
+`record_types/`, outside the shared navmesh cache's tag.
+
+<a id="fallout-door-links-renumbered"></a>**FO3/FNV door links are renumbered
+like every other reference** (`navm_falloutnv.parse_door_links`). An authored
+Fallout navmesh names its doors in NVDP by the source FormID, `0010618E` for
+the Prospector Saloon's front door. The converted plugin has Skyrim.esm as its
+first master, so that door is written as `0110618E`, and `convert_REFR` looks
+its link up by that id. The door links were stored unrenumbered, so the import
+logged "1100 doors bound" while none of FalloutNV.esm's 1,108 teleport doors
+got XNDP, and the navmeshes' own Door Triangles named records in Skyrim.esm's
+space. No NPC could path through a door: Sunny Smiles's Back in the Saddle
+package (travel to `VCG02SunnyOutsideMarkerREF` outside the saloon) started
+and she never moved.
+
 <a id="navmesh-worker-rebuilt-globals"></a>
 **What `init_worker` must rebuild in every pool child** (`navmesh/worker.py`).
 A spawned child does NOT inherit the parent's module globals, so each of these
