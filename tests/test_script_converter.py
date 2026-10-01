@@ -554,6 +554,27 @@ class TestFunctionConversion:
         result = emit_function(converter, None, 'GetSelf', '', 'ObjectReference')
         assert result == 'Self'
 
+    def test_setrestrained_restrain_routes_through_polyfill(self, converter):
+        # Oblivion setrestrained suspended ALL AI; the helper adds the combat
+        # stop SetDontMove alone dropped.
+        result = emit_function(converter, 'myActor', 'SetRestrained', '1', 'Actor')
+        assert result == 'TES4Polyfill.SetRestrained(myActor, true)'
+
+    def test_setrestrained_release_routes_through_polyfill(self, converter):
+        result = emit_function(converter, 'myActor', 'SetRestrained', '0', 'Actor')
+        assert result == 'TES4Polyfill.SetRestrained(myActor, false)'
+
+    def test_setrestrained_default_arg_is_release(self, converter):
+        # Bare `setrestrained` with no arg defaults to 0 (the row's default).
+        result = emit_function(converter, 'myActor', 'SetRestrained', '', 'Actor')
+        assert result == 'TES4Polyfill.SetRestrained(myActor, false)'
+
+    def test_setrestrained_bare_self_gets_actor_cast(self, converter):
+        # A receiverless call on a non-Actor script casts Self for the helper's
+        # Actor parameter (same promotion the old SetDontMove row relied on).
+        result = emit_function(converter, None, 'SetRestrained', '1', 'ObjectReference')
+        assert result == 'TES4Polyfill.SetRestrained((Self as Actor), true)'
+
 
 # ===========================================================================
 # Actor value mapping tests

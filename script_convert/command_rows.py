@@ -114,8 +114,16 @@ COMMAND_ROWS = {
     #: Reset3DState -> MoveTo self (reloads 3D).
     'reset3dstate': Cmd('{ref}.MoveTo({ref})'),
 
-    #: SetRestrained -> SetDontMove.
-    'setrestrained': Cmd('{ref}.SetDontMove({b0})', ACTOR, defaults={0: '0'}),
+    #: SetRestrained: Oblivion suspended ALL AI (movement AND combat) and
+    #: resumed it on release.  SetDontMove -- and Skyrim's own SetRestrained
+    #: native -- stop only movement, leaving a "pacified" actor still in combat
+    #: (so a restrained group never leaves combat and escort/travel packages
+    #: can't engage).  The helper restores the full semantics: StopCombat on
+    #: restrain, EvaluatePackage on release (the suspend/resume Oblivion gave
+    #: free).  Aggression is left untouched -- scripts set it themselves around
+    #: setrestrained (e.g. MS27 Umbacano `setav aggression 50; setrestrained 0`).
+    #: See: docs/commentary/script_convert.md#setrestrained-suspends-all-ai
+    'setrestrained': Cmd('TES4Polyfill.SetRestrained({ref}, {b0})', ACTOR, defaults={0: '0'}),
 
     #: IsOnGround: Skyrim has only the inverse.
     'isonground': Cmd('!({ref}.IsFlying())', RAW),

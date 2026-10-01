@@ -7,6 +7,7 @@
 - [Papyrus / Script Conversion Notes](#papyrus-script-conversion-notes)
 - [Language mapping basics](#language-mapping-basics)
 - [Paired on/off commands — the asymmetric-map trap](#paired-onoff-commands-asymmetric-map)
+- [SetRestrained suspends ALL AI, not just movement (2026-10-01)](#setrestrained-suspends-all-ai)
 - [Skyrim has GMST readers but no GMST writer (2026-07-31)](#skyrim-has-gmst-readers-but)
 - [Silent mis-conversion — the unmarked loss](#silent-mis-conversion-unmarked-loss)
 - [Event / timer conversion](#event-timer-conversion)
@@ -151,6 +152,57 @@ the original state. Audit the partner call before accepting either.
   immortality — a worse defect than the one being fixed. The suppression itself
   is now a falling-damage perk, not DamageResist:
   [fall damage is a perk](#fall-damage-is-a-perk).
+
+## SetRestrained suspends ALL AI, not just movement (2026-10-01)
+<a id="setrestrained-suspends-all-ai"></a>
+
+**Oblivion's `setrestrained 1` suspended an actor's ENTIRE AI — it stopped
+moving AND stopped fighting — and resumed it on `setrestrained 0`. The old map
+to `SetDontMove` froze only movement, so a "restrained" actor stayed in
+combat.** This is the same asymmetric-map trap as `SetAlert` above, one level
+deeper: the call converted and the actor stopped walking, so it *looked* right,
+but the combat half was silently dropped. A single restrained actor still in
+combat keeps its whole group in combat, and Skyrim will not run an escort or
+travel package while the package owner is in combat — `EvaluatePackage()` does
+not override the combat controller.
+
+**Receipt — the CharGen stage-50 escort stall.** After the birthsign the
+tutorial restrains the three second-wave assassins (`CGGenericAssassin1/2/3`,
+"Move out!") so the Emperor's escort can proceed. Converted with `SetDontMove`
+they stopped walking but stayed aggroed, so the group never left combat, the
+Emperor's `CGGlenroyEscortEmperorToF` package never ran, its `OnPackageDone`
+never set stage 52, and Baurus never followed — a soft-lock of a quest needed
+much later. (It is also why the combat-end re-eval seam could not help: combat
+never *ended*, so `OnCombatStateChanged(0)` never fired.)
+
+**The fix is general, not tutorial-specific.** A census of the whole master
+found 85 `setrestrained` calls across 35 records / 23 logical sites — SE03
+Gnarl, MS10 Ulrich (rats must kill him), MS52 Agronak, the Dark Brotherhood
+finale execution, MQ09/MQ15/MQ16, MS27 Umbacano, E3 Kvatch, and CharGen — not
+one isolated bug. `setrestrained` now routes through
+`TES4Polyfill.SetRestrained(akActor, abRestrain)`, which keeps `SetDontMove`
+and adds the dropped halves: **`StopCombat()` on restrain** (the pacify Oblivion
+gave free) and **`EvaluatePackage()` on release** (the resume Oblivion did
+continuously but Skyrim must be nudged into — several release sites, e.g. the
+CharGen final-ambush trigger zone and the MQ16 Dagon stagger, have no explicit
+re-eval after `setrestrained 0`).
+
+**Aggression is deliberately left untouched.** The tempting "zero aggression on
+restrain, restore it on release" is wrong: the source scripts manage aggression
+themselves around `setrestrained`, and auto-restoring would clobber them. The
+decisive case is MS27 Umbacano — his script runs `setav aggression 50` and then
+`setrestrained 0` so he attacks; a restore-to-base on release would overwrite
+the 50 with his noble base aggression and he would never fight, soft-locking the
+quest. MS52 Agronak shows the same convention from the other side: the script
+itself calls `StopCombat` + `SetAV Aggression 0` by hand. The actor's current
+aggression is the author's intent; the helper preserves it.
+
+**Why not the `Actor.SetRestrained` native?** Skyrim *does* have one, but it
+also stops only movement (Bethesda's own scripts pair it with a separate
+`StopCombatAlarm()`/`EvaluatePackage()`, e.g. `QF_MQ301` for Odahviing), so it
+would not fix the bug and would change the immobilization behavior at all 23
+sites for no gain. Keeping `SetDontMove` plus the combat/resume halves is the
+minimal change that actually closes the gap.
 
 ## ResetFallDamageTimer is a falling-damage perk window (2026-09-25, unconfirmed in game)
 <a id="fall-damage-is-a-perk"></a>

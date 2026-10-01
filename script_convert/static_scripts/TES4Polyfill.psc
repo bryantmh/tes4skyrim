@@ -726,6 +726,28 @@ Function SetActorRefraction(Actor akActor, Float afValue) Global
   EndIf
 EndFunction
 
+; TES4 SetRestrained: Oblivion suspended an actor's ENTIRE AI (it stopped
+; moving AND stopped fighting) and resumed it on release.  Skyrim's SetDontMove
+; -- and even the Actor.SetRestrained native -- freeze movement only, so a
+; "restrained" actor stays in combat; a whole group then never leaves combat
+; and its escort/travel packages can't run (the CharGen stage-50 escort stall).
+; Restore the real semantics: on restrain also StopCombat; on release re-run
+; the package pick (the resume Oblivion did continuously, Skyrim needs nudged).
+; Aggression is deliberately left alone -- the source scripts manage it around
+; setrestrained themselves (e.g. MS27 Umbacano sets aggression 50 then releases
+; to attack), so touching it here would clobber their intent.
+Function SetRestrained(Actor akActor, Bool abRestrain) Global
+  If akActor == None
+    Return
+  EndIf
+  akActor.SetDontMove(abRestrain)
+  If abRestrain
+    akActor.StopCombat()
+  Else
+    akActor.EvaluatePackage()
+  EndIf
+EndFunction
+
 ; TES4 (OBSE) ResetFallDamageTimer: the fall in progress does no damage.
 ; Skyrim's falling damage is reachable only through perk entry point Mod
 ; Falling Damage, so the importer's TES4NoFallDamage spell carries a perk
