@@ -29,6 +29,16 @@ def update_interval(sc, extends: str = '') -> str:
     if extends == 'Quest':
         return (QUEST_DELAY_CALL if sc.declares_quest_delay
                 else float_literal(QUEST_DEFAULT_INTERVAL))
+    return active_interval(sc)
+
+
+def active_interval(sc) -> str:
+    """The fine poll interval the body's own work wants, ignoring the Quest 5 s cap.
+
+    This is what a NON-quest script polls at, and what a Quest re-arms to WHILE a
+    countdown timer is running (assemble._adaptive_arm): the interval its body was
+    written to run at, capped at MIN_INTERVAL.
+    """
     if sc.uses_getsecondspassed or sc.moves_in_poll:
         return '0.1'
     if sc.uses_say_timer:

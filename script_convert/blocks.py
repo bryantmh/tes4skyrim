@@ -91,6 +91,9 @@ COMBAT_STATE_GUARDS = {'onalarm': 'aeCombatState != 0',
                        'onstartcombat': 'aeCombatState == 1',
                        **FALLOUT_COMBAT_STATE_GUARDS}
 
+#: The merged event both combat blocks become; used to hang a combat-END arm.
+COMBAT_EVENT_HEADER = BLOCK_MAP['onstartcombat']
+
 
 def _filter_property_type(param_type: str, rtype: str) -> 'str | None':
     """The Papyrus type to bind the filter's property at, or None if unusable.

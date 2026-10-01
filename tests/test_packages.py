@@ -19,6 +19,7 @@ from tes5_import.packages.converter import (
     SPEED_RUN,
     T5_MUST_COMPLETE,
     T5_OFFERS_SERVICES,
+    T5_ONCE_PER_DAY,
     T5_UNLOCK_DOORS_START,
     T5_WEAPON_DRAWN,
     build_psdt,
@@ -179,6 +180,52 @@ def test_always_run_becomes_preferred_speed_field():
 def test_ambush_sets_weapon_drawn():
     flags, _ = convert_flags(0, 9)               # TES4 Ambush
     assert flags & T5_WEAPON_DRAWN
+
+
+# --- Force-greet Once Per Day: a quest-scheduled greet must NOT latch ------
+# A ForceGreet on a persistent actor with Once Per Day is counted spent at game
+# load, so the engine runs it one frame and drops the actor to its next package.
+# That hard-stalled CharacterGen at stage 17 (the Emperor never opened dialogue).
+# A greet gated by its quest's GetStage/GetQuestVariable condition is scheduled
+# by that condition, so the daily latch is redundant and harmful -> drop it; a
+# routine (non-quest) vendor greet keeps it.
+
+#: A ForceGreet is an Ambush (or Find) aimed at the player.
+_FORCEGREET_AT_PLAYER = {'PTDT.Type': 0, 'PTDT.Target': '00000014',
+                         'PTDT.Count': 1}
+#: GetStage(0002466E) == 17 -- a quest condition, no owner needed.
+_GETSTAGE_17 = '00000000000088413a0000006e4602000000000000000000'
+
+
+def _pkdt_flags(record) -> int:
+    return struct.unpack_from('<I', _first(_subrecords(record), 'PKDT'), 0)[0]
+
+
+def test_quest_owned_forcegreet_drops_once_per_day():
+    """A quest-OWNED force-greet (CharacterGen's Emperor greet) must shed the
+    Once Per Day latch so it fires every time its stage condition passes."""
+    plan = PackagePlan()
+    plan.owner_quest[0x00001000] = 0x00035713
+    ctx = PackContext(plan=plan)
+    rec = _pack(9, **{'PKDT.Flags': 0x400, **_FORCEGREET_AT_PLAYER})
+    assert _pkdt_flags(convert_PACK(rec, ctx)) & T5_ONCE_PER_DAY == 0
+
+
+def test_condition_gated_forcegreet_drops_once_per_day():
+    """A greet the quest only CONDITION-gates (GetStage), not owns, is the
+    common case (120 of 7,209 packages are owned) and must shed it too."""
+    ctx = PackContext()
+    rec = _pack(9, **{'PKDT.Flags': 0x400, 'ConditionCount': 1,
+                      'Condition[0].Raw': _GETSTAGE_17, **_FORCEGREET_AT_PLAYER})
+    assert _pkdt_flags(convert_PACK(rec, ctx)) & T5_ONCE_PER_DAY == 0
+
+
+def test_routine_forcegreet_keeps_once_per_day():
+    """A routine (non-quest) greet -- a vendor/servant who greets at most once a
+    day -- keeps TES4's Once Per Day (the WITavernServerGreetPlayer pattern)."""
+    ctx = PackContext()
+    rec = _pack(9, **{'PKDT.Flags': 0x400, **_FORCEGREET_AT_PLAYER})
+    assert _pkdt_flags(convert_PACK(rec, ctx)) & T5_ONCE_PER_DAY
 
 
 # --- The GetScriptVariable gate (the fgc01rats mechanism) -----------------

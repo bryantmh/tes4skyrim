@@ -1307,17 +1307,19 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     is_forcegreet = (ptype in (T4_AMBUSH, T4_FIND)
                      and _targets_player(rec))
     hostile = not (is_forcegreet or _approaches_ref(rec, ptype))
+    owner = ctx.quest_of(pack_fid)
     flags, speed = convert_flags(get_int(rec, 'PKDT.Flags'), ptype, hostile,
-                                 quest_gated=ctx.quest_of(pack_fid) is not None)
+                                 quest_gated=owner is not None)
     # A scripted one-shot (force-greet, or "go operate that switch") must run
     # at vanilla's pace and with vanilla's interrupt authorisation, or the actor
     # dawdles / can never break off to do the thing.  Both were measured from
     # real instances: MS05InductionForcegreet and CWEscapeCitySceneActivateDoor.
     is_activate = _operate_target(rec, ctx)
     if is_forcegreet:
-        subs += pack_subrecord('PKDT', build_pkdt(_forcegreet_flags(rec, flags),
-                                                  SPEED_RUN,
-                                                  FORCEGREET_INTERRUPT))
+        subs += pack_subrecord('PKDT', build_pkdt(
+            _forcegreet_flags(rec, flags, owner),
+            SPEED_RUN,
+            FORCEGREET_INTERRUPT))
     elif is_activate:
         # Keep the TES4 flags (Must Complete / Once Per Day are real), but take
         # vanilla's speed and interrupts.
@@ -1334,7 +1336,6 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     # in Skyrim, so without this the package could never fire.
     subs += _source_conditions(rec, ctx)
 
-    owner = ctx.quest_of(pack_fid)
     if owner:
         subs += pack_formid_subrecord('QNAM', owner)
 
@@ -1502,8 +1503,28 @@ _QUEST_PARAM_FUNCS = frozenset({
 })
 
 
-def _forcegreet_flags(rec: dict, flags: int) -> int:
-    """Force-greet PKDT flags: TES4's, Once Per Day restored (contracts doc, PKDT)."""
+def _forcegreet_flags(rec: dict, flags: int, owner: int) -> int:
+    """Force-greet PKDT flags.
+
+    A ROUTINE greet keeps TES4's Once Per Day: a vendor/servant greets the
+    player at most once a day (the WITavernServerGreetPlayer pattern this
+    conversion follows), so the bit is restored (contracts doc, PKDT).
+
+    A QUEST-gated greet must DROP it.  Such a greet fires every time its
+    GetStage/GetQuestVariable condition passes, and that condition already
+    scopes when; Once Per Day on top is counted already spent at game load for a
+    persistent actor, so the engine takes the package for a single frame and
+    immediately drops the actor back to its next passing package -- the same
+    latch convert_flags strips for a quest-OWNED package (see its comment).  It
+    killed CharacterGen's Emperor force-greet (stage 17): Uriel took the greet,
+    the latch was spent, the dialogue menu never opened, so convCount never
+    advanced and the tutorial hard-stalled.  convert_flags has already stripped
+    the bit when the package is quest-OWNED; keying on `owner or
+    _condition_quest` also covers a greet the quest only condition-gates -- the
+    common case, since only 120 of 7,209 packages are quest-owned.
+    """
+    if owner is not None or _condition_quest(rec):
+        return flags & ~T5_ONCE_PER_DAY
     if get_int(rec, 'PKDT.Flags') & T4_ONCE_PER_DAY:
         flags |= T5_ONCE_PER_DAY
     return flags

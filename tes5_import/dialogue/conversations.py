@@ -582,6 +582,12 @@ def build_conversation_plan(by_type: dict, script_vars: dict = None,
 # Oblivion starts ambient conversations only between actors close together;
 # fAIMaxSocialDistance-scale.  Also the poll cadence for the driver.
 _CONVERSE_DISTANCE = 500.0
+# How near the PLAYER must be to a native-scene actor for the scene to fire, so
+# a converged-but-offstage exchange never plays to an empty room. 2000 matches
+# CharGenQuest's own hatch boundary (it skips the stage-26 beat when the player
+# is >2000 from Glenroy), so the scene fires exactly in the window the quest
+# still expects it and never fights that fallback.
+_SCENE_PLAYER_DISTANCE = 2000.0
 _POLL_SECONDS = 4.0
 _FALLBACK_LINE_SECONDS = 4.0
 _LINE_BEAT = 0.6            # breath between lines, like Oblivion's scheduler
@@ -767,20 +773,74 @@ def _chain_body(chain, i: int, cond: str, say) -> str:
 
 
 def _scene_chain_body(chain, i: int, cond: str) -> str:
-    """A native-scene chain's `if` block: ForceStart the scene once, then latch.
+    """A native-scene chain's `if` block: start the owning quest, then ForceStart.
 
     The SCEN delivers every line and fires each INFO's End fragment natively, so
-    the driver only triggers it (no per-line SayLine, no measured waits). Latches
-    immediately (and retires any mutually-exclusive chain) so it fires once.
+    the driver only triggers it (no per-line SayLine, no measured waits). The
+    scene's owning quest must be RUNNING before ForceStart -- a start-game flag is
+    not reliable for an alias-only quest added by a master update (observed
+    in-game: "cannot force start scene because its parent quest was not running").
+    So the driver Start()s the owning quest on the first qualifying poll and
+    ForceStart()s on the NEXT poll, once its forced-ref aliases have filled (a
+    two-phase trigger avoids a same-frame alias-fill race). Latches (retiring any
+    mutually-exclusive chain) only after the ForceStart, so it fires exactly once.
     """
-    done = [f'        _done{j} = True'
+    done = [f'            _done{j} = True'
             for j in [i, *chain.get('exclusive_with', ())]]
     return '\n'.join([
         f'    ; {chain["owner_quest_edid"]}: native scene '
         f'(head INFO {chain["head_fid"]:08X})',
         f'    if {cond}',
-        f'        Conv{i}Scene.ForceStart()',
+        f'        Quest sceneQ{i} = Conv{i}Scene.GetOwningQuest()',
+        f'        if sceneQ{i} && !sceneQ{i}.IsRunning()',
+        f'            sceneQ{i}.Start()',
+        f'            Debug.Trace("TES4NPCConv chain {i}: started owning quest; '
+        f'ForceStart next poll")',
+        f'        else',
+        f'            Debug.Trace("TES4NPCConv chain {i}: ForceStart " + Conv{i}Scene)',
+        f'            Conv{i}Scene.ForceStart()',
         *done,
+        f'        endif',
+        '    endif'])
+
+
+def _scene_stop_clause(chain, i: int) -> str:
+    """Release a native scene once its moment has passed, or combat breaks it.
+
+    The scene carries a per-actor "stay at current location" hold action spanning
+    all its phases (conversation_scenes._pack_scene).  A Skyrim scene PAUSES for
+    combat rather than ending, so if the ambush hits mid-scene the hold lingered
+    and both actors stood frozen in the hall until the scene eventually resumed
+    and completed -- Rob's "Emperor and Baurus stuck after the first attack".
+
+    So on later polls, once the scene is playing: (a) if its stage gate no longer
+    holds the scene has served its purpose -> Stop, which drops the hold at once
+    instead of waiting on the paused scene's own phase logic; (b) if either actor
+    is in combat -> Stop and re-arm the trigger, so they fight freely and the
+    exchange restarts afterwards (stage/near/converse gates still apply).
+    """
+    seen_q = []
+    for g in chain['gates']:
+        if g['kind'] == 'stage' and g['quest_fid'] not in seen_q:
+            seen_q.append(g['quest_fid'])
+    qprop = {qfid: f'Conv{i}Q{j}' for j, qfid in enumerate(seen_q)}
+    stage_terms = [f'{qprop[g["quest_fid"]]}.GetStage() {g["op"]} {g["value"]}'
+                   for g in chain['gates'] if g['kind'] == 'stage']
+    if not stage_terms:
+        return ''   # no stage gate -> cannot tell when the scene is spent
+    guard = ' && '.join(f'{qprop[q]} != None' for q in seen_q)
+    passed = ' && '.join(stage_terms)
+    return '\n'.join([
+        f'    if _done{i} && Conv{i}Scene != None && Conv{i}Scene.IsPlaying()',
+        f'        if {guard} && !({passed})',
+        f'            Debug.Trace("TES4NPCConv chain {i}: stage passed, Stop scene")',
+        f'            Conv{i}Scene.Stop()',
+        f'        elseif (Conv{i}A && Conv{i}A.IsInCombat()) '
+        f'|| (Conv{i}B && Conv{i}B.IsInCombat())',
+        f'            Debug.Trace("TES4NPCConv chain {i}: combat, Stop scene + re-arm")',
+        f'            Conv{i}Scene.Stop()',
+        f'            _done{i} = False',
+        f'        endif',
         '    endif'])
 
 
@@ -834,9 +894,19 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
                       f'Scene Property Conv{i}Scene Auto']
             decls += gdecls
             decls.append(f'Bool _done{i} = False')
+            # Gate the scene on the PLAYER being present, not just the two actors
+            # being near each other: a scene whose actors converged off in a
+            # side room would otherwise ForceStart and play to an empty room
+            # (Rob's stage-26 report -- the exchange fired but he never heard it
+            # because Baurus/Emperor were elsewhere). PlayerNear keeps the beat
+            # from firing until the player can actually witness it.
             cond = ' && '.join([f'!_done{i}', f'Conv{i}Scene != None'] + terms
-                               + [f'CanConverse(Conv{i}A, Conv{i}B)'])
+                               + [f'CanConverse(Conv{i}A, Conv{i}B)',
+                                  f'PlayerNear(Conv{i}A, Conv{i}B)'])
             bodies.append(_scene_chain_body(chain, i, cond))
+            stop = _scene_stop_clause(chain, i)
+            if stop:
+                bodies.append(stop)
             continue
         decls += [f'Actor Property Conv{i}A Auto',
                   f'Actor Property Conv{i}B Auto',
@@ -852,11 +922,25 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
                            + [f'CanConverse(Conv{i}A, Conv{i}B)'])
         bodies.append(_chain_body(chain, i, cond, _say))
 
+    # Diagnostics (Debug.Trace, gated on bEnableTrace): a one-shot OnInit line
+    # naming the native-scene chains, plus a low-rate heartbeat (every 5 polls)
+    # dumping each scene chain's latch / CanConverse / owning-quest stage. Without
+    # this a silent driver is indistinguishable from one that never meets a gate.
+    scene_chains = [c for c in plan['chains'] if c['index'] in scene_set]
+    if scene_chains:
+        decls.append('Int _hb = 0')
     lines += decls
+    init_body = []
+    if scene_chains:
+        idxs = ', '.join(str(c['index']) for c in scene_chains)
+        init_body.append(
+            f'    Debug.Trace("TES4NPCConv: driver OnInit; native-scene '
+            f'chains = [{idxs}]")')
+    init_body.append(f'    RegisterForSingleUpdate({_POLL_SECONDS})')
     lines += [
         '',
         'Event OnInit()',
-        f'    RegisterForSingleUpdate({_POLL_SECONDS})',
+        *init_body,
         'EndEvent',
         '',
         'Event OnUpdate()',
@@ -867,6 +951,21 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
         'Function CheckConversations()',
     ]
     lines.append('\n'.join(bodies))
+    if scene_chains:
+        hb = ['    _hb += 1', '    if _hb >= 5', '        _hb = 0',
+              '        String s = "TES4NPCConv hb:"']
+        for c in scene_chains:
+            i = c['index']
+            hb.append(f'        s += " c{i}[done=" + _done{i} + " cc=" '
+                      f'+ CanConverse(Conv{i}A, Conv{i}B) + " pn=" '
+                      f'+ PlayerNear(Conv{i}A, Conv{i}B) + "]"')
+            if any(g['kind'] == 'stage' for g in c['gates']):
+                hb += [f'        if Conv{i}Q0 != None',
+                       f'            s += " c{i}q[run=" + Conv{i}Q0.IsRunning() '
+                       f'+ " stg=" + Conv{i}Q0.GetStage() + "]"',
+                       '        endif']
+        hb += ['        Debug.Trace(s)', '    endif']
+        lines.append('\n'.join(hb))
     lines += [
         'EndFunction',
         '',
@@ -884,6 +983,20 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
         '        return False',
         '    endif',
         f'    return akA.GetDistance(akB) < {_CONVERSE_DISTANCE}',
+        'EndFunction',
+        '',
+        'Bool Function PlayerNear(Actor akA, Actor akB)',
+        '    Actor p = Game.GetPlayer()',
+        '    if p == None',
+        '        return False',
+        '    endif',
+        f'    if akA != None && akA.Is3DLoaded() && p.GetDistance(akA) < {_SCENE_PLAYER_DISTANCE}',
+        '        return True',
+        '    endif',
+        f'    if akB != None && akB.Is3DLoaded() && p.GetDistance(akB) < {_SCENE_PLAYER_DISTANCE}',
+        '        return True',
+        '    endif',
+        '    return False',
         'EndFunction',
         '',
     ]

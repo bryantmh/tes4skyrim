@@ -13,8 +13,8 @@ later phase's state.
 import re
 from dataclasses import replace
 
-from script_convert.blocks import (BLOCK_MAP, COMBAT_STATE_GUARDS,
-                                   block_filter_guard)
+from script_convert.blocks import (BLOCK_MAP, COMBAT_EVENT_HEADER,
+                                   COMBAT_STATE_GUARDS, block_filter_guard)
 from script_convert.constants import (
     LAST_ACTIVATOR_VAR, MENU_ID_NAMES, SLEEP_WAIT_MENU_ID,
     UDF_CALLER_PARAM, UDF_RESULT_VAR,
@@ -25,7 +25,8 @@ from script_convert.command_rows import (
     COMMAND_ROWS, ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
 )
 from script_convert import symbols as _symbols
-from script_convert.poll_interval import (QUEST_DELAY_CALL, interval_literal,
+from script_convert.poll_interval import (QUEST_DELAY_CALL, active_interval,
+                                          float_literal, interval_literal,
                                           quest_delay_helper)
 from script_convert.poll_motion import relative_sets
 from script_convert.emit import script as _script
@@ -252,6 +253,9 @@ def _load_facts(conv, tree) -> None:
         and any(e.called in ('say', 'sayto')
                 for e in N.walk_expr(st.value) if e.called)
         for b in bodies for st in N.walk_stmts(b))
+    poll_bodies = [b.body for b in (tree.blocks if tree else ())
+                   if b.btype.lower() in POLL_BLOCKS]
+    sc.countdown_timers = _countdown_timers(poll_bodies)
     # The hour-boundary guard: `GameHour >= 23.98`.
     sc.uses_hour_window = any(
         isinstance(e, N.BinOp) and e.op in ('>=', '<=')
@@ -270,6 +274,39 @@ def _load_facts(conv, tree) -> None:
     sc.has_menumode = any(b.btype.lower() == 'menumode' for b in blocks)
     sc.has_scripteffectupdate = any(
         b.btype.lower() == 'scripteffectupdate' for b in blocks)
+
+
+def _countdown_timers(poll_bodies) -> tuple:
+    """Source names of poll timers counted DOWN by the frame delta.
+
+    `set convTimer to convTimer - getSecondsPassed` (or OBSE `let t -= ...`):
+    a variable drained by real elapsed time each pass.  Its positivity means
+    the poll is mid-countdown -- for the conversation quests, a line is playing
+    and the next one is gated on the timer reaching 0.  A Quest that owns such a
+    timer polls fine-grained WHILE any is > 0 and relaxes to its 5 s cadence
+    when all have run out (assemble._adaptive_arm), so pacing follows real time
+    instead of quantising to the 5 s quest tick, without the VM cost of polling
+    the whole quest body fast at all times.
+    """
+    names = []
+    seen = set()
+    for body in poll_bodies:
+        for st in N.walk_stmts(body):
+            if not isinstance(st, N.Assign):
+                continue
+            target = getattr(st.target, 'name', '')
+            if not target:
+                continue
+            drains = any(
+                e.called in ('getsecondspassed', 'scripteffectelapsedseconds')
+                for e in N.walk_expr(st.value) if e.called)
+            # A count-DOWN: `let t -= gsp`, or `set t to t - (... gsp ...)`.
+            countdown = st.op == '-' or (
+                isinstance(st.value, N.BinOp) and st.value.op == '-')
+            if drains and countdown and target.lower() not in seen:
+                seen.add(target.lower())
+                names.append(target)
+    return tuple(names)
 
 
 def _load_time_facts(sc, tree, called: set, btypes: set) -> None:
@@ -397,9 +434,69 @@ def quest_restart(conv, tree, extends: str, name: str) -> list:
             f'Bool Function TES4SetStage({script} akQuest, Int aiStage) Global',
             '  If !akQuest.IsRunning()',
             '    TES4Start(akQuest)',
-            '  EndIf',
-            '  Return akQuest.SetStage(aiStage)']
+            '  EndIf']
+    actors = _quest_actor_props(conv, name)
+    if actors:
+        out.append('  Bool tes4_stageResult = akQuest.SetStage(aiStage)')
+        out += _reeval_actors(actors)
+        out.append('  Return tes4_stageResult')
+    else:
+        out.append('  Return akQuest.SetStage(aiStage)')
     return out + ['EndFunction']
+
+
+def _type_extends_map(conv) -> dict:
+    """Generated script-type name -> its Papyrus base class (built once per xref).
+
+    Lets a property's declared type say whether it names an actor: an actor
+    reference is typed as its own generated actor-script (`TES4_BaurusScript`
+    extends Actor), not as plain `Actor`.
+    """
+    cache = getattr(conv.xref, '_type_extends', None)
+    if cache is None:
+        cache = {}
+        for fid, edid in conv.xref.script_formid_to_edid.items():
+            cache[papyrus_script_name(edid)] = conv.xref.get_extends_class(fid)
+        conv.xref._type_extends = cache
+    return cache
+
+
+def _quest_actor_props(conv, name: str) -> list:
+    """The actor properties this quest script holds -- its AI participants.
+
+    Keyed purely on property TYPE (plain `Actor`, or a generated actor-script
+    that extends Actor), so it is generic: no FormID or quest allowlist, just
+    "an actor this quest references".
+    """
+    if not conv.xref:
+        return []
+    extends_of = _type_extends_map(conv)
+    return [prop for prop, ptype in sorted(conv.sc.property_refs.items())
+            if ptype == 'Actor'
+            or (is_generated_script_type(ptype)
+                and extends_of.get(ptype) == 'Actor')]
+
+
+def _reeval_actors(actors: list) -> list:
+    """Re-select AI packages on the quest's participant actors after a stage change.
+
+    Oblivion re-evaluated every actor's package list continuously, so a
+    GetStage-gated travel/escort package activated the moment its stage arrived.
+    Skyrim only re-picks a package on discrete triggers (package end, combat,
+    cell load, or an explicit EvaluatePackage), so an external SetStage left a
+    stage-gated package dormant: a scout actor (Baurus in CharGen) fell to its
+    sandbox fallback and was left behind by the self-restarting escort pair.
+    Re-evaluating here -- the seam every converted stage change flows through --
+    restores the continuous-re-eval behaviour for every stage-gated actor.
+    """
+    out = []
+    for i, prop in enumerate(actors):
+        a = f'tes4_actor{i}'
+        out += [f'  Actor {a} = akQuest.{prop} as Actor',
+                f'  If {a} && {a}.Is3DLoaded()',
+                f'    {a}.EvaluatePackage()',
+                '  EndIf']
+    return out
 
 
 def _declare(name: str, ptype: str) -> str:
@@ -514,6 +611,31 @@ def _udf_params(block_filter: str) -> list:
     return text.split()
 
 
+def _combat_end_reeval(extends: str, merged: dict) -> None:
+    """Re-select AI packages when combat ENDS (an arm on OnCombatStateChanged).
+
+    Oblivion re-evaluated every actor's package list continuously, so a
+    GetStage-gated escort/travel package resumed the instant a fight ended.
+    Skyrim only re-picks a package on discrete triggers, so a converted actor
+    that fought stayed in its post-combat search and never resumed: the CharGen
+    Blades and Emperor, after the sewer assassin ambush, never restarted the
+    escort to marker F -- it "got lost", so the stage it gates (charactergen
+    50->52, set when Glenroy finishes `CGGlenroyEscortEmperorToF`) never
+    advanced, and the stuck stage kept `CGBaurusGreetPlayer` (GetStage>=50)
+    force-greeting the player. A combat-END arm restores the TES4 behaviour.
+
+    Only an actor has OnCombatStateChanged and only an actor has
+    EvaluatePackage, so this appends nothing for a non-actor script. Appended
+    once, after the per-block merge, so several combat blocks still yield one
+    arm. Mirrors the stage-change re-eval in TES4SetStage (`_reeval_actors`).
+    """
+    if extends != 'Actor' or COMBAT_EVENT_HEADER not in merged:
+        return
+    merged[COMBAT_EVENT_HEADER] += ['  If aeCombatState == 0',
+                                    '    Self.EvaluatePackage()',
+                                    '  EndIf']
+
+
 def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
     """One Papyrus event per TES4 block, duplicates merged.
 
@@ -553,6 +675,7 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
             order.append(header)
         merged[header] += body
 
+    _combat_end_reeval(extends, merged)
     out = (_carried_read(conv, tree, extends, merged, order)
            + _record_last_activator(conv, merged, order)
            + _track_holder(conv, merged, order))
@@ -702,7 +825,13 @@ def _track_holder(conv, merged: dict, order: list) -> list:
     """
     if not _carried(conv):
         return []
-    arm = _arm(conv, conv._get_update_interval(), True)
+    # A true-carried item must not arm from a holder event: when it is equipped
+    # or moved into a container its Self is unbound, and RegisterForSingleUpdate
+    # on it throws.  The holder is still RECORDED (game logic + the poll gate +
+    # the body-entry guard read it); only the arm is dropped.  Such a script arms
+    # solely from OnLoad/OnCellAttach, where Self is a bound world ref.
+    arm = [] if _true_carried(conv) else _arm(
+        conv, conv._get_update_interval(), True)
     for header, holder in _HOLDER_EVENTS:
         if header not in merged:
             merged[header] = []
@@ -739,6 +868,7 @@ def poll(conv, tree, extends: str) -> list:
     interval = conv._get_update_interval()
     conv._current_event = 'Event OnUpdate()'
     load_gated = extends in ('ObjectReference', 'Actor')
+    pacing = _pacing_quest(conv, extends) and sc.gsp_realtime
 
     out = []
     if interval == QUEST_DELAY_CALL:
@@ -749,7 +879,28 @@ def poll(conv, tree, extends: str) -> list:
         # not appear in the VMAD.
         out += [f'Float TES4_SecondsPassed = {interval_literal(interval)}',
                 'Float TES4_LastTick = 0.0', '']
+    if pacing:
+        # The grace deadline that keeps the poll fast between a conversation's
+        # lines -- see _pacing_prologue.
+        out += ['Float TES4_FastUntil = 0.0', '']
+    if sc.uses_say and extends in ('Actor', 'Quest'):
+        # The dialogue-exit edge latch for _dialogue_gate's re-eval.  Declared
+        # under EXACTLY the gate's own condition (NOT gsp_realtime/pacing, which
+        # 57 gated scripts -- incl. CGEmperorScript/BaurusScript -- lack): if the
+        # var's guard were narrower than the gate's the edge-check would name an
+        # undeclared variable and the script would fail to compile.
+        out += ['Bool TES4_WasInDialogue = False', '']
     out.append('Event OnUpdate()')
+
+    # Body-entry guard for a true-carried item: if it is now held, bail before the
+    # body touches its own (unbound) Self.  The arms already refuse to schedule
+    # while held, but ONE update queued before a world->inventory pickup can still
+    # deliver and enter the body, whose IsInContainer(Self)/GetDisabled(Self)/
+    # Disable() would then throw.  Books are exempt: _carried_read calls OnUpdate()
+    # directly with the holder set to the player to run the one read pass, and a
+    # book body reads quest state, not Self.
+    if _true_carried(conv) and not conv.sc.on_book:
+        out += [f'  If {_HOLDER_VAR} != None', '    Return', '  EndIf']
 
     # Arm the poll TWICE: an insurance arm at the TOP and the real re-arm at
     # the BOTTOM.
@@ -774,8 +925,12 @@ def poll(conv, tree, extends: str) -> list:
     # A TES4 `return` inside the polled body ends THIS pass only, so the
     # converted `Return` must re-arm at the real interval itself: it skips the
     # bottom arm and the top arm is the long one.
-    sc.poll_return_prefix = '\n'.join(
-        _arm(conv, interval, load_gated, indent='')) + '\n'
+    if pacing:
+        sc.poll_return_prefix = '\n'.join(
+            _adaptive_arm(conv, interval, extends, indent='')) + '\n'
+    else:
+        sc.poll_return_prefix = '\n'.join(
+            _arm(conv, interval, load_gated, indent='')) + '\n'
 
     if extends == 'Quest':
         # Not running: skip the body, but the poll keeps ticking so the loop
@@ -784,6 +939,8 @@ def poll(conv, tree, extends: str) -> list:
 
     out += _dialogue_gate(conv, extends, load_gated)
     out += _elapsed_prologue(conv, interval)
+    if pacing:
+        out += _pacing_prologue(conv, extends)
     out += _glide_prologue(sc)
 
     for block in (tree.blocks if tree else ()):
@@ -802,7 +959,10 @@ def poll(conv, tree, extends: str) -> list:
 
     sc.poll_return_prefix = ''
     sc.glide_secs = ''
-    out += _arm(conv, interval, load_gated)
+    if pacing:
+        out += _adaptive_arm(conv, interval, extends)
+    else:
+        out += _arm(conv, interval, load_gated)
     out += ['EndEvent', '']
     return out
 
@@ -812,12 +972,54 @@ def _carried(conv) -> bool:
     return conv._script_extends == 'ObjectReference' and conv.sc.has_gamemode
 
 
+def _true_carried(conv) -> bool:
+    """A carried script whose EVERY base is a carriable inventory object.
+
+    Narrower than `_carried` (any ObjectReference + GameMode): only these lose
+    their native `Self` binding while held, so only these may NEVER arm or gate on
+    `Self` while held.  A world object -- STAT/ACTI, or a placed (uncarriable)
+    LIGH -- stays bound even when disabled, so its self-enable poll is left on the
+    broad `_carried` path untouched.  Set from `xref.carriable_only` in pipeline.
+    """
+    return _carried(conv) and getattr(conv.sc, 'carriable_only', False)
+
+
 def _gate(conv) -> str:
-    """The poll gate: the reference is live, or a carried one's holder is."""
+    """The poll gate: the reference is live, or a carried one's holder is.
+
+    For a CARRIED object the HOLDER is tested FIRST. An item that lives as an
+    inventory-stack (e.g. the Blades armour attached to 6 ARMO bases, carried by
+    Baurus/Glenroy) has a script instance whose `Self` often has NO bound native
+    ObjectReference, and `SafeGameModeGate(Self)` -> `Self.GetParentCell()` then
+    THROWS "no native object bound", aborting the whole event (re-arm included).
+
+    So `Self` is touched ONLY when there is no holder (`{_HOLDER_VAR} == None`):
+    while the item is held -- worn, or in any container -- the holder is always a
+    real bound ref, so the gate answers from it alone and NEVER evaluates the
+    unbound `Self`.  `||` short-circuits on a live holder, and when the holder is
+    present-but-not-loaded the second term is `None == None`-False and still skips
+    `Self` -- which is the residual "OnEquipped before the NPC's 3D loaded" burst
+    in combat that a bare `|| SafeGameModeGate(Self)` fallback still threw on,
+    flooding the log and starving the VM (delaying scenes and stalling AI).
+    The world-placed path is unchanged: an item lying in the world has no holder,
+    and its poll is only ever armed by OnLoad/OnCellAttach -- where `Self` IS
+    bound -- so `{_HOLDER_VAR} == None && SafeGameModeGate(Self)` evaluates safely.
+    """
     if not _carried(conv):
         return conv._GAMEMODE_GATE
-    return (f'{conv._GAMEMODE_GATE} || '
-            f'TES4Polyfill.SafeGameModeGate({_HOLDER_VAR})')
+    if _true_carried(conv):
+        # A carriable item has NO bound native Self while held, so even the gate's
+        # holder-first short-circuit is not enough: RegisterForSingleUpdate still
+        # ACTS on the unbound Self and throws.  So this gate NEVER passes while
+        # held (`{_HOLDER_VAR} != None`), and arms only as a bound world ref.  All
+        # three arm sites (top insurance, bottom re-arm, poll_return_prefix) use
+        # this gate, so none of them can schedule on an unbound Self; the held
+        # poll simply stops (a worn item cannot run OnUpdate anyway).  OnInit's arm
+        # is dropped and a body-entry guard added for the same reason -- see
+        # lifecycle and poll().
+        return f'{_HOLDER_VAR} == None && {conv._GAMEMODE_GATE}'
+    return (f'TES4Polyfill.SafeGameModeGate({_HOLDER_VAR}) || '
+            f'({_HOLDER_VAR} == None && {conv._GAMEMODE_GATE})')
 
 
 def _arm(conv, secs: str, load_gated: bool, indent: str = '  ') -> list:
@@ -829,11 +1031,95 @@ def _arm(conv, secs: str, load_gated: bool, indent: str = '  ') -> list:
             f'{indent}EndIf']
 
 
+def _pacing_quest(conv, extends: str) -> bool:
+    """A Quest that counts a timer down each pass -- it paces dialogue.
+
+    Only a Quest is capped at the 5 s cadence, so only a Quest needs the
+    adaptive re-arm; a non-quest already polls at its body-derived interval.
+    """
+    return extends == 'Quest' and bool(getattr(conv.sc, 'countdown_timers', ()))
+
+
+#: Keep polling fast this long (s) after a line was last timing, so the WHOLE
+#: inter-line sequence stays fast: a line's end runs a multi-step state machine
+#: in the fragments + quest (advance the turn counter, pick the next speaker,
+#: set its timer, fire) that at the 5 s cadence took one poll PER STEP -- the
+#: 20 s "I've seen you ... let me see your face" gap.  Must outlast that whole
+#: sequence (a few seconds, incl. look-at/turn animations) so it never drops
+#: back to 5 s mid-exchange.  A genuine wait (no line playing -- the player has
+#: to walk somewhere) never bumps this, so the poll still relaxes to 5 s then.
+_PACING_GRACE = '8.0'
+
+
+def _pacing_timer_cond(conv, extends: str) -> str:
+    """`convTimer > 0 || baurusTimer > 0` -- any of this quest's countdown timers is live."""
+    from script_convert.resolve_name import resolve
+    return ' || '.join(f'{resolve(conv, t, extends)} > 0'
+                       for t in conv.sc.countdown_timers)
+
+
+def _pacing_prologue(conv, extends: str) -> list:
+    """Latch fast polling across a whole conversation, not just while a timer > 0.
+
+    Read BEFORE the body's countdown decrement: a quest on the 5 s cadence
+    subtracts a full ~5 s the first pass after a line starts, driving the timer
+    straight past 0, so a POST-decrement `timer > 0` test never turns fast
+    polling on and every inter-line gap stayed a full 5 s tick.  Reading it here
+    (pre-decrement) sees the line is live and opens a short grace window, so the
+    poll stays fast through the gap to the next line (the actor fires it within
+    ~0.15 s) and the whole exchange runs at real speed.  The poll relaxes to 5 s
+    only once no line has played for the grace window.
+    """
+    from script_convert.resolve_name import resolve
+    vals = ' + '.join(f'" {t}=" + {resolve(conv, t, extends)}'
+                      for t in conv.sc.countdown_timers)
+    return [f'  Bool TES4_pacing = ({_pacing_timer_cond(conv, extends)})',
+            '  If TES4_pacing',
+            f'    TES4_FastUntil = TES4_Now + {_PACING_GRACE}',
+            '  EndIf',
+            # ⚠ DIAGNOSTIC (TRIPWIRE: remove with SAY_TRACE) -- log the pacing
+            # timer's real value + whether the fast poll engaged, to see if the
+            # countdown drains fast (=> gap is speaker/actor-side) or slow.
+            '  If (TES4_pacing || TES4_Now < TES4_FastUntil) '
+            '&& TES4Polyfill.SAY_TRACE()',
+            f'    Debug.Trace("TES4Pace" + {vals} + " fast=" + TES4_pacing '
+            '+ " dt=" + TES4_SecondsPassed)',
+            '  EndIf']
+
+
+def _adaptive_arm(conv, slow: str, extends: str, indent: str = '  ') -> list:
+    """Re-arm FINE while a conversation is pacing (grace-latched), SLOW when idle.
+
+    Gated on the grace latch from `_pacing_prologue`, NOT on the post-decrement
+    timer value -- see there for why the naive `timer > 0` test never engaged.
+    """
+    fast = active_interval(conv.sc)
+    return [f'{indent}If (TES4_pacing || TES4_Now < TES4_FastUntil)',
+            f'{indent}  RegisterForSingleUpdate({fast})',
+            f'{indent}Else',
+            f'{indent}  RegisterForSingleUpdate({slow})',
+            f'{indent}EndIf']
+
+
 def _dialogue_gate(conv, extends: str, load_gated: bool) -> list:
-    """Skip this pass while the player is in a dialogue menu.
+    """Skip this pass while the player is in a dialogue menu, and re-evaluate AI
+    packages on the pass the menu/dialogue finally closes.
 
     TES4 GameMode never ran while a menu was open.  Only scripts that SPEAK
     carry the gate; a poll that never speaks cannot cut a line.
+
+    The CLOSE is also where Oblivion's continuous per-frame re-eval mattered: a
+    quest fragment's `evp` meant to make an actor force-greet (the Emperor's
+    birthsign comment, CharGen stage 44) fires the instant a modal Message
+    closes, while the trailing dialogue line is still playing and
+    PlayerIsInDialogue() is still True -- so Skyrim's one-shot EvaluatePackage
+    lands in the teardown transient, the force-greet never auto-opens, and
+    nothing retries (the 3 prior re-eval seams are all one-shot too).  So this
+    latches `TES4_WasInDialogue` while it skips and, on the first non-skip pass,
+    re-evaluates: Self for an Actor, every participant actor for a Quest.  One
+    self-clearing re-eval per dialogue episode -- strictly less often than
+    Oblivion's every-frame re-eval, and a no-op once its gating state has moved
+    on (a completed greet advances its stage, so it is not re-selected).
 
     See: docs/commentary/script_convert.md#the-dialogue-poll-gate
     """
@@ -841,10 +1127,42 @@ def _dialogue_gate(conv, extends: str, load_gated: bool) -> list:
         return []
     test = ('IsInDialogueWithPlayer() || TES4Polyfill.PlayerIsInDialogue()'
             if extends == 'Actor' else 'TES4Polyfill.PlayerIsInDialogue()')
-    return ([f'  If {test}  '
-             '; TES4 GameMode did not run while a menu was open']
-            + _arm(conv, '0.5', load_gated, indent='    ')
-            + ['    Return', '  EndIf'])
+    body = ([f'  If {test}  '
+             '; TES4 GameMode did not run while a menu was open',
+             '    TES4_WasInDialogue = True']
+            + _arm(conv, '0.5', load_gated, indent='    '))
+    if conv.sc.gsp_realtime:
+        # Menu time must not drain a counted timer: Oblivion froze GameMode while
+        # a menu was open.  Advancing LastTick on the skipped pass keeps the next
+        # real pass measuring ~one gate interval, not the whole menu -- otherwise
+        # widening the elapsed clamp (see _ELAPSED_CLAMP_FLOOR) would let a short
+        # menu's seconds count against the timer.
+        body.append('    TES4_LastTick = Utility.GetCurrentRealTime()')
+    return body + ['    Return', '  EndIf'] + _dialogue_exit_reeval(conv, extends)
+
+
+def _dialogue_exit_reeval(conv, extends: str) -> list:
+    """Re-eval on the dialogue->not-dialogue edge (see `_dialogue_gate`).
+
+    Runs only on a NON-skip pass; self-clears so it fires once per episode.  An
+    Actor re-picks its own packages (`Self`); a Quest re-picks every participant
+    actor it holds -- the same generic, type-keyed set TES4SetStage re-evals
+    (`_quest_actor_props`), but in poll context (bare `{prop}`, not `akQuest.`).
+    """
+    inner = []
+    if extends == 'Actor':
+        inner = ['    Self.EvaluatePackage()']
+    else:
+        for i, prop in enumerate(_quest_actor_props(conv, '')):
+            a = f'tes4_xactor{i}'
+            inner += [f'    Actor {a} = {prop} as Actor',
+                      f'    If {a} && {a}.Is3DLoaded()',
+                      f'      {a}.EvaluatePackage()',
+                      '    EndIf']
+    if not inner:
+        return []
+    return ['  If TES4_WasInDialogue',
+            '    TES4_WasInDialogue = False'] + inner + ['  EndIf']
 
 
 def _glide_prologue(sc) -> list:
@@ -862,6 +1180,27 @@ def _glide_prologue(sc) -> list:
             '  Float[] TES4_GlideGoals = new Float[96]']
 
 
+#: The largest real inter-pass gap the elapsed clamp accepts as a genuine frame.
+#: A pass beyond this is treated as a gap TES4 never counted (first pass, a
+#: dialogue menu, a save-load, a cell unload) and reset to one nominal tick.
+#:
+#: ð IT MUST SIT ABOVE A REAL VM-LATE PASS, NOT AT `2.0 * interval`.  A fast
+#: quest sets fQuestDelayTime tiny (CharGen: 0.001), so TES4_QuestDelay() floors
+#: to 0.1 and `2.0 * interval` collapses to 0.2 s -- BELOW a real pass.  Measured
+#: 2026-09-30 (live Papyrus.0.log, prefix 489830, 678 pacing passes): the poll
+#: re-arms at 0.1 s but is DELIVERED ~0.3 s apart under CharGen load, so every
+#: legitimate 0.3 s measurement exceeded the 0.2 s ceiling and was reset to 0.1,
+#: pinning `dt=0.100000` on all 678 passes and draining convTimer ~3x too slow
+#: (a 2.0 s line took 6 wall-clock seconds -> the "20 s between lines").  The
+#: clock was never the problem: a frozen GetCurrentRealTime gives dt=0.0, not
+#: 0.1.  2.0 s is well above the ~0.3-1.0 s real passes seen and well below the
+#: smallest resume gap (a menu or save-load is seconds), and matches the flat
+#: ceiling non-quest scripts have always used.  (End fragments running "11-24 s
+#: late" is a DIFFERENT queue -- fragment dispatch, not poll delivery -- so it
+#: does not raise the real poll gap.)
+_ELAPSED_CLAMP_FLOOR = 2.0
+
+
 def _elapsed_prologue(conv, interval: str) -> list:
     """Measure the REAL time this pass took, for getSecondsPassed.
 
@@ -872,19 +1211,36 @@ def _elapsed_prologue(conv, interval: str) -> list:
     this pass sees the same value, exactly like TES4's per-frame constant.
 
     The clamp covers the first pass and resumption after unload, menus or a
-    save-load, where the raw delta spans a gap TES4 never counted.
+    save-load, where the raw delta spans a gap TES4 never counted.  Its ceiling
+    is `max(2.0 * interval, _ELAPSED_CLAMP_FLOOR)`: a slow 5 s quest keeps its
+    generous 10 s ceiling, but a fast quest whose interval floors to 0.1 s no
+    longer collapses to a 0.2 s ceiling that a normal VM-late pass overshoots
+    (see _ELAPSED_CLAMP_FLOOR).  The reset value stays one nominal tick.
     """
     if not conv.sc.gsp_realtime:
         return []
-    # A 5 s quest cadence measures real 5 s gaps; clamp relative to it.
-    limit = ('2.0' if getattr(conv, '_script_extends', '') != 'Quest'
-             else f'2.0 * {interval}')
-    return ['  Float TES4_Now = Utility.GetCurrentRealTime()',
-            '  TES4_SecondsPassed = TES4_Now - TES4_LastTick',
-            f'  If TES4_SecondsPassed < 0.0 || TES4_SecondsPassed > {limit}',
+    floor_lit = float_literal(_ELAPSED_CLAMP_FLOOR)
+    out = ['  Float TES4_Now = Utility.GetCurrentRealTime()',
+           '  TES4_SecondsPassed = TES4_Now - TES4_LastTick']
+    if getattr(conv, '_script_extends', '') != 'Quest':
+        ceil = floor_lit
+    elif interval == QUEST_DELAY_CALL:
+        # The interval is a runtime call (fQuestDelayTime can floor it to 0.1),
+        # so the max is taken at runtime.
+        out += [f'  Float TES4_ClampCeil = 2.0 * {interval}',
+                f'  If TES4_ClampCeil < {floor_lit}',
+                f'    TES4_ClampCeil = {floor_lit}',
+                '  EndIf']
+        ceil = 'TES4_ClampCeil'
+    else:
+        # A literal interval (default 5 s quest, or an authored DATA.Delay): fold
+        # the max at emit time.
+        ceil = float_literal(max(2.0 * float(interval), _ELAPSED_CLAMP_FLOOR))
+    out += [f'  If TES4_SecondsPassed < 0.0 || TES4_SecondsPassed > {ceil}',
             f'    TES4_SecondsPassed = {interval}',
             '  EndIf',
             '  TES4_LastTick = TES4_Now']
+    return out
 
 
 def lifecycle(conv, tree, extends: str) -> list:
@@ -924,7 +1280,15 @@ def lifecycle(conv, tree, extends: str) -> list:
                 'EndEvent', '']
     if 'onload' not in declared:
         out += ['Event OnLoad()'] + start + ['EndEvent', '']
-    if 'oninit' not in declared:
+    # A carriable item must not register from OnInit: an instance that starts in
+    # an inventory (worn on an NPC) has an unbound Self at init, and the gate's
+    # SafeGameModeGate(Self) -> GetParentCell then throws (aborting OnInit before
+    # it registers anything -- so the gate never did useful work for a worn item).
+    # This covers BOTH the GameMode poll carried items AND sleep/menu-only ones
+    # (e.g. the MS05 Dreamworld Amulet, which registers for sleep): OnLoad /
+    # OnCellAttach cover the world-placed case (Self bound), and a RegisterForSleep
+    # taken there persists through pickup, so the worn instance still listens.
+    if 'oninit' not in declared and not getattr(sc, 'carriable_only', False):
         out += (['Event OnInit()', f'  If ({_gate(conv)})']
                 + [f'  {line}' for line in start]
                 + ['  EndIf', 'EndEvent', ''])

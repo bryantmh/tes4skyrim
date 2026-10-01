@@ -92,6 +92,10 @@ def _new_scan_out() -> dict:
         'global_types': {}, 'global_values': {},
         'pack_type': {}, 'actor_packages': {},
         'record_model': {},
+        # LIGH FormIDs whose DATA 'Can be Carried' flag is set -- the only LIGH
+        # that behave as inventory items (a torch/stone), vs the ~99.8% that are
+        # placed world lights.  See carriable_only / _scan_light.
+        'carriable_light': set(),
         # CELL geometry, for GetInCell: {formid: (is_interior, wrld_fid, x, y)}.
         # An EXTERIOR cell cannot back a Papyrus `Cell` property (see
         # get_cell_family), so its membership test is made from these instead.
@@ -222,6 +226,24 @@ def _scan_actor(rec: dict, formid: str, _edid: str, out: dict) -> None:
         out['actor_packages'][formid] = packs
 
 
+#: TES4 base-object signatures that are always carriable inventory items -- a
+#: held/worn instance has NO bound world Self.  LIGH is deliberately absent: it
+#: is carriable only when its DATA 'Can be Carried' flag is set (see _scan_light),
+#: otherwise it is a placed world light that keeps its binding.
+_CARRIABLE_SIGS = frozenset({
+    'ARMO', 'WEAP', 'AMMO', 'CLOT', 'BOOK', 'INGR', 'ALCH',
+    'APPA', 'SGST', 'SLGM', 'MISC', 'KEYM'})
+
+#: LIGH DATA.Flags bit 0x02 = "Can be Carried" (a torch/stone), vs a world light.
+_LIGH_CAN_CARRY = 0x02
+
+
+def _scan_light(rec: dict, formid: str, _edid: str, out: dict) -> None:
+    """A LIGH that is a CARRIABLE item (torch/stone), not a placed world light."""
+    if _int_field(rec, 'DATA.Flags', 0) & _LIGH_CAN_CARRY:
+        out['carriable_light'].add(formid)
+
+
 def _scan_pack(rec: dict, formid: str, _edid: str, out: dict) -> None:
     """A package's procedure type."""
     pkdt_type = _int_field(rec, 'PKDT.Type')
@@ -237,7 +259,8 @@ def _scan_qust(_rec: dict, _formid: str, edid: str, out: dict) -> None:
 
 #: Signature -> the indexer for the fields only that record type carries.
 _SIG_SCANNERS = {'SCPT': _scan_scpt, 'CELL': _scan_cell, 'NPC_': _scan_actor,
-                 'CREA': _scan_actor, 'PACK': _scan_pack, 'QUST': _scan_qust}
+                 'CREA': _scan_actor, 'PACK': _scan_pack, 'QUST': _scan_qust,
+                 'LIGH': _scan_light}
 
 
 #: Id fields the scan reads, re-keyed with the record's own FormID.
@@ -373,6 +396,8 @@ class CrossRefGraph:
         # CELL FormID -> (is_interior, parent WRLD FormID, grid X, grid Y).
         # Backs the exterior half of get_cell_family (see there).
         self.cell_geom: dict[str, tuple] = {}
+        #: LIGH FormIDs flagged "Can be Carried" (carriable_only / _scan_light).
+        self.carriable_light: set[str] = set()
         # BOOK records with an ENAM: written as SCRL, so `Book` would not bind.
         self.enchanted_books: set[str] = set()
         self.record_base: dict[str, str] = {}  # placed ref FormID -> base record FormID (NAME)
@@ -498,6 +523,7 @@ class CrossRefGraph:
         self.record_type.update(out['record_type'])
         self.record_model.update(out['record_model'])
         self.cell_geom.update(out['cell_geom'])
+        self.carriable_light.update(out['carriable_light'])
         self.enchanted_books.update(out['enchanted_books'])
         self.quest_edids.update(out['quest_edids'])
         self.npc_formids.update(out['npc_formids'])
@@ -553,6 +579,29 @@ class CrossRefGraph:
         """Record signatures of every record the script is attached to."""
         return {self.record_type.get(rec_fid, '')
                 for rec_fid in self.attached_records(script_formid)}
+
+    def carriable_only(self, script_formid: str) -> bool:
+        """True iff EVERY record this script is attached to is a carriable
+        inventory base object -- so a held/worn instance has no bound world Self.
+
+        Such a script must never schedule an update on, or GetParentCell, its
+        own Self while held (it throws "no native object bound").  A world object
+        -- STAT/ACTI, or a placed (uncarriable) LIGH -- keeps its binding even
+        when disabled, so it is excluded here and its self-enable poll is left
+        alone.  LIGH is carriable only when flagged "Can be Carried"
+        (_scan_light): the signature alone is a world light ~99.8% of the time.
+        """
+        recs = self.attached_records(script_formid)
+        if not recs:
+            return False
+        for fid in recs:
+            sig = self.record_type.get(fid, '')
+            if sig == 'LIGH':
+                if fid not in self.carriable_light:
+                    return False
+            elif sig not in _CARRIABLE_SIGS:
+                return False
+        return True
 
     @staticmethod
     def _is_player_base(rec_fid: str) -> bool:

@@ -1006,13 +1006,40 @@ EndFunction
 ; Routing them through this one function makes the cost a single Bool test
 ; against a constant, which the compiler folds away when SAY_TRACE() is False.
 ; Flip SAY_TRACE to True ONLY for a local diagnostic build.
+;
+; ⚠ DIAGNOSTIC BUILD: SAY_TRACE is True in this build (full-tutorial playthrough
+;   trace, 2026-09-30).  TRIPWIRE: flip back to False before any release -- the
+;   enriched _SayTraceRef below does a GetFormID + string concat per spoken line,
+;   which must never ship on.
 Bool Function SAY_TRACE() Global
-  Return False
+  Return True
 EndFunction
 
 Function _SayTrace(String asTag, Float afValue) Global
   If SAY_TRACE()
     Debug.Trace("TES4Say " + asTag + " " + afValue)
+  EndIf
+EndFunction
+
+; Per-line ledger.  akSpeaker/akTopic are already-held locals at every call
+; site, so passing them is free; the GetFormID lookups and the concat happen
+; ONLY inside the SAY_TRACE guard (folded away when it is False), so a shipped
+; build pays one Bool test.  akTopic may be None (the fragment hooks know the
+; speaker but not the topic).  EVERY delivered INFO fires its OnBegin fragment
+; -> LineBegan, whatever delivers it (SayLine, plain Say, a native SCEN action,
+; a speak-as scene), so the BEGIN line is a universal per-line trace; SAY/DROP/
+; PLAY/BUSY additionally trace the SayLine request path.
+Function _SayTraceRef(String asTag, ObjectReference akSpeaker, Form akTopic, Float afValue) Global
+  If SAY_TRACE()
+    Int spk = 0
+    Int top = 0
+    If akSpeaker
+      spk = akSpeaker.GetFormID()
+    EndIf
+    If akTopic
+      top = akTopic.GetFormID()
+    EndIf
+    Debug.Trace("TES4Say " + asTag + " spk=" + spk + " topic=" + top + " v=" + afValue)
   EndIf
 EndFunction
 
@@ -1129,9 +1156,11 @@ Float Function SayLineNoWait(ObjectReference akSpeaker, Topic akTopic, Float afF
   ; Respect a line already in flight exactly as SayLine does: issuing a Say
   ; over a live line drops it AND loses that line's End result.
   If a.IsInDialogueWithPlayer() || _IsSpeaking(a)
+    _SayTraceRef("BUSYNW", akSpeaker, akTopic, 0.5)
     Return 0.5   ; busy: the caller's poll retries, same as a contended SayLine
   EndIf
   a.SetActorValue("Variable09", 0.0)
+  _SayTraceRef("SAYNW", akSpeaker, akTopic, afFallbackLength)
   a.Say(akTopic)
   Return afFallbackLength
 EndFunction
@@ -1148,6 +1177,7 @@ Float Function SayLine(ObjectReference akSpeaker, Topic akTopic, Float afFallbac
   EndIf
   Float now = Utility.GetCurrentGameTime()
   If a.GetActorValue("Variable07") > 0.0 && now < a.GetActorValue("Variable08")
+    _SayTraceRef("BUSY", akSpeaker, akTopic, 0.5)
     Return 0.5   ; another SayLine already owns this speaker's next line; poll again shortly
   EndIf
   ; Claim the speaker.  SetActorValue lands on the game thread a frame later,
@@ -1190,7 +1220,7 @@ Float Function SayLine(ObjectReference akSpeaker, Topic akTopic, Float afFallbac
   ; the length in Variable09).
   a.SetActorValue("Variable09", 0.0)
   Float t0 = Utility.GetCurrentRealTime()
-  _SayTrace("SAY", 0.0)
+  _SayTraceRef("SAY", akSpeaker, akTopic, afFallbackLength)
   a.Say(akTopic)
   ; The engine begins a line it ACCEPTS within 0.15-0.31s (measured
   ; 2026-08-16, n=76: med 0.15, max 0.31).  Anything still silent well past
@@ -1218,6 +1248,7 @@ Float Function SayLine(ObjectReference akSpeaker, Topic akTopic, Float afFallbac
   Float len = a.GetActorValue("Variable09")
   a.SetActorValue("Variable07", 0.0)
   If len <= 0.0
+    _SayTraceRef("DROP", akSpeaker, akTopic, 0.0)
     Return 0.0   ; dropped: nothing under the topic qualified (or the engine refused it)
   EndIf
   If len < 0.02
@@ -1235,6 +1266,7 @@ Float Function SayLine(ObjectReference akSpeaker, Topic akTopic, Float afFallbac
   ; does.  Adding the tail here padded EVERY line with a silence that only a
   ; same-actor re-Say ever needed; _IsSpeaking's grace window enforces that
   ; case directly.
+  _SayTraceRef("PLAY", akSpeaker, akTopic, len)
   Return len
 EndFunction
 
@@ -1268,7 +1300,7 @@ Function LineBegan(ObjectReference akSpeakerRef, Float afLength) Global
   If len <= 0.0
     len = 0.01                 ; unknown length: still marks "speaking"
   EndIf
-  _SayTrace("BEGIN", afLength)
+  _SayTraceRef("BEGIN", akSpeakerRef, None, afLength)
   a.SetActorValue("Variable09", len)
   a.SetActorValue("Variable03", 0.0)   ; a live line supersedes the End grace
   ; Game-wide "a line is in progress" record, kept on the PLAYER so any
@@ -1332,7 +1364,7 @@ Function LineEnded(ObjectReference akSpeakerRef, Float afLength = -1.0) Global
   If (a as Form).GetFormID() == 0x14
     Return
   EndIf
-  _SayTrace("END", afLength)
+  _SayTraceRef("END", akSpeakerRef, None, afLength)
   Float began = a.GetActorValue("Variable06")
   Float cur = a.GetActorValue("Variable09")
   Bool mine = afLength < 0.0 || Math.abs(cur - afLength) < 0.006 || (afLength <= 0.0 && cur <= 0.02)

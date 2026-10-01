@@ -700,7 +700,8 @@ End
         assert 'Event OnUpdate()' in result
         assert 'RegisterForSingleUpdate' in result
         assert 'Event OnCellAttach()' in result
-        assert 'If (TES4Polyfill.SafeGameModeGate(Self)' in result
+        assert ('If (TES4Polyfill.SafeGameModeGate(TES4_Holder) || '
+                '(TES4_Holder == None && TES4Polyfill.SafeGameModeGate(Self))') in result
         assert 'If (Is3DLoaded())' not in result
         assert 'UnregisterForUpdate()' not in result
         body = result.split('Event OnUpdate()', 1)[1].split('EndEvent', 1)[0]
@@ -735,7 +736,8 @@ End
         assert 'Event OnInit()' in result, \
             'a GameMode poll must also start for an already-loaded reference'
         init = result.split('Event OnInit()', 1)[1].split('EndEvent', 1)[0]
-        assert 'If (TES4Polyfill.SafeGameModeGate(Self)' in init, \
+        assert ('If (TES4Polyfill.SafeGameModeGate(TES4_Holder) || '
+                '(TES4_Holder == None && TES4Polyfill.SafeGameModeGate(Self))') in init, \
             'OnInit registration must stay gated (anti-storm)'
         assert 'RegisterForSingleUpdate' in init
 
@@ -770,7 +772,8 @@ End
         result = converter.convert_standalone('EnableScript', source,
                                               'ObjectReference', 'EnableScript')
         init = result.split('Event OnInit()', 1)[1].split('EndEvent', 1)[0]
-        assert 'If (TES4Polyfill.SafeGameModeGate(Self)' in init
+        assert ('If (TES4Polyfill.SafeGameModeGate(TES4_Holder) || '
+                '(TES4_Holder == None && TES4Polyfill.SafeGameModeGate(Self))') in init
         assert 'Is3DLoaded()' not in result, \
             'the gate must go through the polyfill, never a bare 3D test'
 
@@ -800,8 +803,11 @@ End
             'EndEvent', 1)[0]
         assert 'TES4_Holder = akNewContainer' in changed
         assert 'RegisterForSingleUpdate' in changed
-        assert ('TES4Polyfill.SafeGameModeGate(Self) || '
-                'TES4Polyfill.SafeGameModeGate(TES4_Holder)') in result
+        # Holder tested FIRST so `||` short-circuits past a possibly-unbound
+        # Self (an inventory-stack instance) -- see assemble._gate (the fix for
+        # the CGBladesEquipmentScript OnEquipped storm that starved the VM).
+        assert ('TES4Polyfill.SafeGameModeGate(TES4_Holder) || '
+                '(TES4_Holder == None && TES4Polyfill.SafeGameModeGate(Self))') in result
 
     def test_book_read_while_carried_runs_the_read_hook(self, converter):
         """A book's opening OnActivate also runs from OnRead for a carried
@@ -846,6 +852,84 @@ End
                                               'ObjectReference', 'LeverScript')
         assert 'Event OnRead()' not in result
 
+    def test_true_carried_item_never_touches_an_unbound_held_self(self, converter):
+        """A script on carriable bases ONLY (ARMO/WEAP/…) must never schedule or
+        GetParentCell its own Self while held -- the CGBladesEquipmentScript storm
+        (58 "no native object bound" errors + 89 stacks). So: every arm gate drops
+        the holder term (arm only as a bound world ref), the holder events track
+        the holder but do NOT arm, there is no synthesized OnInit arm, and a
+        body-entry guard bails if the item is held."""
+        converter.sc.carriable_only = True
+        source = ("ScriptName ItemScript\nBegin GameMode\n  set x to 1\nEnd\n")
+        result = converter.convert_standalone('ItemScript', source,
+                                              'ObjectReference', 'ItemScript')
+        # Gate drops the holder term at EVERY arm site (top insurance + re-arm).
+        assert 'TES4_Holder == None && TES4Polyfill.SafeGameModeGate(Self)' in result
+        assert 'SafeGameModeGate(TES4_Holder) ||' not in result
+        # Body-entry guard: bail before the body touches a held (unbound) Self.
+        update = result.split('Event OnUpdate()', 1)[1].split('EndEvent', 1)[0]
+        assert update.lstrip().startswith('If TES4_Holder != None')
+        assert 'Return' in update.split('RegisterForSingleUpdate', 1)[0]
+        # Holder events record the holder but do NOT arm (RfSU on unbound Self).
+        changed = result.split('Event OnContainerChanged(', 1)[1].split(
+            'EndEvent', 1)[0]
+        assert 'TES4_Holder = akNewContainer' in changed
+        assert 'RegisterForSingleUpdate' not in changed
+        equipped = result.split('Event OnEquipped(', 1)[1].split('EndEvent', 1)[0]
+        assert 'RegisterForSingleUpdate' not in equipped
+        # No synthesized OnInit arm (OnInit on a worn item has an unbound Self).
+        assert 'Event OnInit()' not in result
+        # Arms only where Self is a bound world ref.
+        assert 'Event OnLoad()' in result and 'Event OnCellAttach()' in result
+
+    def test_true_carried_book_keeps_its_read_pass_and_drops_the_holder_gate(self, converter):
+        """A BOOK is carriable, but its read hook calls OnUpdate() directly while
+        held (holder = player) to run one read pass, so it must KEEP the body (no
+        body-entry guard) while still dropping the holder gate (which short-circuits
+        safely on the held player holder)."""
+        converter.sc.on_book = True
+        converter.sc.carriable_only = True
+        source = ("ScriptName NoteScript\nshort lesen\n"
+                  "Begin GameMode\nif ( lesen == 1 )\n  set lesen to 2\nendif\nEnd\n")
+        result = converter.convert_standalone('NoteScript', source,
+                                              'ObjectReference', 'NoteScript')
+        assert 'TES4_Holder == None && TES4Polyfill.SafeGameModeGate(Self)' in result
+        # Book is EXEMPT from the body-entry guard (it runs the body while held).
+        update = result.split('Event OnUpdate()', 1)[1].split('EndEvent', 1)[0]
+        assert 'If TES4_Holder != None' not in update
+
+    def test_carriable_only_classifies_by_attached_base_signatures(self, xref):
+        """carriable_only is True iff EVERY attached base is a carriable item.
+        A LIGH counts only when its DATA 'Can be Carried' flag was recorded."""
+        xref.record_scri = {'R1': 'SArmo', 'R2': 'SMix', 'R3': 'SMix',
+                            'R4': 'SLightWorld', 'R5': 'SLightCarry', 'R6': 'SMixL'}
+        xref.record_type = {'R1': 'ARMO', 'R2': 'ARMO', 'R3': 'ACTI',
+                           'R4': 'LIGH', 'R5': 'LIGH', 'R6': 'LIGH'}
+        xref.carriable_light = {'R5'}  # only R5 has the Can-be-Carried flag
+        assert xref.carriable_only('SArmo') is True          # pure carriable
+        assert xref.carriable_only('SMix') is False          # carriable + ACTI world
+        assert xref.carriable_only('SLightWorld') is False   # unflagged LIGH = world light
+        assert xref.carriable_only('SLightCarry') is True    # flagged LIGH = torch/stone
+        assert xref.carriable_only('SNothing') is False      # no attachment
+
+    def test_carriable_sleep_item_has_no_oninit_gate_on_self(self, converter):
+        """A carriable item WITHOUT a GameMode poll (e.g. the MS05 Dreamworld
+        Amulet, which only registers for sleep) still must not gate OnInit on
+        SafeGameModeGate(Self): worn on the player its Self is unbound and the
+        gate throws. The OnInit arm is dropped for every carriable item; the
+        world-placed registration from OnLoad/OnCellAttach persists through
+        pickup."""
+        converter.sc.carriable_only = True
+        source = ("ScriptName AmuletScript\nshort isEq\n"
+                  "Begin MenuMode\nif ( IsPCSleeping == 1 )\n  set isEq to 1\nendif\nEnd\n")
+        result = converter.convert_standalone('AmuletScript', source,
+                                              'ObjectReference', 'AmuletScript')
+        # No synthesized OnInit, so no SafeGameModeGate(Self) on an unbound worn Self.
+        assert 'Event OnInit()' not in result
+        assert 'SafeGameModeGate(Self)' not in result
+        # The sleep registration still happens where Self is bound.
+        assert 'RegisterForSleep()' in result
+
     def test_gamemode_oninit_not_duplicated(self, converter):
         """A script with its own OnInit must not get a second one."""
         source = """ScriptName UpdateScript
@@ -882,6 +966,87 @@ End
 """
         result = converter.convert_standalone('QuestScript', source, 'Quest', 'QuestScript')
         assert 'extends Quest' in result
+
+    def test_pacing_quest_polls_fast_while_timer_runs(self, converter):
+        """A Quest counting a timer down by getSecondsPassed must re-arm FINE
+        while the timer is > 0, and relax to the 5s cadence when it runs out.
+
+        Otherwise the timer only decrements once per 5s quest tick, so every
+        conversation line waited up to a full tick before the next fired -- the
+        "standing around staring" tutorial delay.
+        """
+        source = """ScriptName PaceQuest
+
+float fQuestDelayTime
+
+Begin GameMode
+  if convTimer > 0
+    set convTimer to convTimer - getSecondsPassed
+  endif
+  if convTimer <= 0
+    set convTimer to Say CharGenMain 1
+  endif
+End
+"""
+        result = converter.convert_standalone('PaceQuest', source, 'Quest',
+                                              'PaceQuest')
+        # Pacing is latched PRE-decrement (a 5s-late poll would otherwise
+        # overshoot the timer straight to <=0 and never turn fast polling on),
+        # and a grace window keeps the poll fast across the gap to the next line.
+        assert 'Bool TES4_pacing = (convTimer > 0' in result
+        assert 'TES4_FastUntil = TES4_Now + 8.0' in result
+        assert 'If (TES4_pacing || TES4_Now < TES4_FastUntil)' in result
+        assert 'RegisterForSingleUpdate(0.1)' in result
+        assert 'RegisterForSingleUpdate(TES4_QuestDelay())' in result
+        # The pacing latch is read BEFORE the body decrements the timer.
+        assert result.index('Bool TES4_pacing') \
+            < result.index('convTimer = convTimer - TES4_SecondsPassed')
+        # The top insurance arm is still the long one, not the fast one.
+        assert result.index('RegisterForSingleUpdate(5.0)') \
+            < result.index('If (TES4_pacing')
+
+    def test_setstage_reevaluates_participant_actors(self):
+        """TES4SetStage must re-EvaluatePackage the quest's actor participants.
+
+        Skyrim re-picks a stage-gated AI package only on a discrete trigger, so
+        without this a scout actor's travel package stayed dormant after an
+        external SetStage and the actor was left behind (CharGen: Baurus).
+        Selection is by property TYPE (plain Actor, or a generated actor-script
+        that extends Actor) -- no FormID/quest allowlist.
+        """
+        from script_convert import assemble
+        x = CrossRefGraph()
+        x.script_formid_to_edid = {'00AAA': 'BaurusScript', '00BBB': 'CharGenQuest'}
+        x.script_formid_to_type = {'00AAA': 0, '00BBB': 1}
+        x.record_scri = {'00NPC': '00AAA'}
+        x.record_type = {'00NPC': 'NPC_'}
+        conv = ScriptConverter(x)
+        conv.sc.property_refs = {
+            'BaurusRef': 'TES4_BaurusScript', 'Player': 'Actor',
+            'CharGenVoice': 'Topic', 'Charactergen': 'Quest',
+            'CGAmbushCMarker': 'ObjectReference'}
+        props = assemble._quest_actor_props(conv, 'CharGenQuest')
+        # Actors in, non-actors (Topic/Quest/marker) out.
+        assert props == ['BaurusRef', 'Player']
+        body = '\n'.join(assemble._reeval_actors(props))
+        assert 'akQuest.BaurusRef as Actor' in body
+        assert '.EvaluatePackage()' in body
+        assert 'Is3DLoaded()' in body
+
+    def test_quest_without_countdown_stays_slow(self, converter):
+        """A Quest that does NOT drain a timer keeps the flat 5s re-arm -- no
+        fast poll, so the start-game quests do not starve the VM."""
+        source = """ScriptName PlainQuest
+
+Begin GameMode
+  set x to 1
+End
+"""
+        result = converter.convert_standalone('PlainQuest', source, 'Quest',
+                                              'PlainQuest')
+        assert 'TES4_pacing' not in result
+        assert 'TES4_FastUntil' not in result
+        assert 'RegisterForSingleUpdate(5.0)' in result
 
     def test_multiple_blocks(self, converter):
         source = """ScriptName MultiBlock
@@ -2009,6 +2174,109 @@ class TestOnAlarmBlock:
         text = result if isinstance(result, str) else '\n'.join(result)
         assert 'If aeCombatState == 1' in text
 
+    def test_combat_block_adds_combat_end_package_reeval(self, converter):
+        """An actor that fights re-evaluates its AI packages when combat ENDS,
+        so a GetStage-gated escort resumes (TES4 re-evaluated continuously;
+        Skyrim does not). The CharGen Blades stalled the escort without it."""
+        source = ('scriptname TestSC\n'
+                  'begin onStartCombat\n'
+                  '  set doOnce to 1\n'
+                  'end\n')
+        text = converter.convert_standalone('TestSC', source, 'Actor', 'TestSC')
+        text = text if isinstance(text, str) else '\n'.join(text)
+        assert 'If aeCombatState == 0' in text
+        assert 'Self.EvaluatePackage()' in text
+
+    def test_non_actor_combat_block_gets_no_package_reeval(self, converter):
+        """A non-actor never emits Self.EvaluatePackage() -- it has no such
+        method; the combat-end arm is actor-only."""
+        source = ('scriptname TestSC\n'
+                  'begin onStartCombat\n'
+                  '  set doOnce to 1\n'
+                  'end\n')
+        text = converter.convert_standalone('TestSC', source, 'ObjectReference',
+                                            'TestSC')
+        text = text if isinstance(text, str) else '\n'.join(text)
+        assert 'Self.EvaluatePackage()' not in text
+
+
+class TestDialogueExitReeval:
+    """A speaking actor/quest re-evaluates AI packages on the pass a dialogue
+    menu finally closes -- the seam the 3 one-shot re-eval fixes miss.
+
+    TES4 re-evaluated every frame, so an `evp`-triggered force-greet resumed the
+    instant the birthsign Message closed; Skyrim's one-shot EvaluatePackage lands
+    in the dialogue-teardown transient (PlayerIsInDialogue() still True while the
+    trailing line plays) and never retries. The poll already skips that window;
+    this re-evals on the exit edge.
+    """
+
+    def test_speaking_actor_gets_dialogue_exit_reeval(self, converter):
+        source = ('scriptname TestGreet\n'
+                  'begin gamemode\n'
+                  '  SayTo player, TestTopic\n'
+                  'end\n')
+        text = converter.convert_standalone('TestGreet', source, 'Actor',
+                                            'TestGreet')
+        text = text if isinstance(text, str) else '\n'.join(text)
+        # The gate latches while skipping, and re-evals Self on the exit edge.
+        assert 'TES4_WasInDialogue = True' in text
+        assert 'If TES4_WasInDialogue' in text
+        assert 'TES4_WasInDialogue = False' in text
+        assert 'Self.EvaluatePackage()' in text
+
+    def test_latch_var_declared_on_non_gsp_realtime_actor(self, converter):
+        """The latch var must be declared at script scope under the GATE's own
+        condition (uses_say + Actor/Quest), NOT the gsp_realtime/pacing blocks a
+        plain speaking actor lacks -- else the edge-check names an undeclared var
+        and the script fails to compile (57 gated scripts, incl. the targets)."""
+        source = ('scriptname TestGreet\n'
+                  'begin gamemode\n'
+                  '  SayTo player, TestTopic\n'
+                  'end\n')
+        text = converter.convert_standalone('TestGreet', source, 'Actor',
+                                            'TestGreet')
+        text = text if isinstance(text, str) else '\n'.join(text)
+        assert 'Bool TES4_WasInDialogue = False' in text
+        # Declared before the event, at script scope, not inside OnUpdate.
+        assert (text.index('Bool TES4_WasInDialogue')
+                < text.index('Event OnUpdate()'))
+
+    def test_non_speaking_actor_gets_no_dialogue_exit_reeval(self, converter):
+        """No Say -> no dialogue gate -> no latch var and no edge re-eval."""
+        source = ('scriptname TestQuiet\n'
+                  'begin gamemode\n'
+                  '  set doOnce to 1\n'
+                  'end\n')
+        text = converter.convert_standalone('TestQuiet', source, 'Actor',
+                                            'TestQuiet')
+        text = text if isinstance(text, str) else '\n'.join(text)
+        assert 'TES4_WasInDialogue' not in text
+
+    def test_quest_exit_reeval_is_poll_context_not_global_form(self):
+        """A speaking Quest re-evals its participant actors on the exit edge in
+        POLL context: bare `{prop} as Actor`, never TES4SetStage's `akQuest.`."""
+        from script_convert import assemble
+        x = CrossRefGraph()
+        x.script_formid_to_edid = {'00BBB': 'CharGenQuest'}
+        x.script_formid_to_type = {'00BBB': 1}
+        conv = ScriptConverter(x)
+        conv.sc.property_refs = {'BaurusRef': 'Actor', 'Player': 'Actor',
+                                 'CharGenVoice': 'Topic'}
+        lines = '\n'.join(assemble._dialogue_exit_reeval(conv, 'Quest'))
+        assert 'If TES4_WasInDialogue' in lines
+        assert 'BaurusRef as Actor' in lines
+        assert 'akQuest.' not in lines            # poll context, not the Global
+        assert 'Is3DLoaded()' in lines
+        assert '.EvaluatePackage()' in lines
+
+    def test_actor_exit_reeval_uses_self(self):
+        from script_convert import assemble
+        conv = ScriptConverter(CrossRefGraph())
+        lines = '\n'.join(assemble._dialogue_exit_reeval(conv, 'Actor'))
+        assert lines.count('Self.EvaluatePackage()') == 1
+        assert 'as Actor' not in lines            # Self is already an Actor
+
 
 class TestSetAlert:
     """SetAlert maps to Skyrim's native Actor.SetAlert, NOT DrawWeapon.
@@ -2893,6 +3161,30 @@ class TestSayTimerConversion:
             out = converter.convert_standalone('T', silent, ext, 'T')
             assert 'PlayerIsInDialogue' not in out
 
+    def test_dialogue_gate_advances_the_clock_so_menu_time_is_not_counted(self, converter):
+        """A menu-skipped pass stamps TES4_LastTick, so the next real pass
+        measures ~one gate interval, not the whole menu -- Oblivion froze
+        GameMode in menus, and the widened elapsed clamp would otherwise let a
+        short menu's seconds drain a counted timer."""
+        # gsp_realtime (getSecondsPassed) + a Say -> the gate is present and the
+        # clock stamp belongs in it.
+        src = ('scn T\n\nfloat fQuestDelayTime\nfloat t\n\nbegin gamemode\n'
+               'set t to t - GetSecondsPassed\nsayto player SomeTopic\nend\n')
+        quest = converter.convert_standalone('T', src, 'Quest', 'T')
+        qbody = quest.split('Event OnUpdate()', 1)[1]
+        gate = qbody.split('If TES4Polyfill.PlayerIsInDialogue()', 1)[1] \
+                    .split('EndIf', 1)[0]
+        assert 'TES4_LastTick = Utility.GetCurrentRealTime()' in gate
+        assert 'RegisterForSingleUpdate(0.5)' in gate
+        assert 'Return' in gate
+        # A say-driving poll that does NOT measure real time has no timer to
+        # protect, so no stamp is emitted in its gate.
+        nogsp = ('scn T\n\nshort x\n\nbegin gamemode\nset x to 1\n'
+                 'sayto player SomeTopic\nend\n')
+        actor = converter.convert_standalone('T', nogsp, 'Actor', 'T')
+        agate = actor.split('IsInDialogueWithPlayer', 1)[1].split('EndIf', 1)[0]
+        assert 'TES4_LastTick' not in agate
+
     def test_say_driving_script_polls_fast(self, converter):
         """The `T <= 0` guard is what starts the next line, so the poll tick
         is dead air between lines: a script with a timer-Say ticks at 0.15s;
@@ -3207,7 +3499,8 @@ End
         body = out.split('Event OnUpdate()')[1].split('EndEvent')[0]
         idx = body.index('Return')
         before = body[:idx]
-        assert before.count('If (TES4Polyfill.SafeGameModeGate(Self)') == 2
+        assert before.count('If (TES4Polyfill.SafeGameModeGate(TES4_Holder) || '
+                            '(TES4_Holder == None && TES4Polyfill.SafeGameModeGate(Self))') == 2
         assert 'RegisterForSingleUpdate(5.0)' in before
         assert 'RegisterForSingleUpdate(0.5)' in before
 
@@ -5439,7 +5732,30 @@ class TestQuestCadence:
         src = 'float fQuestDelayTime\nfloat t\nbegin gamemode\nset t to t + GetSecondsPassed\nend\n'
         out = self._out(converter, src)
         assert 'Float TES4_SecondsPassed = 5.0' in out
-        assert 'TES4_SecondsPassed > 2.0 * TES4_QuestDelay()' in out
+        # A fast quest floors TES4_QuestDelay() to 0.1, so a bare `2.0 * QuestDelay()`
+        # ceiling would collapse to 0.2 s -- below a real VM-late pass -- and clamp
+        # every genuine measurement back to 0.1 (the flat-dt pacing bug). The ceiling
+        # is floored at 2.0 s at runtime instead; the raw `2.0 * QuestDelay()` form
+        # must NOT survive on its own.
+        assert 'Float TES4_ClampCeil = 2.0 * TES4_QuestDelay()' in out
+        assert 'If TES4_ClampCeil < 2.0\n    TES4_ClampCeil = 2.0' in out
+        assert 'TES4_SecondsPassed > TES4_ClampCeil' in out
+        assert 'TES4_SecondsPassed > 2.0 * TES4_QuestDelay()' not in out
+
+    def test_default_quest_cadence_keeps_its_generous_ceiling(self, converter):
+        """A 5 s quest (no fQuestDelayTime) keeps max(2.0*5.0, 2.0)=10.0 -- the
+        floor never bites, and it needs no runtime ClampCeil."""
+        src = 'float t\nbegin gamemode\nset t to t + GetSecondsPassed\nend\n'
+        out = self._out(converter, src)
+        assert 'TES4_SecondsPassed > 10.0' in out
+        assert 'TES4_ClampCeil' not in out
+
+    def test_object_script_ceiling_is_the_flat_floor(self, converter):
+        """A non-quest poll keeps the flat 2.0 s ceiling (no interval scaling)."""
+        src = 'float t\nbegin gamemode\nset t to t + GetSecondsPassed\nend\n'
+        out = self._out(converter, src, 'ObjectReference')
+        assert 'TES4_SecondsPassed > 2.0\n' in out
+        assert 'TES4_ClampCeil' not in out
 
     def test_quest_script_delays_keys_the_script_by_scri(self):
         """Only quests writing a non-zero delay and a SCRI contribute."""

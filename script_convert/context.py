@@ -47,6 +47,11 @@ class ScriptContext:
     uses_timer: bool = False
     uses_say: bool = False
     uses_say_timer: bool = False
+    #: Poll-block timer variables advanced by the frame delta
+    #: (`set t to t - getSecondsPassed`).  While any is > 0 the poll is actively
+    #: pacing (a conversation line), so a Quest re-arms fine-grained instead of
+    #: at its 5 s cadence -- see poll_interval.active_interval / assemble._adaptive_arm.
+    countdown_timers: tuple = ()
     #: An event without an action ref read the last activator; OnActivate records it.
     uses_last_activator: bool = False
     #: A poll block calls SetPos/SetAngle: TES4 per-frame motion.
@@ -59,6 +64,10 @@ class ScriptContext:
     declares_quest_delay: bool = False
     #: Every record the script is attached to is a BOOK, so its OnActivate means "read".
     on_book: bool = False
+    #: Every record the script is attached to is a carriable inventory base object
+    #: (so a held instance has no bound world Self). Narrows the carried-item poll
+    #: so it never arms/gates on an unbound Self -- see assemble._true_carried.
+    carriable_only: bool = False
 
     # --- Emission bookkeeping ----------------------------------------------
     #: Quest -> latch variable, for stage timers.  Per-script: a latch

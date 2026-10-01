@@ -675,6 +675,58 @@ def set_faction_rank(ctx, call) -> str:
         return f'TES4Polyfill.SetFactionRank({ref}, {faction}, {call.arg(1)})'
 
 
+def _ptype_is_actor(ctx, ptype: str) -> bool:
+    """True when a property/variable TYPE names an actor.
+
+    Plain `Actor`, or a generated actor-script that `extends Actor` (an actor
+    reference is typed as its own generated script, e.g. `TES4_CGRatAmbushASCRIPT
+    extends Actor`). Keyed purely on type -- no FormID or EditorID allowlist.
+    """
+    if ptype == 'Actor':
+        return True
+    if not ptype or not ctx.xref or not is_generated_script_type(ptype):
+        return False
+    cache = getattr(ctx.xref, '_cmd_type_extends', None)
+    if cache is None:
+        cache = {papyrus_script_name(e): ctx.xref.get_extends_class(f)
+                 for f, e in ctx.xref.script_formid_to_edid.items()}
+        ctx.xref._cmd_type_extends = cache
+    return cache.get(ptype) == 'Actor'
+
+
+@command('enable')
+def enable_actor_reeval(ctx, call) -> str:
+    """`enable` -- and re-evaluate AI packages when the target is an ACTOR.
+
+    Oblivion's `enable` on an actor made the engine re-pick its AI package, so
+    an actor enabled into a scene immediately ran whatever stage-gated package
+    its conditions now allowed. The CharacterGen rat is enabled at stage 29 and
+    is meant to run `CGRatAmbushAPushBricks` -- a walk-up-and-activate on the
+    sewer wall (IDCrumbleWall01) that collapses it so the player can pass.
+    Skyrim's `Enable()` does NOT reliably re-select a package in the same frame,
+    so the rat often kept its idle/hold package and the wall collapsed only when
+    some later natural re-evaluation happened to coincide: the intermittent
+    "sometimes the wall doesn't fire" stall. `EvaluatePackage` right after the
+    enable restores the TES4 behaviour (the push package out-ranks the hold one,
+    so it wins once the rat actually re-evaluates).
+
+    Only ACTORS are re-evaluated; a non-actor target (a world light, door, or
+    static -- e.g. the self-enabling exterior lights) declines, so the row table
+    renders a plain `Enable()` exactly as before.
+    """
+    if call.ref:
+        ptype = (ctx.sc.property_refs.get(call.ref, '')
+                 or ctx.sc.var_types.get(call.ref.lower(), ''))
+        if not _ptype_is_actor(ctx, ptype):
+            return None
+        ref = ctx._resolve_self_ref(call.ref, call.extends)
+        actor = ref if ptype == 'Actor' else f'({ref} as Actor)'
+        return f'{ref}.Enable()\n{actor}.EvaluatePackage()'
+    if call.extends == 'Actor':          # a script enabling its own actor Self
+        return 'Self.Enable()\nSelf.EvaluatePackage()'
+    return None
+
+
 def _as_actor(ctx, target: str) -> str:
     """Cast or register `target` so it is Actor-typed at the call site."""
     vtype = ctx.sc.var_types.get(target.lower(), '')

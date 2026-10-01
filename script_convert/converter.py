@@ -532,7 +532,8 @@ class ScriptConverter:
         self.sc = ScriptContext(property_refs=dict(prev.property_refs),
                                 scro_aliases=dict(prev.scro_aliases),
                                 quest_delay=prev.quest_delay,
-                                on_book=prev.on_book)
+                                on_book=prev.on_book,
+                                carriable_only=prev.carriable_only)
         return _assemble.build(self, name, source, extends, editor_id)
 
     def convert_fragment(self, source: str, extends: str = 'Quest') -> list[str]:

@@ -1033,6 +1033,59 @@ CONV_FAKE_FID_BASE = 0x00F40000
 # derived record can hash onto one).
 CONV_FAKE_FID_COUNT = 0x1000
 _CONV_FAKE_FID_BASE = CONV_FAKE_FID_BASE
+# Hop dedicated-topic fids live high in the same reserved window so they can
+# never collide with the head fids (base + chain index, low in the window).
+_CONV_HOP_FAKE_OFFSET = 0x800
+
+
+def _rehome_scene_hops(chain, info_by_fid, dials, offset, used_low24, hop_ctr):
+    """Give each hop of a NATIVE-SCENE chain its OWN dedicated 1-INFO topic.
+
+    Generalises the head re-home to every hop: a scene action then delivers
+    off a DEDICATED topic (one INFO, always selectable) instead of the shared,
+    multi-stage-gated bucket the line originally lived in -- the coupling that
+    made the SCEN stall 1-2 min before advancing (the head, already dedicated,
+    never stalled).  Each re-homed INFO keeps its fragments/voice/conditions
+    (all keyed on its stable FormID); a per-topic SAY_TOPIC_DISPOSITIONS entry
+    retargets its RunOn=Target GetIsID to the OTHER actor's ref, exactly as the
+    head's does, so the line stays selectable inside the scene.  Head-chain
+    hops already point at a dedicated synth head topic, so they are left alone.
+
+    Returns the advanced hop counter.
+    """
+    for k, hop in enumerate(chain['hops']):
+        if 'head_chain' in hop:
+            continue
+        hop_info = info_by_fid.get(hop['info_fid'])
+        if hop_info is None:
+            continue
+        fake = _CONV_FAKE_FID_BASE + _CONV_HOP_FAKE_OFFSET + hop_ctr
+        hop_ctr += 1
+        assert fake < _CONV_FAKE_FID_BASE + CONV_FAKE_FID_COUNT, (
+            'conversation hop dedicated-topic fids exhausted the reserved '
+            'fake-FormID window; raise CONV_FAKE_FID_COUNT')
+        assert (fake & 0xFFFFFF) not in used_low24, (
+            'synthetic conversation hop DIAL fid collides with a real DIAL')
+        hop_info['ParentDIAL'] = f'{fake:08X}'
+        dials.append({
+            'Signature': 'DIAL',
+            'FormID': f'{fake:08X}',
+            'EditorID': f"{chain['head_topic_edid']}H{k}",
+            'RecordFlags': '0',
+            'QuestCount': '1',
+            'Quest[0]': f"{chain['owner_quest_fid']:08X}",
+            'DATA.Type': str(DIAL_TYPE_CONVERSATION),
+        })
+        # The hop's RunOn=Target GetIsID names the OTHER actor (the listener);
+        # retarget it to that actor's placed ref so it holds inside the scene.
+        other = chain['tgt'] if hop['speaker'] == 'A' else chain['subj']
+        SAY_TOPIC_DISPOSITIONS[fake & 0xFFFFFF] = (
+            'ref', remap_formid(other['ref_fid'], offset))
+        # Store the OUTPUT-space fid (load-order index shifted like the head's,
+        # which is recovered via get_formid(...,'FormID')); the SCEN action DATA
+        # references it directly, so a raw fid would dangle in the master space.
+        hop['_synth_topic_fid'] = remap_formid(fake, offset, is_own_id=True)
+    return hop_ctr
 
 
 def register_conversation_chains(plan, dials, infos, offset):
@@ -1051,6 +1104,10 @@ def register_conversation_chains(plan, dials, infos, offset):
             info_by_fid[int(rec.get('FormID', '0') or '0', 16)] = rec
         except ValueError:
             pass
+
+    from .conversations import native_scene_chains
+    scene_set = native_scene_chains(plan)
+    hop_ctr = 0
 
     fake_by_index = {}
     for chain in plan['chains']:
@@ -1081,6 +1138,9 @@ def register_conversation_chains(plan, dials, infos, offset):
         for tfid in chain['undrop_topic_fids']:
             SAY_TOPIC_DISPOSITIONS.setdefault(tfid & 0xFFFFFF,
                                               ('drop', None))
+        if chain['index'] in scene_set:
+            hop_ctr = _rehome_scene_hops(chain, info_by_fid, dials, offset,
+                                         used_low24, hop_ctr)
     return fake_by_index
 
 
@@ -1107,6 +1167,9 @@ def make_conversation_quest(writer, plan, synth_topic_fids, bark_topic_fids,
         i = chain['index']
 
         def _resolve_hop(hop):
+            synth = hop.get('_synth_topic_fid')
+            if synth:
+                return synth
             if 'head_chain' in hop:
                 return synth_topic_fids.get(hop['head_chain'], 0)
             edid = hop['topic_edid']
