@@ -881,6 +881,22 @@ def _prescan_package_plan(by_type: dict, ctx, writer, fid_to_edid: dict, _step_d
     if _chains:
         print(f"  Hunt chains: {len(_chains)} Find-at-actor-base packages -> "
               f"{sum(len(v) for v in _chains.values())} Follow links")
+
+    # Escort-drive: an NPC-escort whose escortee stays put gets a
+    # Follow(escorter) injected on the escortee's alias so it is dragged to the
+    # destination the way Oblivion's Escort procedure did (CharGen stg50 stall).
+    from .packages.converter import plan_escort_drivers
+    _drive, _drive_unbindable = plan_escort_drivers(
+        by_type, pack_ctx, writer, _master_export)
+    pack_ctx.escort_drive = _drive
+    if _drive:
+        print(f"  Escort-drive: {len(_drive)} NPC-escort(s) get an escortee "
+              f"Follow(escorter) so the escortee reaches the destination")
+    if _drive_unbindable:
+        print(f"  WARNING: escort-drive: {len(_drive_unbindable)} NPC-escort(s) "
+              f"look drivable but are unbindable (no owner quest / single "
+              f"escorter) -- left unchanged: {', '.join(_drive_unbindable)}")
+
     set_quest_packages(pack_plan.owner_quest.keys())
     _step_done('package plan')
     return (pack_plan, pack_ctx, _script_vars)

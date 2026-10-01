@@ -804,6 +804,31 @@ class PackagePlan:
                         out.append(p)
                 per_actor[aref] = out
 
+    def insert_escort_driver(self, qfid: int, escortee_ref: int,
+                             driver_fid: int, before_fid: int) -> bool:
+        """Inject an escortee-drive package onto the escortee's quest alias,
+        immediately ABOVE `before_fid` (the no-op it must beat), and give it the
+        quest's ownership.  First-condition-true-wins makes order priority, so
+        the driver selects in exactly the no-op's window while any higher real
+        mover on the escortee's stack still wins when its own gate opens (no
+        over-extension past the window).  See converter.plan_escort_drivers.
+
+        Returns False WITHOUT mutating anything when `before_fid` is not already
+        on this escortee's alias list -- the caller guarantees it is (the
+        tier-mismatch guard in plan_escort_drivers), so this only fends off a
+        silent insert-at-0 that would stack the driver atop the whole alias and
+        over-suppress the escortee's later movers."""
+        pkgs = self.quest_packages.setdefault(qfid, {}).setdefault(
+            escortee_ref, [])
+        if driver_fid in pkgs:
+            return True
+        if before_fid not in pkgs:
+            return False
+        self.owner_quest[driver_fid] = qfid
+        pkgs.insert(pkgs.index(before_fid), driver_fid)
+        self.needed_aliases.setdefault(qfid, set()).add(escortee_ref)
+        return True
+
     def alias_of(self, qfid: int, ref_fid: int):
         return self.alias_index.get((qfid, ref_fid))
 

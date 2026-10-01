@@ -26,9 +26,16 @@ from tes5_import.packages.converter import (
     T5_WEAPON_DRAWN,
     build_psdt,
     convert_PACK,
+    convert_PACK_records,
     convert_flags,
+    escort_window,
+    escortee_selected_package,
     is_monotonic_forcegreet,
+    is_npc_escort_candidate,
+    is_stayput_noop,
+    plan_escort_drivers,
 )
+from tes5_import.packages.indexes import build_pack_indexes
 from tes5_import.packages.templates import (
     ESCORT,
     FOLLOW,
@@ -807,3 +814,424 @@ def test_hunt_chain_runs_ahead_of_its_source_on_alias_and_pkid_lists():
             [0x0100E001, 0x0100DDDD, 0x0100DDDE]
     finally:
         set_package_chains({})
+
+
+# --- Escort-drive: an NPC-escort drags its escortee to the destination -------
+# Oblivion's Escort procedure moved the escorted ACTOR; Skyrim's only walks the
+# escorter and waits for a self-moving target.  So a converted NPC-escort whose
+# escortee stays put (CharacterGen stg50: the Emperor's own stage-50 travel is a
+# PLDT type-2 no-op) never completes -- the escorter outpaces the stationary
+# escortee past the 1500 wait radius and OnPackageEnd never fires.  The fix
+# injects a Follow(escorter) onto the escortee's quest alias, ranked immediately
+# above the no-op it beats, so the pair move together.  Allowlist-free; changes
+# no existing package's bytes.
+
+def _cond_getstage(quest_low24: int, op: int, value: float) -> str:
+    """A GetStage(quest) <op> value CTDA, hex-encoded as the export writes it.
+    `op` is the CTDA operator byte: 0x60 >=, 0x40 >, 0x00 ==, 0x80 <, plus the
+    0x01 OR-bit to OR with the following condition."""
+    return struct.pack('<B3xfH2xII4x', op, float(value), 58,
+                       quest_low24, 0).hex()
+
+
+def _cond_getstagedone(quest_low24: int, done: float, stage: int) -> str:
+    """A GetStageDone(quest, stage) == done CTDA.  The stage lives in param2
+    (the SECOND id field); the comparison float is the 0/1 'done' bool, NOT a
+    stage -- the trap escort_window / the window-sim must not fall into."""
+    return struct.pack('<B3xfH2xII4x', 0x00, float(done), 59,
+                       quest_low24, stage).hex()
+
+
+class _StubWriter:
+    """Minimal writer exposing a deterministic derive_formid for planning."""
+
+    def __init__(self):
+        self._by_key = {}
+
+    def derive_formid(self, site, key):
+        # Pure function of (site, key), like the real allocator -- same source
+        # always yields the same id within the run.
+        return self._by_key.setdefault((site, key),
+                                       0x00F00000 + len(self._by_key) + 1)
+
+
+_Q = 0x00ABCD01            # the escort's owner quest
+_DEST = '00DE5701'         # a real destination reference
+
+
+def _escort_world(*, escort_target='00AC0002', escort_pldt_type='0',
+                  escort_loc=_DEST, escort_cond=True,
+                  escortee_packages=('real54', 'noop50')):
+    """A minimal by_type: a quest, an escorter who runs an Escort, and an
+    escortee whose own packages are chosen by `escortee_packages` (keywords for
+    a real travel, a no-op travel, or a follow)."""
+    menu = {
+        'real54': {'Signature': 'PACK', 'FormID': '00E0F701',
+                   'EditorID': 'EeRealTravel', 'PKDT.Type': '6',
+                   'PLDT.Type': '0', 'PLDT.Location': '00DE5702',
+                   'ConditionCount': '1',
+                   'Condition[0].Raw': _cond_getstage(_Q, 0x60, 54)},
+        'real50': {'Signature': 'PACK', 'FormID': '00E0F703',
+                   'EditorID': 'EeRealTravel50', 'PKDT.Type': '6',
+                   'PLDT.Type': '0', 'PLDT.Location': '00DE5703',
+                   'ConditionCount': '1',
+                   'Condition[0].Raw': _cond_getstage(_Q, 0x60, 50)},
+        'noop50': {'Signature': 'PACK', 'FormID': '00E0F702',
+                   'EditorID': 'EeStayPut', 'PKDT.Type': '6',
+                   'PLDT.Type': '2', 'PLDT.Location': '0',
+                   'ConditionCount': '1',
+                   'Condition[0].Raw': _cond_getstage(_Q, 0x60, 50)},
+        'follow50': {'Signature': 'PACK', 'FormID': '00E0F704',
+                     'EditorID': 'EeFollow', 'PKDT.Type': '1',
+                     'PTDT.Type': '0', 'PTDT.Target': '00AC0001',
+                     'ConditionCount': '1',
+                     'Condition[0].Raw': _cond_getstage(_Q, 0x60, 50)},
+    }
+    escortee_pkgs = [menu[k] for k in escortee_packages]
+    escort = {'Signature': 'PACK', 'FormID': '00E5C001',
+              'EditorID': 'EscortToDest', 'PKDT.Type': '2',
+              'PTDT.Type': '0', 'PTDT.Target': escort_target,
+              'PTDT.Count': '150', 'PLDT.Type': escort_pldt_type,
+              'PLDT.Location': escort_loc}
+    if escort_cond:
+        escort['ConditionCount'] = '1'
+        escort['Condition[0].Raw'] = _cond_getstage(_Q, 0x60, 50)
+    npc_escorter = {'Signature': 'NPC_', 'FormID': '00B0B001',
+                    'EditorID': 'Escorter', 'AIPackageCount': '1',
+                    'AIPackage[0]': '00E5C001'}
+    npc_escortee = {'Signature': 'NPC_', 'FormID': '00B0B002',
+                    'EditorID': 'Escortee',
+                    'AIPackageCount': str(len(escortee_pkgs))}
+    for i, p in enumerate(escortee_pkgs):
+        npc_escortee[f'AIPackage[{i}]'] = p['FormID']
+    achr_escorter = {'Signature': 'ACHR', 'FormID': '00AC0001',
+                     'NAME': '00B0B001'}
+    achr_escortee = {'Signature': 'ACHR', 'FormID': '00AC0002',
+                     'NAME': '00B0B002'}
+    quest = {'Signature': 'QUST', 'FormID': '00ABCD01',
+             'EditorID': 'EscortQuest'}
+    return {
+        'QUST': [quest],
+        'PACK': [escort] + escortee_pkgs,
+        'NPC_': [npc_escorter, npc_escortee],
+        'ACHR': [achr_escorter, achr_escortee],
+    }
+
+
+def _built_plan_and_ctx(by_type):
+    plan = PackagePlan()
+    plan.build(by_type, {get_formid_(by_type['QUST'][0])})
+    ctx = PackContext(plan=plan, **build_pack_indexes(by_type))
+    return plan, ctx
+
+
+def get_formid_(rec):
+    from tes5_import.base.text_reader import get_formid
+    return get_formid(rec, 'FormID')
+
+
+# -- predicate pieces (pure) ------------------------------------------------
+
+def test_is_npc_escort_candidate_clauses_1_to_3():
+    by_type = _escort_world()
+    _plan, ctx = _built_plan_and_ctx(by_type)
+    escort = by_type['PACK'][0]
+    assert is_npc_escort_candidate(escort, ctx)
+    # player target -> not a candidate (clause 2)
+    player = dict(escort, **{'PTDT.Target': '00000014'})
+    assert not is_npc_escort_candidate(player, ctx)
+    # no real destination (type-2/loc0) -> not a candidate (clause 3)
+    nodest = dict(escort, **{'PLDT.Type': '2', 'PLDT.Location': '0'})
+    assert not is_npc_escort_candidate(nodest, ctx)
+    # a non-escort type -> not a candidate (clause 1)
+    travel = dict(escort, **{'PKDT.Type': '6'})
+    assert not is_npc_escort_candidate(travel, ctx)
+
+
+def test_is_stayput_noop_classifies_movers_vs_noops():
+    noop = {'PKDT.Type': '6', 'PLDT.Type': '2', 'PLDT.Location': '0'}
+    real = {'PKDT.Type': '6', 'PLDT.Type': '0', 'PLDT.Location': '00DE5702'}
+    empty = {'PKDT.Type': '6', 'PLDT.Type': '0', 'PLDT.Location': '0'}
+    editor = {'PKDT.Type': '6', 'PLDT.Type': '3', 'PLDT.Location': '0'}
+    follow = {'PKDT.Type': '1', 'PTDT.Type': '0', 'PTDT.Target': '00AC0001'}
+    assert is_stayput_noop(noop)
+    assert is_stayput_noop(empty)
+    assert not is_stayput_noop(real)
+    assert not is_stayput_noop(editor)      # type-3 moves to editor location
+    assert not is_stayput_noop(follow)      # a Follow is a mover
+
+
+def test_escortee_window_sim_picks_the_noop_over_higher_real_mover():
+    """At the escort's onset stage the higher real travel (>=54) is not yet
+    true, so first-condition-true-wins selects the stay-put no-op (>=50)."""
+    by_type = _escort_world(escortee_packages=('real54', 'noop50'))
+    escort = by_type['PACK'][0]
+    escortee_pkgs = [get_formid_(p) for p in by_type['PACK'][1:]]
+    pack_by_fid = {get_formid_(p): p for p in by_type['PACK']}
+    assert escort_window(escort) == (0x00ABCD01, 50.0)
+    winner, ambiguous = escortee_selected_package(escort, escortee_pkgs,
+                                                  pack_by_fid)
+    assert not ambiguous
+    assert pack_by_fid[winner]['EditorID'] == 'EeStayPut'
+
+
+def test_escortee_window_sim_cross_quest_gate_is_ambiguous():
+    """A higher package gated on a DIFFERENT quest cannot be decided here, so
+    the selection is ambiguous and the fix must not fire."""
+    other = {'Signature': 'PACK', 'FormID': '00E0F799',
+             'EditorID': 'EeOtherQuest', 'PKDT.Type': '6', 'PLDT.Type': '0',
+             'PLDT.Location': '00DE5709', 'ConditionCount': '1',
+             'Condition[0].Raw': _cond_getstage(0x00FEED01, 0x60, 10)}
+    noop = {'Signature': 'PACK', 'FormID': '00E0F702',
+            'EditorID': 'EeStayPut', 'PKDT.Type': '6', 'PLDT.Type': '2',
+            'PLDT.Location': '0', 'ConditionCount': '1',
+            'Condition[0].Raw': _cond_getstage(_Q, 0x60, 50)}
+    escort = {'FormID': '00E5C001', 'PKDT.Type': '2', 'ConditionCount': '1',
+              'Condition[0].Raw': _cond_getstage(_Q, 0x60, 50)}
+    pack_by_fid = {0x00E0F799: other, 0x00E0F702: noop}
+    _winner, ambiguous = escortee_selected_package(
+        escort, [0x00E0F799, 0x00E0F702], pack_by_fid)
+    assert ambiguous
+
+
+# -- plan_escort_drivers: fire set + injection ------------------------------
+
+def test_plan_escort_drivers_fires_and_injects_above_the_noop():
+    by_type = _escort_world(escortee_packages=('real54', 'noop50'))
+    plan, ctx = _built_plan_and_ctx(by_type)
+    writer = _StubWriter()
+    drive, unbindable = plan_escort_drivers(by_type, ctx, writer)
+
+    assert unbindable == []
+    assert 0x00E5C001 in drive
+    driver_fid, escortee_ref, escorter_ref, noop_fid = drive[0x00E5C001]
+    assert escortee_ref == 0x00AC0002
+    assert escorter_ref == 0x00AC0001           # the actor that runs the escort
+    assert noop_fid == 0x00E0F702               # the stay-put it beats
+    # the driver is a new quest-owned package
+    assert plan.owner_quest[driver_fid] == 0x00ABCD01
+    # and it sits immediately ABOVE the no-op on the escortee's alias, with the
+    # higher real mover (>=54) still ahead of it -> no over-extension past the
+    # no-op's window.
+    assert plan.quest_packages[0x00ABCD01][0x00AC0002] == \
+        [0x00E0F701, driver_fid, 0x00E0F702]
+
+
+def test_plan_escort_drivers_does_not_fire_when_escortee_self_moves():
+    """Escortee's window winner is a real travel -> already moves -> no fix."""
+    by_type = _escort_world(escortee_packages=('real50',))
+    plan, ctx = _built_plan_and_ctx(by_type)
+    drive, unbindable = plan_escort_drivers(by_type, ctx, _StubWriter())
+    assert drive == {}
+    assert unbindable == []
+
+
+def test_plan_escort_drivers_does_not_fire_when_escortee_follows():
+    """Escortee already Follows the escorter -> injecting a Follow would be a
+    circular double-drive -> no fix."""
+    by_type = _escort_world(escortee_packages=('follow50',))
+    _plan, ctx = _built_plan_and_ctx(by_type)
+    drive, unbindable = plan_escort_drivers(by_type, ctx, _StubWriter())
+    assert drive == {}
+    assert unbindable == []
+
+
+def test_plan_escort_drivers_skips_player_escort():
+    by_type = _escort_world(escort_target='00000014',
+                            escortee_packages=('noop50',))
+    _plan, ctx = _built_plan_and_ctx(by_type)
+    drive, unbindable = plan_escort_drivers(by_type, ctx, _StubWriter())
+    assert drive == {}
+    assert unbindable == []
+
+
+def test_plan_escort_drivers_skips_escort_with_no_real_dest():
+    by_type = _escort_world(escort_pldt_type='2', escort_loc='0',
+                            escortee_packages=('noop50',))
+    _plan, ctx = _built_plan_and_ctx(by_type)
+    drive, unbindable = plan_escort_drivers(by_type, ctx, _StubWriter())
+    assert drive == {}
+    assert unbindable == []
+
+
+def test_plan_escort_drivers_loud_noop_for_unbindable_escort():
+    """A drivable-looking escort with no owner quest (the two non-quest Uuras
+    herding escorts) is surfaced, never silently dropped."""
+    by_type = _escort_world(escort_cond=False, escortee_packages=('noop50',))
+    _plan, ctx = _built_plan_and_ctx(by_type)
+    drive, unbindable = plan_escort_drivers(by_type, ctx, _StubWriter())
+    assert drive == {}
+    assert unbindable == ['EscortToDest']
+
+
+# -- the injected record + no byte change to the escort itself --------------
+
+def test_escort_drive_record_follows_escorter_through_alias():
+    by_type = _escort_world(escortee_packages=('real54', 'noop50'))
+    plan, ctx = _built_plan_and_ctx(by_type)
+    drive, _ = plan_escort_drivers(by_type, ctx, _StubWriter())
+    ctx.escort_drive = drive                    # the pipeline does this wiring
+    driver_fid = drive[0x00E5C001][0]
+    # assign the aliases the QUST converter would, so alias_for resolves
+    plan.assign_aliases(0x00ABCD01, {})
+    records = convert_PACK_records(by_type['PACK'][0], ctx)
+
+    # exactly two records: the escort itself, then its escortee driver
+    assert len(records) == 2
+    # the escort record is byte-for-byte what convert_PACK produces alone:
+    # the fix adds a record, it does not touch the escort's bytes.
+    assert records[0] == convert_PACK(by_type['PACK'][0], ctx)
+
+    driver = records[1]
+    assert struct.unpack_from('<I', driver, 12)[0] == driver_fid
+    subs = _subrecords(driver)
+    # it is a Follow instance (PKCU names the Follow template root)
+    _count, template, _ver = struct.unpack('<III', _first(subs, 'PKCU'))
+    assert template == FOLLOW.formid
+    # its target is the ESCORTER, reached through a reference alias (PTDA type 4)
+    ttype, alias, _ = struct.unpack('<iii', _first(subs, 'PTDA'))
+    assert ttype == 4
+    assert alias == plan.alias_of(0x00ABCD01, 0x00AC0001)
+    # it belongs to the escort's quest and carries the escort's stage gate
+    assert struct.unpack('<I', _first(subs, 'QNAM'))[0] & 0x00FFFFFF \
+        == 0x00ABCD01
+    assert any(s == 'CTDA' for s, _ in subs)
+
+
+def test_non_firing_escort_emits_a_single_unchanged_record():
+    """An escort not in the escort_drive plan converts to exactly one record,
+    identical to convert_PACK -- unrelated escorts keep their bytes."""
+    by_type = _escort_world(escortee_packages=('real50',))
+    _plan, ctx = _built_plan_and_ctx(by_type)
+    plan_escort_drivers(by_type, ctx, _StubWriter())   # fires on nothing here
+    records = convert_PACK_records(by_type['PACK'][0], ctx)
+    assert len(records) == 1
+    assert records[0] == convert_PACK(by_type['PACK'][0], ctx)
+
+
+# --- FIX 1: GetStageDone (func 59) is NOT a GetStage window/eval source -------
+# GetStageDone stores the stage in param2 (unread by the 24-byte export view);
+# its comparison float is a 0/1 'done' bool.  Reading it as a stage gave a bogus
+# (quest, 0.0) window and a false stage comparison (MS48's first condition).
+
+def test_escort_window_ignores_getstagedone():
+    from tes5_import.packages.converter import escort_window
+    # first condition GetStageDone(q)==0, then the real GetStage(q) >= 91 gate
+    rec = {'ConditionCount': '2',
+           'Condition[0].Raw': _cond_getstagedone(_Q, 0.0, 91),
+           'Condition[1].Raw': _cond_getstage(_Q, 0x60, 91)}
+    assert escort_window(rec) == (_Q, 91.0)          # not the bogus (_Q, 0.0)
+    # an escort gated ONLY by GetStageDone has no usable window
+    only_done = {'ConditionCount': '1',
+                 'Condition[0].Raw': _cond_getstagedone(_Q, 0.0, 50)}
+    assert escort_window(only_done) is None
+
+
+def test_condition_true_at_getstagedone_is_indeterminate():
+    from tes5_import.packages.converter import _condition_true_at
+    rec = {'ConditionCount': '1',
+           'Condition[0].Raw': _cond_getstagedone(_Q, 0.0, 10)}
+    # indeterminate at every stage -- never a determinate True/False
+    assert _condition_true_at(rec, _Q, 10.0) is None
+    assert _condition_true_at(rec, _Q, 50.0) is None
+
+
+# --- FIX 2: the CTDA OR-bit (operator flag 0x01) is an OR, not an AND ---------
+# Consecutive conditions joined by the OR-bit form an OR-group; groups are
+# ANDed; a group is True if ANY member is True.
+
+def test_or_group_true_when_one_member_passes():
+    from tes5_import.packages.converter import _condition_true_at
+    # GetStage(q) >= 26  [OR]  GetStage(q) == 22, evaluated at stage 50
+    rec = {'ConditionCount': '2',
+           'Condition[0].Raw': _cond_getstage(_Q, 0x60 | 0x01, 26),
+           'Condition[1].Raw': _cond_getstage(_Q, 0x00, 22)}
+    assert _condition_true_at(rec, _Q, 50.0) is True     # was False under AND
+
+
+def test_or_group_false_when_no_member_passes():
+    from tes5_import.packages.converter import _condition_true_at
+    rec = {'ConditionCount': '2',
+           'Condition[0].Raw': _cond_getstage(_Q, 0x00 | 0x01, 10),
+           'Condition[1].Raw': _cond_getstage(_Q, 0x00, 20)}
+    assert _condition_true_at(rec, _Q, 50.0) is False
+
+
+def test_or_group_indeterminate_when_unsatisfied_member_is_unknown():
+    from tes5_import.packages.converter import _condition_true_at
+    # GetStage(q) >= 99 (false) [OR] GetStage(OTHER) >= 5 (cross-quest, unknown)
+    rec = {'ConditionCount': '2',
+           'Condition[0].Raw': _cond_getstage(_Q, 0x60 | 0x01, 99),
+           'Condition[1].Raw': _cond_getstage(0x00FEED01, 0x60, 5)}
+    assert _condition_true_at(rec, _Q, 50.0) is None
+
+
+def test_or_group_is_anded_with_the_next_group():
+    from tes5_import.packages.converter import _condition_true_at
+    # (>=50) AND (>=26 OR ==22): both groups true at 50 -> True
+    both = {'ConditionCount': '3',
+            'Condition[0].Raw': _cond_getstage(_Q, 0x60, 50),
+            'Condition[1].Raw': _cond_getstage(_Q, 0x60 | 0x01, 26),
+            'Condition[2].Raw': _cond_getstage(_Q, 0x00, 22)}
+    assert _condition_true_at(both, _Q, 50.0) is True
+    # a leading AND group that fails sinks the whole block even if the OR passes
+    first_fails = {'ConditionCount': '3',
+                   'Condition[0].Raw': _cond_getstage(_Q, 0x60, 99),
+                   'Condition[1].Raw': _cond_getstage(_Q, 0x60 | 0x01, 26),
+                   'Condition[2].Raw': _cond_getstage(_Q, 0x00, 22)}
+    assert _condition_true_at(first_fails, _Q, 50.0) is False
+
+
+# --- FIX 3: a winning no-op NOT on the escortee's quest alias must not fire ---
+# The window-sim reads the BASE package list, but the driver injects at the
+# ALIAS tier (ALPC, which outranks base).  Firing when the no-op is a base-tier
+# package would stack the driver atop the whole alias and over-suppress the
+# escortee's later movers -- so skip and surface it.
+
+def test_plan_escort_drivers_skips_noop_not_on_quest_alias():
+    by_type = _escort_world(escortee_packages=('noop50',))
+    # Make the escortee's no-op NOT quest-owned: strip its stage gate so it is a
+    # base-tier package (always true, selected by the sim) that is not on the
+    # charactergen alias.
+    for p in by_type['PACK']:
+        if p['EditorID'] == 'EeStayPut':
+            p.pop('ConditionCount', None)
+            p.pop('Condition[0].Raw', None)
+    _plan, ctx = _built_plan_and_ctx(by_type)
+    drive, unbindable = plan_escort_drivers(by_type, ctx, _StubWriter())
+    assert drive == {}                                  # did NOT fire
+    assert 'EscortToDest' in unbindable                 # surfaced, not silent
+
+
+def test_insert_escort_driver_refuses_when_before_not_on_alias():
+    """The plan method itself fends off the insert-at-0 fallback: with the no-op
+    absent from the alias it mutates nothing and returns False."""
+    plan = PackagePlan()
+    plan.quest_packages[_Q] = {0x00AC0002: [0x00E0F701]}   # no-op 0xE0F702 absent
+    assert plan.insert_escort_driver(_Q, 0x00AC0002, 0x00F00001,
+                                     0x00E0F702) is False
+    assert plan.quest_packages[_Q][0x00AC0002] == [0x00E0F701]
+    assert 0x00F00001 not in plan.owner_quest
+
+
+# --- FIX 4: the prescan -> ctx -> emit wiring (pack_ctx.escort_drive = _drive) -
+# The hand-wired tests above set ctx.escort_drive themselves; this one drives the
+# REAL _prescan_package_plan so the pipeline's own wiring line is covered.
+
+def test_prescan_wires_escort_drive_into_the_context():
+    from tes5_import.pipeline import _prescan_package_plan
+    from tes5_import.base.writer import PluginWriter
+
+    by_type = _escort_world(escortee_packages=('real54', 'noop50'))
+    writer = PluginWriter()
+    plan, ctx, _script_vars = _prescan_package_plan(
+        by_type, None, writer, {}, lambda *_a, **_k: None)
+
+    # (a) the context carries the plan the pipeline computed
+    assert 0x00E5C001 in ctx.escort_drive
+    # (b) and convert_PACK_records emits the escort + its injected driver
+    records = convert_PACK_records(by_type['PACK'][0], ctx)
+    assert len(records) == 2
+    # the driver is the second record and is a Follow instance
+    driver_fid = ctx.escort_drive[0x00E5C001][0]
+    assert struct.unpack_from('<I', records[1], 12)[0] == driver_fid

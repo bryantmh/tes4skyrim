@@ -681,6 +681,10 @@ class PackContext:
         # hunts expanded into a Follow chain (import_main fills this from
         # hunt_chain_targets + writer.derive_formid).
         self.hunt_chains = {}
+        # escort PACK fid -> (driver PACK fid, escortee ref, escorter ref,
+        # no-op winner pack fid): an NPC-escort whose escortee stays put gets a
+        # Follow(escorter) injected on the escortee's alias (plan_escort_drivers).
+        self.escort_drive = {}
         self.script_vars = script_vars or {}
         # Converted FormID of the GREETING topic (TES4 DIAL 0x000000C8).  A
         # ForceGreet package opens THIS -- Oblivion's force-greet raised the
@@ -1520,15 +1524,329 @@ def _seek_record(rec: dict, ctx: PackContext, src_fid: int, seek_fid: int,
 
 def convert_PACK_records(rec: dict, ctx: PackContext = None) -> list:
     """Every TES5 PACK record one TES4 PACK becomes: the hunt chain's seek
-    links (when import_main planned one, see PackContext.hunt_chains) followed
-    by the package itself."""
+    links (when import_main planned one, see PackContext.hunt_chains), the
+    package itself, and — for an NPC-escort whose escortee stays put — the
+    escortee's Follow(escorter) driver (PackContext.escort_drive)."""
     ctx = ctx or PackContext()
     src_fid = get_formid(rec, 'FormID')
     out = []
     for k, (seek_fid, ref) in enumerate(ctx.hunt_chains.get(src_fid, ()), 1):
         out.append(_seek_record(rec, ctx, src_fid, seek_fid, ref, k))
     out.append(convert_PACK(rec, ctx))
+    drive = ctx.escort_drive.get(src_fid)
+    if drive:
+        driver_fid, _escortee_ref, escorter_ref, _noop = drive
+        out.append(_escort_drive_record(rec, ctx, driver_fid, escorter_ref))
     return out
+
+
+# --- Escort-drive: give an NPC-escort's escortee its own locomotion ---------
+#
+# Oblivion's Escort procedure DRAGGED the escorted actor to the destination;
+# Skyrim's only walks the escorter and WAITS for a self-moving target (the
+# player).  Repointed at an NPC with no mover of its own, the escortee stands,
+# the escorter outpaces it past the 1500 wait radius, and the escort never
+# completes (CharacterGen stage 50: Glenroy stranded, the Emperor never reaches
+# marker F, OnPackageEnd never fires -> stuck).  The faithful fix is to supply
+# what Oblivion supplied implicitly: a Follow(escorter) package ON THE ESCORTEE,
+# ranked immediately above the escortee's selected no-op so it wins in that
+# window and the pair move together.  Allowlist-free; adds one derived PACK and
+# one ALPC, changes no existing package's bytes.
+#
+# See: docs/commentary/tes5_import_package.md (escort semantics) and
+#      project_native_scene_dialogue / probe_BASELINE (the stg50 stall).
+
+# CTDA function indices that name a quest in param1 (shared with aliases.py).
+_GETSTAGE, _GETSTAGEDONE = 58, 59
+
+
+def _iter_conditions(rec: dict):
+    """Yield (operator_byte, comp_value, func_index, param1) for each CTDA."""
+    i = 0
+    while True:
+        raw = rec.get(f'Condition[{i}].Raw')
+        if raw is None:
+            return
+        i += 1
+        try:
+            d = bytes.fromhex(raw)
+        except (ValueError, TypeError):
+            continue
+        if len(d) < 16:
+            continue
+        yield (d[0], struct.unpack_from('<f', d, 4)[0],
+               struct.unpack_from('<H', d, 8)[0],
+               struct.unpack_from('<I', d, 12)[0])
+
+
+def escort_window(rec: dict):
+    """(quest low-24, stage value) of this escort's first GetStage gate.
+
+    The onset stage at which the escort becomes active -- the point its
+    escortee's package selection is simulated at.  None when the escort has no
+    GetStage gate (then it is not bindable to a quest window; see predicate).
+
+    ONLY GetStage (func 58) is a window source: GetStageDone (func 59) stores
+    the stage in param2 (unread by the export's 24-byte view) and puts a 0/1
+    'done' bool in the comparison float -- reading that as a stage yields a
+    bogus (quest, 0.0) window (MS48TierraCiviliansToCamp's first condition is
+    GetStageDone)."""
+    for _op, comp, func, p1 in _iter_conditions(rec):
+        if func == _GETSTAGE and p1:
+            return (p1 & 0x00FFFFFF, comp)
+    return None
+
+
+def _eval_stage_condition(op: int, comp: float, func: int, p1: int,
+                          quest_low24: int, stage: float):
+    """One condition at (quest_low24 == stage): True / False / None.
+
+    Only GetStage (58) on THIS quest is decidable; GetStageDone (59, its stage
+    is in the unread param2), a GetStage on another quest, and every non-stage
+    function are indeterminate on purpose -- the window-sim fires only when the
+    escortee's no-op is UNAMBIGUOUSLY selected."""
+    if func != _GETSTAGE or (p1 & 0x00FFFFFF) != quest_low24:
+        return None
+    cmp_op = op & 0xE0
+    if cmp_op == 0x00:
+        return stage == comp
+    if cmp_op == 0x20:
+        return stage != comp
+    if cmp_op == 0x40:
+        return stage > comp
+    if cmp_op == 0x60:
+        return stage >= comp
+    if cmp_op == 0x80:
+        return stage < comp
+    if cmp_op == 0xA0:
+        return stage <= comp
+    return None
+
+
+def _condition_true_at(rec: dict, quest_low24: int, stage: float):
+    """`rec`'s whole condition block at (quest_low24 == stage): True / False /
+    None (indeterminate).
+
+    Honours the CTDA OR-bit (operator flag 0x01): a run of conditions each
+    carrying the OR-bit forms an OR-GROUP with the following condition, groups
+    are ANDed, and a group is True if ANY member is True.  An OR-group that is
+    not already satisfied but holds an indeterminate member stays indeterminate;
+    the overall verdict is False if any group is determinately False, else None
+    if any group is indeterminate, else True.  (Reading the OR-bit as an AND
+    made `GetStage>=26 [OR] ==22` evaluate False at stage 50.)"""
+    any_indeterminate = False
+    group_true = False
+    group_indet = False
+    open_group = False           # a prior condition OR-ed into this one
+    for op, comp, func, p1 in _iter_conditions(rec):
+        v = _eval_stage_condition(op, comp, func, p1, quest_low24, stage)
+        if not open_group:
+            group_true = False
+            group_indet = False
+        if v is True:
+            group_true = True
+        elif v is None:
+            group_indet = True
+        open_group = bool(op & 0x01)      # OR-bit: the NEXT cond joins this group
+        if open_group:
+            continue
+        # group closes here -- fold it into the AND
+        if not group_true:
+            if group_indet:
+                any_indeterminate = True
+            else:
+                return False
+    return None if any_indeterminate else True
+
+
+def is_stayput_noop(rec: dict) -> bool:
+    """Clause 4's non-mover: a Travel whose procedure does not walk the actor
+    toward a destination -- PLDT type-2 'near current location'
+    (StayAtCurrentLocation / the engine's stay-put idiom, templates.py
+    _PLDT_HERE_1000), or an empty type-0/1 location (Location 0).  A real
+    Travel, a Wander, a Follow/Accompany/Escort or a type-3 'near editor
+    location' all MOVE the actor and so are NOT no-ops."""
+    if get_int(rec, 'PKDT.Type', -1) != T4_TRAVEL:
+        return False
+    ltype = get_int(rec, 'PLDT.Type', -1)
+    if ltype == 2:
+        return True
+    if ltype in (0, 1) and not get_formid(rec, 'PLDT.Location'):
+        return True
+    return False
+
+
+def is_npc_escort_candidate(rec: dict, ctx: PackContext) -> bool:
+    """Predicate clauses 1-3: a TES4 Escort (type 2) whose target is a specific
+    reference naming a non-player ACTOR, carrying a REAL destination.
+
+    Clause 4 (the escortee actually stays put in this window) is decided
+    separately by the window-sim, which needs the escortee's package stack."""
+    if get_int(rec, 'PKDT.Type', -1) != T4_ESCORT:
+        return False
+    if get_int(rec, 'PTDT.Type', -1) != 0 or _targets_player(rec):
+        return False
+    target = get_formid(rec, 'PTDT.Target')
+    if not target or target == PLAYER_FID:
+        return False
+    if ctx.base_sig_of(target) not in ACTOR_SIGS:       # escortee is an actor ref
+        return False
+    ltype = get_int(rec, 'PLDT.Type', -1)
+    loc = get_formid(rec, 'PLDT.Location')
+    return bool(loc) and ltype in (0, 1, 3)             # a real destination
+
+
+def escortee_selected_package(rec: dict, escortee_packages: list,
+                              pack_by_fid: dict):
+    """Deterministic first-condition-true-wins over the escortee's package list
+    at the escort's onset stage.  Returns (winner_fid, ambiguous): winner_fid
+    is the first package whose conditions ALL determinately pass; `ambiguous`
+    is True when an earlier package could not be decided (so the winner is not
+    unambiguous and the fix must not fire).  (None, _) when nothing is
+    determinately selected."""
+    window = escort_window(rec)
+    if window is None:
+        return (None, False)
+    quest_low24, stage = window
+    ambiguous = False
+    for pfid in escortee_packages:
+        prec = pack_by_fid.get(pfid)
+        if prec is None:
+            continue
+        verdict = _condition_true_at(prec, quest_low24, stage)
+        if verdict is True:
+            return (pfid, ambiguous)
+        if verdict is None:
+            ambiguous = True
+    return (None, ambiguous)
+
+
+def _escort_runner(plan, qfid: int, escort_fid: int):
+    """The single reference that RUNS this escort package on its owner quest
+    (the escorter the escortee will follow), or None when it is not run by
+    exactly one aliased actor."""
+    if plan is None or qfid is None:
+        return None
+    runners = [aref for aref, pkgs
+               in plan.quest_packages.get(qfid, {}).items()
+               if escort_fid in pkgs]
+    return runners[0] if len(runners) == 1 else None
+
+
+def plan_escort_drivers(by_type: dict, ctx: PackContext, writer,
+                        master_export: dict = None) -> tuple:
+    """Plan the escortee-Follow injections for every NPC-escort whose escortee
+    stays put.  Returns ({escort fid -> (driver fid, escortee ref, escorter
+    ref, no-op fid)}, [unbindable escort EditorIDs]).
+
+    Mints each driver with `writer.derive_formid('PACK', (escort FormID,
+    'escorteedrive'))` -- a pure hash of authored data, save-stable like the
+    hunt chains -- and inserts it onto the escortee's quest alias immediately
+    above the no-op it beats (PackagePlan.insert_escort_driver).  An escort that
+    passes clauses 1-3 but cannot be wired (no owner quest, no single escorter,
+    or an escortee with no resolvable base/packages -- the two non-quest Uuras
+    herding escorts) is surfaced in the second list, never silently dropped."""
+    plan = ctx.plan
+    if plan is None:
+        return {}, []
+    pack_by_fid = {}
+    ref_to_base = {}
+    sources = [by_type.get('PACK', [])]
+    achr_sources = [by_type.get('ACHR', []) + by_type.get('ACRE', [])]
+    if master_export:
+        sources.append([r for r in master_export.values()
+                        if r.get('Signature') == 'PACK'])
+        achr_sources.append([r for r in master_export.values()
+                             if r.get('Signature') in ('ACHR', 'ACRE')])
+    for src in sources:
+        for r in src:
+            fid = get_formid(r, 'FormID')
+            if fid:
+                pack_by_fid.setdefault(fid, r)
+    for src in achr_sources:
+        for r in src:
+            ref = get_formid(r, 'FormID')
+            base = get_formid(r, 'NAME')
+            if ref and base:
+                ref_to_base.setdefault(ref, base)
+
+    drive, unbindable = {}, []
+    for rec in by_type.get('PACK', []):
+        if not is_npc_escort_candidate(rec, ctx):
+            continue
+        escort_fid = get_formid(rec, 'FormID')
+        qfid = plan.owner_quest.get(escort_fid)
+        escortee_ref = get_formid(rec, 'PTDT.Target')
+        escortee_base = ref_to_base.get(escortee_ref)
+        escorter_ref = _escort_runner(plan, qfid, escort_fid)
+        if qfid is None or escortee_base is None or escorter_ref is None:
+            unbindable.append(get_str(rec, 'EditorID')
+                              or f'{escort_fid & 0x00FFFFFF:06X}')
+            continue
+        escortee_packages = plan.actor_packages.get(escortee_base, [])
+        winner, ambiguous = escortee_selected_package(
+            rec, escortee_packages, pack_by_fid)
+        if winner is None or ambiguous:
+            continue
+        if not is_stayput_noop(pack_by_fid.get(winner, {})):
+            continue
+        # The window-sim reads the escortee's BASE package list, but the driver
+        # is injected at the ALIAS tier (ALPC), which OUTRANKS the base list.
+        # Fire only when the winning no-op is itself on the escortee's alias for
+        # THIS quest -- then insert_escort_driver can place the driver directly
+        # above it (pkgs.index(before) is well-defined) and the relative order
+        # with the escortee's other quest movers is preserved.  If the no-op is
+        # a BASE-tier package not on this alias, inserting at the alias tier
+        # would put the driver atop the whole alias stack and over-suppress the
+        # escortee's later base movers -- so skip and surface it instead.
+        if plan.owner_quest.get(winner) != qfid or winner not in \
+                plan.quest_packages.get(qfid, {}).get(escortee_ref, ()):
+            unbindable.append(get_str(rec, 'EditorID')
+                              or f'{escort_fid & 0x00FFFFFF:06X}')
+            continue
+        driver_fid = writer.derive_formid(
+            'PACK', (rec.get('FormID', ''), 'escorteedrive'))
+        if not plan.insert_escort_driver(qfid, escortee_ref, driver_fid,
+                                         winner):
+            unbindable.append(get_str(rec, 'EditorID')
+                              or f'{escort_fid & 0x00FFFFFF:06X}')
+            continue
+        drive[escort_fid] = (driver_fid, escortee_ref, escorter_ref, winner)
+    return drive, unbindable
+
+
+def _escort_drive_record(escort_rec: dict, ctx: PackContext, driver_fid: int,
+                         escorter_ref: int) -> bytes:
+    """The escortee's injected Follow(escorter): same stage gate as the escort,
+    owned by the escort's quest, target the escorter through its quest alias.
+
+    Mirrors _seek_record (a hunt chain's Follow link): the only difference is
+    this follows the ESCORTER so the escortee moves with it to the goal."""
+    edid = get_str(escort_rec, 'EditorID')
+    subs = b''
+    if edid:
+        subs += pack_string_subrecord('EDID', f'{edid}EscorteeDrive')
+    owner = ctx.quest_of(driver_fid)
+    flags, speed = convert_flags(get_int(escort_rec, 'PKDT.Flags'), T4_FOLLOW,
+                                 quest_gated=owner is not None)
+    subs += pack_subrecord('PKDT', build_pkdt(flags, speed))
+    subs += pack_subrecord('PSDT', build_psdt(escort_rec))
+    subs += _source_conditions(escort_rec, ctx)
+    if owner:
+        subs += pack_formid_subrecord('QNAM', owner)
+    inputs = Inputs(FOLLOW)
+    alias = ctx.alias_for(driver_fid, escorter_ref)
+    inputs.set('target', build_alias_target(alias) if alias is not None
+               else build_target(0, escorter_ref))
+    if get_int(escort_rec, 'PKDT.Flags', 0) & T4_USE_HORSE:
+        inputs.set('ride_horse', 1)
+    t = inputs.t
+    subs += pack_subrecord('PKCU', struct.pack('<III', len(t.inputs),
+                                               t.formid, t.version))
+    subs += inputs.emit()
+    subs += package_markers()
+    return pack_record('PACK', driver_fid,
+                       get_int(escort_rec, 'RecordFlags'), subs)
 
 # TES4 condition functions whose param1 is a QUEST FormID.
 _QUEST_PARAM_FUNCS = frozenset({
