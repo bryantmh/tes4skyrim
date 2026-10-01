@@ -61,6 +61,9 @@ from script_convert.pipeline import (
     build_vmad_quest_fragments,
     build_vmad_info_fragment,
     convert_all_scripts,
+    build_script_context,
+    _script_worker_init,
+    _WORKER_CTX,
 )
 
 
@@ -1054,6 +1057,31 @@ End
         assert '.EvaluatePackage()' in body
         assert 'Is3DLoaded()' in body
 
+    def test_forcegreet_coverage_injects_stage_gated_owner(self):
+        """PIECE 1: a stage-gated force-greet OWNER tied to the quest only by a
+        package condition (incl. a scriptless one) is injected as an Actor
+        property, so TES4SetStage re-evals it when the stage advances."""
+        from script_convert import assemble
+        x = CrossRefGraph()
+        x.script_formid_to_edid = {}
+        conv = ScriptConverter(x)
+        # Per-run plan: this quest nudges a force-greet owner not in its script.
+        conv.forcegreet_reeval_owners = {'chargenquest': ['GrayFoxGreeter']}
+        conv.sc.property_refs = {'Charactergen': 'Quest'}   # a non-actor prop
+        assemble._inject_forcegreet_reeval(conv, 'Quest', 'CharGenQuest')
+        assert conv.sc.property_refs.get('GrayFoxGreeter') == 'Actor'
+        props = assemble._quest_actor_props(conv, 'CharGenQuest')
+        assert 'GrayFoxGreeter' in props          # the Quest prop stays out
+        body = '\n'.join(assemble._reeval_actors(props))
+        assert 'akQuest.GrayFoxGreeter as Actor' in body
+        assert '.EvaluatePackage()' in body
+        # A non-Quest script is never touched.
+        conv2 = ScriptConverter(x)
+        conv2.forcegreet_reeval_owners = {'chargenquest': ['GrayFoxGreeter']}
+        conv2.sc.property_refs = {}
+        assemble._inject_forcegreet_reeval(conv2, 'Actor', 'CharGenQuest')
+        assert conv2.sc.property_refs == {}
+
     def test_quest_without_countdown_stays_slow(self, converter):
         """A Quest that does NOT drain a timer keeps the flat 5s re-arm -- no
         fast poll, so the start-game quests do not starve the VM."""
@@ -1763,6 +1791,48 @@ class TestIntegration:
         stats = convert_all_scripts(str(export_dir), str(output_dir))
         assert stats['info_ok'] == 1
         assert os.path.exists(os.path.join(str(output_dir), 'TES4_TIF__AABB0001.psc'))
+
+    def test_forcegreet_coverage_rides_worker_initargs(self, tmp_path):
+        """PIECE 1 wiring: the coverage plan must travel to the .psc workers via
+        the initargs tuple, NOT a parent class-attr mutation (forkserver/spawn
+        workers do not inherit it).  This is the test that catches a plan that is
+        bound by the importer but silently absent from the shipped .pex.
+        """
+        from script_convert.converter import ScriptConverter
+        export_dir = tmp_path / 'export'
+        export_dir.mkdir()
+        output_dir = tmp_path / 'output'
+        # TestQuest + a scriptless owner running a force-greet gated on its stage.
+        (export_dir / 'QUST.txt').write_text(
+            '---RECORD_BEGIN---\nSignature=QUST\nFormID=00ABCD01\n'
+            'EditorID=TestQuest\n---RECORD_END---\n', encoding='utf-8')
+        # Find (type 0) at the player, gated GetStage(00ABCD01) >= 50.
+        (export_dir / 'PACK.txt').write_text(
+            '---RECORD_BEGIN---\nSignature=PACK\nFormID=00FACE01\n'
+            'EditorID=FGPack\nPKDT.Type=0\nPTDT.Target=00000014\n'
+            'PTDT.Count=1\nConditionCount=1\n'
+            'Condition[0].Raw=60000000000048423a00000001cdab000000000000000000\n'
+            '---RECORD_END---\n', encoding='utf-8')
+        (export_dir / 'NPC_.txt').write_text(
+            '---RECORD_BEGIN---\nSignature=NPC_\nFormID=00NPC001\n'
+            'EditorID=TestOwner\nAIPackageCount=1\nAIPackage[0]=00FACE01\n'
+            '---RECORD_END---\n', encoding='utf-8')
+
+        saved = ScriptConverter.forcegreet_reeval_owners
+        try:
+            ctx = build_script_context(str(export_dir), str(output_dir))
+            initargs = ctx['initargs']
+            # The plan is PRESENT in the tuple the worker pool is seeded with.
+            assert initargs[-1] == {'testquest': ['TestOwner']}
+            # And _script_worker_init reads that position into the class attr --
+            # with the parent attr cleared, proving it comes from initargs.
+            ScriptConverter.forcegreet_reeval_owners = {}
+            _script_worker_init(*initargs)
+            assert ScriptConverter.forcegreet_reeval_owners == {
+                'testquest': ['TestOwner']}
+        finally:
+            ScriptConverter.forcegreet_reeval_owners = saved
+            _WORKER_CTX.clear()
 
 
 # ===========================================================================

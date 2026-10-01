@@ -59,6 +59,7 @@ def build(conv, name: str, source: str, extends: str, editor_id: str) -> str:
     body += helpers(conv)
     body += chargen_latch(conv)
     body += stage_latches(conv)
+    _inject_forcegreet_reeval(conv, extends, editor_id)
     body += quest_restart(conv, tree, extends, name)
 
     out = list(header(conv, name, extends, editor_id))
@@ -497,6 +498,32 @@ def _reeval_actors(actors: list) -> list:
                 f'    {a}.EvaluatePackage()',
                 '  EndIf']
     return out
+
+
+def _inject_forcegreet_reeval(conv, extends: str, editor_id: str) -> None:
+    """Add stage-gated force-greet OWNERS as extra re-eval targets on this quest.
+
+    PIECE 1 coverage: a force-greet gated on `GetStage(thisQuest)` must fire when
+    the stage advances, but its OWNER is tied to the quest only by a package
+    CONDITION, so it is not among the quest SCRIPT's own actor properties and
+    `_quest_actor_props` never sees it.  Here the owners enumerated for this
+    quest (`ScriptConverter.forcegreet_reeval_owners`, built once per run from
+    the raw export) are registered as plain Actor properties, which
+    `_quest_actor_props` then feeds into TES4SetStage's `_reeval_actors` --
+    reaching owners that have no script of their own.
+
+    Keyed purely on the quest's EditorID + property TYPE, never a FormID/quest
+    allowlist.  `setdefault` leaves an owner the script already names (possibly
+    with a more specific actor-script type) untouched, so the injection is
+    additive.  It runs for BOTH the .psc emit and the importer's VMAD resolve
+    (both re-run this converter), so the declared and the bound properties stay
+    in step; the owner's EditorID resolves to its placed ref at bind time.
+    """
+    if extends != 'Quest':
+        return
+    for owner_edid in conv.forcegreet_reeval_owners.get(
+            (editor_id or '').lower(), ()):
+        conv.sc.property_refs.setdefault(safe_property_name(owner_edid), 'Actor')
 
 
 def _declare(name: str, ptype: str) -> str:

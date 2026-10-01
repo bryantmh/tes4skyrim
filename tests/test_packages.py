@@ -13,7 +13,9 @@ from tes5_import.base.conditions import (
     convert_ctda_list_with_strings,
     papyrus_var_name,
 )
-from tes5_import.packages.aliases import PackagePlan, build_script_var_map
+from tes5_import.packages.aliases import (
+    PackagePlan, build_script_var_map, forcegreet_reeval_owners,
+)
 from tes5_import.packages.converter import (
     PackContext,
     SPEED_RUN,
@@ -25,6 +27,7 @@ from tes5_import.packages.converter import (
     build_psdt,
     convert_PACK,
     convert_flags,
+    is_monotonic_forcegreet,
 )
 from tes5_import.packages.templates import (
     ESCORT,
@@ -108,11 +111,44 @@ def test_data_inputs_match_template_signature_positionally():
     assert _first(subs, 'XNAM')[0] == ESCORT.xnam
 
 
+def _assert_markers_empty(record):
+    """POBA/POEA/POCA are present and EMPTY: no procedure body, INAM==0,
+    PDTO==(0,0).  Nothing in the converter ever fills a begin/end/change block
+    (the ~943 vanilla packages carry them empty), and the force-greet retire
+    work (Piece 2) must never change that -- a guard belongs in a CTDA, never a
+    POBA action slot.  See the package_markers() regression guard in the spec.
+    """
+    subs = _subrecords(record)
+    for marker in ('POBA', 'POEA', 'POCA'):
+        idx = next(i for i, (s, _d) in enumerate(subs) if s == marker)
+        assert subs[idx][1] == b''                     # empty procedure block
+        s_inam, d_inam = subs[idx + 1]
+        assert s_inam == 'INAM' and struct.unpack('<I', d_inam)[0] == 0
+        s_pdto, d_pdto = subs[idx + 2]
+        assert s_pdto == 'PDTO' and struct.unpack('<II', d_pdto) == (0, 0)
+
+
 def test_all_three_procedure_markers_present():
     subs = _subrecords(convert_PACK(_pack(6), PackContext()))
     sigs = [s for s, _ in subs]
     for marker in ('POBA', 'POEA', 'POCA'):
         assert marker in sigs
+
+
+def test_procedure_markers_stay_empty_for_every_package_kind():
+    """A non-force-greet (Travel), an is_activate (Find at an ACTI), AND a
+    condition-gated force-greet all keep EMPTY begin/end/change blocks."""
+    # Travel.
+    _assert_markers_empty(convert_PACK(_pack(6), PackContext()))
+    # is_activate: Find (type 0) at a ref whose base is an ACTI.
+    activate_ctx = PackContext(ref_base_sig={0x00ABCD: 'ACTI'})
+    activate = _pack(0, **{'PTDT.Type': 0, 'PTDT.Target': '0000ABCD',
+                           'PTDT.Count': 0})
+    _assert_markers_empty(convert_PACK(activate, activate_ctx))
+    # A condition-gated force-greet (the Piece-2 class) -- still empty.
+    fg = _pack(9, **{'PKDT.Flags': 0x400, 'ConditionCount': 1,
+                     'Condition[0].Raw': _GETSTAGE_17, **_FORCEGREET_AT_PLAYER})
+    _assert_markers_empty(convert_PACK(fg, PackContext()))
 
 
 # --- Locations and targets are COPIED, not approximated -------------------
@@ -226,6 +262,147 @@ def test_routine_forcegreet_keeps_once_per_day():
     ctx = PackContext()
     rec = _pack(9, **{'PKDT.Flags': 0x400, **_FORCEGREET_AT_PLAYER})
     assert _pkdt_flags(convert_PACK(rec, ctx)) & T5_ONCE_PER_DAY
+
+
+# --- Piece 1 coverage: nudge stage-gated force-greet owners on stage advance -
+# A force-greet gated on GetStage(Q) must fire when Q's stage advances, even for
+# an owner tied to Q only by a package CONDITION (incl. the scriptless owners).
+# forcegreet_reeval_owners enumerates {gating quest edid -> [owner edids]} so the
+# quest's TES4SetStage re-evals them.  Keyed on is_forcegreet + the GetStage
+# condition->quest join, never an allowlist.
+
+#: GetStage(00ABCD01) >= 50 -- op 0x60 (GE), func 58, quest low24 0xABCD01.
+_GETSTAGE_GE_50 = '60000000000048423a00000001cdab000000000000000000'
+#: GetQuestVariable(00ABCD01, var 1) == 1 -- func 79, a Slice-2 gate, NOT stage.
+_GETQUESTVAR_EQ_1 = '000000000000803f4f00000001cdab000100000000000000'
+
+
+def test_forcegreet_coverage_enumerates_stage_gated_owner():
+    """A SCRIPTLESS owner whose force-greet is GetStage-gated on a quest is
+    enumerated against that quest."""
+    quest = {'Signature': 'QUST', 'FormID': '00ABCD01',
+             'EditorID': 'TestQuest'}
+    # Find-at-player force-greet, gated GetStage(TestQuest) >= 50.
+    fg = {'Signature': 'PACK', 'FormID': '00FACE01', 'EditorID': 'FGPack',
+          'PKDT.Type': '0', 'PTDT.Target': '00000014', 'PTDT.Count': '1',
+          'ConditionCount': '1', 'Condition[0].Raw': _GETSTAGE_GE_50}
+    # Owner NPC with NO SCRI (scriptless) that runs the force-greet.
+    owner = {'Signature': 'NPC_', 'FormID': '00NPC001',
+             'EditorID': 'TestOwner', 'AIPackageCount': '1',
+             'AIPackage[0]': '00FACE01'}
+    plan = forcegreet_reeval_owners(
+        {'QUST': [quest], 'PACK': [fg], 'NPC_': [owner]})
+    assert plan == {'testquest': ['TestOwner']}
+
+
+def test_forcegreet_coverage_skips_questvar_and_nonforcegreet():
+    """A GetQuestVariable-gated greet (Slice 2) and a non-force-greet Travel
+    package produce no coverage nudge."""
+    quest = {'Signature': 'QUST', 'FormID': '00ABCD01',
+             'EditorID': 'TestQuest'}
+    questvar = {'Signature': 'PACK', 'FormID': '00FACE02',
+                'EditorID': 'QVGreet', 'PKDT.Type': '0',
+                'PTDT.Target': '00000014', 'PTDT.Count': '1',
+                'ConditionCount': '1', 'Condition[0].Raw': _GETQUESTVAR_EQ_1}
+    travel = {'Signature': 'PACK', 'FormID': '00FACE03',
+              'EditorID': 'TravelPack', 'PKDT.Type': '6'}
+    owner = {'Signature': 'NPC_', 'FormID': '00NPC002', 'EditorID': 'Owner2',
+             'AIPackageCount': '2', 'AIPackage[0]': '00FACE02',
+             'AIPackage[1]': '00FACE03'}
+    plan = forcegreet_reeval_owners(
+        {'QUST': [quest], 'PACK': [questvar, travel], 'NPC_': [owner]})
+    assert plan == {}
+
+
+# --- Piece 2 retire: a monotonic (>=/>) greet fires once, then latches off ----
+# A `GetStage(Q) >= N` force-greet gate never re-closes, so Oblivion's continuous
+# re-eval would force the greeting again on every dialogue-exit re-eval (the live
+# CGBaurusGreetPlayer loop).  The retire latch (a per-greet GLOB, set by the
+# package's OnEnd fragment, read by an ANDed GetGlobalValue==0 guard) stops that.
+# == / questvar / routine greets self-retire or must re-arm -> NO guard.
+
+def test_is_monotonic_forcegreet_discriminator():
+    """GE/GT GetStage with no GetQuestVariable == monotonic; everything else
+    (==-stage, questvar-paired, routine) is not."""
+    mono = _pack(9, **{'ConditionCount': 1, 'Condition[0].Raw': _GETSTAGE_GE_50,
+                       **_FORCEGREET_AT_PLAYER})
+    assert is_monotonic_forcegreet(mono)                 # CGBaurusGreetPlayer shape
+    # ==-stage greet self-retires on the next stage -> not monotonic.
+    eq = _pack(9, **{'ConditionCount': 1, 'Condition[0].Raw': _GETSTAGE_17,
+                     **_FORCEGREET_AT_PLAYER})
+    assert not is_monotonic_forcegreet(eq)
+    # A questvar gate must re-arm, so it is excluded EVEN WITH a monotonic stage
+    # gate (the SE03/SE07 assassin greets).
+    qv = _pack(9, **{'ConditionCount': 2, 'Condition[0].Raw': _GETSTAGE_GE_50,
+                     'Condition[1].Raw': _GETQUESTVAR_EQ_1, **_FORCEGREET_AT_PLAYER})
+    assert not is_monotonic_forcegreet(qv)
+    # A routine Travel package is not a force-greet at all.
+    assert not is_monotonic_forcegreet(_pack(6))
+
+
+def test_monotonic_forcegreet_gets_one_guard_and_onend_fragment():
+    """A monotonic >= greet with a minted latch gets exactly ONE ANDed
+    GetGlobalValue(latch)==0 guard + the PACK OnEnd VMAD fragment, with the
+    subrecord order EDID (VMAD) PKDT PSDT CTDA* QNAM PKCU ... POBA intact and the
+    begin/end/change markers still empty."""
+    LATCH = 0x00DEAD01
+    plan = PackagePlan()
+    plan.owner_quest[0x00001000] = 0x00035713            # so QNAM is emitted
+    ctx = PackContext(plan=plan, forcegreet_retire={0x001000: LATCH})
+    rec = _pack(9, **{'ConditionCount': 1, 'Condition[0].Raw': _GETSTAGE_GE_50,
+                      **_FORCEGREET_AT_PLAYER})
+    record = convert_PACK(rec, ctx)
+    subs = _subrecords(record)
+    sigs = [s for s, _ in subs]
+
+    # OnEnd fragment VMAD present, right after EDID and before PKDT.
+    assert 'VMAD' in sigs and sigs.index('EDID') < sigs.index('VMAD') < sigs.index('PKDT')
+    # Relative subrecord order.
+    for a, b in (('EDID', 'PKDT'), ('PKDT', 'PSDT'), ('PSDT', 'CTDA'),
+                 ('CTDA', 'QNAM'), ('QNAM', 'PKCU'), ('PKCU', 'POBA')):
+        assert sigs.index(a) < sigs.index(b)
+
+    # Exactly ONE guard CTDA: GetGlobalValue(LATCH) == 0, ANDed (OR-bit clear).
+    guards = [d for s, d in subs
+              if s == 'CTDA' and struct.unpack_from('<H', d, 8)[0] == 74]
+    assert len(guards) == 1
+    g = guards[0]
+    assert g[0] & 0x01 == 0                               # OR flag clear (AND)
+    assert g[0] & 0xE0 == 0x00                            # == comparison
+    assert struct.unpack_from('<f', g, 4)[0] == 0.0       # true until greeted
+    assert struct.unpack_from('<I', g, 12)[0] == LATCH
+
+    # The guard sits AFTER the source condition and BEFORE QNAM.
+    ctda_idxs = [i for i, (s, _d) in enumerate(subs) if s == 'CTDA']
+    assert len(ctda_idxs) == 2                            # source GetStage + guard
+    assert max(ctda_idxs) < sigs.index('QNAM')
+    # The guard lives in a CTDA, never a procedure block.
+    _assert_markers_empty(record)
+
+
+def test_non_monotonic_forcegreet_gets_no_retire_guard():
+    """A greet with no minted latch (==-stage here) gets neither the OnEnd VMAD
+    nor a GetGlobalValue guard."""
+    ctx = PackContext()                                  # empty forcegreet_retire
+    rec = _pack(9, **{'ConditionCount': 1, 'Condition[0].Raw': _GETSTAGE_17,
+                      **_FORCEGREET_AT_PLAYER})
+    subs = _subrecords(convert_PACK(rec, ctx))
+    assert 'VMAD' not in [s for s, _ in subs]
+    assert not any(s == 'CTDA' and struct.unpack_from('<H', d, 8)[0] == 74
+                   for s, d in subs)
+
+
+def test_routine_forcegreet_keeps_opd_and_gets_no_guard():
+    """A routine (non-quest) greet keeps Once Per Day and, with no latch planned,
+    gets no retire guard -- the OPD-drop logic is untouched by Piece 2."""
+    ctx = PackContext()
+    rec = _pack(9, **{'PKDT.Flags': 0x400, **_FORCEGREET_AT_PLAYER})
+    record = convert_PACK(rec, ctx)
+    assert _pkdt_flags(record) & T5_ONCE_PER_DAY
+    subs = _subrecords(record)
+    assert 'VMAD' not in [s for s, _ in subs]
+    assert not any(s == 'CTDA' and struct.unpack_from('<H', d, 8)[0] == 74
+                   for s, d in subs)
 
 
 # --- The GetScriptVariable gate (the fgc01rats mechanism) -----------------

@@ -381,6 +381,24 @@ def _prescan_force_greets(by_type: dict, ctx, writer, _SC) -> None:
           f"{sum(n for _f, n in slots.values())} alias slots")
 
 
+def _prescan_forcegreet_reeval(by_type: dict, ctx, _SC, _step_done) -> None:
+    """Enumerate stage-gated force-greet owners per gating quest (PIECE 1).
+
+    Runs BEFORE the quest/object script plans so the quest VMAD resolve binds
+    the owner properties the .psc will also declare (both re-run the converter,
+    which reads this shared plan).
+
+    See: docs/commentary/tes5_import_package.md#force-greet-coverage
+    """
+    from .packages.aliases import forcegreet_reeval_owners
+    plan = forcegreet_reeval_owners(by_type, ctx.master_export if ctx else None)
+    _SC.forcegreet_reeval_owners = plan
+    print(f"  Force-greet coverage: "
+          f"{sum(len(v) for v in plan.values())} owner nudges across "
+          f"{len(plan)} gating quests")
+    _step_done('force-greet reeval plan')
+
+
 def _prescan_menu_records(by_type: dict, writer, _SC, _step_done):
     """Create the button-menu and chargen-menu MESG records.
 
@@ -816,6 +834,7 @@ def _prescan_package_plan(by_type: dict, ctx, writer, fid_to_edid: dict, _step_d
     from .packages.aliases import (PackagePlan, build_script_var_map,
                                build_scriptvar_owner_map,
                                build_assigned_var_names,
+                               build_forcegreet_retire_latches,
                                build_script_assigned_packages)
     from .dialogue.quest import set_assigned_var_names
     from .packages.actor_wiring import load_package_types
@@ -838,7 +857,11 @@ def _prescan_package_plan(by_type: dict, ctx, writer, fid_to_edid: dict, _step_d
 
     from .packages.converter import PackContext, hunt_chain_targets
     from .packages.indexes import build_pack_indexes
+    _retire = build_forcegreet_retire_latches(by_type, writer, _master_export)
+    print(f"  Force-greet retire: {len(_retire)} monotonic (>=/>) greets "
+          f"latched (one-shot, no re-greet loop)")
     pack_ctx = PackContext(plan=pack_plan, script_vars=_script_vars,
+                           forcegreet_retire=_retire,
                            **build_pack_indexes(by_type, _master_export))
 
     _chains = {}
@@ -1149,6 +1172,7 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
     _prescan_force_greets(by_type, ctx, writer, _SC)
     _prescan_menu_records(by_type, writer, _SC, _step_done)
     st.fid_to_edid = _prescan_fid_to_edid(all_records, ctx, _step_done)
+    _prescan_forcegreet_reeval(by_type, ctx, _SC, _step_done)
     st.xref = _prescan_cross_ref_graph(all_records, ctx, export_dir,
                                        _step_done)
     _prescan_effect_families(by_type, ctx, writer)

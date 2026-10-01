@@ -107,6 +107,15 @@ class ScriptConverter:
     #: StartConversation topic (lower, '' = none) -> (first alias, count), from build_force_greet_slots.
     force_greet_slots: dict = {}
 
+    #: gating-quest EditorID (lower) -> [force-greet OWNER EditorID], from
+    #: aliases.forcegreet_reeval_owners.  A quest's TES4SetStage re-evals these
+    #: owners' packages so a stage-gated force-greet fires when the stage
+    #: advances (PIECE 1 coverage), reaching owners with no script of their own.
+    #: Shared with the importer: the same converter re-run binds each owner
+    #: EditorID property to its placed ref, so the .psc declarations and the
+    #: quest VMAD bindings cannot disagree.
+    forcegreet_reeval_owners: dict = {}
+
     # script EditorID (lower) -> [(mesg_edid, text, buttons)], from
     # script_convert.message_menus.build_message_plan. Populated once per run
     # by the pipeline AND the importer from the same analysis, so the Message

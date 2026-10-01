@@ -46,6 +46,7 @@ from tes5_import.dialogue.converter import (DIAL_TYPE_SERVICE,
                                             SERVICE_MENU_TOPICS)
 from tes5_import.dialogue.say_topics import build_force_greet_slots
 from tes5_import.dialogue.unlocks import build_unlock_plan
+from tes5_import.packages.aliases import forcegreet_reeval_owners
 
 
 # ===========================================================================
@@ -128,7 +129,8 @@ def _script_worker_init(xref, output_dir, info_reveals, service_topics,
                         chargen_menus=None, say_topics=None,
                         music_cues=None, namespace=None,
                         quest_delays=None, quest_objectives=None,
-                        conversation_chains=None, force_greet_slots=None):
+                        conversation_chains=None, force_greet_slots=None,
+                        forcegreet_reeval_owners=None):
     """Seed one worker with the parent state that spawning does not carry.
 
     `namespace` is installed FIRST: the generated-script prefix derives from
@@ -170,6 +172,12 @@ def _script_worker_init(xref, output_dir, info_reveals, service_topics,
     ScriptConverter.topic_unlock_globals = topic_unlock_globals or {}
     ScriptConverter.conversation_chains = conversation_chains or {}
     ScriptConverter.force_greet_slots = force_greet_slots or {}
+    # gating-quest edid -> [force-greet owner edids] (Piece 1 coverage).  Windows
+    # SPAWNS and this box FORKSERVERS workers, so a class-attr mutation in the
+    # parent does NOT reach a worker -- it must ride initargs like the lines
+    # above, or _inject_forcegreet_reeval sees the empty default and emits
+    # nothing (zero coverage in the shipped .pex).
+    ScriptConverter.forcegreet_reeval_owners = forcegreet_reeval_owners or {}
     # script EditorID -> button-MessageBox MESG plan; the importer writes the
     # records this makes the converter reference (message_menus.py).
     ScriptConverter.message_menus = message_menus or {}
@@ -217,6 +225,31 @@ def _chunk(records: list, size: int):
 # High-level conversion functions
 # ===========================================================================
 
+def _report_forcegreet_coverage(plan: dict, xref) -> None:
+    """Log Piece-1 coverage, making the PARTIAL part LOUD.
+
+    An owner with 0 or >1 placements has no unique placed ref, so its injected
+    Actor property binds to None and the EvaluatePackage is a silent no-op.
+    Counting those makes the gap visible -- a Slice-2 item (resolve multi-placed
+    owners), never a silent hole.
+    """
+    from script_convert.resolve import resolve_property_formid
+    from script_convert.constants import safe_property_name
+    owners = sorted({o for v in plan.values() for o in v})
+    unbindable = [e for e in owners
+                  if not xref.unique_placed_ref(
+                      resolve_property_formid(xref, safe_property_name(e)))]
+    nudges = sum(len(v) for v in plan.values())
+    print(f"  Force-greet coverage: {nudges} owner nudges across "
+          f"{len(plan)} gating quests; "
+          f"{len(owners) - len(unbindable)}/{len(owners)} owners bindable")
+    if unbindable:
+        print(f"    WARNING: {len(unbindable)} owner(s) have no unique placed "
+              f"ref (multi-placed/unresolved) -> EvaluatePackage no-op "
+              f"(Slice-2): {unbindable[:8]}"
+              f"{'...' if len(unbindable) > 8 else ''}")
+
+
 def build_script_context(export_dir: str, output_dir: str) -> dict:
     """Everything a script-conversion worker needs, built ONCE per plugin.
 
@@ -231,7 +264,7 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
     deploy_static_scripts(export_dir, output_dir)
     xref = build_xref(export_dir)
     by_type = load_records(export_dir, ('DIAL', 'INFO', 'QUST', 'SCPT', 'NPC_',
-                                        'MESG'))
+                                        'CREA', 'PACK', 'MESG'))
     unlock_plan = build_unlock_plan(by_type)
     print(f'    AddTopic unlocks: {len(unlock_plan["gated"])} gated topics, '
           f'{len(unlock_plan["info_reveals"])} revealer INFOs')
@@ -256,6 +289,10 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
     if message_menus:
         print(f'    Button menus: {sum(len(v) for v in message_menus.values())} '
               f'MessageBox sites in {len(message_menus)} scripts')
+    # Piece-1 coverage: the SAME pure enumeration the importer runs in-process, so
+    # the .psc declares exactly the owner props the importer binds (no orphans).
+    fg_reeval = forcegreet_reeval_owners(by_type)
+    _report_forcegreet_coverage(fg_reeval, xref)
     initargs = (xref, output_dir, unlock_plan['info_reveals'],
                 service_menu_topics(by_type, SERVICE_MENU_TOPICS,
                                     DIAL_TYPE_SERVICE),
@@ -267,7 +304,8 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
                 quest_script_delays(by_type),
                 quest_objective_indices(by_type),
                 build_script_chain_map(by_type),
-                build_force_greet_slots(by_type))
+                build_force_greet_slots(by_type),
+                fg_reeval)
     return {'initargs': initargs, 'scpt_work': scpt_work,
             'info_work': info_work, 'qust_work': qust_work, 'stats': stats}
 
@@ -1058,13 +1096,19 @@ def build_vmad_info_fragment(info_formid: str, property_values: dict = None,
 
 
 def build_vmad_package_fragment(script_name: str,
-                                value_props: dict = None) -> bytes:
+                                value_props: dict = None,
+                                object_props: dict = None) -> bytes:
     """VMAD attaching `script_name` to a PACK, whose `Fragment_0` runs OnEnd.
 
     xEdit wbVMADFragmentedPACK: the script block, then bind version 2, flags
     (bit1 = OnEnd), FileName, and one entry per set flag bit.
+
+    `object_props` binds FormID-typed properties (e.g. the force-greet retire
+    latch GlobalVariable); `value_props` binds literal int/float/bool properties
+    (Path B's alias Slot).
     """
-    buf = build_vmad_object_script(script_name, value_props=value_props)
+    buf = build_vmad_object_script(script_name, object_props=object_props,
+                                   value_props=value_props)
     buf += struct.pack('<bB', 2, 0x02) + _pack_wstring(script_name)
     buf += struct.pack('<B', 1) + _pack_wstring(script_name)
     return buf + _pack_wstring('Fragment_0')

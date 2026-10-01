@@ -25,6 +25,7 @@ See docs/commentary/tes5_import_package.md for the fidelity analysis (which TES4
 map exactly, which degrade, and why).
 """
 
+import re
 import struct
 
 from .escort_when_near import escort_template
@@ -75,6 +76,19 @@ def _targets_player(rec: dict) -> bool:
     below has to accept both or it silently takes the generic path.
     """
     return get_formid(rec, 'PTDT.Target') in (PLAYER_REF_FID, PLAYER_BASE_FID)
+
+
+def is_forcegreet_pack(rec: dict) -> bool:
+    """True when this PACK is a force-greet: an Ambush/Find aimed at the player.
+
+    Oblivion's scripted-approach idiom (the actor walks over so dialogue can
+    fire), not a hostile ambush -- a real ambush waits on a location (no PTDT)
+    or targets another actor.  The single predicate `convert_PACK` and the
+    Piece-1 coverage enumeration (aliases.forcegreet_reeval_owners) both call,
+    so the two classify identically.
+    """
+    return (get_int(rec, 'PKDT.Type', -1) in (T4_AMBUSH, T4_FIND)
+            and _targets_player(rec))
 
 # Fallback SEARCH area for an Object-ID target when no interior cell can be
 # named (see PackContext.search_ground): a wide radius around the actor's own
@@ -650,8 +664,14 @@ class PackContext:
                  ref_base_sig=None, base_sig=None, base_placements=None,
                  interior_cells=None,
                  ref_cell=None, pack_runner_cells=None,
-                 pack_runner_refs=None, actor_pos=None):
+                 pack_runner_refs=None, actor_pos=None,
+                 forcegreet_retire=None):
         self.plan = plan
+        # raw24 force-greet PACK fid -> its retire-latch GLOB FormID (Piece 2).
+        # A monotonic (>=/>) GetStage-gated greet gets a GetGlobalValue(latch)==0
+        # guard + a package OnEnd fragment that sets the latch; built once per
+        # run by build_forcegreet_retire_latches.
+        self.forcegreet_retire = forcegreet_retire or {}
         # raw24 PACK fid -> the raw24 ACHR/ACRE refs that run it, and raw24
         # ACHR/ACRE -> (x, y, z): a hunt's seek chain is ordered nearest-first
         # from the hunter's own placement (hunt_chain_targets).
@@ -1301,11 +1321,18 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
         subs += pack_string_subrecord('EDID', edid)
 
     ptype = get_int(rec, 'PKDT.Type', -1)
-    # An Ambush aimed at the PLAYER is Oblivion's scripted-approach idiom, not
-    # a hostile ambush: the actor walks over so dialogue can fire.  Real
-    # ambushes wait on a location (no PTDT) or target another actor.
-    is_forcegreet = (ptype in (T4_AMBUSH, T4_FIND)
-                     and _targets_player(rec))
+    is_forcegreet = is_forcegreet_pack(rec)
+    # Piece 2 retire: a monotonic (>=/>) GetStage-gated greet with a minted latch
+    # carries a package OnEnd fragment (sets the latch, VMAD after EDID) and an
+    # ANDed GetGlobalValue(latch)==0 guard (appended after _source_conditions),
+    # so it fires once and then stops re-firing on every dialogue-exit re-eval.
+    retire_latch = (ctx.forcegreet_retire.get(pack_fid & 0x00FFFFFF)
+                    if is_forcegreet else 0)
+    if retire_latch:
+        from script_convert.pipeline import build_vmad_package_fragment
+        subs += pack_subrecord('VMAD', build_vmad_package_fragment(
+            FORCEGREET_RETIRE_SCRIPT, object_props={'Latch': retire_latch}))
+
     hostile = not (is_forcegreet or _approaches_ref(rec, ptype))
     owner = ctx.quest_of(pack_fid)
     flags, speed = convert_flags(get_int(rec, 'PKDT.Flags'), ptype, hostile,
@@ -1335,6 +1362,15 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     # the Papyrus property — see dialog_conditions; the legacy function is dead
     # in Skyrim, so without this the package could never fire.
     subs += _source_conditions(rec, ctx)
+
+    if retire_latch:
+        # ANDed (operator 0x00, OR-bit clear) so it forms its own AND group --
+        # safe after whatever _source_conditions emitted (it already repaired any
+        # trailing OR).  True until the OnEnd fragment sets the latch to 1.  Same
+        # safe post-_source_conditions append as _seek_record's target gates.
+        from ..base.conditions import build_ctda, FUNC_GET_GLOBAL_VALUE
+        subs += pack_subrecord('CTDA', build_ctda(
+            FUNC_GET_GLOBAL_VALUE, param1=retire_latch, comp_value=0.0))
 
     if owner:
         subs += pack_formid_subrecord('QNAM', owner)
@@ -1551,6 +1587,89 @@ def _condition_quest(rec: dict) -> int:
         if struct.unpack_from('<H', d, 8)[0] in _QUEST_PARAM_FUNCS:
             from ..base.text_reader import remap_formid
             return remap_formid(struct.unpack_from('<I', d, 12)[0])
+
+
+def forcegreet_stage_quest(rec: dict) -> int:
+    """Low-24 FormID of the quest a force-greet's GetStage/GetStageDone
+    condition gates on, or 0.
+
+    Piece-1 coverage nudges THIS quest's re-eval set so a stage-gated greet
+    fires when the stage advances.  Only GetStage/GetStageDone (funcs 58/59)
+    count: a GetQuestVariable gate is re-armed by a var write, not a stage
+    change, so it belongs to Slice 2.  The RAW low-24 is returned (no remap):
+    the enumeration keys everything by low-24, so the result is independent of
+    the load-order offset.
+    """
+    i = 0
+    while True:
+        raw = rec.get(f'Condition[{i}].Raw')
+        if raw is None:
+            return 0
+        i += 1
+        try:
+            d = bytes.fromhex(raw)
+        except (ValueError, TypeError):
+            continue
+        if len(d) < 16:
+            continue
+        if struct.unpack_from('<H', d, 8)[0] in (58, 59):
+            return struct.unpack_from('<I', d, 12)[0] & 0x00FFFFFF
+
+
+# --- Force-greet RETIRE (Piece 2) ------------------------------------------
+#
+# The static package OnEnd fragment that sets a monotonic greet's latch.
+FORCEGREET_RETIRE_SCRIPT = 'TES4_ForceGreetRetire'
+
+
+def is_monotonic_forcegreet(rec: dict) -> bool:
+    """True when a force-greet's gate NEVER re-closes on its own.
+
+    The discriminator is a GE/GT GetStage/GetStageDone condition (CTDA operator
+    bits 0xE0 == 0x60 >= or 0x40 >, func 58/59) with NO GetQuestVariable (func
+    79) condition.  A `>= stage` gate stays true as the quest advances, so
+    Oblivion's continuous re-evaluation would force the greeting again on every
+    dialogue-exit re-eval (the CGBaurusGreetPlayer loop); the retire latch stops
+    that.
+
+    A `==`/`!=`/`<`/`<=` stage greet self-retires and is not monotonic.  A
+    GetQuestVariable gate is EXCLUDED even when a monotonic stage gate is also
+    present: the quest re-arms that variable, and a permanent retire latch would
+    break the re-arm (the SE03/SE07 assassin greets pair a `>=` stage gate with a
+    `GetQuestVariable == 1` re-arm).  Derived from the CTDA alone -- allowlist-
+    free -- so it is the discriminator convert_PACK and the latch builder share.
+    """
+    if not is_forcegreet_pack(rec):
+        return False
+    monotonic = False
+    i = 0
+    while True:
+        raw = rec.get(f'Condition[{i}].Raw')
+        if raw is None:
+            return monotonic
+        i += 1
+        try:
+            d = bytes.fromhex(raw)
+        except (ValueError, TypeError):
+            continue
+        if len(d) < 16:
+            continue
+        func = struct.unpack_from('<H', d, 8)[0]
+        if func == 79:                                   # GetQuestVariable
+            return False                                 # must re-arm -> no latch
+        if func in (58, 59) and (d[0] & 0xE0) in (0x40, 0x60):
+            monotonic = True
+
+
+def retire_latch_name(edid: str, pack_fid: int) -> str:
+    """The per-greet retire latch GLOB EditorID: `TES4ForceGreeted_<pack edid>`.
+
+    Keyed off the PACK's AUTHORED EditorID so `derive_formid` is a stable pure
+    hash (no save-shift); the hex low-24 is a fallback for an unnamed package.
+    """
+    base = (re.sub(r'[^A-Za-z0-9_]', '_', edid) if edid
+            else f'{pack_fid & 0x00FFFFFF:06X}')
+    return f'TES4ForceGreeted_{base}'
 
 # The Topic input is the FIRST data input of a ForceGreet instance, so its PDTO
 # is the first PDTO in the record. The POBA/POEA/POCA blocks that follow also

@@ -464,6 +464,115 @@ def build_script_assigned_packages(by_type: dict, fid_to_edid: dict,
     return out
 
 
+def forcegreet_reeval_owners(by_type: dict, master_export: dict = None) -> dict:
+    """{gating-quest EditorID (lower) -> sorted [force-greet OWNER EditorID]}.
+
+    PIECE 1 (coverage).  A force-greet whose gate is `GetStage(Q) [>=|==] N`
+    fires when Q's stage advances, by injecting the OWNER actor's ref into Q's
+    TES4SetStage re-eval set (assemble._reeval_actors).  This reaches owners NOT
+    otherwise re-eval'd -- including the SCRIPTLESS ones -- because the nudge
+    fires from the gating QUEST's fragment, not the owner's own script.
+
+    Keyed on `is_forcegreet` + the GetStage condition->quest join, never a
+    FormID/quest-name allowlist.  Every id is matched on its low 24 bits, so the
+    result is independent of the load-order offset.  The OWNER's EditorID becomes
+    the property name the quest VMAD binds (resolve_property_formid -> the base's
+    placed ref), so no converter-computed key can shift a save.
+
+    This mirrors `PackagePlan._own_quests`/`_wire_actor_packages` but is a
+    self-contained pass on the raw export: the full PackagePlan is not built
+    until after the quest-script VMADs are resolved, and the binding needs the
+    owner names in hand before then.
+    """
+    from .converter import is_forcegreet_pack, forcegreet_stage_quest
+
+    quest_edid = {}            # quest low24 -> EditorID
+    for fid, rec in _master_records(master_export, 'QUST'):
+        e = get_str(rec, 'EditorID')
+        if e:
+            quest_edid.setdefault(fid & 0x00FFFFFF, e)
+    for rec in by_type.get('QUST', []):
+        e = get_str(rec, 'EditorID')
+        if e:
+            quest_edid[get_formid(rec, 'FormID') & 0x00FFFFFF] = e
+
+    pack_quest = {}            # force-greet pack low24 -> gating quest low24
+    for fid, rec in _master_records(master_export, 'PACK'):
+        if is_forcegreet_pack(rec):
+            q = forcegreet_stage_quest(rec)
+            if q:
+                pack_quest[fid & 0x00FFFFFF] = q
+    for rec in by_type.get('PACK', []):
+        low = get_formid(rec, 'FormID') & 0x00FFFFFF
+        q = forcegreet_stage_quest(rec) if is_forcegreet_pack(rec) else 0
+        if q:
+            pack_quest[low] = q           # own override wins
+        else:
+            pack_quest.pop(low, None)     # no longer a stage-gated force-greet
+
+    owners = {}
+    actor_recs = list(_master_records(master_export, 'NPC_', 'CREA'))
+    actor_recs += [(get_formid(r, 'FormID'), r)
+                   for r in by_type.get('NPC_', []) + by_type.get('CREA', [])]
+    for _afid, rec in actor_recs:
+        aedid = get_str(rec, 'EditorID')
+        if not aedid:
+            continue
+        for i in range(get_int(rec, 'AIPackageCount')):
+            p = get_formid(rec, f'AIPackage[{i}]')
+            q = pack_quest.get(p & 0x00FFFFFF) if p else 0
+            if not q:
+                continue
+            qe = quest_edid.get(q)
+            if qe:
+                owners.setdefault(qe.lower(), set()).add(aedid)
+    return {k: sorted(v) for k, v in owners.items()}
+
+
+def build_forcegreet_retire_latches(by_type: dict, writer,
+                                    master_export: dict = None) -> dict:
+    """Mint one latch GLOB (float 0.0) per MONOTONIC force-greet; return
+    {force-greet PACK low24 -> latch GLOB FormID} (PIECE 2 retire).
+
+    The package's OnEnd fragment (TES4_ForceGreetRetire) sets the latch to 1 once
+    the greeting has run, and convert_PACK ANDs a `GetGlobalValue(latch) == 0`
+    guard onto the package, so a never-re-closing `>=` stage greet fires once and
+    then stops (the CGBaurusGreetPlayer loop).  `is_monotonic_forcegreet` is the
+    shared discriminator (allowlist-free); the latch is named/keyed off the
+    PACK's AUTHORED EditorID so derive_formid is a stable pure hash (no
+    save-shift).  Own overrides win over a master's record, and each latch is
+    minted exactly once.
+    """
+    from .converter import is_monotonic_forcegreet, retire_latch_name
+    from ..overrides.adoption import generated_formid
+    from ..record_types.common import (pack_record, pack_string_subrecord,
+                                       pack_subrecord)
+
+    monotonic = {}             # pack low24 -> (edid, fid); own wins
+    for fid, rec in _master_records(master_export, 'PACK'):
+        if is_monotonic_forcegreet(rec):
+            monotonic[fid & 0x00FFFFFF] = (get_str(rec, 'EditorID'), fid)
+    for rec in by_type.get('PACK', []):
+        fid = get_formid(rec, 'FormID')
+        low = fid & 0x00FFFFFF
+        if is_monotonic_forcegreet(rec):
+            monotonic[low] = (get_str(rec, 'EditorID'), fid)
+        else:
+            monotonic.pop(low, None)      # own override is no longer monotonic
+
+    out = {}
+    for low, (edid, fid) in monotonic.items():
+        name = retire_latch_name(edid, fid)
+        gfid = generated_formid(writer, 'GLOB', name, 'FORCEGREET_RETIRE',
+                                edid or f'{low:06X}')
+        subs = pack_string_subrecord('EDID', name)
+        subs += pack_subrecord('FNAM', b'f')
+        subs += pack_subrecord('FLTV', struct.pack('<f', 0.0))
+        writer.add_record('GLOB', pack_record('GLOB', gfid, 0, subs))
+        out[low] = gfid
+    return out
+
+
 class PackagePlan:
     """The quest/alias wiring for every converted package.
 
