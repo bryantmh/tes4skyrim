@@ -19,6 +19,7 @@
 #include "json.h"
 #include "log.h"
 #include "main_thread.h"
+#include "recorder.h"
 
 namespace bridge {
 
@@ -92,6 +93,7 @@ Json CmdCapabilities(const Json&) {
     caps.set("output_capture",
              Json(ConsoleCaptureInstalled() && ConsoleModeFlagAvailable()));
     caps.set("papyrus_capture", Json(PapyrusCaptureInstalled()));
+    caps.set("recorder", Json(GetRecorderStats().installed));
 
     Json missing = Json::Array();
     for (const auto& m : g_addr.missing) missing.push(Json(m));
@@ -807,6 +809,29 @@ Json CmdWaitReady(const Json& args) {
     return Ok(std::move(r));
 }
 
+// The flight recorder's state; `enable` turns recording on or off. Plugin-local,
+// so it answers on the pipe thread.
+Json CmdRecorder(const Json& args) {
+    if (args.has("enable")) SetRecorderEnabled(args["enable"].asBool());
+    const RecorderStats s = GetRecorderStats();
+    Json r = Json::Object();
+    r.set("installed", Json(s.installed));
+    r.set("enabled", Json(s.enabled));
+    r.set("path", Json(s.path));
+    r.set("events", Json(s.events));
+    r.set("bytes", Json(s.bytes));
+    r.set("dropped", Json(s.dropped));
+    Json kinds = Json::Object();
+    for (const auto& kv : s.perKind) kinds.set(kv.first, Json(kv.second));
+    r.set("per_kind", std::move(kinds));
+    Json hooked = Json::Array(), missing = Json::Array();
+    for (const auto& h : s.hooked) hooked.push(Json(h));
+    for (const auto& m : s.missing) missing.push(Json(m));
+    r.set("hooked", std::move(hooked));
+    r.set("missing", std::move(missing));
+    return Ok(std::move(r));
+}
+
 Json CmdStatus(const Json&) {
     if (!IsGameLoaded()) {
         Json r = Json::Object();
@@ -874,6 +899,7 @@ std::string HandleRequest(const std::string& line) {
     else if (cmd == "cleanup")      resp = CmdCleanup(args);
     else if (cmd == "moveref")      resp = CmdMoveRef(args);
     else if (cmd == "wait_ready")   resp = CmdWaitReady(args);
+    else if (cmd == "recorder")     resp = CmdRecorder(args);
     // Distinct from E_UNSUPPORTED (a command this runtime cannot resolve):
     // this plugin build simply does not have the command, so a newer client can
     // fall back to a console-based path instead of reporting a hard failure.

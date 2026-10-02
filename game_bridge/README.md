@@ -138,6 +138,7 @@ Working now:
 | `vmlog` | Papyrus VM output captured from the logger sink |
 | `resolve` / `readmem` / `call` | raw probes: stable id → address, read live memory, call a function |
 | `hookstats` | how many times each hook has fired |
+| `recorder` | the [flight recorder](#flight-recorder): which event sinks are hooked, how many events were written |
 
 ### 🛑 `ConsoleExecute` COMPILES — it does not run
 
@@ -227,6 +228,70 @@ the game's main thread stops draining SKSE's task queue and marshalled commands
 time out with `E_LOADING`. The client retries automatically; if you are driving
 it by hand, leave the game focused.
 
+<a id="flight-recorder"></a>
+## Flight recorder
+
+An always-on log of what the engine decided, written while the game is played
+normally and read afterwards with the game closed. No client needs to be
+connected, and nobody has to reproduce anything for it.
+
+```bash
+python tools/live/flight_log.py show --plugin <path>/FalloutNV.esm
+python tools/live/flight_log.py show --kinds quest_stage,topic_info,package --grep VCG01
+python tools/live/flight_log.py show --run 1        # the run before
+python tools/live/flight_log.py status              # live: hooks and counts
+```
+
+The file is `Documents\My Games\Skyrim Special Edition\SKSE\TESGameBridge_events.jsonl`.
+Older runs rotate to `.1` and `.2`. Each line is one event:
+
+| `ev` | Fields |
+|---|---|
+| `quest_stage` | `quest`, `stage` |
+| `quest_init` | `quest` (a quest starting) |
+| `topic_info` | `speaker`, `info`, `phase` begin/end: every dialogue line spoken, follow-ups included |
+| `package` | `actor`, `package`, `phase` start/change/end (force greets show here) |
+| `trigger_enter` / `trigger_leave` | `trigger`, `actor` |
+| `activate` | `target`, `by` |
+| `open_close` | `target`, `by`, `opened` |
+| `furniture` | `actor`, `furniture`, `phase` enter/exit (beds, chairs) |
+| `cell_loaded` | `cell` |
+| `death`, `combat`, `equip`, `lock_changed` | the actors, items and refs involved |
+| `container`, `location` | the player's only |
+| `load_game`, `loading`, `loaded`, `saved`, `new_game` | session boundaries, with the save name |
+| `papyrus` | Papyrus errors and warnings with their stack frames (at most 100 lines a second) |
+
+**How it hooks.** SkyrimVM is registered as a sink for every script event,
+since that is how OnActivate and OnStageSet reach scripts. Each
+`BSTEventSink<T>` base has its own vtable, whose slot 1 is `ProcessEvent`. The
+recorder finds those vtables at startup by walking MSVC RTTI from the name
+`.?AVSkyrimVM@@` (`plugin/rtti.cpp`), then swaps slot 1 for a thunk that writes
+one line and calls through. It uses no stable ID, signature or inline detour.
+A missing sink goes in the log's `missing` list instead of failing the plugin.
+
+**Layouts.** Each event struct's field offsets were checked against the reads
+SkyrimVM's own `ProcessEvent` makes in the unpacked 1.6.1170 exe
+(`C:\Coding\tes4skyrim\SkyrimSE.exe.unpacked.exe`). The check caught one
+mistake: `TESTopicInfoEvent`'s speaker is at `+08`. Its `+00` is a ref-counted
+callback; the handler bumps a count at `[p+8]`, where a reference keeps its
+count at `+0x28`.
+
+**Self-checks.** Each decoded form is still verified at runtime:
+
+- a quest id must look up to a QUST;
+- a speaker must be a reference.
+
+When a check fails, the line gets `<field>_check`, the raw event bytes, and
+every offset holding something that resolves to a form. So a wrong layout
+shows up on the first run with the correction in hand, instead of quietly
+logging garbage.
+
+**Tests.** `plugin/test_recorder.cpp` runs the RTTI walk against the real exe,
+mapped the way SKSE maps plugins. It must reproduce the SkyrimVM vtables
+`tools/disasm/skyrim_disasm.py` lists; both the packed and unpacked 1.6.1170
+exes pass. The same file also runs the decoders over fake forms. The build
+line is in the file's header.
+
 The engine-side handlers below are specified in `docs/protocol.md` and not yet
 implemented — they need struct work that should be validated against a live game
 first, one at a time:
@@ -287,5 +352,8 @@ bugs, so the guards are part of the design, not decoration:
 | `plugin/main_thread.cpp` | main-thread marshalling |
 | `plugin/pipe_server.cpp` | named-pipe server |
 | `plugin/json.cpp` | dependency-free JSON |
+| `plugin/recorder.cpp` | flight recorder: script event sinks to a JSONL file |
+| `plugin/rtti.cpp` | runtime RTTI walk (a base class to its vtable) |
+| `plugin/test_recorder.cpp` | offline test: the RTTI walk on the real exe, the event decoders |
 | `docs/protocol.md` | full command surface and error codes |
 | `tools/live/game_bridge.py` | Python client + CLI |
