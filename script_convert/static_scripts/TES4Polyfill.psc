@@ -1037,6 +1037,35 @@ Bool Function SAY_TRACE() Global
   Return True
 EndFunction
 
+; Flip PACK_TRACE to True ONLY for a local diagnostic build.
+;
+; ⚠ DIAGNOSTIC BUILD: PACK_TRACE is True in this build (CharGen AI-package
+;   transition trace, 2026-10-01).  Papyrus.0.log carries no native AI-package
+;   trace, so a converted package-driven actor (a scene participant like the
+;   CharGen Blades) logs every OnPackageStart/End/Change with the package form,
+;   making a stuck travel (never ENDs) or a start/end reject loop visible.
+;   TRIPWIRE: flip back to False before any release -- see assemble._package_trace.
+Bool Function PACK_TRACE() Global
+  Return True
+EndFunction
+
+; Force a stuck actor to RE-PATH, not merely re-select.  Deep Probe #4 (2026-10-02)
+; proved EvaluatePackage alone is insufficient: Baurus held a correctly-SELECTED
+; travel package for 4 minutes -- re-eval'd every 0.15s the whole time -- without
+; moving, while every other NPC pathed fine; only talking to him (a full AI reset)
+; freed him.  A SetRestrained toggle clears the actor's movement/pathing state so
+; the re-selected package paths from scratch -- the scriptable equivalent of that
+; reset, and what Oblivion's SetRestrained suspend/resume did on release.  Guarded
+; on load; a no-op for an unloaded/None ref.  Used by assemble._reeval_actors (the
+; stage-change seam every converted SetStage flows through).
+Function TES4_Unstick(Actor a) Global
+  If a && a.Is3DLoaded()
+    a.SetRestrained(true)
+    a.SetRestrained(false)
+    a.EvaluatePackage()
+  EndIf
+EndFunction
+
 Function _SayTrace(String asTag, Float afValue) Global
   If SAY_TRACE()
     Debug.Trace("TES4Say " + asTag + " " + afValue)

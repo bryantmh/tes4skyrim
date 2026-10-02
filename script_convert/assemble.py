@@ -489,14 +489,21 @@ def _reeval_actors(actors: list) -> list:
     sandbox fallback and was left behind by the self-restarting escort pair.
     Re-evaluating here -- the seam every converted stage change flows through --
     restores the continuous-re-eval behaviour for every stage-gated actor.
+
+    Deep Probe #4 (2026-10-02, CharGen live trace) proved a bare EvaluatePackage
+    here is NOT ENOUGH: Baurus held a correctly-selected stage-gated travel for
+    4 minutes -- re-eval'd every 0.15s by his own OnUpdate the whole time -- and
+    never moved; only talking to him (a full AI reset) freed him. So this seam
+    now calls TES4Polyfill.TES4_Unstick (a SetRestrained toggle that clears the
+    stuck movement state, then EvaluatePackage) instead of EvaluatePackage alone
+    -- the scriptable equivalent of that reset, Oblivion's suspend/resume. Still
+    generic: every stage-gated participant actor, no FormID/quest allowlist.
     """
     out = []
     for i, prop in enumerate(actors):
         a = f'tes4_actor{i}'
         out += [f'  Actor {a} = akQuest.{prop} as Actor',
-                f'  If {a} && {a}.Is3DLoaded()',
-                f'    {a}.EvaluatePackage()',
-                '  EndIf']
+                f'  TES4Polyfill.TES4_Unstick({a})']
     return out
 
 
@@ -663,6 +670,45 @@ def _combat_end_reeval(extends: str, merged: dict) -> None:
                                     '  EndIf']
 
 
+#: Package events a diagnostic build traces: (BLOCK_MAP key, event arg, tag).
+_PKG_TRACE_EVENTS = (
+    ('onpackagestart',  'akNewPackage', 'start'),
+    ('onpackageend',    'akOldPackage', 'end'),
+    ('onpackagechange', 'akOldPackage', 'change'),
+)
+
+
+def _package_trace(extends: str, merged: dict, order: list) -> None:
+    """Trace every AI-package transition on a package-driven actor (PACK_TRACE).
+
+    A DIAGNOSTIC facility, not shipped behaviour: it fires only while
+    `TES4Polyfill.PACK_TRACE()` is True (a local diagnostic build) and folds
+    away otherwise.  Scoped STRUCTURALLY, never by FormID -- only an Actor whose
+    own script already handles a package event (OnPackageStart/End/Change), i.e.
+    a scripted package-driven actor such as a scene participant (the CharGen
+    Blades), so an ordinary NPC gets nothing and the game-wide log never floods.
+    For such an actor it ensures all three package events exist and PREPENDS a
+    guarded Debug.Trace naming the actor and the package form.  Papyrus.0.log
+    carries no native AI-package trace, so this is how a stuck travel (a package
+    that is selected but never ENDs) or a start/end reject loop becomes visible.
+    TRIPWIRE: remove with SAY_TRACE/PACK_TRACE at release.
+    """
+    if extends != 'Actor':
+        return
+    headers = {BLOCK_MAP[k] for k, _a, _t in _PKG_TRACE_EVENTS}
+    if not headers & merged.keys():
+        return
+    for key, arg, tag in _PKG_TRACE_EVENTS:
+        header = BLOCK_MAP[key]
+        if header not in merged:
+            merged[header] = []
+            order.append(header)
+        merged[header][:0] = ['  If TES4Polyfill.PACK_TRACE()',
+                              f'    Debug.Trace("TES4Pkg {tag} self=" + Self'
+                              f' + " pkg=" + {arg})',
+                              '  EndIf']
+
+
 def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
     """One Papyrus event per TES4 block, duplicates merged.
 
@@ -703,6 +749,7 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
         merged[header] += body
 
     _combat_end_reeval(extends, merged)
+    _package_trace(extends, merged, order)
     out = (_carried_read(conv, tree, extends, merged, order)
            + _record_last_activator(conv, merged, order)
            + _track_holder(conv, merged, order))

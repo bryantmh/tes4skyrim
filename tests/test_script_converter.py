@@ -1054,8 +1054,10 @@ End
         assert props == ['BaurusRef', 'Player']
         body = '\n'.join(assemble._reeval_actors(props))
         assert 'akQuest.BaurusRef as Actor' in body
-        assert '.EvaluatePackage()' in body
-        assert 'Is3DLoaded()' in body
+        # Deep Probe #4: the seam now force-re-paths via TES4_Unstick (a
+        # SetRestrained toggle + EvaluatePackage, with the None/Is3DLoaded guard
+        # inside the helper) -- a bare EvaluatePackage was proven insufficient.
+        assert 'TES4Polyfill.TES4_Unstick(tes4_actor0)' in body
 
     def test_forcegreet_coverage_injects_stage_gated_owner(self):
         """PIECE 1: a stage-gated force-greet OWNER tied to the quest only by a
@@ -1074,7 +1076,7 @@ End
         assert 'GrayFoxGreeter' in props          # the Quest prop stays out
         body = '\n'.join(assemble._reeval_actors(props))
         assert 'akQuest.GrayFoxGreeter as Actor' in body
-        assert '.EvaluatePackage()' in body
+        assert 'TES4Polyfill.TES4_Unstick(' in body   # re-eval via the unstick helper
         # A non-Quest script is never touched.
         conv2 = ScriptConverter(x)
         conv2.forcegreet_reeval_owners = {'chargenquest': ['GrayFoxGreeter']}
