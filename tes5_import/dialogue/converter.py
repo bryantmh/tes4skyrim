@@ -400,6 +400,11 @@ def is_npc_to_npc_conversation(rec: dict) -> bool:
 
 def should_skip_dial(rec: dict) -> bool:
     dtype = get_int(rec, 'DATA.Type')
+    # Type-1 records are authored NPC conversation nodes, including reaction
+    # channels and indirect TCLT continuations. Absence of a direct script
+    # call does not make them unused. Keep them; groups keeps them unlisted.
+    if dtype == DIAL_TYPE_CONVERSATION:
+        return False
     if dtype in _SKIP_TYPES and not service_menu_kind(rec):
         return True
     edid = get_str(rec, 'EditorID', '')

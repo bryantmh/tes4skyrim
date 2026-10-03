@@ -729,7 +729,7 @@ def _chain_body(chain, i: int, cond: str, say) -> str:
     return '\n'.join(body)
 
 
-def generate_driver_psc(plan, say_durations: dict = None) -> str:
+def generate_driver_psc(plan, say_durations: dict = None, graph_script: str = '') -> str:
     """The full TES4NPCConv<plugin>.psc source, or '' when no chains."""
     if not plan['chains']:
         return ''
@@ -770,10 +770,18 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
         decls += gdecls
         decls.append(f'Bool _done{i} = False')
         topic_guards = [f'Conv{i}T{k} != None'
-                        for k in range(len(chain['hops']) + 1)]
+                        for k in range(1 if graph_script else len(chain['hops']) + 1)]
         cond = ' && '.join([f'!_done{i}'] + topic_guards + terms
                            + [f'CanConverse(Conv{i}A, Conv{i}B)'])
-        bodies.append(_chain_body(chain, i, cond, _say))
+        if graph_script:
+            body = [f'    if {cond}',
+                    f'        if {graph_script}.Play(Conv{i}A, Conv{i}B, Conv{i}T0)',
+                    f'            _done{i} = True']
+            body += [f'            _done{j} = True' for j in chain.get('exclusive_with', ())]
+            body += ['        endif', '    endif']
+            bodies.append('\n'.join(body))
+        else:
+            bodies.append(_chain_body(chain, i, cond, _say))
 
     lines += decls
     lines += [

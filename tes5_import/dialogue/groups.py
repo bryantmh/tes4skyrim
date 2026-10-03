@@ -376,8 +376,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
     # derive it from the same export with the same function, so they agree.
     from script_convert.converter import ScriptConverter
     from script_convert.pipeline import scan_say_topic_fids
-    if not ScriptConverter.say_topics:
-        ScriptConverter.say_topics = scan_say_topic_fids(by_type)
+    ScriptConverter.say_topics = scan_say_topic_fids(by_type)
 
     lip_texts.clear()
     dials = by_type.get('DIAL', [])

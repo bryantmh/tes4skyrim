@@ -63,6 +63,14 @@ def build_say_topic_dispositions(by_type: dict,
     for dfid in engine_fired & out.keys():
         if out[dfid][0] == 'drop':
             out[dfid] = ENGINE_TARGET
+    # Retain all NPC conversation nodes as hidden, callable topics. This
+    # includes indirect continuations and engine-selected response channels.
+    # Direct call-site target bindings still take precedence.
+    from .converter import CONV_KEEP_EDIDS, DIAL_TYPE_CONVERSATION
+    for dial in by_type.get('DIAL', []):
+        if (int(dial.get('DATA.Type', '0') or '0') == DIAL_TYPE_CONVERSATION
+                and dial.get('EditorID', '') not in CONV_KEEP_EDIDS):
+            out.setdefault(get_formid(dial, 'FormID') & 0xFFFFFF, ('drop', None))
     return out
 
 

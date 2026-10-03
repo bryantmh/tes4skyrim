@@ -131,6 +131,14 @@ class MasterIndex:
         entry = self._offsets.get(formid)
         return entry[0] if entry else b''
 
+    def covers_slot(self, slot: int) -> bool:
+        """Whether this index can prove an owned FormID in this slot is absent.
+
+        Records inherited from its masters may be present as overrides, but
+        absence here says nothing about the records in those other files.
+        """
+        return slot == self.own_index
+
     def record(self, formid: int) -> bytes:
         """Full record bytes (header + body) for a FormID, or b'' if absent."""
         entry = self._offsets.get(formid)
@@ -524,6 +532,10 @@ class ChainedMasterIndex:
     def signature(self, formid: int) -> bytes:
         idx, own = self._route(formid)
         return idx.signature(own) if idx else b''
+
+    def covers_slot(self, slot: int) -> bool:
+        """Whether the owning master at this child-space slot was indexed."""
+        return slot in self._by_slot
 
     def record(self, formid: int) -> bytes:
         """The master's converted record, RESTATED in the child's id space.

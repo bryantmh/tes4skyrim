@@ -103,6 +103,8 @@ class ScriptConverter:
 
     #: DIAL EditorID (lower) -> chain line count, from build_script_chain_map.
     conversation_chains: dict = {}
+    #: Emitted graph runtime and the source topics it covers.
+    conversation_graph: dict = {}
 
     #: StartConversation topic (lower, '' = none) -> (first alias, count), from build_force_greet_slots.
     force_greet_slots: dict = {}

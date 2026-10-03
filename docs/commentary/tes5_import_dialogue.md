@@ -2,6 +2,56 @@
 
 **Code:** `tes5_import/dialogue/converter.py`, `script_convert/converter.py`, `tes5_import/dialogue/conversations.py`, `tes5_import/base/object_scripts.py`
 
+## Conversation preservation (2026-10-03)
+
+The older NPC-to-NPC **drop rules described below are superseded**. All nonempty
+TES4 Type-1 conversation topics now survive, including reaction channels and
+continuations that no script names directly. Absence of a direct call is not
+evidence that the source topic is unused. These extra topics stay off the player
+menu; ordinary greetings and menu topics retain their existing classifications.
+
+`dialogue/runtime_graph.py` reads the effective source DIAL/INFO graph across
+masters, identifies records by owning filename and local ID, and binds every
+response to its final output parent. This accommodates bark splitting and new
+INFOs under a master's topic. A missing response produces a warning with its
+source identity and is recorded in the sidecar; import continues with the
+available responses. Empty topics need no emitted
+record. Native player-menu TCLTs to hidden NPC topics are removed; the source
+edges remain in the runtime graph.
+
+The importer attaches a plugin-specific routing quest and writes
+`<plugin>.dialogue.json`. Step 8 generates its Papyrus routing pages from those
+exact bindings. Source and output SHA-256 fingerprints reject stale or incomplete
+imports before deleting previously generated scripts. Sidecars are per plugin,
+including when several plugins share an output folder. Regenerate step 6 and
+step 8 for the master first, then its dependents; script generation alone cannot
+restore missing plugin records. The master supplies `TES4ConversationRunner`.
+
+Scripted `StartConversation` and the existing quest-conversation driver enqueue
+the first topic. INFO Begin/End hooks identify the response actually selected by
+Skyrim. After its End result, the runner follows its ordered choices and
+`NextSpeaker`, trying the other participant for Either. Existing consecutive
+quest-counter talks retain same-topic continuation until their last counter
+value. It does not manufacture a SetStage result if a line never finishes.
+Routing is nonblocking, serialized per plugin, and bounded against cycles.
+NPC Variable01/02 carry the active routing quest's FormID; the player is excluded
+(the player's same actor values are used by door gating).
+
+This preserves data and scripted routing; it is not a complete replacement for
+Oblivion's ambient actor-pairing AI. The existing driver's head/gate eligibility
+rules still apply. Existing approximations for ambiguous RunOn=Target conditions
+also remain. In-game selection and quest completion require playtesting.
+
+Validation of the original fix used isolated English dialogue fixtures,
+which retained all 8,157 graph INFOs across
+Oblivion/Knights, all six previously omitted SetStage responses, and had zero
+unresolved TCLTs against the supplied masters. The Knights fixture merges the
+effective source dialogue; separate regression tests cover inherited-only INFOs
+and child/master FormID slots. These are dialogue fixtures, not installable
+world builds. New routing scripts are compiled separately against the installed
+Papyrus SDK (501 scripts, no compilation failures), using an API stand-in for the existing TES4Polyfill dependency;
+compilation does not establish runtime correctness.
+
 ## Contents
 
 - [Dialogue / Quest Conversion Notes (DIAL / INFO / QUST / DLBR / DLVW)](#dialogue-quest-conversion-notes)

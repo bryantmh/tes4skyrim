@@ -333,6 +333,10 @@ def start_conversation(ctx, call) -> str:
     if len(parts) >= 2 and parts[1].strip():
         topic = parts[1].strip().split()[0]
         ctx._mark_topic_property(topic)
+        graph = ctx.conversation_graph
+        if topic.lower() in graph.get('topic_edids', ()):
+            listener = ctx._cast(ctx.arg_expr(0, call.extends), 'Actor')
+            return f'{graph["script"]}.Play({ref}, {listener}, {call.arg(1)})'
         lines = ctx.conversation_chains.get(topic.lower())
         if lines:
             return _replay_chain(ctx, ref, call, lines)

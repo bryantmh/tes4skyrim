@@ -663,21 +663,16 @@ class TestDIAL:
         assert should_skip_dial({'DATA.Type': '0', 'EditorID': 'TestFoo'})
         assert not should_skip_dial({'DATA.Type': '0', 'EditorID': 'Rumors'})
 
-    def test_emotion_response_topics_are_not_converted(self):
-        """Oblivion's emotion-response channels have no Skyrim equivalent.
-
-        The engine picks these after a player line to voice the NPC's reaction;
-        Skyrim has no such channel, so converting them produced player-visible
-        topics ("SadGeneral", "AngerReceive", ...) hanging off every greeting.
-        """
+    def test_emotion_response_topics_survive_as_hidden_conversation_nodes(self):
+        """Response channels are valid destinations, not disposable topics."""
         for edid in ('SadGeneral', 'QuestionGeneral', 'FearGeneral',
                      'AngerReceive', 'HappyReceive', 'SurpriseReceive',
                      'FollowupNegative', 'FollowupPositive', 'AnswerNegative',
                      'AnswerPositive', 'AnswerStatus', 'NeutralReceive',
                      'Question'):
-            assert should_skip_dial(
+            assert not should_skip_dial(
                 {'DATA.Type': str(DIAL_TYPE_CONVERSATION), 'EditorID': edid}), \
-                f'{edid} should not be converted'
+                f'{edid} must survive conversion'
 
         # Rumors is the ONE Oblivion conversation channel Skyrim does have
         # (subtype 2 RUMO), so it must still convert...
@@ -2228,7 +2223,8 @@ class TestNpcConversationChains:
         """MidTopic is Type-1 chatter the NPC-to-NPC drop would remove; a
         restored chain must instead carry it (the driver Says it)."""
         plan = self._plan()
-        assert plan['chains'][0]['undrop_topic_fids'] == [self.MID_D]
+        # Every Type-1 node now survives before the driver walk runs.
+        assert plan['chains'][0]['undrop_topic_fids'] == []
 
     def test_flavor_chain_stays_dropped(self):
         """No quest-advancing result anywhere -> not restored (the
@@ -2276,6 +2272,13 @@ class TestNpcConversationChains:
         assert '.Say(' not in psc
         assert 'Conv0Q0.GetStage() == 26' in psc
         assert 'Conv0T0 != None' in psc and 'Conv0Q0 != None' in psc
+
+    def test_driver_routes_actual_selected_info_instead_of_a_guessed_linear_path(self):
+        from tes5_import.dialogue.conversations import generate_driver_psc
+        psc = generate_driver_psc(self._plan(), graph_script='TES4_DialogueGraphTest')
+        assert 'if TES4_DialogueGraphTest.Play(Conv0A, Conv0B, Conv0T0)' in psc
+        assert 'TES4Polyfill.SayLine(' not in psc
+        assert psc.index('.Play(') < psc.index('_done0 = True')
 
     def test_property_bindings_mirror_the_psc(self):
         """Every Conv* property the psc declares must be bound by

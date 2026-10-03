@@ -131,7 +131,7 @@ def _script_worker_init(xref, output_dir, info_reveals, service_topics,
                         music_cues=None, namespace=None,
                         quest_delays=None, quest_objectives=None,
                         conversation_chains=None, force_greet_slots=None,
-                        force_flee_slots=None):
+                        force_flee_slots=None, conversation_graph=None):
     """Seed one worker with the parent state that spawning does not carry.
 
     `namespace` is installed FIRST: the generated-script prefix derives from
@@ -172,6 +172,7 @@ def _script_worker_init(xref, output_dir, info_reveals, service_topics,
     # gate the INFO/QUST fragments do.
     ScriptConverter.topic_unlock_globals = topic_unlock_globals or {}
     ScriptConverter.conversation_chains = conversation_chains or {}
+    ScriptConverter.conversation_graph = conversation_graph or {}
     ScriptConverter.force_greet_slots = force_greet_slots or {}
     ScriptConverter.force_flee_slots = force_flee_slots or {}
     # script EditorID -> button-MessageBox MESG plan; the importer writes the
@@ -231,13 +232,24 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
     subset build is the SAME conversion as the full one.
     See: docs/commentary/script_convert.md#script-output-dir
     """
+    from tes5_import.dialogue.runtime_graph import (
+        generate_scripts, load_manifest, sidecar_path, source_graph,
+    )
+    by_type = load_records(export_dir, ('DIAL', 'INFO', 'QUST', 'SCPT', 'NPC_',
+                                        'MESG'))
+    plugin_output = os.path.dirname(os.path.dirname(output_dir))
+    # Empty patches do not need their own bindings for inherited dialogue.
+    # An imported patch can still own a generated dialogue quest, so retain
+    # its scripts whenever Import has already published a binding manifest.
+    has_script_work = any(by_type[sig] for sig in ('SCPT', 'INFO', 'QUST'))
+    needs_graph = ((has_script_work or sidecar_path(plugin_output, export_dir).is_file())
+                   and bool(source_graph(export_dir)['infos']))
+    graph = load_manifest(export_dir, plugin_output, required=True) if needs_graph else {}
     owner = owner_key(export_dir)
     shared = prepare_output_dir(output_dir, owner)
     bounds_cache = load_bounds_cache(export_dir)
     _WRITTEN.extend(deploy_static_scripts(export_dir, output_dir, shared))
     xref = build_xref(export_dir)
-    by_type = load_records(export_dir, ('DIAL', 'INFO', 'QUST', 'SCPT', 'NPC_',
-                                        'MESG'))
     unlock_plan = build_unlock_plan(by_type)
     print(f'    AddTopic unlocks: {len(unlock_plan["gated"])} gated topics, '
           f'{len(unlock_plan["info_reveals"])} revealer INFOs')
@@ -257,7 +269,10 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
     print(f'    script-driven topics: {len(say_topics)}')
     quest_script_vars = build_quest_script_vars(by_type)
     _write_conversation_driver(export_dir, output_dir, by_type,
-                               quest_script_vars, say_durations)
+                               quest_script_vars, say_durations, graph.get('script', ''))
+    if graph:
+        for name, source in generate_scripts(graph).items():
+            write_psc(output_dir, name, source)
     message_menus = build_message_plan(by_type['SCPT'], by_type['MESG'])
     if message_menus:
         print(f'    Button menus: {sum(len(v) for v in message_menus.values())} '
@@ -273,7 +288,7 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
                 quest_objective_indices(by_type),
                 build_script_chain_map(by_type),
                 build_force_greet_slots(by_type),
-                build_force_flee_slots(by_type))
+                build_force_flee_slots(by_type), graph)
     stats['written'] = _drain_written()
     return {'initargs': initargs, 'scpt_work': scpt_work,
             'info_work': info_work, 'qust_work': qust_work, 'stats': stats,
@@ -282,7 +297,7 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
 
 def _write_conversation_driver(export_dir: str, output_dir: str,
                                by_type: dict, quest_script_vars: dict,
-                               say_durations: dict) -> None:
+                               say_durations: dict, graph_script: str = '') -> None:
     """Generate the NPC-to-NPC conversation driver script of a masterless plugin.
 
     Built from the same plan the importer bound the driver quest's VMAD
@@ -296,7 +311,7 @@ def _write_conversation_driver(export_dir: str, output_dir: str,
         os.path.basename(os.path.normpath(export_dir)))[0]
     plan = build_conversation_plan(conv_by_type, script_vars=quest_script_vars,
                                    plugin_stem=stem)
-    psc = generate_driver_psc(plan, say_durations)
+    psc = generate_driver_psc(plan, say_durations, graph_script)
     if psc:
         write_psc(output_dir, plan['script_name'], psc)
         print(f"    NPC conversations: {len(plan['chains'])} chains "
@@ -625,7 +640,8 @@ def _info_begin_fragment(body_lines: list, seq_gate: str,
             gated_rest, _ = split_stage_advances(rest)
             handoff, _ = split_turn_handoff(counter_step, gated_rest)
     out = ['Function Fragment_1(ObjectReference akSpeakerRef)',
-           f'  TES4Polyfill.LineBegan(akSpeakerRef, {length:g})']
+           f'  TES4Polyfill.LineBegan(akSpeakerRef, {length:g})',
+           '  TES4ConversationRunner.NotifyBegin(akSpeakerRef, Self.GetFormID())']
     if handoff:
         out.append(f"  If {seq_gate}  ; still this line's turn")
         out.extend('  ' + b for b in handoff)
@@ -661,6 +677,7 @@ def _info_end_fragment(body_lines: list, seq_gate: str, reveals,
     if service_kind:
         out.append(SERVICE_MENU_CALL[service_kind])
     out.append(f'  TES4Polyfill.LineEnded(akSpeakerRef, {length:g})')
+    out.append('  TES4ConversationRunner.NotifyEnd(akSpeakerRef, Self.GetFormID())')
     return out + ['EndFunction', '']
 
 
@@ -933,14 +950,28 @@ def scan_say_topic_fids(by_type: dict) -> set:
     info_needs_fragment() is a plain set membership test.
     """
     names = scan_say_topics(by_type)
-    if not names:
-        return set()
     out = set()
     for rec in by_type.get('DIAL', []):
         edid = (rec.get('EditorID') or '').strip().lower()
         fid = (rec.get('FormID') or '').strip().upper()
-        if edid and fid and edid in names:
+        if fid and (edid in names or int(rec.get('DATA.Type', '0') or '0') == 1):
             out.add(fid)
+    # A dependent plugin can add INFOs under a master's Type-1 topic without
+    # carrying that DIAL. Their exported dialogue type still seeds the graph.
+    for info in by_type.get('INFO', []):
+        if int(info.get('DATA.DialogType', '0') or '0') == 1 and info.get('ParentDIAL'):
+            out.add(info['ParentDIAL'].upper())
+    changed = True
+    while changed:
+        changed = False
+        for info in by_type.get('INFO', []):
+            if info.get('ParentDIAL', '').upper() not in out:
+                continue
+            for i in range(int(info.get('ChoiceCount', '0') or '0')):
+                target = info.get(f'Choice[{i}]', '').upper()
+                if target and target not in out:
+                    out.add(target)
+                    changed = True
     return out
 
 
@@ -1016,7 +1047,8 @@ def info_needs_fragment(rec: dict, info_reveals: dict = None,
 
     # Script-driven topic: SayLine reads the line's start and length from the
     # Begin/End fragments, so these must keep theirs.
-    return bool(parent) and parent.upper() in ScriptConverter.say_topics
+    return (bool(parent) and parent.upper() in ScriptConverter.say_topics
+            or int(rec.get('DATA.DialogType', '0') or '0') == 1)
 
 
 def build_vmad_info_fragment(info_formid: str, property_values: dict = None,
