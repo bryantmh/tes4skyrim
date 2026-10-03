@@ -54,7 +54,8 @@ TIP_IDLE = ("Everything in this folder's version has already been run for this "
             "plugin, so there is nothing to re-convert.")
 TIP_NEVER_RUN = ("This plugin has never been converted, so there is no previous "
                  "version to compare against and nothing to narrow down.\n\n"
-                 "Leave the default steps ticked and press Run.")
+                 "Shared steps its mod already ran are unticked automatically; "
+                 "leave the rest ticked and press Run.")
 TIP_OFFLINE = ("The list of steps each release changed is published on GitHub "
                "and could not be fetched.\n\nConnect to the internet and "
                "reselect this plugin to enable the shortcut, or tick the steps "
@@ -180,12 +181,137 @@ def _plan_tip(plan) -> str:
             f"plugin:\n{names}")
 
 
+#: Record types the mesh-variant plan is built from. A plugin carrying these
+#: extends its masters' plan, so skipping its Meshes run would silently drop
+#: its variants; anything else converts identically under the base plan.
+_WEARABLE_SIGS = frozenset({'ARMO', 'CLOT', 'HAIR'})
+
+#: Record types steering creature-folder selection. Same deal as wearables:
+#: a sibling with CREA records may add or retie folders.
+_CREATURE_SIGS = frozenset({'CREA', 'ACRE'})
+
+#: Shared step -> record types whose presence keeps the step ticked.
+# With scoped asset conversion, new models and placed master objects need
+# their own Meshes run too, not only wearable variants.
+_MODEL_SIGS = frozenset({
+    'ACTI', 'ALCH', 'AMMO', 'APPA', 'ARMO', 'BODY', 'BOOK', 'CLOT',
+    'CONT', 'CREA', 'DOOR', 'EFSH', 'FLOR', 'FURN', 'GRAS', 'HAIR',
+    'INGR', 'LIGH', 'MGEF', 'MISC', 'NPC_', 'RACE', 'STAT', 'TREE', 'WEAP',
+    'ADDN', 'ARMA', 'DEBR', 'EXPL', 'IMOD', 'MSTT', 'PROJ', 'SCOL', 'TERM',
+})
+_SHARED_PLAN_SIGS = {'meshes': _MODEL_SIGS | {'REFR'},
+                     'creatures': _CREATURE_SIGS}
+
+#: Plugin binary -> top-level record signatures, per session. Header-only
+#: scans cost ~0.01 s even for large plugins, but selection changes often.
+_sig_cache: dict = {}
+
+
+def _binary_sigs(path: str) -> frozenset:
+    """Top-level record signatures in a TES4 binary; empty when unreadable."""
+    try:
+        from tes4_export.tes4_reader import read_file
+        if not path or not os.path.isfile(path):
+            return frozenset()
+        _, records = read_file(path, parse_subs=False)
+        return frozenset(getattr(r, 'type', '') for r in records) - {''}
+    except Exception:
+        return frozenset()
+
+
+def plugin_adds_records(app, fname: str, sigs: frozenset) -> bool:
+    """True when `fname`'s binary holds any of the `sigs` record types.
+
+    Unknown (missing binary, unreadable file) reads as True: failing toward
+    re-running a shared step wastes minutes, failing toward skipping ships
+    broken output with no error.
+    """
+    key = (fname or '').strip().lower()
+    hit = _sig_cache.get(key)
+    if hit is None:
+        try:
+            from source_paths import resolve_plugin_path
+            source = resolve_plugin_path(fname, app.tes4_var.get(),
+                                         str(EXPORT_DIR))
+        except Exception:
+            return True
+        hit = _binary_sigs(source)
+        if hit:
+            _sig_cache[key] = hit
+        else:
+            return True
+    return bool(hit & sigs)
+
+
+def plugin_adds_wearables(app, fname: str) -> bool:
+    """True when `fname` may extend the mesh-variant plan."""
+    return plugin_adds_records(app, fname, _WEARABLE_SIGS)
+
+
+def _is_multi_group_member(fname: str) -> bool:
+    """True when `fname` belongs to a multi-plugin imported mod.
+
+    Pack steps cover the whole shared folder, so per-plugin ticks would pack
+    it once per member (same zip overwritten, per-stem BSAs duplicated).
+    """
+    try:
+        members = source_registry.group_members(str(EXPORT_DIR), fname)
+    except Exception:
+        return False
+    return len(members) > 1
+
+
+def _untick_shared_done(app, fname: str) -> None:
+    """Untick shared steps the mod already ran at this version.
+
+    A never-converted plugin owes every own step, but a shared step (meshes)
+    its mod ran needs no re-tick. A plugin carrying records that extend the
+    step's plan stays ticked: skipping would silently drop its variants.
+    Manual re-ticking still rebuilds.
+    """
+    if not imported_mod_optimizations_enabled(app):
+        return
+    try:
+        ran = version_info.steps_run_at(fname)
+        done = version_info.shared_steps_done(
+            ran, version_info.current_version())
+    except Exception:
+        return
+    keep = {key for key, sigs in _SHARED_PLAN_SIGS.items()
+            if key in done and plugin_adds_records(app, fname, sigs)}
+    skipped = done - keep
+    for key in skipped:
+        var = app.step_vars.get(key)
+        if var is not None:
+            var.set(False)
+    if skipped:
+        app.log(f"  Shared steps this mod already ran: "
+                f"{', '.join(sorted(skipped))} unticked")
+        app.update_run_btn()
+
+
+def imported_mod_optimizations_enabled(app) -> bool:
+    var = getattr(app, 'imported_mod_optimizations_var', None)
+    if var is not None:
+        return bool(var.get())
+    from core.gui.config import load_config
+    return load_config().get('importedModOptimizations') is not False
+
+
 def _apply_plan_state(app, plan, fname: str, auto_apply: bool) -> None:
     """Set the Upgrade button's label, tooltip and enabled state for `plan`."""
     if not plan:
         app.upgrade_btn.configure(text="Upgrade", state="disabled")
         app.set_upgrade_tip(TIP_IDLE)
         return
+    if plan.get('never_run'):
+        _untick_shared_done(app, fname)
+        if imported_mod_optimizations_enabled(app) and _is_multi_group_member(fname):
+            for key in ('pack', 'pack_zip'):
+                var = app.step_vars.get(key)
+                if var is not None:
+                    var.set(False)
+            app.update_run_btn()
     for matches, label, tip in _INERT_STATES:
         if matches(plan):
             app.upgrade_btn.configure(text=label, state="disabled")

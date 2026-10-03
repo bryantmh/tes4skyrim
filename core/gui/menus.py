@@ -30,6 +30,7 @@ from core.gui.config import (
     EXPORT_DIR,
     GLOBAL_ACTIONS,
     PACK_DEFAULT_CONFIG_KEY,
+    IMPORTED_MOD_OPTIMIZATIONS_KEY,
     PACKING_STEPS,
     REPO_ROOT,
     LOD_DETAIL_CONFIG_KEY,
@@ -114,6 +115,28 @@ def _add_pack_default(app, settings_menu) -> None:
         onvalue=True, offvalue=False, command=_changed)
 
 
+def _add_imported_mod_optimizations(app, settings_menu) -> None:
+    """One persisted switch for shared history and work inside imported-mod stages."""
+    def _changed():
+        save_setting(IMPORTED_MOD_OPTIMIZATIONS_KEY,
+                     bool(app.imported_mod_optimizations_var.get()))
+        row = app.scope_rows.get(app.scope_var.get()) or {}
+        if row.get('kind') == 'mod':
+            from core.gui.config import default_on_steps
+            from core.gui.selection import refresh_upgrade_notice
+            defaults = default_on_steps(app.pack_default_var.get())
+            for key, var in app.step_vars.items():
+                var.set(key in defaults and runnable(app, key))
+            app.plan_applied.clear()
+            app.update_run_btn()
+            refresh_upgrade_notice(app)
+
+    settings_menu.add_checkbutton(
+        label="Optimize imported mod conversion",
+        variable=app.imported_mod_optimizations_var,
+        onvalue=True, offvalue=False, command=_changed)
+
+
 def _add_winding_menu(app, settings_menu, menu_opts) -> None:
     """Settings > Infer collision winding: Automatic / Always on / Always off.
 
@@ -181,6 +204,7 @@ def _build_settings_menu(app, menubutton, menu_opts) -> None:
     _add_workers_menu(app, settings_menu, menu_opts)
     _add_cache_download(app, settings_menu)
     _add_pack_default(app, settings_menu)
+    _add_imported_mod_optimizations(app, settings_menu)
     _add_winding_menu(app, settings_menu, menu_opts)
     _add_navmesh_menu(app, settings_menu, menu_opts)
     _add_lod_detail_menu(app, settings_menu, menu_opts)
