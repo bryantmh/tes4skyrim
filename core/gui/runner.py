@@ -998,7 +998,13 @@ def pipeline_argv(app, fname, out_dir, steps, subdirs) -> list:
     One command when the selection is the default and nothing narrows it;
     otherwise one per step, so a failure can stop the rest.
     """
-    if _is_default_selection(app, steps) and fname and not subdirs:
+    entry = source_registry.get(EXPORT_DIR, fname) or {} if fname else {}
+    from core.gui.config import load_config
+    var = getattr(app, 'imported_mod_optimizations_var', None)
+    enabled = bool(var.get()) if var is not None else (
+        load_config().get('importedModOptimizations') is not False)
+    optimized = enabled and bool(entry.get('group_id'))
+    if _is_default_selection(app, steps) and fname and not subdirs and not optimized:
         cmd = [sys.executable, "-u", str(REPO_ROOT / "convert.py"),
                "-f", fname, winding_flag(app)] + navmesh_flags(app)
         cmd += [flag for key, flag, *_ in STEPS if key in set(steps)]

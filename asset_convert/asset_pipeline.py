@@ -163,7 +163,8 @@ def _persist_mesh_manifests(mesh_stats, manifest_dir, partial: bool) -> None:
 
 
 def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, export_root, plugin,
-                       mesh_subdirs, parallax, textures_only):
+                       mesh_subdirs, parallax, textures_only,
+                       plugin_assets_only=False, mesh_reuse_token=None):
     """Run the NIF batch over `mesh_src`; return its stats dict.
 
     The wearable plan names which _0/_1/plain variants each mesh is actually
@@ -197,7 +198,30 @@ def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, export_root, plugin,
     plan[resting_items_plan.RESTING_KEY] = resting
     print(f"  Resting items plan: {stocked} fixture models share a cell "
           f"with an item")
-    mesh_scan_fragments.clear_fragments(asset_dir)
+    model_filter = None
+    if plugin_assets_only:
+        from asset_convert.sources.plugin_assets import model_paths
+        from core.plugin_masters import master_chain, master_dir
+
+        # Placed master objects keep their authored collision/animation roles.
+        inherited_masses, inherited_doors, inherited_fixtures = {}, set(), set()
+        inherited_animated = set()
+        for name in master_chain(str(rec_dir)):
+            base = master_dir(str(rec_dir), name)
+            inherited_masses.update(clutter_plan.build_clutter_masses(base))
+            inherited_doors.update(door_plan.build_door_models(base))
+            inherited_fixtures.update(fixture_plan.build_fixture_models(base))
+            inherited_animated.update(fixture_plan.build_animated_models(base))
+            plan[door_plan.REACH_KEY] |= door_plan.places_morrowind_doors(base)
+        inherited_masses.update(masses)
+        plan[clutter_plan.CLUTTER_KEY] = inherited_masses
+        doors.update(inherited_doors)
+        fixtures.update(inherited_fixtures)
+        plan[fixture_plan.ANIMATED_KEY].update(inherited_animated)
+        model_filter = model_paths(rec_dir)
+        print(f"  Plugin mesh scope: {len(model_filter)} referenced models")
+    else:
+        mesh_scan_fragments.clear_fragments(asset_dir)
     return nif_batch.batch_convert(
         str(mesh_src), output_dir=str(mesh_dst),
         fix_textures=True, remap_skeleton=None,
@@ -206,12 +230,15 @@ def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, export_root, plugin,
         parallax=parallax,
         textures_only=textures_only,
         scan_dir=None if textures_only else str(asset_dir),
+        model_filter=model_filter,
+        reuse_token=mesh_reuse_token if plugin_assets_only else None,
     )
 
 
 def convert_meshes(source_file, extract_dir='export', output_dir='output',
                    mesh_subdirs=None, parallax=False, textures_only=False,
-                   skip_hair=False):
+                   skip_hair=False, plugin_assets_only=False,
+                   defer_textures=False, mesh_reuse_token=None):
     """Convert extracted NIFs and copy textures into `output_dir/<source_name>/`.
 
     Needs extract_bsas run first. `mesh_subdirs` converts ONLY the NIFs under
@@ -220,6 +247,9 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
     `skip_hair` skips the hair pass. Assets come from the shared group tree,
     records from the plugin's own dump. Returns stats keyed
     'mesh_conversion', 'textures_copied', 'other_copied'.
+    `plugin_assets_only` limits the NIF batch to this plugin's references
+    while retaining its post-passes and the other plugins' mesh manifests.
+    `defer_textures` leaves the shared texture pass to the mod's finalizer.
     """
     extract_dir = Path(extract_dir)
     output_dir = Path(output_dir)
@@ -246,11 +276,18 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
     if mesh_src.exists():
         stats['mesh_conversion'] = _convert_mesh_tree(
             mesh_src, plugin_dir / 'meshes' / ns, asset_dir, extract_dir,
-            source_name, mesh_subdirs, parallax, textures_only)
+            source_name, mesh_subdirs, parallax, textures_only,
+            plugin_assets_only, mesh_reuse_token)
         if parallax:
             _write_parallax_notice(plugin_dir)
+        opacity = set(stats['mesh_conversion'].get('alpha_opacity_diffuse', ()))
+        if mesh_subdirs:
+            opacity |= texture_prune.read_manifest(rec_dir,
+                                                   texture_prune.OPACITY_MANIFEST_NAME)
+        texture_prune.write_manifest(rec_dir, opacity,
+                                      texture_prune.OPACITY_MANIFEST_NAME)
         _persist_mesh_manifests(stats['mesh_conversion'], asset_dir,
-                                bool(mesh_subdirs))
+                                bool(mesh_subdirs) or plugin_assets_only)
     else:
         print(f"  No meshes found at {mesh_src}")
         stats['mesh_conversion'] = {'converted': 0, 'skipped': 0, 'errors': 0}
@@ -263,6 +300,10 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
             _master_meshes(rec_dir, output_dir, extract_dir))
     if mesh_src.exists() and not textures_only:
         _split_magic_art(rec_dir, mesh_src, plugin_dir / 'meshes' / ns, stats)
+
+    if defer_textures:
+        print("  Shared textures deferred until all mod meshes are processed.")
+        return stats
 
     # -----------------------------------------------------------------------
     # Copy Textures
@@ -277,6 +318,50 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
     stats['ltex_normals_written'] = written
     print(f"  LTEX normals: {checked} land textures, {written} flat normals "
           f"written for textures shipping none")
+    return stats
+
+
+def convert_shared_textures(source_file, plugins, extract_dir='export',
+                             output_dir='output', reuse=False):
+    """Copy/fix a mod's shared textures once, using every member's opacity set."""
+    extract_dir, output_dir = Path(extract_dir), Path(output_dir)
+    source_name = Path(source_file).name
+    asset_dir = _asset_root(extract_dir, source_name)
+    rec_dir = record_dir(extract_dir, source_name)
+    plugin_dir = _out_root(output_dir, source_name, extract_dir)
+    ns = _activate_namespace(rec_dir)
+    opacity = set()
+    for name in plugins:
+        opacity |= texture_prune.read_manifest(record_dir(extract_dir, name),
+                                               texture_prune.OPACITY_MANIFEST_NAME)
+    stats = {'mesh_conversion': {'alpha_opacity_diffuse': opacity},
+             'textures_copied': 0, 'other_copied': 0}
+    memo, key = None, None
+    if reuse:
+        from asset_convert.sources import shared_reuse
+        from core.plugin_masters import master_chain, master_dir
+        inputs = [asset_dir / 'textures']
+        for name in plugins:
+            records = record_dir(extract_dir, name)
+            inputs.append(records / 'LTEX.txt')
+            inputs.extend(Path(master_dir(str(records), master)) / 'LTEX.txt'
+                          for master in master_chain(str(records)))
+        key = shared_reuse.digest([ns, sorted(opacity),
+                                    shared_reuse.stamps(inputs),
+                                    shared_reuse.implementation_stamp()])
+        memo = plugin_dir / '.shared-textures-reuse.json'
+        if shared_reuse.reusable(memo, key, [plugin_dir / 'textures']):
+            print('  Shared textures already current; no copy or repair needed.')
+            stats['textures_reused'] = True
+            return stats
+    print("\nShared Mod Textures")
+    _copy_and_fix_textures(asset_dir, plugin_dir, ns, stats, rec_dir)
+    for name in plugins:
+        checked, written = landscape_normals.ensure_ltex_normals(
+            record_dir(extract_dir, name), plugin_dir / 'textures', output_dir)
+        print(f"  [{name}] LTEX normals: {checked} checked, {written} written")
+    if memo and not stats.get('tga_failed'):
+        shared_reuse.remember(memo, key, [plugin_dir / 'textures'])
     return stats
 
 
@@ -331,6 +416,7 @@ def _copy_and_fix_textures(asset_dir, plugin_dir, ns, stats, rec_dir):
 
     tc_found, tc_written, tc_failed = image_transcode.run(tex_dst)
     stats['tga_transcoded'] = tc_written
+    stats['tga_failed'] = tc_failed
     if tc_found:
         print(f"  Loose TGA/BMP: {tc_found} found, {tc_written} "
               f"transcoded to DDS"
@@ -405,7 +491,8 @@ def convert_speedtrees(source_file, extract_dir='export', output_dir='output',
 
 
 def convert_sounds(source_file, extract_dir='export', output_dir='output',
-                   ffmpeg_path='ffmpeg'):
+                   ffmpeg_path='ffmpeg', skip_shared_sounds=False,
+                   scope_plugin_voices=True):
     """Convert extracted sound files to XWM format.  Delegates to audio_converter.
 
     Args:
@@ -419,7 +506,9 @@ def convert_sounds(source_file, extract_dir='export', output_dir='output',
     """
     from asset_convert.audio.audio_converter import convert_sounds as _ac_convert
     return _ac_convert(source_file, extract_dir=extract_dir,
-                       output_dir=output_dir, ffmpeg_path=ffmpeg_path)
+                       output_dir=output_dir, ffmpeg_path=ffmpeg_path,
+                       skip_shared_sounds=skip_shared_sounds,
+                       scope_plugin_voices=scope_plugin_voices)
 
 
 def _copy_tree(src, dst):

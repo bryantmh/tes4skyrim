@@ -140,7 +140,7 @@ def _categorize_pyffi_warnings(messages: list) -> dict:
 def _empty_batch_stats(total):
     """The stats dict asset_pipeline expects, with every bucket present."""
     return {
-        'total': total, 'converted': 0, 'copied': 0, 'skipped': 0,
+        'total': total, 'converted': 0, 'copied': 0, 'skipped': 0, 'reused': 0,
         'errors': 0, 'strips': 0, 'properties': 0, 'roots': 0, 'rotations': 0,
         'warn_counts': _collections.Counter(),
         #: Union of the textures every written mesh references.
@@ -154,7 +154,7 @@ def _empty_batch_stats(total):
     }
 
 
-def _collect_nifs(mesh_path, subdir_filter, fixtures=()):
+def _collect_nifs(mesh_path, subdir_filter, fixtures=(), model_filter=None):
     """(files to convert, how many the filters dropped).
 
     Each `subdir_filter` entry is a path prefix under the mesh root: a root
@@ -171,6 +171,8 @@ def _collect_nifs(mesh_path, subdir_filter, fixtures=()):
         parts = tuple(p.lower() for p in nf.relative_to(mesh_path).parts)
         if (any(seg in parts for seg in SKIP_PATHS)
                 and '/'.join(parts) not in fixtures):
+            skipped += 1
+        elif model_filter is not None and '/'.join(parts) not in model_filter:
             skipped += 1
         elif allowed is not None and not any(parts[:len(a)] == a for a in allowed):
             skipped += 1
@@ -217,7 +219,7 @@ def _progress(stats, mesh_path, nif_str, done, total):
 
 
 def _run_batch(work_args, stats, skipped_list, mesh_path, workers,
-               scan_dir=None):
+               scan_dir=None, on_result=None):
     """Convert every queued mesh, in a pool or serially."""
     total = len(work_args)
 
@@ -225,6 +227,8 @@ def _run_batch(work_args, stats, skipped_list, mesh_path, workers,
         """Fold one result in and print progress every `every` meshes."""
         if status == 'ok':
             _merge_result(stats, skipped_list, mesh_path, nif_str, payload)
+            if on_result:
+                on_result(nif_str, payload)
         else:
             stats['errors'] += 1
             rel = str(Path(nif_str).relative_to(mesh_path))
@@ -328,6 +332,8 @@ def _report_batch(stats, skipped_list, total, parallax):
     print(f'\nResults: {stats["converted"]} converted, {stats["copied"]} '
           f'copied, {stats["skipped"]} skipped, {stats["errors"]} errors / '
           f'{total} total')
+    if stats['reused']:
+        print(f"  Reused {stats['reused']} meshes from earlier mod members.")
     if skipped_list:
         print(f'\nFailed/Skipped ({len(skipped_list)}) -- '
               f'RD=read fail, WR=write fail, EXC=exception:')
@@ -345,7 +351,8 @@ def _report_batch(stats, skipped_list, total, parallax):
 
 def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
                   remap_skeleton=None, subdir_filter=None, wearable_plan=None,
-                  parallax=False, textures_only=False, scan_dir=None):
+                  parallax=False, textures_only=False, scan_dir=None,
+                  model_filter=None, reuse_token=None):
     """Convert every NIF under mesh_dir into output_dir; return run stats.
 
     Skip reasons are VER (unsupported version), RD (read failure) and WR
@@ -358,7 +365,8 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
     mesh_path = Path(mesh_dir)
     out_base = Path(output_dir)
     nif_files, skipped_by_path = _collect_nifs(
-        mesh_path, subdir_filter, (wearable_plan or {}).get(FIXTURE_KEY, ()))
+        mesh_path, subdir_filter, (wearable_plan or {}).get(FIXTURE_KEY, ()),
+        model_filter=model_filter)
     total = len(nif_files)
     stats = _empty_batch_stats(total)
     skipped_list = []
@@ -372,8 +380,8 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
         print(f'  Texture fallback: {len(tex_fallback)} master tree(s) '
               f'-- {names}')
     if skipped_by_path:
-        print(f'  Skipped {skipped_by_path} files matching SKIP_PATHS: '
-              f'{sorted(SKIP_PATHS)}')
+        print(f'  Skipped {skipped_by_path} files outside the selected scope '
+              f'or matching SKIP_PATHS: {sorted(SKIP_PATHS)}')
     if total == 0:
         return stats
 
@@ -383,8 +391,34 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
          parallax, textures_only, tex_fallback)
         for nif_file in nif_files
     ]
-    _run_batch(work_args, stats, skipped_list, mesh_path, workers,
-               scan_dir=scan_dir)
+    reuse = None
+    if reuse_token and not textures_only:
+        from .run_reuse import RunReuse
+        reuse = RunReuse(scan_dir or mesh_path.parent, reuse_token, wearable_plan,
+                         [fix_textures, remap_skeleton, str(mesh_path.resolve()),
+                          tex_fallback, str(Path(scan_dir).resolve()) if scan_dir else None,
+                          parallax])
+        pending = []
+        for args in work_args:
+            result = reuse.take(Path(args[0]), Path(args[1]))
+            if result is None:
+                pending.append(args)
+            else:
+                _merge_result(stats, skipped_list, mesh_path, args[0], result)
+                stats['converted' if result.get('converted') else 'copied'] -= 1
+                stats['reused'] += 1
+        work_args = pending
+        print(f"  Mesh reuse: {stats['reused']} matching results already available; "
+              f"{len(work_args)} need conversion")
+    if work_args:
+        def remember(source, result):
+            reuse.remember(Path(source), out_base / Path(source).relative_to(mesh_path), result)
+        kwargs = {'scan_dir': scan_dir}
+        if reuse:
+            kwargs['on_result'] = remember
+        _run_batch(work_args, stats, skipped_list, mesh_path, workers, **kwargs)
+    if reuse:
+        reuse.save()
     _report_batch(stats, skipped_list, total, parallax)
     return stats
 
