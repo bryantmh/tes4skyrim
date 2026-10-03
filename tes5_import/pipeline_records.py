@@ -356,6 +356,17 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
         master_export=getattr(st.ctx, 'master_export', None) if st.ctx else None,
         activator_fids=acti_fids)
 
+    if (not st.navm_cache
+            and os.environ.get('TESCONV_IMPORTED_MOD_OPTIMIZATIONS') != '0'):
+        # Keep the indexes above for CELL/WRLD conversion. Only the post-passes
+        # consume the generated meshes, so they have no work with an empty cache.
+        if st.ctx is not None:
+            st.ctx.relinked_master_navms = []
+        set_door_navmesh_links({})
+        print('  No navmeshes to stitch or split.')
+        phase_done('navmesh generation')
+        return
+
     _dump_to = os.environ.get('TESCONV_DUMP_NAVM_CACHE', '').strip()
     if _dump_to:
         import pickle as _pickle
