@@ -16,6 +16,7 @@ from asset_convert.character.hand_pairs import split_models
 from asset_convert.character.morrowind_coverage import SIDED_SLOTS
 from asset_convert.character.skyrim_overrides import SBP_33_HANDS, SBP_59_RIGHT_HAND
 from asset_convert.sources.base_plugins import export_dirs
+from core.tes4_encoding import decode
 from output_layout import record_dir
 from tes5_import.base.text_reader import parse_export_file
 
@@ -175,7 +176,7 @@ def _vanilla_holders(esms, lefts: set) -> dict:
         for rec in read_file(path)[1]:
             if rec.type in _HOLDER_TYPES and not rec.deleted:
                 items = {get_string(sub).lower() if sub.type == 'INAM'
-                         else sub.data[4:36].split(bytes(1))[0].decode('cp1252').lower()
+                         else decode(sub.data[4:36].split(bytes(1))[0]).lower()
                          for sub in rec.subrecords if sub.type in ('NPCO', 'INAM')}
                 held[(_HOLDER_TYPES[rec.type], rec.record_id.lower())] = items & lefts
     return {key: lefts for key, lefts in held.items() if lefts}

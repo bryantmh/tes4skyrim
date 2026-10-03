@@ -11,6 +11,8 @@ See: docs/commentary/tes4_export_morrowind.md#ai-packages
 
 import struct
 
+from core.tes4_encoding import decode
+
 from ..morrowind_ids import encode_editor_id
 from ..morrowind_world import cell_grid
 from ..tes3_reader import Tes3Record, get_subrecord
@@ -36,7 +38,7 @@ _PERSISTENT = 1024
 
 def _tes3_id(raw: bytes) -> str:
     """A fixed 32-byte Morrowind ID field as text."""
-    return raw.split(b'\x00', 1)[0].decode('cp1252', 'replace')
+    return decode(raw.split(b'\x00', 1)[0])
 
 
 def _wander(fields) -> tuple:

@@ -427,8 +427,9 @@ def convert_sounds(
         convert_audio=(ffmpeg is not None),
         ffmpeg_path=ffmpeg_path,
         formid_index=formid_index,
-        voice_map=find_voice_map(output_dir, source_name),
-        lip_text=find_lip_text(output_dir, source_name),
+        voice_map=find_voice_map(output_dir, source_name, extract_dir),
+        lip_text=find_lip_text(output_dir, source_name, extract_dir),
+        record_source_dir=record_dir(extract_dir, source_name),
     )
 
     # ── Non-voice sounds: keep .wav, transcode only .mp3 ────────────────────
@@ -532,6 +533,14 @@ VOICE_FILENAME_RE = re.compile(
 )
 
 
+class VoiceMap(dict):
+    """INFO routing plus Import's actual (race EditorID, gender) voice types."""
+
+    def __init__(self):
+        super().__init__()
+        self.race_voice_types = {}
+
+
 def load_voice_map(map_path) -> dict:
     """Load the importer's `<esm>.voicemap.txt`.
 
@@ -539,11 +548,18 @@ def load_voice_map(map_path) -> dict:
     tab-separated VTYP list names the folder(s) the line's speaker resolves to
     when that differs from the Oblivion source race folder (e.g. Arvena Thelas
     is a Dark Elf but her recordings sit under high elf/f/). Empty list = keep
-    the source race folder (generic lines are recorded per race, correctly)."""
-    voice_map = {}
+    the imported race/gender identity for generic lines, when recorded in the
+    map; older maps fall back to the source RACE exports."""
+    voice_map = VoiceMap()
     with open(map_path, encoding='utf-8') as f:
         for line in f:
             line = line.rstrip('\n')
+            if line.startswith('# RaceVoice\t'):
+                parts = line.split('\t')
+                if len(parts) == 4:
+                    _, race, gender, edid = parts
+                    voice_map.race_voice_types[(race, gender)] = edid
+                continue
             if not line or line.startswith('#') or '=' not in line:
                 continue
             fid_hex, value = line.split('=', 1)
@@ -559,10 +575,10 @@ def load_voice_map(map_path) -> dict:
     return voice_map
 
 
-def find_voice_map(output_dir, source_name) -> 'dict | None':
+def find_voice_map(output_dir, source_name, extract_dir=None) -> 'dict | None':
     """Locate and load the voicemap written next to the converted ESM
     (output/<plugin>/<plugin>.voicemap.txt), if present."""
-    map_path = (_out_root(output_dir, source_name)
+    map_path = (_out_root(output_dir, source_name, extract_dir)
                 / (source_name + '.voicemap.txt'))
     if map_path.exists():
         return load_voice_map(map_path)
@@ -597,10 +613,10 @@ def load_lip_text(map_path) -> dict:
     return lip_text
 
 
-def find_lip_text(output_dir, source_name) -> 'dict | None':
+def find_lip_text(output_dir, source_name, extract_dir=None) -> 'dict | None':
     """Locate and load the lip transcript map written next to the converted
     ESM (output/<plugin>/<plugin>.liptext.txt), if present."""
-    map_path = (_out_root(output_dir, source_name)
+    map_path = (_out_root(output_dir, source_name, extract_dir)
                 / (source_name + '.liptext.txt'))
     if map_path.exists():
         return load_lip_text(map_path)
@@ -631,7 +647,8 @@ def _voice_decoder(voice_root) -> str:
 
 def _resolve_voice_type(race: str, gender: str, fallout: bool,
                         race_voices, unmapped_races: set,
-                        fnv_edids: dict = None) -> str:
+                        fnv_edids: dict = None,
+                        converted_voices: dict = None) -> str:
     """VTYP EditorID a source voice folder maps to.
 
     A FO3/FNV folder IS the voice type. Oblivion resolves the race through the
@@ -644,6 +661,12 @@ def _resolve_voice_type(race: str, gender: str, fallout: bool,
         return voice_type_edid(race, fnv_edids)
     key = race_voices.folder_key(race)
     if key:
+        targets = {converted_voices[(edid, gender)]
+                   for edid, source_key in race_voices.by_race_edid.items()
+                   if source_key == key and converted_voices
+                   and (edid, gender) in converted_voices}
+        if len(targets) == 1:
+            return targets.pop()
         return _vtyp_edid(key, gender)
     unmapped_races.add((race, gender))
     return _vtyp_edid(voice_key(race), gender)
@@ -688,12 +711,16 @@ def prune_stale_voice_files(touched_dirs: set, intended: set,
 
     `plugin_roots` are the `Sound/Voice/<plugin>` directories this run owns;
     their VTYP subfolders are swept too, since a voice-type relocation empties
-    the old folder entirely. Only files with a voice extension are removed.
+    the old folder entirely. Only files with a voice extension are removed;
+    a swept folder left with no files at all is removed as well, so a renamed
+    voice type leaves no empty directory behind.
     See: docs/commentary/asset_convert_audio.md#pruning-stale-voice-output
     """
     sweep = set(touched_dirs)
+    roots = set()
     for root in (plugin_roots or ()):
         if root.is_dir():
+            roots.add(root.resolve())
             sweep.update(d.resolve() for d in root.iterdir() if d.is_dir())
     removed = []
     for d in sorted(sweep):
@@ -711,6 +738,11 @@ def prune_stale_voice_files(touched_dirs: set, intended: set,
                 removed.append(f)
             except OSError as exc:
                 print(f'  WARN could not remove stale {f.name}: {exc}')
+        if d.resolve() not in roots:
+            try:
+                d.rmdir()
+            except OSError:
+                pass
     return removed
 
 
@@ -837,6 +869,7 @@ def organize_voice_files(
     lip_text: 'dict | str | None' = None,
     lipgenerator_path: 'str | None' = None,
     prune: bool = True,
+    record_source_dir=None,
 ) -> dict:
     """Reorganise extracted TES4 voice files into the TES5 directory layout.
 
@@ -859,6 +892,7 @@ def organize_voice_files(
     dest_dir   = Path(dest_dir)
     if isinstance(voice_map, (str, Path)):
         voice_map = load_voice_map(voice_map)
+    converted_voices = getattr(voice_map, 'race_voice_types', {})
     if voice_map:
         voice_map = {k: (v if isinstance(v, tuple) else (v, []))
                      for k, v in voice_map.items()}
@@ -887,7 +921,8 @@ def organize_voice_files(
     stats = {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0}
     unmapped_races: set = set()
 
-    race_voices = load_race_voices(source_dir)
+    record_source = Path(record_source_dir) if record_source_dir else source_dir
+    race_voices = load_race_voices(record_source)
     if race_voices:
         print(f'  Plugin races: {len(race_voices.keys)} voice identities '
               f'from {len(race_voices.by_race_edid)} RACE records')
@@ -916,7 +951,7 @@ def organize_voice_files(
 
                 voice_type = _resolve_voice_type(race, gender, fallout,
                                                  race_voices, unmapped_races,
-                                                 fnv_edids)
+                                                 fnv_edids, converted_voices)
 
                 out_dir = dest_dir / 'sound' / 'Voice' / effective_plugin / voice_type
                 out_dir.mkdir(parents=True, exist_ok=True)

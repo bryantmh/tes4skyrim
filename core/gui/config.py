@@ -129,6 +129,9 @@ LOD_DETAIL_CONFIG_KEY = "lodDetail"
 #: conversion_config.json key for the navmesh generator (core.navmesh_options.GENERATORS).
 NAVMESH_GENERATOR_CONFIG_KEY = "navmeshGenerator"
 
+#: conversion_config.json key for the TES4 text codepage (core.tes4_encoding).
+TES4_ENCODING_CONFIG_KEY = "tes4Encoding"
+
 #: conversion_config.json key for the folder the navmesh editor saves pins to.
 NAVMESH_PINS_CONFIG_KEY = "navmeshPinsDir"
 

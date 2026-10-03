@@ -85,6 +85,8 @@ from core.process_job import create_pool_job, describe_limit
 from core.heavy_lock import SUPERVISED_ENV_VAR, hold_heavy_lock
 from core.collision_options import WINDING_FIX_ENV_VAR, default_for_plugin
 from core.navmesh_options import set_navmesh_generator, set_navmesh_pins_dir
+from core.tes4_encoding import (ENCODING_AUTO, ENCODING_CONFIG_KEY, choice,
+                                pin)
 
 # multiprocessing.Pool workers (nif/lod conversion) must also inherit a hidden
 # console — configure before any pool is created.
@@ -445,9 +447,11 @@ def _plugins_to_convert(args, config: dict, tes4_data: str,
 def phase_export(file_name: str, tes4_data: str, export_dir: str,
                  config: dict):
     """Export TES4 records using the Python binary reader."""
-    from tes4_export.tes4_reader import read_file
+    from tes4_export.tes4_reader import configure_for_source, read_file
     from tes4_export.export import export_file, export_header
 
+    if choice() == ENCODING_AUTO and config.get(ENCODING_CONFIG_KEY):
+        pin(config[ENCODING_CONFIG_KEY])
     if file_name == PATCH_NAME:
         return run_patch_export(export_dir)
     out_dir = str(record_dir(export_dir, file_name))
@@ -472,6 +476,8 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
 
     t1 = time.time()
     print(f"  Scanned {len(all_records)} records in {t1-t0:.2f}s")
+
+    configure_for_source(source, all_records)
 
     os.makedirs(out_dir, exist_ok=True)
     export_header(header, out_dir)
@@ -742,6 +748,9 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
         print(f"[{file_name}] No export directory, skipping import")
         return False
 
+    from core.plugin_masters import export_encoding
+    print(f"  Source text encoding: {pin(export_encoding(export_subdir))}; Skyrim output: UTF-8")
+
     _install_navmesh_cache(file_name, config)
 
     out_root = output_dir or str(SCRIPT_DIR / "output")
@@ -1002,6 +1011,8 @@ def _run_pipeline():
     args = build_parser().parse_args()
     set_navmesh_generator(args.navmesh_generator)
     set_navmesh_pins_dir(args.navmesh_pins)
+    if args.tes4_encoding:
+        pin(args.tes4_encoding)
     config = load_config(args.config)
     apply_config_overrides(args, config)
     tes4_data, tes5_data = get_paths(config)
