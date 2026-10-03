@@ -34,6 +34,7 @@ from core.gui.config import (
     REPO_ROOT,
     LOD_DETAIL_CONFIG_KEY,
     NAVMESH_GENERATOR_CONFIG_KEY,
+    TES4_ENCODING_CONFIG_KEY,
     WINDING_AUTO,
     WINDING_CONFIG_KEY,
     WINDING_OFF,
@@ -49,6 +50,7 @@ from core.gui.menubar_behavior import (add_tipped_command, enable_hover_switch,
 from core.gui.morrowind import add_source_menu
 from core.gui.selection import runnable
 from core.navmesh_options import CORRIDOR, LATTICE
+from core.tes4_encoding import ENCODING_CHOICES
 from core.gui import navmesh_editor
 from core.gui.widgets import open_folder, open_url
 from core.worker_budget import worker_count
@@ -155,6 +157,29 @@ def _add_navmesh_menu(app, settings_menu, menu_opts) -> None:
     settings_menu.add_cascade(label="Navmesh generator", menu=gen_menu)
 
 
+def _add_encoding_menu(app, settings_menu, menu_opts) -> None:
+    """Settings > Plugin text encoding: auto-detect or a fixed codepage.
+
+    The Russian install needs cp1251; auto-detect measures the plugin binary
+    (Western Oblivion.esm 0.03% high bytes, Russian 73%). Applies on the next
+    export -- already-exported text keeps the codec it was decoded with.
+    """
+    def _changed():
+        """Persist the chosen codepage."""
+        save_setting(TES4_ENCODING_CONFIG_KEY, app.tes4_encoding_var.get())
+
+    enc_menu = tk.Menu(settings_menu, **menu_opts)
+    labels = {"auto": "Auto-detect  (default)",
+              "cp1252": "Western  (cp1252)",
+              "cp1251": "Russian  (cp1251)",
+              "cp1250": "Central European  (cp1250)"}
+    for name in ENCODING_CHOICES:
+        enc_menu.add_radiobutton(label=labels.get(name, name), value=name,
+                                 variable=app.tes4_encoding_var,
+                                 command=_changed)
+    settings_menu.add_cascade(label="Plugin text encoding", menu=enc_menu)
+
+
 def _add_lod_detail_menu(app, settings_menu, menu_opts) -> None:
     """Settings > Distant LOD detail: a radio group over the detail presets.
 
@@ -183,6 +208,7 @@ def _build_settings_menu(app, menubutton, menu_opts) -> None:
     _add_pack_default(app, settings_menu)
     _add_winding_menu(app, settings_menu, menu_opts)
     _add_navmesh_menu(app, settings_menu, menu_opts)
+    _add_encoding_menu(app, settings_menu, menu_opts)
     _add_lod_detail_menu(app, settings_menu, menu_opts)
     add_source_menu(app, settings_menu, menu_opts, app.cfg, load_config,
                     save_config, EXPORT_DIR)

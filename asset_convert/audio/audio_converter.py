@@ -688,12 +688,16 @@ def prune_stale_voice_files(touched_dirs: set, intended: set,
 
     `plugin_roots` are the `Sound/Voice/<plugin>` directories this run owns;
     their VTYP subfolders are swept too, since a voice-type relocation empties
-    the old folder entirely. Only files with a voice extension are removed.
+    the old folder entirely. Only files with a voice extension are removed;
+    a swept folder left with no files at all is removed as well, so a renamed
+    voice type leaves no empty directory behind.
     See: docs/commentary/asset_convert_audio.md#pruning-stale-voice-output
     """
     sweep = set(touched_dirs)
+    roots = set()
     for root in (plugin_roots or ()):
         if root.is_dir():
+            roots.add(root.resolve())
             sweep.update(d.resolve() for d in root.iterdir() if d.is_dir())
     removed = []
     for d in sorted(sweep):
@@ -711,6 +715,11 @@ def prune_stale_voice_files(touched_dirs: set, intended: set,
                 removed.append(f)
             except OSError as exc:
                 print(f'  WARN could not remove stale {f.name}: {exc}')
+        if d.resolve() not in roots:
+            try:
+                d.rmdir()
+            except OSError:
+                pass
     return removed
 
 

@@ -633,6 +633,35 @@ def test_organize_voice_files_prune_scope(tmp_path):
         "pruned a file under another plugin's voice root"
 
 
+def test_organize_voice_files_prunes_emptied_folders(tmp_path):
+    """A swept folder left with no files at all is removed, not left empty.
+
+    A voice-type rename (or a codepage fix relocating every folder) strands
+    whole directories; deleting their files but keeping the folders leaves
+    the old spelling lying next to the new one. The plugin root itself stays.
+    """
+    plugin = 'Test.esm'
+    voice_src = tmp_path / 'extract' / 'sound' / 'voice' / plugin / 'Nord' / 'M'
+    voice_src.mkdir(parents=True, exist_ok=True)
+    _make_wav(voice_src / 'q_t_0000a1b2_1.wav')
+    out_root = tmp_path / 'output' / 'sound' / 'Voice' / plugin
+    emptied = out_root / 'TES4FemaleNord'
+    emptied.mkdir(parents=True, exist_ok=True)
+    (emptied / 'someone_elses_0000ffff_1.fuz').write_bytes(b'stale')
+    kept = out_root / 'TES4MaleNord'
+    kept.mkdir(parents=True, exist_ok=True)
+    (kept / 'notes.txt').write_text('not a voice file')
+
+    organize_voice_files(source_dir=str(tmp_path / 'extract'),
+                         dest_dir=str(tmp_path / 'output'),
+                         plugin_name=plugin, convert_audio=True,
+                         ffmpeg_path=FFMPEG)
+
+    assert not emptied.exists(), 'emptied VTYP folder was left behind'
+    assert out_root.is_dir(), 'pruned the plugin voice root itself'
+    assert kept.is_dir(), 'pruned a folder that still holds files'
+
+
 def test_organize_voice_files_no_match_counted(tmp_path):
     """Files that don't match the voice filename pattern are counted as no_match."""
     plugin = 'Test.esm'

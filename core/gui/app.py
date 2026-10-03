@@ -36,6 +36,7 @@ from core.gui.config import (
     WINDING_AUTO,
     LOD_DETAIL_CONFIG_KEY,
     NAVMESH_GENERATOR_CONFIG_KEY,
+    TES4_ENCODING_CONFIG_KEY,
     WINDING_CONFIG_KEY,
     WINDING_MODES,
     default_on_steps,
@@ -47,6 +48,7 @@ from core.gui.config import (
 )
 from core.gui.menus import build_menubar
 from core.navmesh_options import DEFAULT_GENERATOR, GENERATORS
+from core.tes4_encoding import ENCODING_AUTO, ENCODING_CHOICES
 from core.worker_budget import cpu_total, worker_count
 from output_layout import configured_output, output_setting
 from preflight import RC_MISSING_DEP
@@ -251,6 +253,7 @@ class GuiApp:
         self.cache_dl_var = self.pack_default_var = None
         self.winding_mode_var = self.parallax_var = self.tex_only_var = None
         self.lod_detail_var = self.navmesh_gen_var = None
+        self.tes4_encoding_var = None
         self.step_vars = {}
         self.mesh_subdir_vars = []
         self.all_plugins = []
@@ -491,6 +494,9 @@ def build_state(root, cfg: dict) -> GuiApp:
     saved_gen = cfg.get(NAVMESH_GENERATOR_CONFIG_KEY)
     app.navmesh_gen_var = tk.StringVar(
         value=saved_gen if saved_gen in GENERATORS else DEFAULT_GENERATOR)
+    saved_enc = cfg.get(TES4_ENCODING_CONFIG_KEY)
+    app.tes4_encoding_var = tk.StringVar(
+        value=saved_enc if saved_enc in ENCODING_CHOICES else ENCODING_AUTO)
     app.parallax_var = tk.BooleanVar(value=False)
     app.tex_only_var = tk.BooleanVar(value=False)
 

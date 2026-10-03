@@ -7,6 +7,7 @@ import argparse
 
 from core.collision_options import WINDING_FIX_DEFAULT_PLUGINS
 from core.navmesh_options import DEFAULT_GENERATOR, GENERATORS
+from core.tes4_encoding import ENCODING_CHOICES
 from tes4_export.export_morrowind import (MORROWIND_SOURCE_KEY,
                                           SOURCE_MORROBLIVION, SOURCE_VANILLA)
 
@@ -123,6 +124,11 @@ def _add_run_args(parser) -> None:
                              "this run only, instead of the configured "
                              "Settings > Morrowind source (which is left "
                              "unchanged).")
+    parser.add_argument("--tes4-encoding", choices=ENCODING_CHOICES,
+                        default=None,
+                        help="TES3/TES4 plugin text codepage for this run only "
+                             "(default: auto-detect; the Russian install "
+                             "needs cp1251). Saved choice: Settings menu.")
     parser.add_argument("--only", nargs="+", metavar="NAME",
                         help="Scope the stage to these units instead of "
                              "rebuilding all of them. Honored by "
