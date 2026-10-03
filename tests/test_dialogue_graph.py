@@ -8,7 +8,7 @@ from script_convert.converter import ScriptConverter
 from script_convert.cross_ref import CrossRefGraph
 from script_convert.pipeline import (
     _info_begin_fragment, _info_end_fragment, info_needs_fragment,
-    scan_say_topic_fids,
+    build_script_context, convert_all_scripts, scan_say_topic_fids,
 )
 from tes5_import.base import text_reader
 from tes5_import.base.tes5_reader import records
@@ -122,6 +122,61 @@ def test_inherited_response_resolves_through_master_index(tmp_path):
     writer.add_raw_group('DIAL', _topic_blob(0x02000200, (0x02000201, 0)))
     bind_graph(child, tmp_path / 'Child.esp', writer, MasterIndex(str(master_path)))
     assert len(load_manifest(child, tmp_path)['infos']) == 2
+
+
+def test_empty_patch_scripts_do_not_require_inherited_bindings(tmp_path):
+    root = tmp_path / 'export'
+    _export(root / 'Base.esm', dials=[_dial(0x100, 'Reaction')],
+            infos=[_info(0x101, 0x100)])
+    child = _export(root / 'Empty.esp', ('Base.esm',))
+    output = tmp_path / 'out' / 'scripts' / 'Source'
+
+    stats = convert_all_scripts(str(child), str(output), workers=1)
+
+    assert stats['scpt_total'] == stats['info_total'] == stats['qust_total'] == 0
+    assert stats['scpt_err'] == stats['info_err'] == stats['qust_err'] == 0
+    assert not list(output.glob('*DialogueGraph*.psc'))
+
+
+@pytest.mark.parametrize('own_dialogue', [False, True])
+def test_imported_patch_still_generates_bound_dialogue_scripts(tmp_path, own_dialogue):
+    root = tmp_path / 'export'
+    _export(root / 'Base.esm', dials=[_dial(0x100, 'Reaction')],
+            infos=[_info(0x101, 0x100)])
+    dials = [_dial(0x01000200, 'Head')] if own_dialogue else []
+    infos = [_info(0x01000201, 0x01000200, 0x100)] if own_dialogue else []
+    child = _export(root / 'Child.esp', ('Base.esm',), dials, infos)
+    output = tmp_path / 'out'
+    output.mkdir()
+    master = output / 'Base.esm'
+    master.write_bytes(pack_tes4_header(['Skyrim.esm'])
+                       + pack_top_group('DIAL', _topic_blob(0x01000100, (0x01000101, 0))))
+    writer = PluginWriter(['Skyrim.esm', 'Base.esm'])
+    if own_dialogue:
+        writer.add_raw_group('DIAL', _topic_blob(0x02000200, (0x02000201, 0)))
+    plugin = output / 'Child.esp'
+    bind_graph(child, plugin, writer, MasterIndex(str(master)))
+    writer.write(str(plugin))
+    seal_manifest(child, plugin)
+    manifest = load_manifest(child, output, required=True)
+    script_output = output / 'scripts' / 'Source'
+
+    context = build_script_context(str(child), str(script_output))
+
+    assert context['initargs'][-1]['infos'] == manifest['infos']
+    assert len(context['info_work']) == int(own_dialogue)
+    assert (script_output / (manifest['script'] + '.psc')).is_file()
+    assert (script_output / (manifest['script'] + 'Page0.psc')).is_file()
+
+
+def test_patch_with_own_dialogue_still_requires_import_bindings(tmp_path):
+    root = tmp_path / 'export'
+    _export(root / 'Base.esm', dials=[_dial(0x100, 'Reaction')],
+            infos=[_info(0x101, 0x100)])
+    child = _export(root / 'Child.esp', ('Base.esm',),
+                    [_dial(0x01000200, 'Head')], [_info(0x01000201, 0x01000200)])
+    with pytest.raises(ValueError, match='bindings are missing'):
+        build_script_context(str(child), str(tmp_path / 'out' / 'scripts' / 'Source'))
 
 
 def test_shared_output_sidecars_are_distinct_and_stale_exports_rejected(tmp_path):

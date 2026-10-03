@@ -232,12 +232,19 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
     subset build is the SAME conversion as the full one.
     See: docs/commentary/script_convert.md#script-output-dir
     """
-    from tes5_import.dialogue.runtime_graph import generate_scripts, load_manifest, source_graph
+    from tes5_import.dialogue.runtime_graph import (
+        generate_scripts, load_manifest, sidecar_path, source_graph,
+    )
     by_type = load_records(export_dir, ('DIAL', 'INFO', 'QUST', 'SCPT', 'NPC_',
                                         'MESG'))
-    needs_graph = bool(source_graph(export_dir)['infos'])
-    graph = (load_manifest(export_dir, os.path.dirname(os.path.dirname(output_dir)),
-                           required=True) if needs_graph else {})
+    plugin_output = os.path.dirname(os.path.dirname(output_dir))
+    # Empty patches do not need their own bindings for inherited dialogue.
+    # An imported patch can still own a generated dialogue quest, so retain
+    # its scripts whenever Import has already published a binding manifest.
+    has_script_work = any(by_type[sig] for sig in ('SCPT', 'INFO', 'QUST'))
+    needs_graph = ((has_script_work or sidecar_path(plugin_output, export_dir).is_file())
+                   and bool(source_graph(export_dir)['infos']))
+    graph = load_manifest(export_dir, plugin_output, required=True) if needs_graph else {}
     owner = owner_key(export_dir)
     shared = prepare_output_dir(output_dir, owner)
     bounds_cache = load_bounds_cache(export_dir)
