@@ -13,6 +13,7 @@ import os
 import struct
 
 import output_layout
+from core.tes4_encoding import normalize as _normalize_codec
 from tes4_export.tes3_reader import read_masters as _tes3_masters
 
 #: Where the TES4 header record ends; FO3/FNV push HEDR four bytes later.
@@ -128,6 +129,16 @@ def export_source(record_dir: str) -> str:
     """The `Source=` game an export's `_HEADER.txt` names; '' for a TES4 dump."""
     return next((value for key, value in _export_header(record_dir)
                  if key == 'Source'), '')
+
+
+def export_encoding(record_dir: str) -> str:
+    """The `ENCODING=` codec an export's `_HEADER.txt` declares.
+
+    Old exports predate the line and read back as cp1252, which is what they
+    were decoded with. Never raises: unknown names fall back to cp1252.
+    """
+    return _normalize_codec(next((value for key, value in _export_header(record_dir)
+                                  if key == 'ENCODING'), ''))
 
 
 def _export_header(record_dir: str) -> list:

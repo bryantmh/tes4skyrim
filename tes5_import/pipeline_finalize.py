@@ -289,12 +289,19 @@ def _write_voice_map(output_path: str, voice_map: dict):
     """
     if not voice_map:
         return
+    from .base.equivalents import VOICE_TYPE_MAP, VTYP_EDID_BY_FID
     map_path = output_path + '.voicemap.txt'
     with open(map_path, 'w', encoding='utf-8') as f:
         f.write('# InfoFormID(low24,hex)=prefix[\\tVTYP1,VTYP2] '
                 '(questEDID_topicEDID; optional tab-separated target voice-type '
                 'folders for NPC-specific lines whose speaker VTYP differs from '
                 'the Oblivion source race folder)\n')
+        # Generic replies have no pinned NPC. Preserve the voice identities
+        # actually adopted by Import, which can differ from source RACE names.
+        for (race, gender), fid in sorted(VOICE_TYPE_MAP.items()):
+            edid = VTYP_EDID_BY_FID.get(fid)
+            if edid:
+                f.write(f'# RaceVoice\t{race}\t{gender[0].upper()}\t{edid}\n')
         for fid in sorted(voice_map):
             f.write(f'{fid:06X}={voice_map[fid]}\n')
     print(f"  Wrote {map_path} ({len(voice_map)} voice filename prefixes)")

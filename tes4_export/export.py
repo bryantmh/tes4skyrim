@@ -100,12 +100,14 @@ from .tes4_reader import (
     Record,
     _read_record,
     RECORD_HEADER_SIZE,
+    configure_for_source,
     detect_header_size,
     get_formid_str,
     get_string,
     get_subrecord,
     read_file,
 )
+from core.tes4_encoding import current as current_codec
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.worker_budget import worker_count
@@ -424,6 +426,7 @@ def export_header(header: Record, output_dir: str):
         lines.append(f"Master[{i}]={get_string(mast)}")
 
     lines.append(f"Flags={header.flags}")
+    lines.append(f"ENCODING={current_codec()}")
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
@@ -475,6 +478,7 @@ def main():
     header, all_records = read_file(args.input, parse_subs=False)
     t1 = time.time()
     print(f"  Scanned {len(all_records)} records in {t1-t0:.2f}s")
+    configure_for_source(args.input, all_records)
 
     os.makedirs(output_dir, exist_ok=True)
     export_header(header, output_dir)

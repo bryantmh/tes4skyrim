@@ -550,9 +550,10 @@ def winding_flag(app) -> str:
 
 
 def navmesh_flags(app) -> list:
-    """The navmesh-generator and pin-folder flags matching the settings."""
+    """Run-wide flags matching the settings: navmesh, pins, TES4 encoding."""
     return ["--navmesh-generator", app.navmesh_gen_var.get(),
-            "--navmesh-pins", navmesh_pins_dir()]
+            "--navmesh-pins", navmesh_pins_dir(),
+            "--tes4-encoding", app.tes4_encoding_var.get()]
 
 
 def _mesh_flags(app, selected_subdirs) -> list:

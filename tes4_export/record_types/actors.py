@@ -8,6 +8,7 @@ Pure TES4 data dump - no transformations.
 import struct
 
 from ..tes4_reader import Record, get_all_subrecords, get_formid_str, get_subrecord
+from core.tes4_encoding import decode
 from .common import (
     emit_conditions,
     emit_float,
@@ -208,8 +209,7 @@ def export_CREA(rec: Record) -> list:
     # NIFZ - body part model file list (null-separated string block)
     nifz = get_subrecord(rec, "NIFZ")
     if nifz:
-        parts = [p.decode("cp1252", "replace")
-                 for p in nifz.data.split(b"\x00") if p]
+        parts = [decode(p) for p in nifz.data.split(b"\x00") if p]
         lines.append(f"NIFZCount={len(parts)}")
         for i, p in enumerate(parts):
             lines.append(f"NIFZ[{i}]={escape_value(p)}")
@@ -217,8 +217,7 @@ def export_CREA(rec: Record) -> list:
     # KFFZ - animation .kf file list (null-separated string block)
     kffz = get_subrecord(rec, "KFFZ")
     if kffz:
-        parts = [p.decode("cp1252", "replace")
-                 for p in kffz.data.split(b"\x00") if p]
+        parts = [decode(p) for p in kffz.data.split(b"\x00") if p]
         lines.append(f"KFFZCount={len(parts)}")
         for i, p in enumerate(parts):
             lines.append(f"KFFZ[{i}]={escape_value(p)}")
@@ -442,7 +441,7 @@ def _emit_race_parts(lines: list, rec: Record):
         if index is None:
             continue
         if t in ("MODL", "ICON"):
-            val = sub.data.rstrip(b"\x00").decode("cp1252", errors="replace")
+            val = decode(sub.data.rstrip(b"\x00"))
             if val:
                 key = "Model" if t == "MODL" else "Texture"
                 lines.append(f"{section.capitalize()}Part[{index}].{key}"

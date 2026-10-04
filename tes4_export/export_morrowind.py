@@ -20,6 +20,8 @@ from collections import Counter
 
 from output_layout import assets_for, record_dir
 from core.plugin_masters import masters_from_export_header
+from core.tes4_encoding import (ENCODING_AUTO, ENCODING_CONFIG_KEY, choice,
+                                current as current_codec, pin)
 
 from .morroblivion import (MORROBLIVION_PREFIX, MorroblivionModels,
                            remap_vanilla_models)
@@ -60,8 +62,8 @@ from .record_types.morrowind_magic import (MORROWIND_MAGIC_EXPORTERS,
                                            synthesized_effects)
 from .record_types.morrowind_scripts import MORROWIND_SCRIPT_EXPORTERS
 from .record_types.common import escape_value
-from .tes3_reader import (file_type, get_subrecord, is_tes3, read_file,
-                          read_masters)
+from .tes3_reader import (configure_for_source, file_type, get_subrecord,
+                          is_tes3, read_file, read_masters)
 
 #: TES3 signature -> exporter, over every base record type this pass converts.
 EXPORTERS = {**MORROWIND_ITEM_EXPORTERS, **MORROWIND_ACTOR_EXPORTERS,
@@ -512,6 +514,10 @@ def run_export(file_name: str, source: str, export_dir: str,
     """
     start = time.time()
     print(f'[{file_name}] Exporting (Morrowind)...')
+    if choice() == ENCODING_AUTO and (config or {}).get(ENCODING_CONFIG_KEY):
+        pin(config[ENCODING_CONFIG_KEY])
+    header, records = read_file(source)
+    configure_for_source(source, records)
     mode = (config or {}).get(MORROWIND_SOURCE_KEY, SOURCE_VANILLA)
     if mode == SOURCE_MORROBLIVION and not morroblivion_allowed(file_name, source):
         print(f'[{file_name}] ERROR: {file_name} is a vanilla Morrowind master '
@@ -526,7 +532,7 @@ def run_export(file_name: str, source: str, export_dir: str,
         return False
     if masters:
         print(f"  Borrowing objects from {', '.join(_master_list(masters))}")
-    result = export_plugin(source, export_dir, masters)
+    result = _export_parsed(source, export_dir, masters, header, records)
     total = sum(result['counts'].values())
     print(f"  Wrote {total} records to {result['output']}")
     if result['dropped']:
@@ -590,8 +596,15 @@ def export_plugin(source_path: str, export_dir: str, masters=()) -> dict:
     Records land in `record_dir(export_dir, <plugin>)`, the same resolver every
     other stage uses, so nothing downstream needs to know the source was TES3.
     """
-    plugin = os.path.basename(source_path)
     header, records = read_file(source_path)
+    configure_for_source(source_path, records)
+    return _export_parsed(source_path, export_dir, masters, header, records)
+
+
+def _export_parsed(source_path: str, export_dir: str, masters,
+                   header, records) -> dict:
+    """Export records whose codec and string identities are already resolved."""
+    plugin = os.path.basename(source_path)
     ctx = _plugin_context(export_dir, masters, records, plugin)
     ctx.body_models = load_body_models(source_path, records, export_dir)
     own_meshes = assets_for(record_dir(export_dir, plugin)) / 'meshes'
@@ -970,6 +983,7 @@ def write_header(output_dir: str, masters: list, num_records: int,
              f'SNAM.Description={description}']
     lines.extend(f'Master[{i}]={name}' for i, name in enumerate(masters))
     lines.append(f'Flags={flags}')
+    lines.append(f'ENCODING={current_codec()}')
     if source:
         lines.append(f'Source={source}')
     with open(os.path.join(output_dir, '_HEADER.txt'), 'w',
