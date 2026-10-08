@@ -11,6 +11,7 @@
 - [Per-game asset namespace](#per-game-asset-namespace)
   - [A master is resolved by `record_dir`, never by joining its name](#master-resolved-by-record-dir)
     - [...and the ROOT it resolves against is found by marker, not by `.parent`](#export-root-by-marker)
+- [A lookup ignores case only after an exact miss](#case-blind-lookups)
 - [Loose .tga/.bmp textures are transcoded, not just copied](#loose-tgabmp-textures)
 - [The blacklist prune](#the-blacklist-prune)
 - [Texture repairs write in place, never by rename](#texture-repairs-write-in-place)
@@ -877,6 +878,37 @@ harmless, explicit, and independent of environment inheritance.
 🛑 The environment is per-process GLOBAL state, so a parent that converts two
 plugins must call `set_namespace` for each -- it is the phase's entry point
 that owns this, not the pool.
+
+## A lookup ignores case only after an exact miss
+<a id="case-blind-lookups"></a>
+
+**Code:** `find_nocase`, `folder_names` in `asset_convert/game_paths.py`
+
+A record keeps its author's mixed case, and the file it names may be spelled
+otherwise on disk: a BSA stores every internal path lowercase and
+`bsa_extract.py` keeps that. A case-insensitive filesystem answers for every
+spelling; on a case-sensitive one an exact join misses, and nothing reports it.
+
+`find_nocase` is `win_join` followed by the lookup a case-insensitive filesystem
+does on its own:
+
+- **The exact join is probed first and returned untouched.** An exact hit lists
+  nothing, so where the filesystem ignores case a file that exists costs the one
+  probe it always did, and the result is the path the code always built.
+- After a miss, on any filesystem, each segment is matched ignoring case through
+  EVERY folder that spells it, so an empty `Oblivion/` beside `oblivion/` cannot
+  hide a file. Of two names that differ only by case, the first in sorted order
+  answers. Names are compared with `str.lower()`.
+- A miss is `None`, never a guess: a caller that reports the missing path keeps
+  naming the one it asked for.
+
+A miss costs one `os.listdir` per folder on the path. `folder_names` reads the
+folder on every call, so a file written between two lookups is seen by the
+second. `listing` replaces the lister: the tests pass an in-memory tree, and a
+caller with many names to look up may pass one that remembers what it read, as
+long as it forgets a folder the run writes into. A case-blind hit is probed
+again before it is returned, so a stale listing can miss a file created mid-run
+but cannot return one that is gone.
 
 ## The blacklist prune
 <a id="the-blacklist-prune"></a>
