@@ -13,6 +13,7 @@ from ..record_types.common import get_int
 
 #: PKDT interrupt flags: hellos to player, reaction to player actions, idle chatter.
 _HELLOS, _REACTIONS, _IDLE_CHATTER = 0x0001, 0x0010, 0x0080
+_RANDOM_CONVERSATIONS = 0x0002
 
 #: TES4 PKDT.Type of the packages OpenMW keeps silent: follow and escort.
 _FOLLOW, _ESCORT = 1, 2
@@ -26,7 +27,9 @@ _HELLO_FIELD = 'MorrowindHello'
 
 def interrupt_for_kind(package_type: int, hello: int, default: int) -> int:
     """The interrupt flags for one Morrowind package kind and Hello setting."""
-    flags = default | _REACTIONS
+    # TES3 supplies its own greeting policy; do not inherit TES4's permission
+    # to greet or converse when Hello=0 or while following/escorting.
+    flags = (default & ~(_HELLOS | _RANDOM_CONVERSATIONS)) | _REACTIONS
     if hello <= 0:
         return flags
     if package_type in _GREETING_TYPES:

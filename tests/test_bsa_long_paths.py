@@ -10,6 +10,8 @@ See: docs/commentary/asset_convert_bsa.md#staging-past-the-path-limit
 
 import os
 import sys
+from pathlib import Path
+import pytest
 
 from asset_convert.sources.bsa_pack import long_path, _stage_bin
 
@@ -64,3 +66,48 @@ class TestStagingBeyondMaxPath:
         assert _stage_bin([(src, deep, 3)], stage) == 1
         assert os.path.exists(long_path(staged))
         assert open(long_path(staged), 'rb').read() == b'NIF'
+
+
+@pytest.mark.skipif(WIN_ONLY, reason='bundled Windows BSArch')
+def test_pack_localized_voice_path_preserves_utf8_and_audio(tmp_path):
+    from asset_convert.sources.bsa_pack import _run_bsarch
+    from asset_convert.sources.bsa_extract import iter_bsa
+    tool = Path(__file__).resolve().parents[1] / 'external/bsarch/BSArch.exe'
+    stage = tmp_path / 'staging'
+    payload = b'FUZE' + b'\1\0\0\0' + b'\0'*4 + b'RIFF'
+    voice = tmp_path / 'source.fuz'
+    voice.write_bytes(payload)
+    nif = tmp_path / 'source.nif'
+    nif.write_bytes(b'NIF payload')
+    rel = Path('sound/Voice/Test.esp/TES4MaleНорд/line.fuz')
+    name_map = {}
+    _stage_bin([(voice, rel, len(payload)),
+                (nif, Path('meshes/test.nif'), 11)], stage, name_map)
+    archive = tmp_path / 'Test.bsa'
+    result = {'packed': [], 'errors': []}
+    assert _run_bsarch(str(tool), stage, archive, False, result, name_map)
+    assets = {name.encode('latin-1').decode('utf-8'): body
+              for name, body in iter_bsa(archive)}
+    expected = str(rel).replace('/', '\\').encode('utf-8').lower().decode('utf-8')
+    assert assets == {expected: payload, 'meshes\\test.nif': b'NIF payload'}
+
+
+@pytest.mark.skipif(WIN_ONLY, reason='bundled Windows BSArch')
+def test_pack_compressed_localized_texture_preserves_payload(tmp_path):
+    from asset_convert.sources.bsa_pack import _run_bsarch
+    from asset_convert.sources.bsa_extract import iter_bsa
+    tool = Path(__file__).resolve().parents[1] / 'external/bsarch/BSArch.exe'
+    source = tmp_path / 'source.dds'
+    payload = b'DDS payload' * 100
+    source.write_bytes(payload)
+    stage = tmp_path / 'staging'
+    rel = Path('textures/Русский/Текстура.dds')
+    name_map = {}
+    _stage_bin([(source, rel, len(payload))], stage, name_map)
+    archive = tmp_path / 'Texture.bsa'
+    result = {'packed': [], 'errors': []}
+    assert _run_bsarch(str(tool), stage, archive, True, result, name_map)
+    assets = {name.encode('latin-1').decode('utf-8'): body
+              for name, body in iter_bsa(archive)}
+    expected = str(rel).replace('/', '\\').encode('utf-8').lower().decode('utf-8')
+    assert assets == {expected: payload}

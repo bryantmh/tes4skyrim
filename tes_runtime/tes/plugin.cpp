@@ -27,12 +27,13 @@
 #include "paths.h"
 #include "skse_abi.h"
 #include "spin.h"
+#include "voice_redirects.h"
 
 using namespace tesruntime;
 
 namespace {
 
-constexpr UInt32 kPluginVersion = 6;
+constexpr UInt32 kPluginVersion = 7;
 constexpr UInt32 kSerializationId = 'TES4';
 
 bool g_engineResolved = false;
@@ -131,6 +132,9 @@ __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
         Log("addresses: loaded %s (%zu entries)", g_versionDb.path().c_str(),
             g_versionDb.count());
     }
+    // Patch resource callers before the game's worker threads start loading
+    // assets. Rules need only loose JSON files, not any live engine forms.
+    InstallVoiceRedirects();
     QueryInterfaces(skse);
     g_engineResolved = ResolveEngine();
     g_crimeInstalled = g_engineResolved && LoadCrimeSidecars();

@@ -237,7 +237,7 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
     See: docs/commentary/script_convert.md#script-output-dir
     """
     owner = owner_key(export_dir)
-    shared = prepare_output_dir(output_dir, owner)
+    shared = prepare_output_dir(output_dir, owner, export_dir=export_dir)
     bounds_cache = load_bounds_cache(export_dir)
     _WRITTEN.extend(deploy_static_scripts(export_dir, output_dir, shared))
     xref = build_xref(export_dir)

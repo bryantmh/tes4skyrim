@@ -16,7 +16,7 @@ authors never touched. Authorship now comes from diffing the two TES4 exports
 import os
 import struct
 import zlib
-from output_layout import paths
+from output_layout import paths, converted_master_path
 
 from ..base.tes5_reader import REC_HDR as _HEADER_SIZE
 from ..base.tes5_reader import first_sub, masters, walk
@@ -152,14 +152,22 @@ class MasterIndex:
         table = self._edid_tables.get(signature)
         if table is None:
             table = self._edid_tables[signature] = self._scan_edids(signature)
-        return table.get(edid.encode('ascii', 'replace'), 0)
+        return table.get(edid.encode('utf-8'), 0)
 
     def _scan_edids(self, signature: bytes) -> dict:
-        """{EditorID bytes: FormID} for one signature's uncompressed records."""
+        """{EditorID bytes: FormID} for one signature's uncompressed records.
+
+        Only records this file DEFINES (index byte == own_index) are keyed.
+        An override copy names another file's record while carrying its EDID —
+        adopting it would restamp a foreign id into this file's slot and the
+        override would land on the wrong record in the child.
+        """
         table = {}
         for fid, (sig, off, size) in self._offsets.items():
             if sig != signature:
                 continue
+            if ((fid >> 24) & 0xFF) != self.own_index:
+                continue            # another file's record, overridden here
             # Compressed bodies start with a u32 decompressed size, not EDID.
             if struct.unpack_from('<I', self._data, off + 8)[0] & 0x00040000:
                 continue
@@ -497,7 +505,15 @@ class ChainedMasterIndex:
         return owner, own_id
 
     def _to_child(self, idx, formid: int) -> int:
-        """Translate one of `idx`'s own-space ids back into the child's space."""
+        """Translate one of `idx`'s own-space ids back into the child's space.
+
+        Only ids the file DEFINES (index byte == its own) are restated. An
+        override copy names a record another file owns; restamping it into
+        this file's slot would point the child at a different record under
+        the same low 24 bits, so such ids pass through unchanged.
+        """
+        if ((formid >> 24) & 0xFF) != idx.own_index:
+            return formid
         for slot, cand in self._by_slot.items():
             if cand is idx:
                 return (slot << 24) | (formid & 0x00FFFFFF)
@@ -645,7 +661,7 @@ def resolve_master_outputs(masters: list, tes4_master_count: int,
     for name in masters[len(masters) - tes4_master_count:]:
         # convert.py writes the ESM into the plugin's output folder, which
         # for an imported mod is its MOD's folder, not one named for it.
-        path = str(paths(name, out_root=output_root).esm)
+        path = str(converted_master_path(output_root, name))
         out.append((name, path if os.path.isfile(path) else None))
     return out
 

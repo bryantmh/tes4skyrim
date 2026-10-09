@@ -289,7 +289,7 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
     support_root = not ctx or not adopt_master_special_records(ctx, master_export_dirs(ctx))
     if support_root:
         create_vtyp_records(writer, export_dir, by_type)
-    _origin_fact = create_origin_faction(writer, support_root)
+    _origin_fact = create_origin_faction(writer, support_root, by_type)
     print(f"  Plugin-origin faction: {_origin_fact:08X} (TES4PluginOriginFaction)")
     if support_root:
         create_tes4_special_records(writer)
@@ -1032,7 +1032,8 @@ def _prescan_music_records(by_type: dict, writer, export_dir: str, plugin_out_di
             plugin_out_dir,
             export_dir=os.path.dirname(os.path.normpath(export_dir)),
             plugin=os.path.basename(output_path))
-        _by_enum = master_music_types(writer)
+        _by_enum = master_music_types(
+            writer, output_root=os.path.dirname(plugin_out_dir))
         if _music_manifest.get('tracks'):
             _plugin_name = _music_manifest.get('plugin') or os.path.basename(
                 os.path.normpath(plugin_out_dir))

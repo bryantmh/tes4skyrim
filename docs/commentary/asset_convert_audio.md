@@ -509,6 +509,20 @@ a race without one has no folder to route to. Oblivion's `VampireRace`
 (`0x00000019`) is the only such record, and no `vampire/` source folder exists.
 
 ## VNAM: which race's actors voice a race
+
+Skyrim voice paths in BSA directories are written as UTF-8, matching plugin
+EditorIDs. Non-ASCII staging paths use temporary ASCII names so BSArch's Windows
+ANSI codepage cannot alter them; the final archive restores their UTF-8 spelling
+and hashes, retaining audio payloads. Non-ASCII case from the EditorID is kept.
+
+Dependent plugins use the selected converted masters' voice folders exclusively.
+The master variant matching the configured target install supplies both the
+VTYP records and its own race export; ancestors are resolved transitively.
+Source folder names and old voicemap targets are aliases into those existing
+master voices. They cannot create a second English/localized spelling. An
+unresolved folder or a pinned voice absent from the masters is reported and
+omitted rather than written to a guessed destination. The dialogue plugin
+continues to own its audio files; only voice-type folder identities are inherited.
 <a id="vnam-voice-routing"></a>
 
 Oblivion does not record one take per RACE. It records one take per **voice**,

@@ -131,6 +131,39 @@ def _walk_records(blob):
 # ---------------------------------------------------------------------------
 
 class TestCTDAConversion:
+    @pytest.mark.parametrize('speaker_vampire,player_vampire,eligible', [
+        (False, False, False), (False, True, True),
+        (True, False, False), (True, True, False),
+    ])
+    def test_vampire_refusal_requires_vampire_player_and_mortal_speaker(
+            self, speaker_vampire, player_vampire, eligible):
+        # Morroblivion INFO 0100A9AF: GetVampire(subject)==0 AND
+        # GetVampire(target)==1. This refusal must never reach a mortal player.
+        rec = {'Condition[0].Raw': _tes4_ctda(func=40, comp=0).hex(),
+               'Condition[1].Raw': _tes4_ctda(func=40, type_byte=2).hex()}
+        conditions = convert_ctda_list_with_strings(rec, offset=3,
+                                                    run_on_target_ref=0x14)
+        assert len(conditions) == 2
+        results = []
+        for condition, _ in conditions:
+            function = struct.unpack_from('<H', condition, 8)[0]
+            keyword = struct.unpack_from('<I', condition, 12)[0]
+            run_on, reference = struct.unpack_from('<II', condition, 20)
+            assert function == 560 and keyword == 0x000A82BB
+            assert (run_on, reference) in ((0, 0), (2, 0x14))
+            actor = speaker_vampire if run_on == 0 else player_vampire
+            results.append(float(actor) == struct.unpack_from('<f', condition, 4)[0])
+        assert all(results) is eligible
+
+    def test_vampire_alternative_keeps_or_and_target(self):
+        # A vampire gate may be an alternative to another valid response gate.
+        rec = {'Condition[0].Raw': _tes4_ctda(func=40, type_byte=3).hex(),
+               'Condition[1].Raw': _tes4_ctda(func=72, p1=0x1234).hex()}
+        conditions = convert_ctda_list(rec, offset=2)
+        assert len(conditions) == 2 and conditions[0][0] & CTDA_OR
+        assert struct.unpack_from('<I', conditions[0], 20)[0] == 1
+        assert struct.unpack_from('<I', conditions[0], 12)[0] == 0x000A82BB
+
     def test_size_and_field_positions(self):
         out = convert_ctda(_tes4_ctda(func=72, p1=0x1234), offset=0)
         assert out is not None and len(out) == 32
@@ -1821,6 +1854,53 @@ class TestOriginGate:
     file, not per-plugin. A line is only scoped to its own plugin if some
     condition POSITIVELY names a form that plugin owns.
     """
+
+    @pytest.mark.parametrize('actor_sig,actor_fid', [
+        (None, None), ('NPC_', '00000042'),
+        ('NPC_', '01000042'), ('CREA', '01000042'),
+    ])
+    def test_addon_greeting_keeps_a_reachable_origin_audience(
+            self, actor_sig, actor_fid):
+        """Actorless greetings reach master NPCs without admitting foreign NPCs."""
+        from tes5_import.base.writer import PluginWriter
+        from tes5_import.record_types.actor_common import (
+            create_origin_faction, reset_origin_faction)
+
+        class MasterIndex:
+            def find_all_by_edid(self, sig, edid):
+                return [0x01000010, 0x02000010]
+
+        # Slot 1 is an inherited master; only slot 2 is in the source header.
+        set_formid_index_offset(2)
+        try:
+            reset_origin_faction(MasterIndex())
+            writer = PluginWriter(masters=['Skyrim.esm', 'Inherited.esm', 'Master.esm'])
+            by_type = {
+                'DIAL': [{'FormID': '01000100', 'EditorID': 'HELLO',
+                          'DATA.Type': '6', 'QuestCount': '0'}],
+                'INFO': [{'FormID': '01000200', 'ParentDIAL': '01000100',
+                          'DATA.Flags': '0', 'ResponseCount': '1',
+                          'Response[0].ResponseNumber': '1',
+                          'Response[0].ResponseText': 'A greeting.',
+                          'Condition[0].Raw': self._ctda(70, comp=0)}],
+            }
+            if actor_sig:
+                by_type[actor_sig] = [{'FormID': actor_fid}]
+            own_origin = create_origin_faction(writer, False, by_type)
+            build_dialog_groups(by_type, writer, npc_to_vtyp={})
+            data = b''.join(writer._top_groups.get('DIAL', []))
+            info = next(r for r in records(data, b'INFO', span=(0, len(data)))
+                        if r.form_id == 0x03000200)
+            conditions = [v for k, v in info.subs() if k == b'CTDA']
+            gates = [v for v in conditions if struct.unpack_from('<H', v, 8)[0] == 71]
+            expected = own_origin if actor_fid == '01000042' else 0x02000010
+            assert [struct.unpack_from('<I', v, 12)[0] for v in gates] == [expected]
+            assert gates[0][0] == 0 and struct.unpack_from('<f', gates[0], 4)[0] == 1
+            assert any(struct.unpack_from('<H', v, 8)[0] == 70
+                       and struct.unpack_from('<f', v, 4)[0] == 0 for v in conditions)
+        finally:
+            set_formid_index_offset(0)
+            reset_origin_faction()
 
     @staticmethod
     def _ctda(func, operator=0x00, comp=1.0, param1=0x00A082,

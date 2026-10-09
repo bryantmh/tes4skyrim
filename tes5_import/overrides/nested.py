@@ -299,6 +299,7 @@ class OverrideContext:
         `num_tes4_masters`: indexed for adoption, never diffed against.
         """
         self.export_dir = export_dir
+        self.output_root = output_root
         self.master_index = load_master_index(
             masters, num_tes4_masters + inherited, output_root)
         self.master_manifest = load_master_manifests(
@@ -988,7 +989,19 @@ def _convert_nested(sig: str, rec: dict, ctx: OverrideContext, parent_out: int,
     """
     label = struct.pack('<I', parent_out)
     if sig == 'INFO':
-        return convert_INFO(rec, injected_ctdas=origin_gate(rec)), ((7, label),)
+        from ..dialogue.converter import service_menu_kind
+        from ..dialogue.groups import _service_gate
+        parent = (ctx.master_export or {}).get(
+            (rec.get('ParentDIAL') or '').upper(), {})
+        service = service_menu_kind(parent)
+        gates = origin_gate(rec)
+        if service:
+            service_gates = _service_gate(service)
+            if not service_gates:
+                return b'', ()
+            gates = service_gates + gates
+        return convert_INFO(rec, injected_ctdas=gates,
+                            service_menu=service), ((7, label),)
     if sig == 'LAND':
         return _nested_land(rec, ctx, parent_out)
     if sig == 'PGRD':

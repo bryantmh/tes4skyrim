@@ -79,7 +79,21 @@ class MasterAdoption:
         writer.remove_records(lambda r: _formid(r) in self.adopted)
         kept = 0
         for record in ours:
-            merged = _with_text(self.master_index.record(_formid(record)), record)
+            fid = _formid(record)
+            master = self.master_index.record(fid)
+            if not master:
+                # The adopted id names no record in the loaded masters
+                # (truncated master output, an unroutable slot, or an EDID
+                # that resolved to another file's override copy). Crashing
+                # here killed the whole import (Tamriel_Data.esm:
+                # struct.error on a 0-byte buffer); the record we built is
+                # kept as-is so the plugin still defines the id, loudly.
+                print(f"  WARNING: adopted {record[:4].decode('ascii', 'replace')} "
+                      f"{fid:08X} has no master record; keeping ours")
+                writer.add_record(record[:4].decode('ascii', 'replace'), record)
+                kept += 1
+                continue
+            merged = _with_text(master, record)
             if merged:
                 writer.add_record(merged[:4].decode('ascii'), merged)
                 kept += 1

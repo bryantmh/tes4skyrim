@@ -2,7 +2,7 @@
 
 See: docs/commentary/script_convert.md#wipe-output-dir
 """
-from script_convert.context_setup import prepare_output_dir
+from script_convert.context_setup import deploy_static_scripts, prepare_output_dir
 from script_convert.ownership import read_owned, sibling_owned, write_owned
 
 
@@ -46,3 +46,64 @@ def test_owned_lists_round_trip(tmp_path):
     assert read_owned(src, 'A.esm') == {'X', 'Y'}
     assert sibling_owned(src, 'B.esp') == {'X', 'Y'}
     assert sibling_owned(src, 'A.esm') == set()
+
+
+def _imported_group(tmp_path, kind='folder', online=True):
+    from asset_convert.sources import source_registry as registry
+
+    exp = tmp_path / 'export'
+    original = tmp_path / 'original'
+    if online:
+        original.mkdir()
+        for name in ('A.esm', 'B.esp'):
+            (original / name).write_bytes(b'x')
+    for name in ('A.esm', 'B.esp', 'Deleted.esp'):
+        registry.put(exp, name, {
+            'kind': kind, 'plugin': name, 'group_id': 'pack',
+            'group_label': 'Pack', 'group_plugins': ['A.esm', 'B.esp', 'Deleted.esp'],
+            'archive_original': str(original), 'plugin_member': name,
+        })
+        records = registry.record_dir(exp, name)
+        records.mkdir(parents=True)
+        (records / '_HEADER.txt').write_text('Master[0]=Oblivion.esm\n', encoding='utf-8')
+        binary = registry.source_dir(exp, name) / name
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b'x')
+    return registry.record_dir(exp, 'A.esm')
+
+
+def test_removed_members_cannot_keep_stale_scripts_or_master_polyfill(tmp_path):
+    records = _imported_group(tmp_path)
+    src = _scripts(tmp_path, ['OwnOld', 'Live', 'Shared', 'DeadOnly',
+                             'UnregisteredOnly', 'TES4Polyfill'])
+    write_owned(src, 'A.esm', ['OwnOld'])
+    write_owned(src, 'B.esp', ['Live', 'Shared'])
+    write_owned(src, 'Deleted.esp', ['DeadOnly', 'Shared', 'TES4Polyfill'])
+    # A re-import can also remove the old member from the registry entirely.
+    write_owned(src, 'OldUnregistered.esp', ['UnregisteredOnly'])
+
+    shared = prepare_output_dir(str(src), 'A.esm', export_dir=str(records))
+    assert shared == {'Live', 'Shared'}
+    assert deploy_static_scripts(str(records), str(src), shared) == []
+    assert sorted(p.stem for p in src.glob('*.psc')) == ['Live', 'Shared']
+    assert sorted(p.stem for p in src.parent.glob('*.pex')) == ['Live', 'Shared']
+    assert sorted(p.name for p in src.parent.glob('*.owned.txt')) == [
+        'A.esm.owned.txt', 'B.esp.owned.txt']
+
+
+def test_archive_and_offline_members_keep_their_owned_scripts(tmp_path):
+    for kind, online in (('archive', True), ('folder', False)):
+        root = tmp_path / kind
+        root.mkdir()
+        records = _imported_group(root, kind=kind, online=online)
+        src = _scripts(root, ['Live', 'Cached', 'TES4Polyfill'])
+        write_owned(src, 'A.esm', [])
+        write_owned(src, 'B.esp', ['Live'])
+        write_owned(src, 'Deleted.esp', ['Cached', 'TES4Polyfill'])
+
+        shared = prepare_output_dir(str(src), 'A.esm', export_dir=str(records))
+        assert shared == {'Live', 'Cached', 'TES4Polyfill'}
+        assert deploy_static_scripts(str(records), str(src), shared) == []
+        assert sorted(p.stem for p in src.glob('*.psc')) == ['Cached', 'Live', 'TES4Polyfill']
+        assert sorted(p.stem for p in src.parent.glob('*.pex')) == ['Cached', 'Live', 'TES4Polyfill']
+        assert (src.parent / 'Deleted.esp.owned.txt').is_file()

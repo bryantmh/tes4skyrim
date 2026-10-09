@@ -49,7 +49,7 @@ from ..actors.outfits import split_inventory
 from ..packages.actor_wiring import CSTY_DEFAULT
 from .vmad_swap import SCRIPT_SWAP_KEY, SCRIPTED_TYPES, swap_vmad_script
 
-from ..base.writer import RECORD_HEADER_SIZE
+from ..base.writer import RECORD_HEADER_SIZE, encode_string as _encode_string
 _COMPRESSED_FLAG = 0x00040000
 
 # Export key -> the output subrecord it writes, for keys whose value is a
@@ -203,10 +203,6 @@ def join_subrecords(header: bytes, subs: list) -> bytes:
     body = b''.join(sig + struct.pack('<H', len(p)) + p for sig, p in subs)
     return (header[:4] + struct.pack('<I', len(body))
             + header[8:RECORD_HEADER_SIZE] + body)
-
-
-def _encode_string(value: str) -> bytes:
-    return (value or '').encode('cp1252', errors='replace') + b'\x00'
 
 
 # --------------------------------------------------------------------------

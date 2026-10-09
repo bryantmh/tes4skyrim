@@ -118,6 +118,9 @@ PACKING_STEPS = ("pack", "pack_zip")
 #: conversion_config.json key for that setting. Absent reads as ON.
 PACK_DEFAULT_CONFIG_KEY = "packStepsDefaultOn"
 
+# Shared imported-mod history and asset reuse. Absent reads as ON.
+IMPORTED_MOD_OPTIMIZATIONS_KEY = "importedModOptimizations"
+
 #: conversion_config.json key for the inferred-collision-winding tri-state.
 WINDING_CONFIG_KEY = "collisionWindingFix"
 WINDING_AUTO, WINDING_ON, WINDING_OFF = "auto", "on", "off"
@@ -128,6 +131,9 @@ LOD_DETAIL_CONFIG_KEY = "lodDetail"
 
 #: conversion_config.json key for the navmesh generator (core.navmesh_options.GENERATORS).
 NAVMESH_GENERATOR_CONFIG_KEY = "navmeshGenerator"
+
+#: conversion_config.json key for the TES4 text codepage (core.tes4_encoding).
+TES4_ENCODING_CONFIG_KEY = "tes4Encoding"
 
 #: conversion_config.json key for the folder the navmesh editor saves pins to.
 NAVMESH_PINS_CONFIG_KEY = "navmeshPinsDir"

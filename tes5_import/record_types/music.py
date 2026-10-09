@@ -116,15 +116,33 @@ def musc_editor_id(plugin: str, category: str) -> str:
     return 'MUS%s%s' % (stem, category.capitalize())
 
 
-def master_music_types(writer) -> dict:
-    """{TES4 music enum: a master's category MUSC FormID}, later masters winning."""
+def master_music_types(writer, output_root=None) -> dict:
+    """{TES4 music enum: a master's category MUSC FormID}, later masters winning.
+
+    The music manifest retains an install variant's conversion name even when
+    the plugin filename is simply Oblivion.esm.
+    """
     adoption = getattr(writer, 'adoption', None)
     if adoption is None:
         return {}
     out = {}
     for name in writer.masters:
+        music_name = name
+        if output_root is not None:
+            from output_layout import converted_master_path
+            manifest_path = (converted_master_path(output_root, name).parent
+                             / 'music_tracks.json')
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+                music_name = manifest.get('plugin') or name
+            except (OSError, ValueError):
+                pass
         for enum_val, cat in MUSIC_ENUM_CATEGORY.items():
-            fid = adoption.master_index.find_by_edid(b'MUSC', musc_editor_id(name, cat))
+            fid = adoption.master_index.find_by_edid(
+                b'MUSC', musc_editor_id(music_name, cat))
+            if not fid and music_name != name:
+                fid = adoption.master_index.find_by_edid(
+                    b'MUSC', musc_editor_id(name, cat))
             if fid:
                 out[enum_val] = fid
     return out

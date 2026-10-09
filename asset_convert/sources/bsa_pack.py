@@ -53,6 +53,7 @@ from tes5_import.base.writer import pack_tes4_header
 from asset_convert import paths
 from asset_convert.sources import source_registry
 from asset_convert.texture import texture_prune
+from asset_convert.sources.bsa_names import staging_path, rewrite_names
 
 # ---------------------------------------------------------------------------
 # Size limits
@@ -170,6 +171,7 @@ def bin_files(
 def _stage_bin(
     entries: 'list[tuple[Path, Path, int]]',
     stage_root: Path,
+    name_map=None,
 ) -> int:
     """Hardlink one bin's files into stage_root, preserving archive paths.
 
@@ -178,6 +180,12 @@ def _stage_bin(
     """
     count = 0
     for src, rel, _size in entries:
+        if name_map is not None:
+            original = str(rel).replace('/', '\\').encode('utf-8').lower()
+            rel = staging_path(rel)
+            staged = str(rel).replace('/', '\\').encode('ascii').lower()
+            if staged != original:
+                name_map[staged] = original
         dst = stage_root / rel
         os.makedirs(long_path(dst.parent), exist_ok=True)
         _link_or_copy(src, dst)
@@ -265,6 +273,7 @@ def _run_bsarch(
     bsa_path: Path,
     compress: bool,
     results: dict,
+    name_map=None,
 ) -> bool:
     """Invoke BSArch on a staged directory.  Returns True on success.
 
@@ -310,6 +319,12 @@ def _run_bsarch(
             bsa_path.unlink()   # remove partial archive
         return False
 
+    if name_map:
+        try:
+            rewrite_names(bsa_path, name_map)
+        except Exception as exc:
+            results['errors'].append(f'{bsa_name}: UTF-8 archive names: {exc}')
+            return False
     size = bsa_path.stat().st_size if bsa_path.exists() else 0
     if size > BSA_HARD_LIMIT:
         err_msg = (
@@ -490,10 +505,11 @@ def _pack_bin(bsarch: str, plugin_dir: Path, bsa_path: Path, entries: list,
         shutil.rmtree(long_path(stage_root))
     stage_root.mkdir(parents=True)
     try:
-        n_files = _stage_bin(entries, stage_root)
+        name_map = {}
+        n_files = _stage_bin(entries, stage_root, name_map)
         print(f"  PACK  {bsa_path.name}  ({n_files} files, "
               f"{bin_size / 1_048_576:.1f} MB from {label})")
-        _run_bsarch(bsarch, stage_root, bsa_path, compress, results)
+        _run_bsarch(bsarch, stage_root, bsa_path, compress, results, name_map)
     except Exception as exc:
         print(f"  ERROR {bsa_path.name}: {exc}")
         results['errors'].append(f"{bsa_path.name}: {exc}")

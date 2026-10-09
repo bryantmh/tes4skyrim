@@ -49,6 +49,27 @@ harmful ones, and a calcinator boosts both. The best of each kind you have is
 used. Brewing itself stays Skyrim's: the same ingredients, perks, skill gains
 and potion values.
 
+### Missing converted voice recordings can use the original game's substitutes
+
+For converted Oblivion plugins, the Sounds step stages VoiceFile Redirector
+rules in `<plugin>.voice_redirects.json`. TESRuntime opens the requested voice
+normally first. When it is absent, it tries the shared racial voice (Dark Elf
+or Wood Elf to High Elf, Orc to Nord), then the same-sex Imperial recording.
+An absent first GREETING response can use that voice's ordinary Oblivion hello.
+As in the original OBSE plugin, this hello can differ from the subtitle.
+
+The runtime reads the existing loose/BSA file directly. It creates no audio
+copies, no English aliases of localized voices, and changes no NPC voice types
+or dialogue conditions. It does not invent recordings or let Nord speakers
+borrow arbitrary High Elf dialogue. Unstaged plugins are unaffected.
+
+Rules use the actual converted master's VTYP folders and converted hello
+filenames. Implementation: `voice_redirects.cpp` (selection), `voice_hooks.cpp`
+(the engine resource-open call sites, Address Library id 69839). The hook is
+installed at plugin load and only substitutes failed read opens with
+BSResource::NotExist; other errors and writes retain the engine's result.
+Reference: [VoiceFile Redirector](https://github.com/ponyrider0/voicefile-redirector).
+
 ## Should I keep it enabled?
 
 Yes, whenever you play a converted game. Without it, arrests use Skyrim's

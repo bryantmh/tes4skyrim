@@ -3,17 +3,21 @@
 See: docs/commentary/tes5_import_override.md#generated-records-reuse-the-masters
 """
 
+import json
 import struct
 import sys
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tes5_import.actors.creature_races import _shared_creatures
 from tes5_import.base.writer import PluginWriter, pack_record, pack_string_subrecord
 from tes5_import.overrides.adoption import MasterAdoption, generated_formid
+from tes5_import.overrides.master_index import MasterIndex
 from tes5_import.overrides.builder import apply_changes, split_subrecords
 from tes5_import.overrides.nested import OverrideContext
 from tes5_import.record_types.common import register_music_types
@@ -97,6 +101,23 @@ def test_translated_record_keeps_the_masters_other_fields():
     assert list(writer.top_records()) == [packed('Grey Wolf', 7)]
 
 
+def test_finalize_keeps_ours_when_the_master_record_is_missing(capsys):
+    """An adopted id with no master bytes ships ours instead of crashing.
+
+    The master index can answer an EDID with an id whose bytes are then
+    unavailable (truncated output, an unroutable slot). finalize used to die
+    with struct.error on the empty buffer and kill the whole import.
+    """
+    ours = _record('MESG', MASTER_MSG, 'TES4Msg_A', 'Hello')
+    writer = _writer({MASTER_MSG: _record('MESG', MASTER_MSG, 'TES4Msg_A', 'Hallo')})
+    writer.adoption.find('MESG', 'TES4Msg_A')
+    writer.add_record('MESG', ours)
+    writer.adoption.master_index.records.pop(MASTER_MSG)
+    assert writer.adoption.finalize(writer) == (1, 0)
+    assert list(writer.top_records()) == [ours]
+    assert 'has no master record' in capsys.readouterr().out
+
+
 def test_queued_copy_yields_to_a_record_already_written():
     """A renamed copy ships only where nothing else wrote that FormID."""
     written = _record('MGEF', MASTER_MGEF_COPY, 'TES4REHEFFSelf', 'Restore Life')
@@ -177,3 +198,88 @@ def test_child_music_falls_back_to_the_masters_categories():
     writer = _writer({0x01001000: _record('MUSC', 0x01001000, 'MUSNehrimesmDungeon', ''),
                       0x01001001: _record('MUSC', 0x01001001, 'MUSNehrimesmExplore', '')})
     assert master_music_types(writer) == {0: 0x01001001, 2: 0x01001000}
+
+
+def test_child_music_uses_the_converted_masters_install_name(tmp_path):
+    """A renamed localized master still supplies the child's music categories."""
+    folder = tmp_path / 'Nehrim.esm'
+    folder.mkdir()
+    (folder / 'music_tracks.json').write_text(
+        json.dumps({'plugin': 'Nehrim.esm (Deutsch)'}), encoding='utf-8')
+    writer = _writer({
+        0x01001000: _record('MUSC', 0x01001000, 'MUSNehrimesmDeutschDungeon', ''),
+        0x01001001: _record('MUSC', 0x01001001, 'MUSNehrimesmDeutschExplore', ''),
+        0x01001002: _record('MUSC', 0x01001002, 'MUSNehrimesmDeutschPublic', ''),
+    })
+    assert master_music_types(writer, output_root=tmp_path) == {
+        0: 0x01001001, 1: 0x01001002, 2: 0x01001000}
+
+
+@pytest.mark.parametrize('installed', ['localized', 'canonical', 'missing', 'other'])
+def test_child_uses_installed_converted_master_variant(tmp_path, monkeypatch, installed):
+    """Master records, companion IDs and music all come from the installed variant."""
+    from asset_convert.sources import skyrim_assets
+    from tes5_import.overrides.master_index import load_master_index
+    from tes5_import.overrides.manifest import load_master_manifests, write_manifest
+
+    output = tmp_path / 'output'
+    game = tmp_path / 'Data'
+    game.mkdir()
+    files = {}
+    for kind, name, fid in [('canonical', 'Nehrim.esm', 0x01001000),
+                            ('localized', 'Nehrim.esm (Deutsch)', 0x01002000)]:
+        folder = output / name
+        folder.mkdir(parents=True)
+        master = PluginWriter(masters=['Skyrim.esm'])
+        edid = 'MUS' + ''.join(c for c in name if c.isalnum()) + 'Explore'
+        master.add_record('MUSC', _record('MUSC', fid, edid, ''))
+        path = folder / 'Nehrim.esm'
+        master.write(str(path))
+        write_manifest(str(path), 'Nehrim.esm', {'00000080': {'fid': fid}})
+        (folder / 'music_tracks.json').write_text(
+            json.dumps({'plugin': name}), encoding='utf-8')
+        files[kind] = path
+    if installed in files:
+        (game / 'Nehrim.esm').write_bytes(files[installed].read_bytes())
+    elif installed == 'other':
+        # Same size is insufficient: an unrelated install must not select a variant.
+        raw = bytearray(files['localized'].read_bytes())
+        raw[-2] ^= 1
+        (game / 'Nehrim.esm').write_bytes(raw)
+    monkeypatch.setattr(skyrim_assets, 'find_skyrim_data', lambda: str(game))
+    masters = ['Skyrim.esm', 'Nehrim.esm']
+    index = load_master_index(masters, 1, str(output))
+    manifest = load_master_manifests(masters, 1, str(output))
+    writer = PluginWriter(masters=masters)
+    writer.adoption = MasterAdoption(index)
+    expected = 0x01002000 if installed == 'localized' else 0x01001000
+    assert manifest.output_formid('00000080') == expected
+    assert master_music_types(writer, output_root=output) == {0: expected}
+
+
+def test_child_npc_adopts_the_localized_master_voice(tmp_path, monkeypatch):
+    """The child uses the existing Russian VTYP and publishes its audio folder."""
+    from tes5_import.base.adopted_records import _adopt_race_voices
+    from tes5_import.base.equivalents import VOICE_TYPE_MAP, VTYP_EDID_BY_FID
+    from tes5_import.dialogue.converter import build_npc_to_vtyp_map
+
+    english_fid, russian_fid = 0x01001000, 0x01001001
+    russian_edid = 'TES4MaleВысокийэльф'
+    master = PluginWriter(masters=['Skyrim.esm'])
+    for fid, edid in [(english_fid, 'TES4MaleHighElf'),
+                      (russian_fid, russian_edid)]:
+        master.add_record('VTYP', _record('VTYP', fid, edid, ''))
+    path = tmp_path / 'Oblivion.esm'
+    master.write(str(path))
+    (tmp_path / 'RACE.txt').write_text(
+        '---RECORD_BEGIN---\nFormID=00000001\nEditorID=HighElf\n'
+        'FULL=Высокий эльф\n---RECORD_END---\n', encoding='utf-8')
+    monkeypatch.setitem(VOICE_TYPE_MAP, ('HighElf', 'Male'), english_fid)
+    monkeypatch.setitem(VTYP_EDID_BY_FID, russian_fid, '')
+    assert _adopt_race_voices(MasterIndex(str(path)), [tmp_path]) == 1
+    by_type = {
+        'RACE': [{'FormID': '00000001', 'EditorID': 'HighElf'}],
+        'NPC_': [{'FormID': '01000080', 'RNAM.Race': '00000001', 'ACBS.Flags': '0'}],
+    }
+    assert build_npc_to_vtyp_map(by_type, 1)[0x02000080] == russian_fid
+    assert VTYP_EDID_BY_FID[russian_fid] == russian_edid

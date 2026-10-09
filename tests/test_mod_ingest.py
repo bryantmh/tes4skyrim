@@ -1026,6 +1026,7 @@ def test_mod_name_is_refused_as_a_plugin(tmp_path):
     assert source_registry.mod_plugins(export, 'TR_Mainland.esm') == []
     assert source_registry.mod_plugins(export, 'Tamriel Landscape Pack') == []
 
-    args = type('Args', (), {'files': ['Tamriel Rebuilt 25.08.12']})()
+    args = type('Args', (), {'files': ['Tamriel Rebuilt 25.08.12'],
+                               'build_morrowind_patch': None})()
     with pytest.raises(SystemExit, match='-f TR_Mainland.esm'):
         convert._plugins_to_convert(args, {}, '', str(export))

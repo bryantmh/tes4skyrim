@@ -38,18 +38,15 @@ See: docs/commentary/asset_convert_audio.md#race-identity-spans-the-masters
 
 from pathlib import Path
 
-from core.plugin_masters import master_dirs
+from core.plugin_masters import (export_encoding, master_dirs, master_chain,
+                                master_export_dir, export_root)
 
 __all__ = ['voice_key', 'vtyp_edid', 'load_race_voices', 'RaceVoices',
            'master_race_dirs']
 
 
 def voice_key(name: str) -> str:
-    """Collapse a race display name into the EditorID fragment used for VTYPs.
-
-    Keeps letters and digits, drops everything else, preserves case:
-    "High Elf" -> "HighElf", "Halb-Aeterna" -> "HalbAeterna".
-    """
+    """A display name as a VTYP key: letters and digits kept, case kept."""
     return ''.join(c for c in (name or '') if c.isalnum())
 
 
@@ -70,14 +67,22 @@ class RaceVoices:
     __slots__ = ('by_race_edid', 'by_folder', 'keys')
 
     def __init__(self, by_race_edid, by_folder, keys):
+        """Store the resolved race, folder and key maps."""
         self.by_race_edid = by_race_edid
         self.by_folder = by_folder
         self.keys = keys
 
     def folder_key(self, folder: str) -> 'str | None':
-        """Voice key for a source race folder, or None if the plugin has no
-        race by that display name."""
-        return self.by_folder.get((folder or '').strip().lower())
+        """Voice key for a source race folder, or None when unknown.
+
+        Falls back to the alnum-collapsed spelling: the BSA spells some
+        folders with spaces the records do not have ('dark seducer' vs
+        'DarkSeducer'), and those must resolve to the same voice key
+        instead of synthesising a duplicate voice type.
+        """
+        lowered = (folder or '').strip().lower()
+        return self.by_folder.get(lowered) or self.by_folder.get(
+            voice_key(lowered))
 
     def __bool__(self):
         return bool(self.keys)
@@ -101,8 +106,11 @@ def iter_records(txt: Path):
 
 
 def master_race_dirs(export_dir: Path) -> list:
-    """Each exported master's folder, resolved as the importer resolves it."""
-    return [Path(d) for d in master_dirs(export_dir)
+    """All exported ancestors, deepest first, for shared race voice identities."""
+    root = export_root(export_dir)
+    dirs = [master_export_dir(root, name) for name in master_chain(export_dir)]
+    return [Path(d) for d in dirs
+            if Path(d).is_dir()
             if Path(d) != Path(export_dir)]
 
 
@@ -112,21 +120,53 @@ def _iter_race_records(export_dir: Path):
         yield from iter_records(d / 'RACE.txt')
 
 
-def load_race_voices(export_dir) -> RaceVoices:
+def _export_codec(export_dir: Path) -> str:
+    """The text codec of this export tree.
+
+    The caller's folder is the shared asset root, which owns no `_HEADER.txt`
+    when the mod ships several plugins; masters are the same install's game,
+    so their header answers identically.
+    """
+    dirs = [export_dir] + master_race_dirs(export_dir)
+    for folder in dirs:
+        codec = export_encoding(str(folder))
+        if (folder / "_HEADER.txt").is_file() and codec != "cp1252":
+            return codec
+    return export_encoding(str(export_dir))
+
+
+def _bsa_spelling(name: str, codec: str) -> str:
+    """`name` as the BSA extractor spells it on disk, or '' when identical.
+
+    Archive names decode as latin-1, so re-encoding the export-text name in
+    the export's codec and decoding those bytes as latin-1 reproduces the
+    extracted folder exactly. ASCII names spell the same either way.
+    """
+    try:
+        alias = name.encode(codec).decode("latin-1")
+    except (LookupError, UnicodeError):
+        return ""
+    return "" if alias == name else alias
+
+
+def load_race_voices(export_dir, *, include_masters=True) -> RaceVoices:
     """Voice identity for a plugin's races, its masters' races included.
 
-    A plugin that declares masters voices its actors out of THEIR race folders
-    (an Oblivion mod's `high elf/` recordings are Oblivion.esm's race), so the
-    masters are read first and the plugin's own RACE records override them.
-    A plugin with no RACE.txt anywhere yields an empty result. A race with no
-    FULL is skipped: the folder on disk IS the display name.
+    Masters' races are read first (a mod voices its actors out of their
+    folders) and the plugin's own RACE records override them. A plugin with
+    no RACE.txt anywhere yields an empty result. A race with no FULL is
+    skipped: the folder on disk IS the display name. Each folder is also
+    indexed under its BSA-extracted latin-1 spelling (see _bsa_spelling).
 
     See: docs/commentary/asset_convert_audio.md#race-identity-spans-the-masters
     """
     by_race_edid: dict = {}
     by_folder: dict = {}
+    codec = _export_codec(Path(export_dir))
 
-    for rec in _iter_race_records(Path(export_dir)):
+    records = (_iter_race_records(Path(export_dir)) if include_masters
+               else iter_records(Path(export_dir) / 'RACE.txt'))
+    for rec in records:
         edid = (rec.get('EditorID') or '').strip()
         full = (rec.get('FULL') or '').strip()
         key = voice_key(full)
@@ -135,5 +175,69 @@ def load_race_voices(export_dir) -> RaceVoices:
         by_race_edid[edid] = key
         by_folder.setdefault(full.lower(), key)
         by_folder.setdefault(edid.lower(), key)
+        collapsed = voice_key(full).lower()
+        if collapsed != full.lower():
+            by_folder.setdefault(collapsed, key)
+        alias = _bsa_spelling(full, codec)
+        if alias:
+            by_folder.setdefault(alias.lower(), key)
 
     return RaceVoices(by_race_edid, by_folder, sorted(set(by_race_edid.values())))
+
+
+def master_voice_exports(folders, output_root=None):
+    """Master race exports, ancestors first, using each selected output variant."""
+    from output_layout import converted_master_path
+    seen = set()
+    for folder in folders:
+        root = export_root(folder)
+        ancestors = [master_export_dir(root, name) for name in master_chain(folder)]
+        for candidate in ancestors + [str(folder)]:
+            name = Path(candidate).name
+            if output_root:
+                selected = converted_master_path(output_root, name,
+                                                 export_root=root).parent.name
+                variant = Path(root) / selected
+                if (selected.startswith(name + ' (')
+                        and (variant / 'RACE.txt').is_file()):
+                    candidate = str(variant)
+            key = str(Path(candidate).resolve())
+            if key not in seen:
+                seen.add(key)
+                yield Path(candidate), name
+
+
+def load_master_voice_routes(record_dir, output_root):
+    """Authoritative race voices, aliases and VTYP folders of converted masters.
+
+    A dependent plugin must never synthesize another language's folder from
+    its source RACE display names. Missing routes stay missing; they are not
+    replaced with guessed folders. None denotes a root plugin.
+    """
+    import mmap
+    from output_layout import converted_master_path
+    from tes5_import.base.tes5_reader import records
+
+    folders = master_dirs(record_dir)
+    if not master_chain(record_dir):
+        return None
+    identities, aliases, allowed = {}, {}, set()
+    for folder, name in master_voice_exports(folders, output_root):
+        path = converted_master_path(output_root, name,
+                                     export_root=export_root(record_dir))
+        if not path.is_file():
+            continue
+        with path.open('rb') as stream, mmap.mmap(
+                stream.fileno(), 0, access=mmap.ACCESS_READ) as raw:
+            names = {(r.sub(b'EDID') or b'').rstrip(b'\0').decode('utf-8')
+                     for r in records(raw, b'VTYP')}
+        allowed.update(names)
+        races = load_race_voices(folder, include_masters=False)
+        for edid, key in races.by_race_edid.items():
+            for gender in ('M', 'F'):
+                target = vtyp_edid(key, gender)
+                if target in names:
+                    identities[(edid, gender)] = target
+                    aliases[vtyp_edid(edid, gender)] = target
+                    aliases[target] = target
+    return identities, aliases, allowed

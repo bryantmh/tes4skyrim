@@ -17,7 +17,10 @@ import mmap
 import struct
 from dataclasses import dataclass, field
 
-from .tes4_reader import Subrecord
+from core.tes4_encoding import ENCODING_AUTO, choice, decode, normalize, pin
+
+from .tes4_reader import (_PROBE_CAP, _PROBE_DIVISOR, _SIZE_CAP, Subrecord,
+                         decide_codec)
 
 RECORD_HEADER_SIZE = 16
 SUBRECORD_HEADER_SIZE = 8
@@ -63,13 +66,13 @@ def parse_subrecords(data: bytes) -> list:
 
 
 def get_string(sub: Subrecord) -> str:
-    """A TES3 string subrecord as text, decoded cp1252.
+    """A TES3 string subrecord as text, in the run's selected codec.
 
     See: docs/commentary/tes4_export_morrowind.md#the-tes3-container
     """
     if sub is None:
         return ""
-    return sub.data.split(b"\x00", 1)[0].decode("cp1252", errors="replace")
+    return decode(sub.data.split(b"\x00", 1)[0])
 
 
 def get_subrecord(rec: Tes3Record, sig: str) -> Subrecord:
@@ -148,7 +151,7 @@ def script_name(rec: Tes3Record) -> str:
     schd = get_subrecord(rec, "SCHD")
     if schd is None:
         return ""
-    return schd.data[:32].split(b"\x00", 1)[0].decode("cp1252", errors="replace")
+    return decode(schd.data[:32].split(b"\x00", 1)[0])
 
 
 def read_masters(filepath: str) -> list:
@@ -176,3 +179,64 @@ def _read_header_only(filepath: str) -> tuple:
         rec = Tes3Record(type="TES3", flags=flags, offset=0)
         rec.subrecords = parse_subrecords(fh.read(data_size))
     return rec, data_size
+
+
+#: TES3 display names, descriptions, book/dialogue text and localized IDs.
+_TES3_TEXT_SUBS = frozenset(("FNAM", "DESC", "TEXT", "RNAM", "NAME"))
+
+
+def _tes3_text_payloads(source_path: str, records: list):
+    """Text payloads stride-sampled across a Morrowind plugin binary.
+
+    TES3 records carry no compression flag; the data size is re-read from
+    each record header. Yields bytes.
+    """
+    taken = 0
+    size = 0
+    step = max(1, len(records) // _PROBE_DIVISOR)
+    with open(source_path, "rb") as fh:
+        mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+        try:
+            for rec in records[::step]:
+                if taken >= _PROBE_CAP or size >= _SIZE_CAP:
+                    break
+                taken += 1
+                if rec.offset < 0:
+                    continue
+                data_size = struct.unpack_from(
+                    "<I", mm, rec.offset + 4)[0]
+                chunk = mm[rec.offset + RECORD_HEADER_SIZE:
+                           rec.offset + RECORD_HEADER_SIZE + data_size]
+                for sub in parse_subrecords(bytes(chunk)):
+                    if sub.type in _TES3_TEXT_SUBS and sub.data:
+                        size += len(sub.data)
+                        yield sub.data
+        finally:
+            mm.close()
+
+
+def detect_codec(source_path: str, records: list) -> str:
+    """'cp1251' when the Morrowind binary reads as Russian, else 'cp1252'.
+
+    Same rule as the TES4 detector (see tes4_reader.decide_codec).
+    """
+    return decide_codec(_tes3_text_payloads(source_path, records))
+
+
+def configure_for_source(source_path: str, records: list) -> str:
+    """Pin the run's text codec for this Morrowind binary and return it.
+
+    An explicit ``TESCONV_TES4_ENCODING`` wins; ``auto`` scans the binary.
+    The setting is shared with TES4: one install, one codepage.
+    """
+    raw = choice()
+    codec = detect_codec(source_path, records) if raw == ENCODING_AUTO else raw
+    codec = pin(normalize(codec))
+    for rec in records:
+        name = get_subrecord(rec, "NAME")
+        if name is not None:
+            rec.record_id = get_string(name)
+        elif rec.type == "SCPT":
+            rec.record_id = script_name(rec)
+    print(f"  Text encoding: {codec}")
+    return codec

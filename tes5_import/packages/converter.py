@@ -198,15 +198,12 @@ SPEED_WALK, SPEED_JOG, SPEED_RUN, SPEED_FASTWALK = 0, 1, 2, 3
 #
 # TES4 packages never gate combat response at all (its only lever is the
 # Defensive Combat flag, which we deliberately drop — see
-# project_defensive_combat_flag), so the faithful default is: COMBAT bits ON
-# (an actor in a package still fights, exactly as in Oblivion), everything
-# VOCAL OFF.  That includes 0x10 "Reaction to player actions": it authorises
-# spoken reaction comments, and a converted scene actor barking one over a
-# scripted Say line disturbs conversation timing — the same reason the
-# chatter bits (hellos/random conversations/idle chatter/corpse greets) stay
-# governed by Oblivion's global GMST pacing rather than per-package
-# authorisation.
-DEFAULT_INTERRUPT = 0x0044  # observe combat 0x04 | aggro radius 0x40
+# project_defensive_combat_flag). Keep combat response enabled, and also allow
+# hellos and random conversations: GMST pacing cannot make them play while the
+# package denies permission. 0x0044 silenced these ambient lines in Morroblivion;
+# the AmbientPrerequisites patch restores exactly these two bits (0x0047).
+# Spoken reactions, idle chatter and corpse greetings remain disabled here.
+DEFAULT_INTERRUPT = 0x0047  # hello 0x01 | conversation 0x02 | combat 0x04 | aggro 0x40
 
 #: A force greet's interrupt flags, measured from vanilla MS05InductionForcegreet.
 FORCEGREET_INTERRUPT = 0xFEFF

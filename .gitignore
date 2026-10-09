@@ -59,3 +59,7 @@ conversion_config.json
 # Hand-editing artifacts from tools/cellview (local ground truth, not shipped)
 tests/navmesh_authored/
 tests/navmesh_fixed/
+
+# Local-only tool outputs and third-party binaries, never committed.
+external/lodgen/*.txt
+external/xwmaencode/*.exe

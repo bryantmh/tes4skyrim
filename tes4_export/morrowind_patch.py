@@ -52,7 +52,7 @@ from .morrowind_armor import body_models_from
 from .morrowind_ids import BASE_TYPES, IdIndex, load_index
 from .record_types.morrowind import as_dds, tes4_signature
 from .record_types.morrowind_magic import effect_ranges, game_settings
-from .tes3_reader import get_string, get_subrecord, read_file
+from .tes3_reader import configure_for_source, get_string, get_subrecord, read_file
 
 #: Morroblivion's EditorID separators: a leading '0' and '_' written 'U'.
 _EDID_SEP = re.compile(r'[_u]')
@@ -373,6 +373,7 @@ def export_patch(data_dir: str, export_dir: str, morroblivion_exports,
     if not morroblivion_exports:
         return {'ok': False, 'error': _no_morroblivion_message()}
 
+    configure_for_source(esms[0], read_file(esms[0])[1])
     progress(f'Indexing {len(morroblivion_exports)} converted Morroblivion '
              f'plugin(s)...')
     index = supplied_index(export_dir, morroblivion_exports)

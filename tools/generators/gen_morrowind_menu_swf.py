@@ -584,8 +584,13 @@ def _sprites(art) -> list:
 
 @functools.lru_cache(maxsize=None)
 def font_metrics() -> tuple:
-    """`(glyphs, ascent, descent, leading)` of the vendored face, read once."""
-    return ttf_glyphs.load(MW_FONT_PATH)
+    """`(glyphs, ascent, descent, leading)` of the vendored face, read once.
+
+    ASCII plus Cyrillic: Russian dialogue arrives as UTF-8, and a code the
+    face does not cover is simply absent from the movie (tofu on screen).
+    """
+    return ttf_glyphs.load(MW_FONT_PATH, extra=[
+        (ttf_glyphs.CYRILLIC_FIRST, ttf_glyphs.CYRILLIC_LAST)])
 
 
 def embed_font() -> Tag:
@@ -708,13 +713,14 @@ def _modal_lines() -> list:
 
 
 def _metric_lines() -> list:
-    """The face's vertical metrics and one advance per printable ASCII code,
-    in FONT_EM units, so the plugin can lay text out exactly as the movie."""
+    """The face's vertical metrics and one advance per code, 32 through
+    Cyrillic, in FONT_EM units, so the plugin can lay text out exactly as
+    the movie. Codes the face does not cover read 0 (measured as '?')."""
     glyphs, ascent, descent, leading = font_metrics()
     advances = {code: adv for code, adv, _contours in glyphs}
     table = ', '.join(str(advances.get(code, 0))
                       for code in range(ttf_glyphs.FIRST_CODE,
-                                        ttf_glyphs.LAST_CODE + 1))
+                                        ttf_glyphs.CYRILLIC_LAST + 1))
     return [f'constexpr int kFontEm = {ttf_glyphs.FONT_EM};',
             f'constexpr int kFontAscent = {ascent};',
             f'constexpr int kFontDescent = {descent};',

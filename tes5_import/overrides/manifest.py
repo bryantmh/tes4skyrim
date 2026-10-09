@@ -30,7 +30,7 @@ import json
 import os
 
 from core.plugin_masters import master_export_dir, master_index_map
-from output_layout import paths
+from output_layout import converted_master_path
 
 MANIFEST_VERSION = 1
 
@@ -182,7 +182,7 @@ def load_master_manifests(masters: list, tes4_master_count: int,
     manifest = MasterManifest()
     missing = []
     for slot, name in enumerate(names):
-        plugin_out = str(paths(name, out_root=output_root).esm)
+        plugin_out = str(converted_master_path(output_root, name))
         path = manifest_path(plugin_out)
         if not os.path.isfile(path):
             missing.append((name, path))

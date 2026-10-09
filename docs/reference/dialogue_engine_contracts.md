@@ -23,6 +23,49 @@ RTTI type names survive in both builds, so `tools/disasm/skyrim_disasm.py --find
 locates classes (`TESTopic`, `TESTopicInfo`, `MenuTopicManager`,
 `BGSDialogueBranch`) either way.
 
+For Steam builds, the decrypted code can also be inspected in a running game
+with `tools/disasm/skyrim_disasm.py --live`. The startup finding below was
+verified this way on Steam runtime **1.7.104**; its RVAs belong to that build,
+not to the static GOG image used for the earlier tables.
+
+## INFO choices must resolve to emitted DIAL records
+
+In Steam 1.7.104, `TESTopicInfo::InitItemImpl` starts at RVA `0x3F1B90`
+(RTTI vtable `0x18639F0`, slot 19). It resolves each TCLT FormID and requires
+the target to be a `TESTopic` (form type `0x4B`). An absent or wrong-type target
+is removed from the choice list. The error path formats the INFO's response
+text, quest/topic EditorIDs and FormIDs into a **260-byte buffer** using
+`sprintf_s` at `0x3F1ECB` (return address `0x3F1ED0`).
+
+The format string is at RVA `0x1862388`:
+
+```
+TopicInfo %08X "%s" in Quest %s (%08x) Topic %s (%08x)
+```
+
+If the formatted message exceeds the buffer, the CRT invokes its invalid
+parameter handler and the game terminates with `0xC0000409` / fast-fail 5
+before the main menu. The limit applies to the entire diagnostic, not just
+one NAM1 subrecord. Shortening individual responses to 256 bytes therefore
+does not establish safety. UTF-8 increases the byte length of Russian text
+and exposed this existing invalid-reference path; valid long UTF-8 responses
+do not take that path.
+
+Converted Russian and English Knights each had 86 TCLT references to absent
+topics, including suppressed/split TES4 NPC conversation topics in Knights
+and Oblivion. With the same masters and BSA files, retaining full UTF-8 text
+and removing only those 86 references allowed the Russian ESP to survive a
+45-second SKSE startup check. Leaving the references while restoring NAM1
+to CP1251 also started, but only hid the reference defect.
+
+Removing those references was a startup-safety workaround, not a dialogue
+restoration. The
+[English source/output audit](english_dialogue_loss_audit.md) establishes that
+all 86 targets resolve in the original plugins, and identifies omitted
+multi-topic conversations with quest-stage result fragments. The source
+references must not be described as inherently broken or as depending on an
+absent third-party mod.
+
 ## The engine's own subtype and category tables
 
 Two static arrays in `.data`, found by cross-referencing the pointer to the

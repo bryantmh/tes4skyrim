@@ -891,6 +891,22 @@ def _imported_group(tmp_path, monkeypatch, plugs, label='My Pack'):
     return exp
 
 
+def test_imported_mod_opt_out_keeps_actual_member_history(tmp_path, monkeypatch):
+    import json
+    _imported_group(tmp_path, monkeypatch, ('A.esm', 'B.esp'))
+    v.record_step_run('meshes', 'A.esm', version='0.600')
+    assert v.steps_run_at('B.esp')['meshes'] == '0.600'
+    settings = tmp_path / 'conversion_config.json'
+    settings.write_text(json.dumps({'importedModOptimizations': False}))
+    assert v.steps_run_at('A.esm')['meshes'] == '0.600'
+    # Upstream already shares mesh history; opt-out preserves that behavior.
+    assert v.steps_run_at('B.esp')['meshes'] == '0.600'
+    v.record_step_run('creatures', 'B.esp', version='0.601')
+    assert 'creatures' not in v.steps_run_at('A.esm')
+    settings.write_text('{}')
+    assert v.steps_run_at('A.esm')['creatures'] == '0.601'
+
+
 def test_shared_asset_step_counts_for_every_plugin_in_the_mod(tmp_path,
                                                               monkeypatch):
     """Meshes converts the mod's ONE payload, so it is done for all of them.
@@ -937,3 +953,34 @@ def test_a_data_directory_plugin_is_unaffected(tmp_path, monkeypatch):
 
     assert v.steps_run_at("Oblivion.esm").get("meshes") == "0.600"
     assert v.steps_run_at("A.esm").get("meshes") is None
+
+
+def test_shared_steps_done_reports_group_steps_at_this_version(tmp_path,
+                                                               monkeypatch):
+    """Only shared steps at the current version count as done.
+
+    Per-plugin stamps never leak in, and a group stamp from an older version
+    still owes the step: unticking it would skip a needed upgrade rebuild.
+    """
+    _imported_group(tmp_path, monkeypatch, ("A.esm", "B.esp"))
+    v.record_step_run("meshes", "A.esm", version="0.600")
+    v.record_step_run("export", "A.esm", version="0.600")
+
+    ran = v.steps_run_at("B.esp")
+    assert v.shared_steps_done(ran, "0.600") == {"meshes"}
+    assert v.shared_steps_done(ran, "0.601") == set()
+    assert v.shared_steps_done({}, "0.600") == set()
+
+
+def test_creatures_are_recorded_once_per_mod(tmp_path, monkeypatch):
+    """Creature projects land in the shared output, like meshes.
+
+    Recorded per plugin, every sibling re-ran the whole pool over the same
+    folders: 66 projects rebuilt for a plugin adding no creatures.
+    """
+    _imported_group(tmp_path, monkeypatch, ("A.esm", "B.esp"))
+    v.record_step_run("creatures", "A.esm", version="0.600")
+
+    assert v.steps_run_at("B.esp").get("creatures") == "0.600"
+    assert v.shared_steps_done(
+        v.steps_run_at("B.esp"), "0.600") == {"creatures"}

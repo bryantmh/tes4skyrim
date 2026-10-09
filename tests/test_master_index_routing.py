@@ -161,6 +161,35 @@ class TestRoutingByIndexByte:
         assert len(seen) == 2
 
 
+class TestEdidSkipsOverrideCopies:
+    """find_by_edid answers with the file's own record, never its override.
+
+    A master that overrides another file's record carries that record's EDID
+    under the other file's index byte. Adopting that copy would restamp a
+    foreign id into the master's slot, so the lookup skips it.
+    """
+
+    @pytest.fixture
+    def master_with_override(self, tmp_path):
+        own = _rec(b'MESG', 0x02000001, _sub(b'EDID', b'SharedMsg\x00'))
+        # Same EDID, but this is Oblivion.esm's record overridden here.
+        copy = _rec(b'MESG', 0x01000002, _sub(b'EDID', b'SharedMsg\x00'))
+        path = _write(tmp_path, 'Later.esp', ['Skyrim.esm', 'Oblivion.esm'],
+                      _grup(b'MESG', 0, own + copy))
+        return MasterIndex(path)
+
+    def test_override_copy_is_not_adoptable(self, master_with_override):
+        assert master_with_override.find_by_edid(b'MESG', 'SharedMsg') == 0x02000001
+
+    def test_to_child_leaves_foreign_slots_alone(self, colliding_masters):
+        tam, anq = colliding_masters
+        chained = ChainedMasterIndex([tam, anq], base_slot=2)
+        # 0x01 names Oblivion.esm, which neither file defines: not restamped
+        # into either file's slot.
+        assert chained._to_child(tam, 0x01000001) == 0x01000001
+        assert chained._to_child(anq, 0x01000001) == 0x01000001
+
+
 class TestBaseSlot:
     def test_base_slot_shifts_the_whole_routing_table(self, colliding_masters):
         """With one prepended master the same masters answer one slot lower."""

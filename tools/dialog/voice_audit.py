@@ -55,9 +55,37 @@ _DISK_RE = re.compile(r'^(.+)_([0-9a-f]{8})_(\d+)\.(fuz|xwm|wav|mp3|lip)$',
                       re.IGNORECASE)
 
 
-def parse_esm(esm_path):
+def _codec_of(source_dir) -> str:
+    """The text codec the converted plugin was written in.
+
+    Read off the export's `_HEADER.txt` ENCODING line, searching up from the
+    voice tree when the audit points inside it. Western exports predate the
+    line and decode as cp1252, which is what they were written with.
+    """
+    from core.plugin_masters import export_encoding
+    folder = Path(source_dir) if source_dir else None
+    for _ in range(5):
+        if folder is None or not str(folder):
+            break
+        if (folder / "_HEADER.txt").is_file():
+            return export_encoding(str(folder))
+        folder = folder.parent
+    return "cp1252"
+
+
+def _edid_text(data: bytes, codec: str) -> str:
+    """A null-terminated EditorID in the export's codec, never raising."""
+    try:
+        return data.rstrip(b"\x00").decode(codec, errors="replace")
+    except (LookupError, ValueError):
+        return _zstring(data)
+
+
+def parse_esm(esm_path, codec: str = "cp1252"):
     """Return (infos, dial_by_fid, qust_edid, vtyp_edid).
 
+    EditorIDs decode in `codec`, the export's codec: decoding Cyrillic
+    voice-type names as UTF-8 yields U+FFFD and every folder lookup misses.
     infos: list of dicts {fid, dial_fid, vtyps(set of VTYP fids),
                           resp_nums(list), has_getisid(bool)}
     """
@@ -71,14 +99,14 @@ def parse_esm(esm_path):
             edid = _get(rec, 'EDID')
             qnam = _get(rec, 'QNAM')
             dial_by_fid[rec.form_id] = (
-                _zstring(edid.data) if edid else '',
+                _edid_text(edid.data, codec) if edid else '',
                 struct.unpack('<I', qnam.data)[0] if qnam and len(qnam.data) == 4 else 0)
         elif rec.type == 'QUST':
             edid = _get(rec, 'EDID')
-            qust_edid[rec.form_id] = _zstring(edid.data) if edid else ''
+            qust_edid[rec.form_id] = _edid_text(edid.data, codec) if edid else ''
         elif rec.type == 'VTYP':
             edid = _get(rec, 'EDID')
-            vtyp_edid[rec.form_id] = _zstring(edid.data) if edid else ''
+            vtyp_edid[rec.form_id] = _edid_text(edid.data, codec) if edid else ''
         elif rec.type == 'INFO':
             vtyps = set()
             has_getisid = False
@@ -192,6 +220,11 @@ def main():
                     help='examples to print per problem class')
     args = ap.parse_args()
 
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
     esm_path = Path(args.esm)
     voice_dir = Path(args.voice_dir)
     source_dir = Path(args.source_dir) if args.source_dir else None
@@ -199,7 +232,9 @@ def main():
         esm_path.with_name(esm_path.name + '.voicemap.txt')
 
     print(f'Parsing ESM: {esm_path}')
-    infos, dial_by_fid, qust_edid, vtyp_edid = parse_esm(esm_path)
+    codec = _codec_of(args.source_dir)
+    print(f'  Text codec: {codec}')
+    infos, dial_by_fid, qust_edid, vtyp_edid = parse_esm(esm_path, codec)
     print(f'  {len(infos)} voiced INFOs, {len(dial_by_fid)} DIALs, '
           f'{len(qust_edid)} QUSTs, {len(vtyp_edid)} VTYPs')
 

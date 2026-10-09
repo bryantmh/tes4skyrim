@@ -27,7 +27,9 @@ and a loose .esp but no manifest, so it still satisfies neither test and is
 never mistaken for a converted plugin.
 """
 
+import hashlib
 import zipfile
+from functools import lru_cache
 from pathlib import Path
 
 FINISHED_DIR_NAME = "Finished Mods"
@@ -142,6 +144,51 @@ def plugin_esm(out_root, plugin: str, export_dir=None) -> Path:
     every copy of it had to be found and fixed by hand. Call this instead.
     """
     return plugin_out_root(out_root, plugin, export_dir) / plugin
+
+
+@lru_cache(maxsize=32)
+def _master_digest(path: str, modified: int, size: int) -> bytes:
+    with open(path, 'rb') as stream:
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.digest()
+
+
+def converted_master_path(out_root, plugin: str, export_root=None) -> Path:
+    """Use the converted variant installed in the configured target game.
+
+    Localized conversions can share a filename but have different generated
+    FormIDs. Match the complete file, and load its adjacent manifests too.
+    Without an installed matching variant, preserve normal output routing.
+    """
+    default = paths(plugin, export_root=export_root, out_root=out_root).esm
+    variants = sorted(Path(out_root).glob(plugin + ' (*)/' + plugin))
+    if not variants:
+        return default
+    from asset_convert.sources.skyrim_assets import find_skyrim_data
+    game_data = find_skyrim_data()
+    if not game_data:
+        return default
+    installed = Path(game_data) / plugin
+    try:
+        target = installed.stat()
+        target_digest = None
+        for candidate in [default, *variants]:
+            if not candidate.is_file():
+                continue
+            stat = candidate.stat()
+            if stat.st_size != target.st_size:
+                continue
+            if target_digest is None:
+                target_digest = _master_digest(
+                    str(installed), target.st_mtime_ns, target.st_size)
+            if _master_digest(str(candidate), stat.st_mtime_ns,
+                              stat.st_size) == target_digest:
+                return candidate
+    except OSError:
+        pass
+    return default
 
 
 def master_record_dir(export_dir, master: str) -> Path:

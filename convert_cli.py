@@ -7,6 +7,7 @@ import argparse
 
 from core.collision_options import WINDING_FIX_DEFAULT_PLUGINS
 from core.navmesh_options import DEFAULT_GENERATOR, GENERATORS
+from core.tes4_encoding import ENCODING_CHOICES
 from tes4_export.export_morrowind import (MORROWIND_SOURCE_KEY,
                                           SOURCE_MORROBLIVION, SOURCE_VANILLA)
 
@@ -123,6 +124,11 @@ def _add_run_args(parser) -> None:
                              "this run only, instead of the configured "
                              "Settings > Morrowind source (which is left "
                              "unchanged).")
+    parser.add_argument("--tes4-encoding", choices=ENCODING_CHOICES,
+                        default=None,
+                        help="TES3/TES4 plugin text codepage for this run only "
+                             "(default: auto-detect; the Russian install "
+                             "needs cp1251). Saved choice: Settings menu.")
     parser.add_argument("--only", nargs="+", metavar="NAME",
                         help="Scope the stage to these units instead of "
                              "rebuilding all of them. Honored by "
@@ -189,6 +195,19 @@ def _add_mesh_args(parser) -> None:
                              "under meshes/ (e.g. architecture tr/l). Default: all.")
     parser.add_argument("--skip-hair", action="store_true",
                         help="Skip the hair baking pass after mesh conversion.")
+    parser.add_argument("--plugin-assets-only", action="store_true",
+                        help="Convert only meshes and creatures referenced by "
+                             "this plugin, including base objects it places.")
+    parser.add_argument("--defer-textures", action="store_true",
+                        help="Leave shared texture processing to a later mod-wide pass.")
+    parser.add_argument("--mesh-reuse-token", help=argparse.SUPPRESS)
+    parser.add_argument("--skip-shared-sounds", action="store_true",
+                        help="Process this plugin's voices without repeating "
+                             "the mod's shared non-voice sound pass.")
+    parser.add_argument("--shared-textures-only", nargs="+", metavar="PLUGIN",
+                        dest="shared_texture_plugins",
+                        help="With --meshes-only, process shared textures for "
+                             "these plugins without reconverting their meshes.")
     winding = parser.add_mutually_exclusive_group()
     winding.add_argument("--collision-winding-fix", dest="collision_winding_fix",
                          action="store_true", default=None,

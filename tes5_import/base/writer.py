@@ -79,16 +79,14 @@ def pack_subrecord(sig: str, data: bytes) -> bytes:
     return sig_bytes + struct.pack('<H', len(data)) + data
 
 
-def pack_string_subrecord(sig: str, value: str) -> bytes:
-    """Pack a null-terminated string subrecord.
+def encode_string(value: str) -> bytes:
+    """Null-terminated TES5 text, always UTF-8 regardless of source codec."""
+    return str(value or '').encode('utf-8') + b'\x00'
 
-    TES5 plugins store text as cp1252 (Windows-1252) -- the same encoding
-    TES4 uses, and xEdit's default (wbEncoding := wbMBCSEncoding(1252)).
-    Writing UTF-8 turns one authored character into a multi-byte run that
-    the engine renders as one garbage glyph per byte.
-    """
-    data = value.encode('cp1252', errors='replace') + b'\x00'
-    return pack_subrecord(sig, data)
+
+def pack_string_subrecord(sig: str, value: str) -> bytes:
+    """Pack a null-terminated UTF-8 string subrecord for Skyrim."""
+    return pack_subrecord(sig, encode_string(value))
 
 
 def pack_record(sig: str, form_id: int, flags: int, subrecords: bytes,

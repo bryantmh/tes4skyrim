@@ -131,3 +131,32 @@ def test_every_placed_character_is_defined_first():
         elif tag.code == _PLACE and tag.data[0] & 0x02:
             placed = struct.unpack_from('<H', tag.data, 3)[0]
             assert placed in defined, f'character {placed} placed before define'
+
+
+def test_embedded_font_covers_russian():
+    """The vendored face ships Cyrillic, or Russian dialogue is tofu boxes."""
+    from asset_convert.ui import ttf_glyphs
+    from tools.generators import gen_morrowind_menu_swf as gen
+    assert (ttf_glyphs.CYRILLIC_FIRST, ttf_glyphs.CYRILLIC_LAST) == (0x0400, 0x045F)
+    glyphs, _ascent, _descent, _leading = gen.font_metrics()
+    codes = {code for code, _adv, _contours in glyphs}
+    assert 0x0410 in codes and 0x044F in codes
+    assert any(0x0410 <= code <= 0x044F and _contours
+               for code, _adv, _contours in glyphs)
+
+
+def test_embedded_font_table_reaches_cyrillic():
+    """The DefineFont2 code table must name the Cyrillic codes it carries."""
+    from asset_convert.ui.swf import TAG_DEFINE_FONT_3, define_font2
+    from tools.generators import gen_morrowind_menu_swf as gen
+    glyphs, ascent, descent, leading = gen.font_metrics()
+    tag = define_font2(25, gen.MW_FONT_NAME, glyphs, ascent, descent, leading)
+    data = tag.data
+    pos = 2 + 2
+    name_len = data[pos]
+    pos += 1 + name_len
+    count = struct.unpack_from('<H', data, pos)[0]
+    codes_at = pos + 2 + 4 * (count + 1)
+    codes_at += struct.unpack_from('<I', data, pos + 2 + 4 * count)[0] - 4 * (count + 1)
+    codes = struct.unpack_from('<%dH' % count, data, codes_at)
+    assert codes[0] == 32 and codes[-1] == 0x0451

@@ -18,6 +18,11 @@ from asset_convert.ui.swf import FONT_EM
 #: The printable ASCII range the menu needs; TES3 text is single-byte.
 FIRST_CODE, LAST_CODE = 32, 126
 
+#: Cyrillic block for Russian (and Ukrainian/Belarusian) dialogue text.
+#: Game strings arrive as UTF-8, so these are Unicode code points, not byte
+#: values; codes the face does not cover are skipped by load() as usual.
+CYRILLIC_FIRST, CYRILLIC_LAST = 0x0400, 0x045F
+
 
 class _ContourPen:
     """Collects a glyph's contours as absolute, Y-flipped integer segments."""
@@ -103,13 +108,15 @@ class _ContourPen:
         return self.contours
 
 
-def load(path, first: int = FIRST_CODE, last: int = LAST_CODE):
+def load(path, first: int = FIRST_CODE, last: int = LAST_CODE,
+         extra: tuple = ()):
     """`(glyphs, ascent, descent, leading)` ready for `define_font2`.
 
     Glyphs come back ordered by character code, which the CodeTable requires.
     A code the font does not cover is skipped rather than faked. Composite
     glyphs are flattened through `DecomposingPen`, so accented letters arrive
-    as plain contours.
+    as plain contours. `extra` is [(first, last), ...] further ranges, e.g.
+    Cyrillic for Russian text.
     """
     from fontTools.pens.recordingPen import DecomposingRecordingPen
     from fontTools.ttLib import TTFont
@@ -119,8 +126,12 @@ def load(path, first: int = FIRST_CODE, last: int = LAST_CODE):
     cmap = font.getBestCmap()
     glyph_set = font.getGlyphSet()
 
+    codes = list(range(first, last + 1))
+    for extra_first, extra_last in extra:
+        codes.extend(range(extra_first, extra_last + 1))
+
     glyphs = []
-    for code in range(first, last + 1):
+    for code in codes:
         name = cmap.get(code)
         if name is None:
             continue
