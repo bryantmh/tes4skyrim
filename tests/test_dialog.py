@@ -1822,6 +1822,53 @@ class TestOriginGate:
     condition POSITIVELY names a form that plugin owns.
     """
 
+    @pytest.mark.parametrize('actor_sig,actor_fid', [
+        (None, None), ('NPC_', '00000042'),
+        ('NPC_', '01000042'), ('CREA', '01000042'),
+    ])
+    def test_addon_greeting_keeps_a_reachable_origin_audience(
+            self, actor_sig, actor_fid):
+        """Actorless greetings reach master NPCs without admitting foreign NPCs."""
+        from tes5_import.base.writer import PluginWriter
+        from tes5_import.record_types.actor_common import (
+            create_origin_faction, reset_origin_faction)
+
+        class MasterIndex:
+            def find_all_by_edid(self, sig, edid):
+                return [0x01000010, 0x02000010]
+
+        # Slot 1 is an inherited master; only slot 2 is in the source header.
+        set_formid_index_offset(2)
+        try:
+            reset_origin_faction(MasterIndex())
+            writer = PluginWriter(masters=['Skyrim.esm', 'Inherited.esm', 'Master.esm'])
+            by_type = {
+                'DIAL': [{'FormID': '01000100', 'EditorID': 'HELLO',
+                          'DATA.Type': '6', 'QuestCount': '0'}],
+                'INFO': [{'FormID': '01000200', 'ParentDIAL': '01000100',
+                          'DATA.Flags': '0', 'ResponseCount': '1',
+                          'Response[0].ResponseNumber': '1',
+                          'Response[0].ResponseText': 'A greeting.',
+                          'Condition[0].Raw': self._ctda(70, comp=0)}],
+            }
+            if actor_sig:
+                by_type[actor_sig] = [{'FormID': actor_fid}]
+            own_origin = create_origin_faction(writer, False, by_type)
+            build_dialog_groups(by_type, writer, npc_to_vtyp={})
+            data = b''.join(writer._top_groups.get('DIAL', []))
+            info = next(r for r in records(data, b'INFO', span=(0, len(data)))
+                        if r.form_id == 0x03000200)
+            conditions = [v for k, v in info.subs() if k == b'CTDA']
+            gates = [v for v in conditions if struct.unpack_from('<H', v, 8)[0] == 71]
+            expected = own_origin if actor_fid == '01000042' else 0x02000010
+            assert [struct.unpack_from('<I', v, 12)[0] for v in gates] == [expected]
+            assert gates[0][0] == 0 and struct.unpack_from('<f', gates[0], 4)[0] == 1
+            assert any(struct.unpack_from('<H', v, 8)[0] == 70
+                       and struct.unpack_from('<f', v, 4)[0] == 0 for v in conditions)
+        finally:
+            set_formid_index_offset(0)
+            reset_origin_faction()
+
     @staticmethod
     def _ctda(func, operator=0x00, comp=1.0, param1=0x00A082,
               run_on_target=False):

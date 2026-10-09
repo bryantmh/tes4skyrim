@@ -289,7 +289,7 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
     support_root = not ctx or not adopt_master_special_records(ctx, master_export_dirs(ctx))
     if support_root:
         create_vtyp_records(writer, export_dir, by_type)
-    _origin_fact = create_origin_faction(writer, support_root)
+    _origin_fact = create_origin_faction(writer, support_root, by_type)
     print(f"  Plugin-origin faction: {_origin_fact:08X} (TES4PluginOriginFaction)")
     if support_root:
         create_tes4_special_records(writer)

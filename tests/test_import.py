@@ -2242,6 +2242,68 @@ class TestServiceConversion:
         assert b'TES4_TIF__00062116' in dial_group
         assert b'Take a look.' in dial_group
 
+    @pytest.mark.parametrize('kind, topic_fid, marker_edid', [
+        ('barter', '0000010F', 'TES4MerchantFaction'),
+        ('training', '00000113', 'TES4JobTrainerFaction'),
+    ])
+    @pytest.mark.parametrize('has_master_marker', [True, False])
+    @pytest.mark.parametrize('route', ['own-topic', 'master-topic'])
+    def test_dialogue_only_plugin_service_gate(
+            self, kind, topic_fid, marker_edid, has_master_marker, route, monkeypatch):
+        """Services for master NPCs retain their audience and availability gates."""
+        from tes5_import.base import text_reader
+        from tes5_import.dialogue.groups import build_dialog_groups
+        from tes5_import.record_types import actor_common
+
+        monkeypatch.setattr(text_reader, '_formid_index_offset', 0)
+        monkeypatch.setattr(actor_common, '_origin_faction_fid', 0)
+        marker_fid = 0x01000A03
+        class MasterIndex(dict):
+            def find_by_edid(self, sig, edid):
+                return (marker_fid if has_master_marker and
+                        (sig, edid) == (b'FACT', marker_edid) else 0)
+
+        master = MasterIndex({marker_fid: marker_edid}
+                             if has_master_marker else {})
+        writer = PluginWriter(masters=['Skyrim.esm', 'Master.esm'])
+        info_fid = 0x02000601
+        by_type = {
+            'DIAL': [{'Signature': 'DIAL', 'FormID': topic_fid,
+                      'EditorID': kind.title(), 'DATA.Type': '5',
+                      'QuestCount': '0'}],
+            'INFO': [{'Signature': 'INFO', 'FormID': f'{info_fid:08X}',
+                      'RecordFlags': '0', 'ParentDIAL': topic_fid,
+                      'DATA.Flags': '0', 'ResponseCount': '1',
+                      'Response[0].ResponseNumber': '1',
+                      'Response[0].ResponseText': 'A service from a master NPC.'}],
+        }
+        actor_common.create_vendor_factions(by_type, writer, master)
+        actor_common.create_trainer_records(by_type, writer, master)
+        if route == 'master-topic':
+            from types import SimpleNamespace
+            from tes5_import.overrides.nested import _convert_nested
+            ctx = SimpleNamespace(master_export={topic_fid: by_type['DIAL'][0]})
+            data, _ = _convert_nested('INFO', by_type['INFO'][0], ctx,
+                                       int(topic_fid, 16), (), [])
+        else:
+            build_dialog_groups(by_type, writer, npc_to_vtyp={}, master_index=master)
+            data = b''.join(writer._top_groups.get('DIAL', []))
+        infos = [r for r in reader_records(data, b'INFO', span=(0, len(data)))
+                 if r.form_id == info_fid]
+        if not has_master_marker:
+            assert not infos, 'a service without an audience gate must not be emitted'
+            return
+        assert len(infos) == 1, 'the master service response must be preserved'
+        conditions = [v for k, v in infos[0].subs() if k == b'CTDA']
+        faction_gates = [v for v in conditions
+                         if struct.unpack_from('<H', v, 8)[0] == 71]
+        assert any(struct.unpack_from('<I', v, 12)[0] == marker_fid
+                   and v[0] == 0 and struct.unpack_from('<f', v, 4)[0] == 1
+                   for v in faction_gates)
+        assert any(struct.unpack_from('<H', v, 8)[0] == 255
+                   and v[0] == 0 and struct.unpack_from('<f', v, 4)[0] == 1
+                   for v in conditions)
+
     def test_greeting_choice_to_menu_topic_is_not_a_tclt(self):
         """A generic greeting whose Choice is a menu topic (Oblivion's SE
         greetings -> INFOGENERAL, which a script AddTopics) keeps no TCLT, so the

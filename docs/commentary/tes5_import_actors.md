@@ -591,11 +591,17 @@ NEGATIVE `GetIsID`), and conversion rewrites `GetIsRace` to a VANILLA Skyrim
 race every plugin shares, so Nehrim NPCs passed them. Race was Oblivion's
 plugin boundary only because Oblivion was the only file loaded.
 
-EVERY converted plugin creates its own, root or dependent, and gates its own
-new lines on it. A plugin's actors join its own and every converted master's
+EVERY converted plugin creates its own, root or dependent. A plugin adding its
+own NPCs or creatures gates its new generic lines on it. An add-on with no own
+actors (including one that only overrides master actors) instead gates those
+lines on the origin factions of its explicitly listed masters: its own empty
+faction cannot qualify any speaker. Original quest/INFO conditions and service
+audience gates still apply. Inherited masters are excluded in both cases.
+
+A plugin's actors join its own and every converted master's
 (`origin_memberships`, found by EditorID through
-`ChainedMasterIndex.find_all_by_edid`), so dialogue flows DOWN the master chain
-and never up or across: Oblivion's generic lines reach Morroblivion's actors,
+`ChainedMasterIndex.find_all_by_edid`). For plugins adding their own actors,
+dialogue flows DOWN the master chain and never up or across: Oblivion's generic lines reach Morroblivion's actors,
 Morroblivion's never reach Oblivion's, and neither reaches Nehrim's or
 vanilla Skyrim's. Dependents' actors used to join nothing: measured on
 TR_Mainland, 0 of 9,264 NPCs carried the compatibility patch's origin faction
