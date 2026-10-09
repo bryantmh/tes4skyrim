@@ -403,3 +403,76 @@ def test_import_main_points_the_soun_converter_at_the_asset_root():
     assert 'set_sound_source_dir(str(assets_for(export_dir)))' in src, (
         'set_sound_source_dir is being handed a record dir again -- every '
         'directory-valued SOUN ANAM becomes an unplayable bare path')
+
+
+def test_live_folder_removal_overrides_retained_binary_and_export(tmp_path, monkeypatch):
+    import zipfile
+    from types import SimpleNamespace
+    from asset_convert.sources import source_registry as registry
+    import convert
+
+    names = ['A.esm', 'Deleted.esp']
+    exp = _fake_group(tmp_path, names)
+    original = tmp_path / 'original'
+    original.mkdir()
+    for name in names:
+        (original / name).write_bytes(b'x')
+        binary = registry.source_dir(exp, name) / name
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b'x')
+        records = registry.record_dir(exp, name)
+        records.mkdir()
+        (records / '_HEADER.txt').write_text('Flags=0\n', encoding='utf-8')
+        entry = registry.get(exp, name)
+        entry.update(kind='folder', archive_original=str(original), plugin_member=name)
+        registry.put(exp, name, entry)
+    (original / 'Deleted.esp').unlink()
+
+    assert registry.all_sources(exp)[0]['plugins'] == ['A.esm']
+    assert registry.plugin_binary(exp, 'Deleted.esp').is_file()
+    args = SimpleNamespace(files=names, build_morrowind_patch=None)
+    assert convert._plugins_to_convert(args, {}, '', str(exp)) == ['A.esm']
+
+    monkeypatch.setattr(convert, 'SCRIPT_DIR', tmp_path)
+    out = tmp_path / 'output'
+    mod_out = out / 'My Pack'
+    mod_out.mkdir(parents=True)
+    for name in ['A.esm', 'Deleted.esp', 'OldUnregistered.esp', 'A_loader.esl', 'A.bsa']:
+        (mod_out / name).write_bytes(b'x')
+    (mod_out / 'OldUnregistered.esp.manifest.json').write_text('{}', encoding='utf-8')
+    assert convert.phase_pack_zip('A.esm', {}, str(out))
+    with zipfile.ZipFile(out / 'Finished Mods/My Pack.zip') as archive:
+        assert set(archive.namelist()) == {'A.esm', 'A_loader.esl', 'A.bsa'}
+    assert (mod_out / 'Deleted.esp').is_file()
+
+    (original / 'Deleted.esp').write_bytes(b'x')
+    assert registry.all_sources(exp)[0]['plugins'] == names
+
+
+def test_cached_imports_remain_selectable_for_archives_and_offline_folders(tmp_path):
+    from types import SimpleNamespace
+    from asset_convert.sources import source_registry as registry
+    import convert
+
+    for kind in ('archive', 'folder'):
+        root = tmp_path / kind
+        exp = _fake_group(root, ['A.esm', 'B.esp'])
+        original = root / 'original'
+        if kind == 'archive':
+            original.mkdir()
+        for name in ('A.esm', 'B.esp'):
+            entry = registry.get(exp, name)
+            entry.update(kind=kind, archive_original=str(original), plugin_member=name)
+            registry.put(exp, name, entry)
+        binary = registry.source_dir(exp, 'A.esm') / 'A.esm'
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b'x')
+        records = registry.record_dir(exp, 'B.esp')
+        records.mkdir(parents=True)
+        (records / '_HEADER.txt').write_text('Flags=0\n', encoding='utf-8')
+
+        names = ['A.esm', 'B.esp']
+        assert registry.all_sources(exp)[0]['plugins'] == names
+        args = SimpleNamespace(files=names, build_morrowind_patch=None)
+        assert convert._plugins_to_convert(args, {}, '', str(exp)) == names
+

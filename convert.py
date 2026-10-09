@@ -438,8 +438,14 @@ def _plugins_to_convert(args, config: dict, tes4_data: str,
             raise SystemExit(
                 f'ERROR: "{name}" is a mod, not a plugin. Convert its '
                 f'plugin(s) instead: -f {" ".join(shipped)}')
+    available = []
+    for name in files:
+        if source_registry.source_available(export_dir, name):
+            available.append(name)
+        else:
+            print(f'[{name}] Skipping: plugin no longer present in its source.')
     return topological_order(
-        files, lambda name: resolve_plugin_path(name, tes4_data, export_dir))
+        available, lambda name: resolve_plugin_path(name, tes4_data, export_dir))
 
 
 def phase_export(file_name: str, tes4_data: str, export_dir: str,
@@ -978,9 +984,25 @@ def phase_pack_zip(file_name: str, config: dict, output_dir: str = None):
     # three different names for a three-plugin pack.
     zip_path = finished_dir(out_root) / f"{src_root.name}.zip"
 
+    export_root = str(SCRIPT_DIR / 'export')
+    active_plugins = {n.lower() for n in
+                      source_registry.group_members(export_root, file_name)
+                      if source_registry.source_available(export_root, n)}
+    imported = bool(source_registry.get(export_root, file_name))
+
+    def _include(src):
+        if not imported or src.suffix.lower() == '.bsa':
+            return True
+        if not source_registry.source_available(export_root, src.name):
+            return False
+        # Generated loaders have no conversion manifest. Old converted members
+        # keep theirs even after their source or registry entry has disappeared.
+        return (src.name.lower() in active_plugins
+                or not (src_root / (src.name + '.manifest.json')).is_file())
+
     members = [(src.name, src)
                for ext in ("*.esm", "*.esl", "*.esp", "*.bsa")
-               for src in sorted(src_root.glob(ext))]
+               for src in sorted(src_root.glob(ext)) if _include(src)]
     members += [(str(src.relative_to(src_root)), src)
                 for src in _loose_files()]
     if not members:

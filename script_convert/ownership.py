@@ -9,6 +9,7 @@ See: docs/commentary/script_convert.md#wipe-output-dir
 """
 
 import os
+from pathlib import Path
 
 #: Suffix of the per-plugin list of scripts written into a shared `scripts/` folder.
 OWNED_SUFFIX = '.owned.txt'
@@ -46,3 +47,45 @@ def sibling_owned(source_dir, owner: str) -> set:
     others = [n[:-len(OWNED_SUFFIX)] for n in names
               if n.endswith(OWNED_SUFFIX) and n != owner + OWNED_SUFFIX]
     return set().union(*(read_owned(source_dir, o) for o in others))
+
+
+def prune_removed_owners(source_dir, record_dir) -> None:
+    """Remove deleted folder members' ownership and exclusively owned scripts.
+
+    Only a reachable original folder can establish that a member was removed.
+    Archive imports, offline folders and unregistered exports keep their lists.
+    """
+    from asset_convert.sources import source_registry
+    from core.plugin_masters import export_root
+
+    root = export_root(record_dir)
+    wanted = os.path.normcase(os.path.abspath(record_dir))
+    plugin = next((name for name, entry in source_registry.load(root)['sources'].items()
+                   if entry.get('kind') == 'folder'
+                   and os.path.normcase(os.path.abspath(
+                       source_registry.record_dir(root, name))) == wanted), None)
+    if plugin is None:
+        return
+    original = source_registry.get(root, plugin).get('archive_original')
+    if not original or not Path(original).is_dir():
+        return
+
+    active = {owner_key(source_registry.record_dir(root, name)).lower()
+              for name in source_registry.group_members(root, plugin)
+              if source_registry.source_available(root, name)}
+    src = Path(source_dir)
+    lists = list(src.parent.glob('*' + OWNED_SUFFIX))
+    removed = [p for p in lists if p.name[:-len(OWNED_SUFFIX)].lower() not in active]
+    kept = set().union(*(read_owned(src, p.name[:-len(OWNED_SUFFIX)])
+                         for p in lists if p not in removed))
+    kept = {name.lower() for name in kept}
+    stale = set().union(*(read_owned(src, p.name[:-len(OWNED_SUFFIX)])
+                          for p in removed))
+    for name in stale:
+        if name.lower() in kept or os.path.basename(name) != name:
+            continue
+        (src / (name + '.psc')).unlink(missing_ok=True)
+        (src.parent / (name + '.pex')).unlink(missing_ok=True)
+    for path in removed:
+        path.unlink()
+        print(f'  Removed stale script ownership: {path.name}')

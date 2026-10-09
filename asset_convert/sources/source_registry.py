@@ -394,6 +394,9 @@ def all_sources(export_dir, extra_dirs=()) -> list:
         out.append({'id': f'dir:{key}', 'kind': 'directory',
                     'label': label_for_directory(path), 'path': path})
     for gid, label, plugs in groups(export_dir):
+        plugs = [p for p in plugs if source_available(export_dir, p)]
+        if not plugs:
+            continue
         # An asset-only mod registers under its own name with no plugin, so
         # "1 plugin" would misdescribe it.
         entry = get(export_dir, plugs[0]) if plugs else None
@@ -630,6 +633,32 @@ def plugin_binary(export_dir, plugin: str):
             return cand
     cand = source_dir(export_dir, name) / name
     return cand if cand.is_file() else None
+
+
+def source_available(export_dir, plugin: str) -> bool:
+    """Keep imported sources that can be read or recovered, not stale names.
+
+    An accessible original folder determines which plugins still belong to it.
+    Cached exports and retained copies remain usable when that folder is offline
+    or the mod was imported from an archive.
+    Asset-only mods have no binary to require. Registry metadata stays intact
+    so restoring a removed source also restores its place in the GUI.
+    """
+    entry = get(export_dir, plugin)
+    if not entry or not entry.get('plugin'):
+        return True
+    original = entry.get('archive_original')
+    if entry.get('kind') == 'folder' and original and Path(original).is_dir():
+        member = entry.get('plugin_member') or entry['plugin']
+        return (Path(original) / member).is_file()
+    if plugin_binary(export_dir, plugin):
+        return True
+    if (record_dir(export_dir, plugin) / '_HEADER.txt').is_file():
+        return True
+    if retained_archive(export_dir, plugin):
+        return True
+    member = entry.get('plugin_member')
+    return bool(original and member and (Path(original) / member).is_file())
 
 
 def retained_archive(export_dir, plugin: str):
