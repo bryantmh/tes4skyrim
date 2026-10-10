@@ -145,6 +145,22 @@ A copy of the archive is kept under `export/<plugin>/_source/` so steps can be
 re-run after you delete the download. **Plugins ▸ Manage Imported Mods…** removes
 them. If a master has not been converted yet, the import says so.
 
+For an imported mod with several plugins, select the mod under **Source** and
+use **Run Whole Mod** to process its members in master-first order. It plans
+the default pipeline for each member, skipping stages already completed at the
+current converter version. **Run Selected Steps** still runs the selected
+plugin with the steps you ticked.
+
+**Rebuild Whole Mod** runs the default pipeline again regardless of version
+history, completing each stage across the mod before proceeding to the next.
+Navmeshes retain their normal cache and freshness checks: current geometry is
+reused, while missing or stale geometry is generated. Both buttons use the
+current parallax, textures-only, collision and navmesh settings, and pack the
+shared output once at the end when **Pack by default** is enabled.
+
+**Settings ▸ Optimize imported mod conversion** controls shared asset reuse
+for both modes. Turning it off runs the original full asset passes.
+
 ### What to install
 
 Everything you install ends up in **`output/Finished Mods/`**. Install these with

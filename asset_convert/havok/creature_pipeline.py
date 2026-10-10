@@ -398,7 +398,7 @@ def _part_sets_by_folder(export_dir: str) -> dict:
     return out
 
 
-def _crea_model_dirs(export_dir: str) -> set:
+def _crea_model_dirs(export_dir: str, plugin_assets_only=False) -> set:
     """The mesh directories CREA records point their Model.MODL at, as
     lowercase paths relative to the meshes root (Model.MODL is already
     meshes-relative: "Creatures\\Rat\\skeleton.nif").
@@ -410,11 +410,16 @@ def _crea_model_dirs(export_dir: str) -> set:
     walk-order heuristic."""
     from tes5_import.base.text_reader import parse_export_file
 
-    crea_path = os.path.join(export_dir, 'CREA.txt')
-    if not os.path.exists(crea_path):
-        return set()
+    if plugin_assets_only:
+        from asset_convert.sources.plugin_assets import related_records
+        records = (rec for sig, rec in related_records(export_dir, {'CREA'}))
+    else:
+        crea_path = os.path.join(export_dir, 'CREA.txt')
+        if not os.path.exists(crea_path):
+            return set()
+        records = parse_export_file(crea_path)
     out = set()
-    for rec in parse_export_file(crea_path):
+    for rec in records:
         model = (rec.get('Model.MODL') or '').replace('/', '\\')
         model = model.replace('\\\\', '\\').lower().lstrip('\\')
         parts = [p for p in model.split('\\') if p]
@@ -486,7 +491,8 @@ def convert_guns(export_dir: str, out_meshes_dir: str, workers: int = None,
         return {}
     work = os.path.join(str(paths.EXPORT), 'skyrim_assets', 'humanoid_graph')
     return build_gun_graphs(manifest, out_meshes_dir, work, log)
-def _creature_folders(export_dir: str, meshes_root: str, names, log) -> list:
+def _creature_folders(export_dir: str, meshes_root: str, names, log,
+                      plugin_assets_only=False) -> list:
     """(folder, leaf name, referenced by a CREA) for every animated creature folder.
 
     A creature is ANY folder holding a skeleton.nif plus .kf animations, at
@@ -495,7 +501,7 @@ def _creature_folders(export_dir: str, meshes_root: str, names, log) -> list:
     models no CREA points at is skipped: its `skeleton.nif` is a model.
     See: docs/commentary/tes4_export_morrowind.md#creatures
     """
-    referenced = _crea_model_dirs(export_dir)
+    referenced = _crea_model_dirs(export_dir, plugin_assets_only)
     sources = source_dirs(export_dir) - referenced
     wanted = {n.lower() for n in names} if names else None
     candidates = []
@@ -504,15 +510,18 @@ def _creature_folders(export_dir: str, meshes_root: str, names, log) -> list:
         if 'skeleton.nif' not in lower:
             continue
         name = os.path.basename(cdir)
+        rel = os.path.relpath(cdir, meshes_root).lower().replace('/', '\\')
+        if plugin_assets_only and rel not in referenced:
+            continue
         if wanted is not None and name.lower() not in wanted:
             continue
-        if name.lower() in _EXCLUDE and wanted is None:
+        if (name.lower() in _EXCLUDE and wanted is None
+                and not (plugin_assets_only and rel in referenced)):
             log(f'  [skip] {name}: excluded (test/cinematic asset)')
             continue
         if not any(f.endswith('.kf') for f in lower):
             log(f'  [skip] {name}: no animations')
             continue
-        rel = os.path.relpath(cdir, meshes_root).lower().replace('/', '\\')
         if rel in sources:
             continue
         candidates.append((cdir, name, rel in referenced))
@@ -641,7 +650,7 @@ def _remove_stale_fragment(plugin_out: str, log=print) -> None:
 
 def convert_creatures(export_dir: str, out_meshes_dir: str,
                       names: list = None, workers: int = None,
-                      log=print) -> dict:
+                      log=print, plugin_assets_only=False) -> dict:
     """Convert every creature folder; {'projects': {name: manifest}, 'errors': {name: str}}.
 
     Writes the projects, meshes, the animation cache fragment (from ALL
@@ -649,6 +658,8 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
     gun appends it already holds, which only a full run rebuilds) and
     <export_dir>/creature_projects.json. Morrowind creatures are split first,
     which creates the tree for a plugin that ships no meshes.
+    `plugin_assets_only` selects folders through this plugin's CREA/ACRE
+    records instead of converting every creature in the shared asset tree.
     See: docs/reference/tes_runtime_fragments.md#the-runtime-composer
     """
     from asset_convert.havok.animation_data import write_fragment
@@ -660,7 +671,8 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
         log(f'  No meshes folder at {meshes_root}')
         return {'projects': {}, 'errors': {}}
     dirs = _pick_creature_dirs(
-        _creature_folders(export_dir, meshes_root, names, log), log)
+        _creature_folders(export_dir, meshes_root, names, log,
+                          plugin_assets_only), log)
     namespace = _namespace_for(out_meshes_dir)
     _remove_unnamespaced_projects(out_meshes_dir, log)
     log(f'  Converting {len(dirs)} creatures '
@@ -673,14 +685,17 @@ def convert_creatures(export_dir: str, out_meshes_dir: str,
         if m.get('namespace') == namespace:
             all_manifests.setdefault(m['name'], m)
     plugin_out = os.path.dirname(os.path.normpath(out_meshes_dir))
-    appends = (_kept_appends(plugin_out) if names
+    appends = (_kept_appends(plugin_out) if names or plugin_assets_only
                else convert_guns(export_dir, out_meshes_dir, workers, log))
+    if plugin_assets_only and not names:
+        # Guns already select their clips through this plugin's WEAP records.
+        appends.update(convert_guns(export_dir, out_meshes_dir, workers, log))
     if all_manifests or appends:
         path = write_fragment(list(all_manifests.values()), out_meshes_dir,
                               os.path.basename(plugin_out), appends, plugin_out)
         log(f'  Registered {len(all_manifests)} projects in '
             f'{os.path.relpath(path, plugin_out)}')
-    elif not names:
+    elif not names and not plugin_assets_only:
         _remove_stale_fragment(plugin_out, log)
     write_artifact(os.path.join(export_dir, 'creature_projects.json'),
                    os.path.basename(os.path.normpath(export_dir)),

@@ -660,3 +660,93 @@ def test_organize_voice_files_missing_voice_dir(tmp_path):
         dest_dir=str(tmp_path / 'output'),
     )
     assert result['organized'] == 0
+
+
+def test_voice_patch_without_recordings_does_not_copy_shared_voices(tmp_path, capsys):
+    source = tmp_path / 'source'
+    foreign = source / 'sound' / 'voice' / 'master.esm' / 'Nord' / 'M'
+    foreign.mkdir(parents=True)
+    (foreign / 'hello_00000001_1.xwm').write_bytes(b'master voice')
+    output = tmp_path / 'output'
+    result = organize_voice_files(source, output, plugin_name='Fix.esp',
+                                   convert_audio=False)
+    assert result['organized'] == 0 and result['errors'] == 0
+    assert not output.exists()
+    assert 'no voice map' not in capsys.readouterr().out
+
+
+def test_voice_scope_can_be_disabled_for_legacy_plugin_conversion(tmp_path):
+    source = tmp_path / 'source'
+    foreign = source / 'sound' / 'voice' / 'master.esm' / 'Nord' / 'M'
+    foreign.mkdir(parents=True)
+    (foreign / 'hello_00000001_1.xwm').write_bytes(b'master voice')
+    output = tmp_path / 'output'
+    result = organize_voice_files(source, output, plugin_name='Fix.esp',
+                                   convert_audio=False, scope_plugin_voices=False)
+    assert result['organized'] == 1 and result['errors'] == 0
+    assert [p.read_bytes() for p in output.rglob('*.xwm')] == [b'master voice']
+
+
+def test_voice_map_borrows_only_required_lines_and_prefers_own_recording(tmp_path):
+    source, output = tmp_path / 'source', tmp_path / 'output'
+    for owner, fid, payload in [('zmaster.esm', 1, b'own take'),
+                                 ('apatch.esp', 1, b'foreign duplicate'),
+                                 ('apatch.esp', 2, b'needed borrowed take'),
+                                 ('apatch.esp', 3, b'unrelated take')]:
+        folder = source / 'sound' / 'voice' / owner / 'Nord' / 'M'
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f'old_{fid:08x}_1.xwm').write_bytes(payload)
+    _race_export(source, [('Nord', 'Nord')])
+    result = organize_voice_files(source, output, plugin_name='ZMaster.esm',
+                                   convert_audio=False,
+                                   voice_map={1: ('own', ['MappedMale']),
+                                              2: ('borrowed', ['MappedMale'])})
+    target = output / 'sound' / 'Voice' / 'ZMaster.esm' / 'MappedMale'
+    assert result['organized'] == 2 and result['unmapped_races'] == set()
+    assert sorted(p.name for p in target.iterdir()) == [
+        'borrowed_00000002_1.xwm', 'own_00000001_1.xwm']
+    assert (target / 'own_00000001_1.xwm').read_bytes() == b'own take'
+    assert (target / 'borrowed_00000002_1.xwm').read_bytes() == b'needed borrowed take'
+
+
+def test_grouped_sound_conversion_uses_plugin_artifacts_and_skips_shared_effects(tmp_path, monkeypatch):
+    import json
+    from asset_convert.audio import audio_converter as audio
+
+    exp, out = tmp_path / 'export', tmp_path / 'output'
+    exp.mkdir()
+    names = ['A.esm', 'B.esp', 'Fix.esp']
+    (exp / 'sources.json').write_text(json.dumps({'version': 1, 'sources': {
+        name: {'kind': 'archive', 'plugin': name, 'group_id': 'g1',
+               'group_label': 'Pack', 'group_plugins': names} for name in names}}),
+        encoding='utf-8')
+    assets = exp / 'Pack'
+    for name in names:
+        (assets / name).mkdir(parents=True)
+    _race_export(assets / 'A.esm', [('Nord', 'Nord')])
+    (assets / 'B.esp' / '_HEADER.txt').write_text('Master[0]=A.esm\n', encoding='utf-8')
+    for name, fid in [('a.esm', 1), ('b.esp', 2), ('b.esp', 3)]:
+        folder = assets / 'sound' / 'voice' / name / 'Nord' / 'M'
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f'old_{fid:08x}_1.xwm').write_bytes(bytes([fid]))
+    effect = _make_wav(assets / 'sound' / 'fx' / 'hit.wav')
+    maps = out / 'Pack'
+    maps.mkdir(parents=True)
+    (maps / 'A.esm.voicemap.txt').write_text(
+        '000001=master_one\tMappedMale\n000002=master_borrowed\tMappedMale\n', encoding='utf-8')
+    (maps / 'B.esp.voicemap.txt').write_text(
+        '000002=patch_two\tMappedMale\n000003=patch_three\tMappedMale\n', encoding='utf-8')
+    monkeypatch.setattr(audio, 'find_ffmpeg', lambda *_: None)
+    assert convert_sounds('A.esm', exp, out)['failed'] == 0
+    voice_out = maps / 'sound' / 'Voice'
+    assert sorted(p.name for p in (voice_out / 'A.esm').rglob('*.xwm')) == [
+        'master_borrowed_00000002_1.xwm', 'master_one_00000001_1.xwm']
+    shared_effect = maps / 'sound' / _namespace(tmp_path, 'A.esm') / 'fx' / 'hit.wav'
+    assert shared_effect.read_bytes() == effect.read_bytes()
+    shared_effect.unlink()
+    assert convert_sounds('B.esp', exp, out, skip_shared_sounds=True)['failed'] == 0
+    assert sorted(p.name for p in (voice_out / 'B.esp').rglob('*.xwm')) == [
+        'patch_three_00000003_1.xwm', 'patch_two_00000002_1.xwm']
+    assert not shared_effect.exists()
+    assert convert_sounds('Fix.esp', exp, out, skip_shared_sounds=True)['total'] == 0
+    assert not (voice_out / 'Fix.esp').exists()

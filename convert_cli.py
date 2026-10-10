@@ -189,6 +189,19 @@ def _add_mesh_args(parser) -> None:
                              "under meshes/ (e.g. architecture tr/l). Default: all.")
     parser.add_argument("--skip-hair", action="store_true",
                         help="Skip the hair baking pass after mesh conversion.")
+    parser.add_argument("--plugin-assets-only", action="store_true",
+                        help="Convert only meshes and creatures referenced by "
+                             "this plugin, including base objects it places.")
+    parser.add_argument("--defer-textures", action="store_true",
+                        help="Leave shared texture processing to a later mod-wide pass.")
+    parser.add_argument("--mesh-reuse-token", help=argparse.SUPPRESS)
+    parser.add_argument("--skip-shared-sounds", action="store_true",
+                        help="Process this plugin's voices without repeating "
+                             "the mod's shared non-voice sound pass.")
+    parser.add_argument("--shared-textures-only", nargs="+", metavar="PLUGIN",
+                        dest="shared_texture_plugins",
+                        help="With --meshes-only, process shared textures for "
+                             "these plugins without reconverting their meshes.")
     winding = parser.add_mutually_exclusive_group()
     winding.add_argument("--collision-winding-fix", dest="collision_winding_fix",
                          action="store_true", default=None,

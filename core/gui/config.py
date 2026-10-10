@@ -118,6 +118,9 @@ PACKING_STEPS = ("pack", "pack_zip")
 #: conversion_config.json key for that setting. Absent reads as ON.
 PACK_DEFAULT_CONFIG_KEY = "packStepsDefaultOn"
 
+# Shared imported-mod history and asset reuse. Absent reads as ON.
+IMPORTED_MOD_OPTIMIZATIONS_KEY = "importedModOptimizations"
+
 #: conversion_config.json key for the inferred-collision-winding tri-state.
 WINDING_CONFIG_KEY = "collisionWindingFix"
 WINDING_AUTO, WINDING_ON, WINDING_OFF = "auto", "on", "off"
