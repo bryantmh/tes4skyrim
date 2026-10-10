@@ -15,6 +15,8 @@ import json
 import os
 import sys
 
+import pytest
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -304,6 +306,164 @@ def test_script_stage_finds_a_master_outside_the_mod_folder(tmp_path):
         str(exp / 'Oblivion.esm'), str(exp / 'My Pack' / 'Mod.esm'), esp]
 
 
+def test_plugin_with_armor_keeps_meshes_ticked(tmp_path, monkeypatch):
+    """A sibling carrying wearables must not inherit the group's meshes stamp.
+
+    Its mesh-variant plan extends the base one, so skipping its Meshes run
+    would silently drop its variants. Unknown binaries fail toward running:
+    a wasted reconversion beats silently broken armor.
+    """
+    from types import SimpleNamespace
+
+    import core.gui.selection as sel
+
+    blob = tmp_path / "Fix.esp"
+    blob.write_bytes(b"x")
+    sel._sig_cache.clear()
+    monkeypatch.setattr("source_paths.resolve_plugin_path",
+                        lambda *a: str(blob))
+    monkeypatch.setattr("tes4_export.tes4_reader.read_file",
+                        lambda *a, **k: (None, [SimpleNamespace(type="ARMO")]))
+    app = SimpleNamespace(tes4_var=SimpleNamespace(get=lambda: "D"))
+    assert sel.plugin_adds_wearables(app, "Fix.esp") is True
+
+    sel._sig_cache.clear()
+    monkeypatch.setattr("tes4_export.tes4_reader.read_file",
+                        lambda *a, **k: (None, [SimpleNamespace(type="CELL")]))
+    assert sel.plugin_adds_wearables(app, "Fix.esp") is False
+
+    sel._sig_cache.clear()
+    monkeypatch.setattr("source_paths.resolve_plugin_path",
+                        lambda *a: None)
+    assert sel.plugin_adds_wearables(app, "Fix.esp") is True
+
+
+def test_plugin_with_creatures_keeps_creatures_ticked(tmp_path, monkeypatch):
+    """Same guard shape as wearables, for the creature-folder selection."""
+    from types import SimpleNamespace
+
+    import core.gui.selection as sel
+
+    blob = tmp_path / "Fix.esp"
+    blob.write_bytes(b"x")
+    sel._sig_cache.clear()
+    monkeypatch.setattr("source_paths.resolve_plugin_path",
+                        lambda *a: str(blob))
+    monkeypatch.setattr("tes4_export.tes4_reader.read_file",
+                        lambda *a, **k: (None, [SimpleNamespace(type="CREA")]))
+    app = SimpleNamespace(tes4_var=SimpleNamespace(get=lambda: "D"))
+    assert sel.plugin_adds_records(app, "Fix.esp", sel._CREATURE_SIGS) is True
+
+    sel._sig_cache.clear()
+    monkeypatch.setattr("tes4_export.tes4_reader.read_file",
+                        lambda *a, **k: (None, [SimpleNamespace(type="CELL")]))
+    assert sel.plugin_adds_records(app, "Fix.esp", sel._CREATURE_SIGS) is False
+
+
+def test_group_members_do_not_pack_by_default(tmp_path, monkeypatch):
+    """Pack steps cover the shared folder, so they are not pre-ticked.
+
+    Ticked per member they would pack the folder once per plugin: one zip
+    overwritten uselessly and per-stem BSAs duplicated under new names.
+    """
+    from types import SimpleNamespace
+
+    import core.gui.selection as sel
+
+    _fake_group(tmp_path, ['A.esm', 'B.esp'])
+    monkeypatch.setattr(sel, 'EXPORT_DIR',
+                        tmp_path / 'export')
+
+    class Var:
+        def __init__(self):
+            self.v = True
+
+        def set(self, x):
+            self.v = x
+
+        def get(self):
+            return self.v
+
+    app = SimpleNamespace(
+        step_vars={k: Var() for k in (
+            'export', 'extract', 'meshes', 'speedtrees', 'creatures',
+            'import', 'sounds', 'scripts', 'pack', 'pack_zip')},
+        upgrade_btn=SimpleNamespace(configure=lambda **k: None),
+        set_upgrade_tip=lambda *a: None,
+        update_run_btn=lambda *a: None,
+        tes4_var=SimpleNamespace(get=lambda: 'D'),
+        plan_applied=set())
+    sel._apply_plan_state(app, {'never_run': True, 'steps': [],
+                                'current': 'x'}, 'B.esp', True)
+    assert app.step_vars['pack'].get() is False
+    assert app.step_vars['pack_zip'].get() is False
+    assert app.step_vars['export'].get() is True
+
+
+@pytest.mark.parametrize('signature,stamp,meshes,creatures', [
+    ('CELL', 'current', False, False),
+    ('ARMO', 'current', True, False),
+    ('CLOT', 'current', True, False),
+    ('HAIR', 'current', True, False),
+    ('CREA', 'current', True, True),
+    ('ACRE', 'current', False, True),
+    ('STAT', 'current', True, False),
+    ('REFR', 'current', True, False),
+    (None, 'current', True, True),
+    ('CELL', '0.001', True, True),
+])
+def test_next_plugin_selects_only_needed_steps(tmp_path, monkeypatch,
+                                             signature, stamp, meshes,
+                                             creatures):
+    """Selection reuses completed assets while retaining a sibling's additions."""
+    import struct
+    from types import SimpleNamespace
+
+    import core.gui.selection as sel
+    import version as v
+
+    exp = _fake_group(tmp_path, ['A.esm', 'B.esp'])
+    monkeypatch.setattr(v, 'SCRIPT_DIR', tmp_path)
+    monkeypatch.setattr(v, 'STATE_FILE', tmp_path / '.conversion_state.json')
+    monkeypatch.setattr(sel, 'EXPORT_DIR', exp)
+    at = v.current_version() if stamp == 'current' else stamp
+    for step in ('extract', 'meshes', 'speedtrees', 'creatures'):
+        v.record_step_run(step, 'A.esm', version=at)
+
+    source = tmp_path / 'B.esp'
+    if signature:
+        sig = signature.encode('ascii')
+        header = b'TES4' + struct.pack('<IIII', 18, 0, 0, 0)
+        header += b'HEDR' + struct.pack('<H', 12) + bytes(12)
+        group = b'GRUP' + struct.pack('<I', 40) + sig + bytes(8)
+        record = sig + struct.pack('<IIII', 0, 0, 1, 0)
+        source.write_bytes(header + group + record)
+    else:
+        source.write_bytes(b'unreadable')
+    monkeypatch.setattr('source_paths.resolve_plugin_path', lambda *a: str(source))
+    monkeypatch.setattr(sel, '_sig_cache', {})
+
+    state = {k: True for k in ('export', 'extract', 'meshes', 'speedtrees',
+                              'creatures', 'import_', 'sounds', 'scripts',
+                              'pack', 'pack_zip')}
+    variables = {k: SimpleNamespace(get=lambda k=k: state[k],
+                                   set=lambda value, k=k: state.__setitem__(k, value))
+                 for k in state}
+    app = SimpleNamespace(step_vars=variables,
+                          tes4_var=SimpleNamespace(get=lambda: ''),
+                          upgrade_btn=SimpleNamespace(configure=lambda **k: None),
+                          set_upgrade_tip=lambda *a: None,
+                          update_run_btn=lambda: None, log=lambda *a: None)
+    sel._apply_plan_state(app, {'never_run': True}, 'B.esp', True)
+
+    assert state['meshes'] is meshes
+    assert state['creatures'] is creatures
+    assert state['extract'] is (stamp != 'current')
+    assert state['speedtrees'] is (stamp != 'current')
+    assert state['pack'] is False and state['pack_zip'] is False
+    assert all(state[k] for k in ('export', 'import_', 'sounds', 'scripts'))
+
+
 def test_import_main_master_dirs_match_load_master_export(tmp_path):
     """`master_export_dirs` exists to mirror `load_master_export` exactly.
 
@@ -403,3 +563,20 @@ def test_import_main_points_the_soun_converter_at_the_asset_root():
     assert 'set_sound_source_dir(str(assets_for(export_dir)))' in src, (
         'set_sound_source_dir is being handed a record dir again -- every '
         'directory-valued SOUN ANAM becomes an unplayable bare path')
+
+
+def test_imported_optimization_opt_out_keeps_default_checkboxes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import core.gui.selection as sel
+    exp = _fake_group(tmp_path, ['A.esm', 'B.esp'])
+    monkeypatch.setattr(sel, 'EXPORT_DIR', exp)
+    state = {key: True for key in ('meshes', 'creatures', 'pack', 'pack_zip')}
+    app = SimpleNamespace(
+        step_vars={key: SimpleNamespace(get=lambda key=key: state[key],
+                   set=lambda value, key=key: state.__setitem__(key, value))
+                   for key in state},
+        imported_mod_optimizations_var=SimpleNamespace(get=lambda: False),
+        upgrade_btn=SimpleNamespace(configure=lambda **kw: None),
+        set_upgrade_tip=lambda *args: None)
+    sel._apply_plan_state(app, {'never_run': True}, 'B.esp', True)
+    assert all(state.values())
