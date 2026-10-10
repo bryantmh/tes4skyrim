@@ -225,6 +225,17 @@ garbage.
 }
 ```
 
+### `trace` — frame-rate sampler + timestamped hooks (`trace.cpp`)
+
+| action | args | effect |
+|---|---|---|
+| `hook` | `{rva\|address, cap_arg, cap_len, label}` | detour (≤6) that records entry/exit µs, thread, 4 args, return, `cap_len` bytes at arg `cap_arg` — only while a trace runs |
+| `start` | `{path, interval_ms, meta, regions:[{kind 0 direct\|1 deref\|2 ptr-array, addr, off, len, stride, elem_ptr_off, max}]}` | background thread copies every region each interval (SEH-guarded) into `path` |
+| `stop` / `status` | – | `{running, samples, hook_records, bytes, path}` |
+
+File: framed records `u8 type, u32 len, payload` — 0 meta JSON, 1 sample, 2 hook
+(layout in `trace.cpp`). Client and decoder: `tools/live/graph_trace.py`.
+
 `ragdoll_instance:false` or `rigid_bodies:0` on a creature that looks fine on
 screen is the exact silent-binding signature that offline validation misses.
 `in_world` distinguishes "ragdoll constructed" from "ragdoll actually raised

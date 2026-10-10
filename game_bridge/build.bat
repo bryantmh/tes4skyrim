@@ -23,7 +23,7 @@ if not exist obj mkdir obj
 echo [build] compiling...
 cl /nologo /c /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG ^
    plugin.cpp commands.cpp console_exec.cpp console_capture.cpp ^
-   papyrus_capture.cpp detour.cpp rawmem.cpp generic_hook.cpp script_object.cpp ^
+   papyrus_capture.cpp detour.cpp rawmem.cpp generic_hook.cpp script_object.cpp trace.cpp ^
    game.cpp addresses.cpp pipe_server.cpp main_thread.cpp json.cpp log.cpp ^
    /Fo:obj\
 if errorlevel 1 (
@@ -33,7 +33,7 @@ if errorlevel 1 (
 
 echo [build] linking...
 link /nologo /DLL /OUT:..\TESGameBridge.dll obj\*.obj ^
-     kernel32.lib user32.lib shell32.lib ole32.lib advapi32.lib
+     kernel32.lib user32.lib shell32.lib ole32.lib advapi32.lib winmm.lib
 if errorlevel 1 (
     echo [build] ERROR: link failed
     exit /b 1

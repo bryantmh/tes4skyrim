@@ -17,14 +17,13 @@ See: docs/commentary/asset_convert_creature.md#strafes-are-blends-not-states
 from asset_convert.havok.behavior_clips import (
     backward_blend_plan,
     combat_idle_clip,
+    direction_children,
+    gait_blend_plan,
     gait_thresholds,
     run_blend_plan,
     speed_blend_plan,
 )
 from asset_convert.havok.behavior_nodes import F_LOCAL
-
-#: Anchor weights of the Direction blend: forward, right, backward, left.
-_DIR_RIGHT, _DIR_BACK, _DIR_LEFT = 0.25, 0.5, 0.75
 
 
 # ---------------------------------------------------------------------------
@@ -32,45 +31,28 @@ _DIR_RIGHT, _DIR_BACK, _DIR_LEFT = 0.25, 0.5, 0.75
 # ---------------------------------------------------------------------------
 
 def gait_speed_blend(gb, name, kf, spd):
-    """slow-creep@5 + clip@natural + clip@2x SpeedSampled blend for one gait.
+    """`gait_blend_plan` as a SpeedSampled blend, or a bare clip when it has no speed.
 
-    The chaurus per-direction layout (RightSlow / Right / Right_Run); a bare
-    clip when the clip has no measurable root-motion speed.  The 2x child is
-    the same clip at playbackSpeed 2.0, because the engine's commanded speed
-    at a strafe heading blends the MOVT columns rather than using the strafe
-    column alone.
+    The chaurus per-direction layout (RightSlow / Right / Right_Run).  The 2x
+    child is there because the engine's commanded speed at a strafe heading
+    blends the MOVT columns rather than using the strafe column alone.
     See: docs/commentary/asset_convert_creature.md#strafes-are-blends-not-states
     """
-    if not spd:
+    plan = gait_blend_plan(name, kf, spd)
+    if len(plan) == 1:
         return gb.clip(name, kf, True)
-    return gb.parametric_blend(
-        f'{name}Blend',
-        [(f'{name}Slow', kf, max(0.02, round(5.0 / spd, 3)), 5.0),
-         (name, kf, 1.0, spd),
-         (f'{name}Fast', kf, 2.0, round(spd * 2.0, 3))])
+    return gb.parametric_blend(f'{name}Blend', plan)
 
 
 def direction_family(gb, prefix, fwd_ref, loco, speeds):
     """The Direction blend around ONE gait family (walk or run).
 
-    Forward @0 plus whatever strafe/backward clips the creature ships, each
-    as its own speed blend.  None when there is nothing to blend, so the
-    family stays a plain forward gait.
+    Forward @0 plus the `direction_children` the creature ships, each as its
+    own speed blend.  None when there is nothing to blend.
     """
-    kids = [(fwd_ref, 0.0)]
-    if 'StrafeRight' in loco:
-        kids.append((gait_speed_blend(
-            gb, f'{prefix}StrafeRight', loco['StrafeRight'],
-            speeds.get('right')).ref, _DIR_RIGHT))
-    if 'MoveBackward' in loco and ('StrafeRight' in loco
-                                   or 'StrafeLeft' in loco):
-        kids.append((gait_speed_blend(
-            gb, f'{prefix}BackwardDir', loco['MoveBackward'],
-            speeds.get('back')).ref, _DIR_BACK))
-    if 'StrafeLeft' in loco:
-        kids.append((gait_speed_blend(
-            gb, f'{prefix}StrafeLeft', loco['StrafeLeft'],
-            speeds.get('left')).ref, _DIR_LEFT))
+    kids = [(fwd_ref, 0.0)] + [
+        (gait_speed_blend(gb, f'{prefix}{sfx}', kf, spd).ref, anchor)
+        for sfx, kf, anchor, spd in direction_children(loco, speeds)]
     if len(kids) == 1:
         return None
     return gb.direction_blend(f'{prefix}DirectionalBlend', kids)
@@ -83,12 +65,12 @@ def direction_family(gb, prefix, fwd_ref, loco, speeds):
 def _gait_hysteresis(gb, speeds):
     """The EEM switching walk<->run on SpeedSampled, with hysteresis.
 
-    iMovementSpeed picks the start state; comparison operators must be
-    XML-escaped in the packfile text.
+    iMovementSpeed picks the start state at the same runStart threshold;
+    comparison operators must be XML-escaped in the packfile text.
     """
     lo, hi = gait_thresholds(speeds)
     arr = gb.expression_array(
-        [('iMovementSpeed = cond((Speed &lt; 100), 0, 1)',
+        [(f'iMovementSpeed = cond((Speed &lt; {hi}), 0, 1)',
           'EVENT_MODE_SEND_ONCE'),
          (f'runStart if (SpeedSampled &gt; {hi})',
           'EVENT_MODE_SEND_ON_FALSE_TO_TRUE'),
@@ -180,34 +162,32 @@ def _standing_idle_machine(gb, clips):
 
 
 def _standing_machine(gb, clips, loco):
-    """StandingBehavior: the idle switch plus looping turn-in-place states."""
+    """StandingBehavior: TurnRight(0), StandingIdle(1), TurnLeft(2).
+
+    Vanilla's ids and start state, bound to the engine's `iSyncTurnState`
+    when both turns exist, so re-entry after an action resumes a turn.
+    States are listed in id order: the engine resolves id 0 by checking
+    only `states[0]`.
+    See: docs/commentary/asset_convert_creature.md#resume-locomotion
+    """
     eid = gb.eid
-    idle_sm = _standing_idle_machine(gb, clips)
-    has_tr, has_tl = 'TurnRight' in loco, 'TurnLeft' in loco
-    idle_trans = []
-    if has_tr:
-        idle_trans.append((eid['turnRight'], 1, F_LOCAL))
-    if has_tl:
-        idle_trans.append((eid['turnLeft'], 2, F_LOCAL))
-    states = [gb.state(0, 'StandingIdleState', idle_sm.ref,
-                       transitions=idle_trans or None)]
-    if has_tr:
-        trans = [(eid['turnStop'], 0, F_LOCAL)]
-        if has_tl:
-            trans.insert(0, (eid['turnLeft'], 2, F_LOCAL))
-        states.append(gb.state(
-            1, 'LoopingTurnRight',
-            gb.clip('TurnRight', loco['TurnRight'], True).ref,
-            transitions=trans))
-    if has_tl:
-        trans = [(eid['turnStop'], 0, F_LOCAL)]
-        if has_tr:
-            trans.insert(0, (eid['turnRight'], 1, F_LOCAL))
-        states.append(gb.state(
-            2, 'LoopingTurnLeft',
-            gb.clip('TurnLeft', loco['TurnLeft'], True).ref,
-            transitions=trans))
-    return gb.state_machine('StandingBehavior', states)
+    turns = {sid: (name, evt) for sid, name, evt in
+             ((0, 'TurnRight', 'turnRight'), (2, 'TurnLeft', 'turnLeft'))
+             if name in loco}
+    to_turns = [(eid[evt], sid, F_LOCAL) for sid, (_n, evt) in turns.items()]
+    states = {1: gb.state(1, 'StandingIdleState',
+                          _standing_idle_machine(gb, clips).ref,
+                          transitions=to_turns or None)}
+    for sid, (name, _evt) in turns.items():
+        trans = [t for t in to_turns if t[1] != sid]
+        states[sid] = gb.state(
+            sid, f'Looping{name}', gb.clip(name, loco[name], True).ref,
+            transitions=trans + [(eid['turnStop'], 1, F_LOCAL)])
+    bind = (gb.binding_set([('startStateId', 'iSyncTurnState')]).ref
+            if len(turns) == 2 else 'null')
+    return gb.state_machine('StandingBehavior',
+                            [states[k] for k in sorted(states)],
+                            start_id=1, binding_ref=bind)
 
 
 def build_default(gb, clips, speeds):

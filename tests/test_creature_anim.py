@@ -1764,7 +1764,8 @@ ASHVAMP_DIR = os.path.join(REPO, 'export', 'Morrowind_ob.esm', 'meshes',
 
 @needs_assets
 class TestAccumBindPoseLeak:
-    """The accum bone flattens to its authored frame-0 pose, never identity.
+    """NonAccum keeps its authored frame-0 pose, never identity, and is never
+    the root-motion bone while a Bip01 track exists (its sway is pose).
 
     See: docs/commentary/asset_convert_falloutnv.md#accum-root-identity
     """
@@ -1772,8 +1773,8 @@ class TestAccumBindPoseLeak:
     @pytest.mark.parametrize('kf,yaw', [('turnleft.kf', 54.18),
                                         ('stagger.kf', 67.11),
                                         ('idle.kf', 54.18)])
-    def test_accum_rotation_flattens_to_first_sample(self, kf, yaw):
-        """The accum track ends static at the source's authored `yaw`."""
+    def test_nonaccum_keeps_authored_pose(self, kf, yaw):
+        """NonAccum starts at the source's authored `yaw` after the split."""
         from asset_convert.havok.kf_decode import split_root_motion
         path = os.path.join(ASHVAMP_DIR, kf)
         if not os.path.exists(path):
@@ -1782,18 +1783,16 @@ class TestAccumBindPoseLeak:
         pre = {t.bone: np.array(t.rotations[0], copy=True)
                for t in clip.tracks if t.rotations is not None}
         motion = split_root_motion(clip)
-        assert motion is not None
-        w, x, y, z = pre[motion['bone']]
+        assert motion is None or motion['bone'] == 'Bip01'
+        non = next(t for t in clip.tracks if t.bone == 'Bip01 NonAccum')
+        assert non.rotations[0] == pytest.approx(pre['Bip01 NonAccum'])
+        w, x, y, z = non.rotations[0]
         got = np.degrees(np.arctan2(2 * (w * z + x * y),
                                     1 - 2 * (y * y + z * z)))
         assert abs(got) == pytest.approx(yaw, abs=0.1)
-        for t in clip.tracks:
-            if t.bone == motion['bone']:
-                assert t.rotations == pytest.approx(
-                    np.tile(pre[t.bone], (len(clip.times), 1)))
 
     def test_accum_translation_is_preserved(self):
-        """Flattening the rotation must not disturb the accum height."""
+        """The split must not disturb the NonAccum height (the turn's sway is pose)."""
         from asset_convert.havok.kf_decode import split_root_motion
         path = os.path.join(ASHVAMP_DIR, 'turnleft.kf')
         if not os.path.exists(path):
@@ -1801,10 +1800,9 @@ class TestAccumBindPoseLeak:
         clip = decode_kf(path)[0]
         pre = {t.bone: np.array(t.translations[0], copy=True)
                for t in clip.tracks if t.translations is not None}
-        motion = split_root_motion(clip)
-        for t in clip.tracks:
-            if t.bone == motion['bone'] and t.translations is not None:
-                assert t.translations[0] == pytest.approx(pre[t.bone])
+        split_root_motion(clip)
+        non = next(t for t in clip.tracks if t.bone == 'Bip01 NonAccum')
+        assert non.translations[0] == pytest.approx(pre['Bip01 NonAccum'])
 
 
 @needs_assets

@@ -37,6 +37,7 @@ ENGINE_VARIABLES = [
     ('iState', 'INT32', 0), ('iGetUpType', 'INT32', 0),
     ('iCharacterSelector', 'INT32', 0), ('iCombatStance', 'INT32', 0),
     ('iMovementSpeed', 'INT32', 0), ('iSyncIdleLocomotion', 'INT32', 0),
+    ('iSyncTurnState', 'INT32', 1),
     ('IsAttacking', 'BOOL', 0), ('IsAttackReady', 'BOOL', 1),
     ('bEquipOK', 'BOOL', 1),
     ('iRightHandType', 'INT32', 0), ('iLeftHandType', 'INT32', 0),

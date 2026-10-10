@@ -42,6 +42,7 @@ from asset_convert.havok.behavior_clips import (
     cast_phase_defs,
     classify_clips,
     clip_state_name,
+    direction_plans,
     run_blend_plan,
     speed_blend_plan,
     state_defs,
@@ -324,11 +325,11 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     default_gen_ref = combat_idle_generator(gb, cast_defs, default_sm)
 
     default_state = gb.state(0, 'DefaultState', default_gen_ref,
-                           transitions=default_trans or None)
+                           transitions=default_trans or None, root=True)
     root_states_inner.insert(0, default_state)
 
     root_wilds.append((eid['returnToDefault'], 0, F_GLOBAL))
-    wild = gb.trans_array(root_wilds)
+    wild = gb.trans_array(root_wilds, root=True)
 
     sm = gb.state_machine(f'{behavior_name}Root', root_states_inner,
                   start_id=0, wildcard_ref=wild.ref)
@@ -791,7 +792,8 @@ class _ClipSet:
         for plan in (speed_blend_plan(self.clips, speeds) or [],
                      run_blend_plan(self.clips, speeds) or [],
                      backward_blend_plan(self.clips, speeds) or [],
-                     swim_blend_plan(self.clips, speeds) or []):
+                     swim_blend_plan(self.clips, speeds) or [],
+                     *direction_plans(self.clips, speeds)):
             for cnm, kf, rate, _anchor in plan:
                 entry = None if cnm in base_of else self._blend_child(cnm, kf,
                                                                       rate)
