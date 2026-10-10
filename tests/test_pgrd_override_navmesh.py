@@ -22,6 +22,39 @@ from tes5_import.navmesh import pool as navm_pool
 from tes5_import.overrides import nested as overrides
 
 
+def test_empty_navmesh_stage_keeps_cell_indexes_and_resets_door_links():
+    from types import SimpleNamespace
+    from tes5_import.pipeline_records import _phase4a_navmesh
+    from tes5_import.record_types import world
+    by_type = {'STAT': [{'FormID': '01000001', 'Model.MODL': 'tree.nif'}],
+               'DOOR': [{'FormID': '01000002', 'Model.MODL': 'door.nif'}],
+               'REFR': [{'FormID': '01000003', 'NAME': '01000002'}]}
+    ctx = SimpleNamespace(master_export={}, master_index=None,
+                          relinked_master_navms=['previous run'])
+    st = SimpleNamespace(by_type=by_type, writer=SimpleNamespace(), ctx=ctx,
+                         num_tes4_masters=1)
+    phases = []
+    world.set_door_navmesh_links({0x01000003: (1, 2)})
+    _phase4a_navmesh(st, '.', phases.append, ())
+    assert not st.navm_cache and not st.navm_metas
+    assert st.base_model_by_fid and st.door_fids
+    assert ctx.relinked_master_navms == []
+    assert not world._DOOR_NAVMESH_LINK
+    assert phases == ['navmesh generation']
+
+
+def test_pathgrid_jobs_still_include_master_geometry():
+    cell = {'FormID': '01000001', 'DATA.Flags': '1'}
+    pathgrid = {'FormID': '01000002', 'ParentCELL': cell['FormID']}
+    master_ref = {'Signature': 'REFR', 'FormID': '00000003',
+                  'ParentCELL': cell['FormID'], 'NAME': '00000004'}
+    jobs = navm_pool.gather_navm_jobs({'CELL': [cell], 'PGRD': [pathgrid]},
+                                     master_export={'00000003': master_ref})
+    assert len(jobs) == 1
+    assert jobs[0]['pgrd_rec'] == pathgrid
+    assert jobs[0]['refr_recs'] == [master_ref]
+
+
 class _FakeMasterIndex:
     def record(self, fid):
         return b''
