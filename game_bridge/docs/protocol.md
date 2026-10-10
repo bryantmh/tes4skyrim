@@ -154,6 +154,17 @@ yours.
 Tailing the file (`tools/script/papyrus_tail.py`) is still supported and complementary
 — it sees history and anything emitted while nothing was armed.
 
+### Flight recorder
+
+Script events (quest stages, dialogue lines, packages, triggers, activations
+and more) are written to `TESGameBridge_events.jsonl` whether or not a client
+is connected. The recorder is described in `../README.md` (Flight recorder),
+and `tools/live/flight_log.py` reads it. This command only reports on it.
+
+| cmd | args | returns |
+|---|---|---|
+| `recorder` | `{enable?}` | `{installed, enabled, path, events, bytes, dropped, per_kind, hooked, missing}`. `enable` turns recording off or back on |
+
 ### Papyrus
 
 | cmd | args | returns |

@@ -40,6 +40,7 @@
 #include "game.h"
 #include "ids.h"
 #include "log.h"
+#include "recorder.h"
 
 namespace bridge {
 
@@ -84,7 +85,10 @@ void Record(const char* text) {
 
 void __cdecl LogDetour(void* self, const char* text) {
     InterlockedIncrement(&g_hits);
-    if (text && *text) Record(text);
+    if (text && *text) {
+        Record(text);
+        RecorderPapyrus(text);
+    }
     // Always call through, with the ORIGINAL pointer: the game's own log file
     // must stay complete and exact, both so papyrus_tail.py keeps working and
     // so nothing is hidden from the user.

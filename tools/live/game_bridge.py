@@ -559,6 +559,14 @@ class Bridge:
         r.setdefault("count", len(r["lines"]))
         return r
 
+    def recorder(self, enable: bool | None = None) -> dict:
+        """The flight recorder's hooks, file and counts; `enable` toggles it.
+
+        See: game_bridge/README.md#flight-recorder
+        """
+        args = {} if enable is None else {"enable": enable}
+        return self.request("recorder", **args)
+
 
 # ----------------------------------------------------------------------- cli --
 
