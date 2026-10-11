@@ -1576,16 +1576,13 @@ class TestRagdollBijection:
 
     @needs_landdreugh
     def test_forward_authored_joint_is_reversed_not_dropped(self):
-        # landdreugh's FIRST body (Pelvis) holds a joint to Spine01, a LATER
-        # body.  The root cannot have a parent, so the same joint is given to
-        # Spine01 with its ends exchanged -- an authored joint, not a
-        # synthetic one.
+        """The dreugh roots at NonAccum, the common ancestor of every body; Pelvis's joint to Spine01 is reversed, not synthetic."""
         _bones, parts = self._parts(LANDDREUGH_SKEL)
         plan, dfs = self._dfs_bodies(LANDDREUGH_SKEL)
         assert [p.name for p in parts] == dfs
-        assert parts[0].name == 'Ragdoll_Bip01 Pelvis'
+        assert parts[0].name == 'Ragdoll_Bip01 NonAccum'
         spine = next(p for p in parts if p.name == 'Ragdoll_Bip01 Spine01')
-        assert parts[spine.parent].name == 'Ragdoll_Bip01 Pelvis'
+        assert parts[spine.parent].name == 'Ragdoll_Bip01 NonAccum'
         rev = [r for (_con, r) in plan['edge_con'].values() if r]
         assert len(rev) == 1
         assert not plan['synthetic']
@@ -1764,7 +1761,8 @@ ASHVAMP_DIR = os.path.join(REPO, 'export', 'Morrowind_ob.esm', 'meshes',
 
 @needs_assets
 class TestAccumBindPoseLeak:
-    """The accum bone flattens to its authored frame-0 pose, never identity.
+    """NonAccum keeps its authored frame-0 pose, never identity, and is never
+    the root-motion bone while a Bip01 track exists (its sway is pose).
 
     See: docs/commentary/asset_convert_falloutnv.md#accum-root-identity
     """
@@ -1772,8 +1770,8 @@ class TestAccumBindPoseLeak:
     @pytest.mark.parametrize('kf,yaw', [('turnleft.kf', 54.18),
                                         ('stagger.kf', 67.11),
                                         ('idle.kf', 54.18)])
-    def test_accum_rotation_flattens_to_first_sample(self, kf, yaw):
-        """The accum track ends static at the source's authored `yaw`."""
+    def test_nonaccum_keeps_authored_pose(self, kf, yaw):
+        """NonAccum starts at the source's authored `yaw` after the split."""
         from asset_convert.havok.kf_decode import split_root_motion
         path = os.path.join(ASHVAMP_DIR, kf)
         if not os.path.exists(path):
@@ -1782,18 +1780,16 @@ class TestAccumBindPoseLeak:
         pre = {t.bone: np.array(t.rotations[0], copy=True)
                for t in clip.tracks if t.rotations is not None}
         motion = split_root_motion(clip)
-        assert motion is not None
-        w, x, y, z = pre[motion['bone']]
+        assert motion is None or motion['bone'] == 'Bip01'
+        non = next(t for t in clip.tracks if t.bone == 'Bip01 NonAccum')
+        assert non.rotations[0] == pytest.approx(pre['Bip01 NonAccum'])
+        w, x, y, z = non.rotations[0]
         got = np.degrees(np.arctan2(2 * (w * z + x * y),
                                     1 - 2 * (y * y + z * z)))
         assert abs(got) == pytest.approx(yaw, abs=0.1)
-        for t in clip.tracks:
-            if t.bone == motion['bone']:
-                assert t.rotations == pytest.approx(
-                    np.tile(pre[t.bone], (len(clip.times), 1)))
 
     def test_accum_translation_is_preserved(self):
-        """Flattening the rotation must not disturb the accum height."""
+        """The split must not disturb the NonAccum height (the turn's sway is pose)."""
         from asset_convert.havok.kf_decode import split_root_motion
         path = os.path.join(ASHVAMP_DIR, 'turnleft.kf')
         if not os.path.exists(path):
@@ -1801,10 +1797,9 @@ class TestAccumBindPoseLeak:
         clip = decode_kf(path)[0]
         pre = {t.bone: np.array(t.translations[0], copy=True)
                for t in clip.tracks if t.translations is not None}
-        motion = split_root_motion(clip)
-        for t in clip.tracks:
-            if t.bone == motion['bone'] and t.translations is not None:
-                assert t.translations[0] == pytest.approx(pre[t.bone])
+        split_root_motion(clip)
+        non = next(t for t in clip.tracks if t.bone == 'Bip01 NonAccum')
+        assert non.translations[0] == pytest.approx(pre['Bip01 NonAccum'])
 
 
 @needs_assets
@@ -1864,3 +1859,29 @@ class TestSpeedBakeFrameFloor:
         for cap in (1.4, 2.0):
             got = speed_bake_factor((10000.0, cap), _Clip(), motion, 30.0)
             assert got == pytest.approx(cap)
+
+
+class TestCreepLadder:
+    """A gait blend's same-clip rungs step at most LADDER_STEP apart from the creep up.
+
+    Havok sync blends durations, so the two-anchor creep/walk blend played the
+    legs at a fraction of the ground speed between them: the land dreugh slid
+    at every speed change (in game 2026-10-10).
+    See: docs/commentary/asset_convert_creature.md#forward-blend-layout
+    """
+
+    def test_dreugh_walk_rungs(self):
+        """Creep first, natural clip last, rates = anchor/natural, no gap over LADDER_STEP."""
+        from asset_convert.havok.behavior_clips import (CREEP_SPEED, LADDER_STEP,
+                                                  creep_ladder)
+        plan = creep_ladder('MoveForward', 'forward.kf', 155.0)
+        anchors = [a for _n, _kf, _r, a in plan]
+        assert anchors[0] == CREEP_SPEED and anchors[-1] == 155.0
+        assert plan[0][0] == 'MoveForwardSlow' and plan[-1] == ('MoveForward', 'forward.kf', 1.0, 155.0)
+        assert all(b / a <= LADDER_STEP + 1e-6 for a, b in zip(anchors[1:], anchors[2:]))
+        assert anchors[1] >= CREEP_SPEED * 2.0
+        assert all(r == pytest.approx(a / 155.0, abs=0.002) for _n, _kf, r, a in plan)
+
+    def test_creep_speed_clip_stands_alone(self):
+        from asset_convert.havok.behavior_clips import creep_ladder
+        assert creep_ladder('SwimMove', 'swim.kf', 5.0) == [('SwimMove', 'swim.kf', 1.0, 5.0)]

@@ -120,7 +120,7 @@ def build_swim(gb, clips, speeds, state_id):
         return [], []
     sm = gb.state_machine('SwimBehavior', _swim_states(gb, sw, clips, speeds))
     state = gb.state(state_id, 'SwimState', sm.ref,
-                     transitions=[(gb.eid['swimStop'], 0, F_LOCAL)])
+                     transitions=[(gb.eid['swimStop'], 0, F_LOCAL)], root=True)
     return [state], [(gb.eid['swimStart'], state_id, F_WILD)]
 
 
@@ -223,7 +223,8 @@ def build_cast(gb, cast_defs, clips, hit_times, state_id):
     state = gb.state(state_id, 'FireForgetState', mg.ref,
                      transitions=[(eid['Spell_Stop'], 0, F_LOCAL),
                                   (eid['Spell_Interrupt'], 0, F_LOCAL),
-                                  (eid['InterruptCast'], 0, F_LOCAL)])
+                                  (eid['InterruptCast'], 0, F_LOCAL)],
+                     root=True)
     return [state], _cast_entry_wilds(eid, state_id)
 
 
@@ -247,7 +248,7 @@ def _block_hit_state(gb, blk, ml, hit_id, block_id):
         hit_id, 'BlockHitState',
         _modifier_generator(gb, 'BlockHit_MG', ml.ref, clip.ref).ref,
         transitions=[(eid['blockHitStop'], block_id, F_LOCAL),
-                     (eid['blockStop'], 0, F_LOCAL)])
+                     (eid['blockStop'], 0, F_LOCAL)], root=True)
 
 
 def build_block(gb, clips, state_id):
@@ -274,7 +275,7 @@ def build_block(gb, clips, state_id):
     states = [gb.state(
         block_id, 'BlockState',
         _modifier_generator(gb, 'Block_MG', ml.ref, guard.ref).ref,
-        transitions=trans)]
+        transitions=trans, root=True)]
     wilds = [(eid['blockStart'], block_id, F_WILD)]
     if hit_id is not None:
         states.append(_block_hit_state(gb, blk, ml, hit_id, block_id))

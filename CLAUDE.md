@@ -74,6 +74,13 @@ These protect things that are hard or impossible to get back.
 
 ## Working with the user
 
+- Agents are expensive and I want token usage kept down. Default to doing the
+  work yourself; think twice before spawning one and only do so when it clearly
+  saves tokens (focused or repetitive tasks that can be fully specified in the
+  prompt). Rarely more than 2. Always set `model` explicitly to one tier below
+  your own (Opus -> sonnet, Sonnet -> haiku), at medium effort, never inheriting
+  the parent model.
+
 - **A fact the user states is ground truth — don't search to confirm it.** Search
   only for what they didn't tell you. If the code later contradicts it, say so in
   the final report.

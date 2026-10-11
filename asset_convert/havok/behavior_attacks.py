@@ -83,6 +83,8 @@ def add_interrupts(gb, root, clips, hit_times):
         end_evt = 'returnToDefault' if st != 'Death' else None
         clip = gb.clip(st, clips['single'][st], False,
                        gb.clip_triggers(hit_times.get(st, []), end_evt))
+        if st != 'Death':
+            clip = gb.holding(st, clip.ref, ['bAnimationDriven'])
         state = gb.state(root.next_id, f'{st}State', clip.ref,
                          exit_events=[stop_evt] if stop_evt else None)
         state_id = root.add(state, eid[enter],
@@ -124,12 +126,14 @@ def attack_modifier_list(gb):
 
     While the state is active it drives IsAttacking=1 (the combat
     controller's in-progress flag), bAllowRotation=1 (target tracking during
-    the swing) and bDisableHeadTrack=1.  Without IsAttacking the engine
-    keeps steering mid-swing.
+    the swing), bDisableHeadTrack=1 and bAnimationDriven=1 (motion from the
+    clip, not the commanded velocity).
+    See: docs/commentary/asset_convert_creature.md#attack-pin
     """
     bind = gb.binding_set([('bIsActive0', 'IsAttacking'),
                            ('bIsActive1', 'bAllowRotation'),
-                           ('bIsActive2', 'bDisableHeadTrack')])
+                           ('bIsActive2', 'bDisableHeadTrack'),
+                           ('bIsActive3', 'bAnimationDriven')])
     iso = gb.add('BSIsActiveModifier')
     iso.param('variableBindingSet', bind.ref)
     iso.param('userData', 2)
@@ -187,7 +191,7 @@ def _stance_machine(gb, entries, unstanced, stance):
                                             F_LOCAL)]))
         trans.append((eid[evt], idx, F_WILD))
     return gb.state_machine(f'Attack_{stance}_SM', inner, start_id=0,
-                            wildcard_ref=gb.trans_array(trans).ref)
+                            wildcard_ref=gb.trans_array(trans, root=True).ref)
 
 
 def _stance_selector(gb, root, specs, clips):
@@ -221,7 +225,8 @@ def _stance_selector(gb, root, specs, clips):
                                 binding_ref=bind.ref)
     state_id = root.next_id
     root.add(gb.state(state_id, 'AttackStanceState', selector.ref,
-                      transitions=[(gb.eid['returnToDefault'], 0, F_LOCAL)]))
+                      transitions=[(gb.eid['returnToDefault'], 0, F_LOCAL)],
+                      root=True))
     for _stance, _st_name, _gen, evt in specs:
         root.default_trans.append((gb.eid[evt], state_id, F_LOCAL))
     return True
@@ -268,11 +273,11 @@ def add_equips(gb, root, clips, hit_times):
                 continue
             st_name = f'{kind.capitalize()}_{stance}'
             evt = f'{kind}Start_{stance}'
-            clip = gb.clip(st_name, kf, False, gb.clip_triggers(
-                hit_times.get(st_name, []), reply))
+            clip = gb.holding(st_name, gb.clip(st_name, kf, False, gb.clip_triggers(
+                hit_times.get(st_name, []), reply)).ref, ['bAnimationDriven'])
             root.add(gb.state(root.next_id, f'{st_name}State', clip.ref,
                               transitions=[(gb.eid['returnToDefault'], 0,
-                                            F_LOCAL)]),
+                                            F_LOCAL)], root=True),
                      gb.eid[evt])
             dispatch.append((kind, evt, hand_types))
     return dispatch
@@ -287,7 +292,8 @@ def add_vocal_idles(gb, root, clips, hit_times, vocal_states):
         clip = gb.clip(st_name, clips['idle'], False, gb.clip_triggers(
             hit_times.get(st_name, []), 'returnToDefault'), anim=stem)
         root.add(gb.state(root.next_id, f'{st_name}State', clip.ref,
-                          transitions=[(gb.eid['IdleStop'], 0, F_LOCAL)]),
+                          transitions=[(gb.eid['IdleStop'], 0, F_LOCAL)],
+                          root=True),
                  gb.eid[evt])
 
 

@@ -321,7 +321,7 @@ def _palette_string(palette_block, offset: int) -> Optional[str]:
     return raw[offset:end].decode('latin-1')
 
 
-def _controlled_block_target(cb) -> Optional[str]:
+def controlled_block_target(cb) -> Optional[str]:
     """Target node name of a controlled block (palette or direct field)."""
     name = None
     if getattr(cb, 'string_palette', None) is not None:
@@ -423,7 +423,7 @@ def _decode_sequence(seq, fps: float) -> DecodedClip:
                                    bytes(tk.value).decode('latin-1')))
 
     for cb in seq.controlled_blocks:
-        bone = _controlled_block_target(cb)
+        bone = controlled_block_target(cb)
         if not bone:
             clip.skipped_blocks.append(('?', 'unresolvable target name'))
             continue
@@ -520,13 +520,16 @@ def split_root_motion(clip: DecodedClip,
                                    'Root Bone')) -> Optional[dict]:
     """Extract root motion from the accum bone in place; AUTHORED spellings.
 
+    Only accum-root tracks are candidates; a NonAccum track (pose: sway,
+    lunge, height) is one only when the clip has no accum-root track at all.
     Returns {'bone', 'times', 'translations', 'rotations'} RELATIVE to the
     first sample of the candidate that moves most, or None when none moves.
     The winner is flattened to its authored FIRST sample.
     See: docs/commentary/asset_convert_falloutnv.md#accum-root-identity
     See: docs/commentary/asset_convert_creature.md#root-bone-rename
     """
-    candidates = [tr for tr in clip.tracks if tr.bone in accum_bones]
+    tracks = [tr for tr in clip.tracks if tr.bone in accum_bones]
+    candidates = [tr for tr in tracks if not tr.bone.endswith(' NonAccum')] or tracks
     if not candidates:
         return None
     best = max(candidates, key=lambda tr: _trans_span(tr) + _rot_span(tr) * 50.0)

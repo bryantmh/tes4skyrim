@@ -203,19 +203,17 @@ int InstallGenericHook(std::uintptr_t target, const std::string& label,
     std::vector<std::uint8_t> expected(stolen);
     std::memcpy(expected.data(), reinterpret_cast<const void*>(target), stolen);
 
-    void* orig = nullptr;
+    Slot& s = g_slots[idx];
     if (!InstallDetour(target, ThunkFor(idx), expected.data(), stolen,
-                       &orig, label.c_str())) {
+                       &s.original, label.c_str())) {
         if (err) *err = "detour install failed (see the log)";
         return -1;
     }
 
-    Slot& s = g_slots[idx];
     s.used = true;
     s.target = target;
     s.label = label;
     s.hits = 0;
-    s.original = orig;
     s.stolen = stolen;
     s.keep = keep ? keep : 16;
     s.calls.clear();

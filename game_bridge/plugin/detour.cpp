@@ -143,6 +143,9 @@ bool InstallDetour(std::uintptr_t target,
         return false;
     }
 
+    // Publish the trampoline BEFORE the jump goes live: another thread can
+    // enter the detour the instant the jump is written.
+    *outOriginal = tramp;
     WriteAbsoluteJump(fn, reinterpret_cast<std::uintptr_t>(detour));
     // Fill the rest of the stolen range with int3 so a jump landing mid-range
     // traps immediately instead of executing a partial instruction.
@@ -151,7 +154,6 @@ bool InstallDetour(std::uintptr_t target,
     VirtualProtect(fn, stolenLen, old, &old);
     FlushInstructionCache(GetCurrentProcess(), fn, stolenLen);
 
-    *outOriginal = tramp;
     Log("detour(%s): hooked %p, trampoline %p", what,
         reinterpret_cast<void*>(target), tramp);
     return true;

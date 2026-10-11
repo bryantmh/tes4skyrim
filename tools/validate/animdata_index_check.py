@@ -34,6 +34,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from tools.validate.animcache_validate import (Scanner, read_string_list,
                                 parse_project_block, compose_for_plugins)
+from output_layout import DEFAULT_EXPORT, DEFAULT_OUTPUT, plugin_out_root
 
 
 def parse_singlefile(path):
@@ -84,8 +85,9 @@ def main():
     ap.add_argument('--verbose', action='store_true')
     args = ap.parse_args()
 
-    meshes = os.path.join(args.out_root or 'output', args.plugin, 'meshes')
-    actors = os.path.join(meshes, 'actors', 'tes4')
+    meshes = plugin_out_root(args.out_root or DEFAULT_OUTPUT, args.plugin,
+                             DEFAULT_EXPORT) / 'meshes'
+    actors = os.path.join(meshes, 'actors')
     if not os.path.isdir(actors):
         sys.exit(f'missing {actors}')
     composed = compose_for_plugins([args.plugin], args.base,
@@ -105,8 +107,8 @@ def main():
             continue
         char_rel = next((p for p in m.get('project_files', [])
                          if p.lower().startswith('characters')), None)
-        char = os.path.join(proj_dir, *char_rel.split('\\')) if char_rel \
-            else ''
+        char = os.path.join(proj_dir, *char_rel.lower().split('\\')) \
+            if char_rel else ''
         if not char or not os.path.isfile(char):
             print(f'{proj_txt}: character hkx missing, skipped')
             continue
@@ -125,19 +127,15 @@ def main():
 
 
 def project_manifests(actors):
-    """[(project dir, manifest)] under actors/tes4/<namespace>/<folder>/
-    (hkx_behavior.project_layout); the manifest names the project files."""
+    """[(project dir, manifest)] for every project_manifest.json under
+    `actors`, at any depth (every game namespace, hkx_behavior.project_layout)."""
     manifests = []
-    for ns in sorted(os.listdir(actors)):
-        ns_dir = os.path.join(actors, ns)
-        if not os.path.isdir(ns_dir):
-            continue
-        for folder in sorted(os.listdir(ns_dir)):
-            mp = os.path.join(ns_dir, folder, 'project_manifest.json')
-            if os.path.isfile(mp):
-                with open(mp, encoding='utf-8') as f:
-                    manifests.append((os.path.join(ns_dir, folder),
-                                      json.load(f)))
+    for dirpath, dirs, files in os.walk(actors):
+        dirs.sort()
+        if 'project_manifest.json' in files:
+            with open(os.path.join(dirpath, 'project_manifest.json'),
+                      encoding='utf-8') as f:
+                manifests.append((dirpath, json.load(f)))
     return manifests
 
 

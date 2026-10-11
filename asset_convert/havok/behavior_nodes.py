@@ -105,16 +105,16 @@ class GraphBuilder:
 
     Holds the three tables every node needs — the packfile, the event-name
     index (`eid`) and the variable-name index (`vidx`) — so callers pass
-    names rather than indices.  `blend_fx` is the shared 0.3s transition
-    effect every state transition references.
+    names rather than indices, plus the three shared 0.3s transition effects.
     """
 
     def __init__(self, events, variables, first_id=80):
-        """Build the index tables and the shared blend effect."""
+        """Build the index tables and the shared blend effects."""
         self.pf = HkxPackfile(first_id=first_id)
         self.eid = {n: i for i, n in enumerate(events)}
         self.vidx = {n: i for i, (n, _t, _iv) in enumerate(variables)}
         self.blend_fx = self._blend_effect()
+        self._driven_fx = {}
 
     def add(self, kind):
         """Add a bare packfile object of `kind`."""
@@ -125,10 +125,10 @@ class GraphBuilder:
         return self.pf.render(top)
 
     def _blend_effect(self):
-        """The shared BlendSmooth transition effect (vanilla default 0.3s)."""
+        """The shared 0.3s BlendSmooth for nested (locomotion) transitions."""
         return self.blend_effect(
             'BlendSmooth', 0.3, 'SELF_TRANSITION_MODE_CONTINUE_IF_CYCLIC',
-            'FLAG_IGNORE_FROM_WORLD_FROM_MODEL')
+            'FLAG_NONE')
 
     def blend_effect(self, name, duration, self_mode, flags):
         """An hkbBlendingTransitionEffect of `duration` seconds."""
@@ -205,15 +205,30 @@ class GraphBuilder:
         clip.param('flags', 0)
         return clip
 
-    def trans_array(self, items):
-        """Transition array from (event_id, to_state, flags) tuples."""
+    def _effect_ref(self, to_state, root):
+        """Nested: `blend_fx`.  Root: the motion-flagged blend into or out of an action.
+
+        Back into DefaultState (0) keeps the leaving action's root motion;
+        into an action takes the action's own.
+        """
+        if not root:
+            return self.blend_fx.ref
+        name, flags = (('BlendFromAnimationDriven', 'FLAG_IGNORE_TO_WORLD_FROM_MODEL')
+                       if to_state == 0 else
+                       ('BlendToAnimationDriven', 'FLAG_IGNORE_FROM_WORLD_FROM_MODEL'))
+        if name not in self._driven_fx:
+            self._driven_fx[name] = self.blend_effect(
+                name, 0.3, 'SELF_TRANSITION_MODE_CONTINUE_IF_CYCLIC', flags)
+        return self._driven_fx[name].ref
+
+    def trans_array(self, items, root=False):
+        """Transition array from (event_id, to_state, flags) tuples; `root` for the action layer."""
         arr = self.pf.add('hkbStateMachineTransitionInfoArray')
         arr.param_raw(
             'transitions',
-            '\n'.join(TRANSITION_TMPL.format(effect=self.blend_fx.ref,
-                                             event_id=e, to_state=st,
-                                             flags=f)
-                      for e, st, f in items),
+            '\n'.join(TRANSITION_TMPL.format(
+                effect=self._effect_ref(st, root), event_id=e, to_state=st,
+                flags=f) for e, st, f in items),
             numelements=len(items))
         return arr
 
@@ -262,13 +277,13 @@ class GraphBuilder:
         return trig.ref
 
     def state(self, state_id, name, generator_ref, transitions=None,
-              exit_events=None, enter_events=None):
+              exit_events=None, enter_events=None, root=False):
         """One stateInfo, building its own transition and event arrays.
 
         Referenced objects are added BEFORE the stateInfo: hkxcmd's parser
-        rejects forward references.
+        rejects forward references.  `root` marks an action-layer state.
         """
-        trans_ref = (self.trans_array(transitions).ref if transitions
+        trans_ref = (self.trans_array(transitions, root).ref if transitions
                      else 'null')
         return self._state_info(
             state_id, name, generator_ref, trans_ref,
@@ -329,6 +344,35 @@ class GraphBuilder:
         m.param_array('states', [s.ref for s in states])
         m.param('wildcardTransitions', wildcard_ref)
         return m
+
+    def holding(self, name, generator_ref, variables):
+        """`generator_ref` wrapped so each named BOOL variable is held true while it runs.
+
+        BSIsActiveModifier -> hkbModifierList -> hkbModifierGenerator, the
+        vanilla shape of every `bAnimationDriven_IsActive` wrapper.
+        """
+        iso = self.pf.add('BSIsActiveModifier')
+        iso.param('variableBindingSet', self.binding_set(
+            [(f'bIsActive{i}', v) for i, v in enumerate(variables)]).ref)
+        iso.param('userData', 1)
+        iso.param('name', f'{name}_IsActive')
+        iso.param('enable', True)
+        for i in range(5):
+            iso.param(f'bIsActive{i}', False)
+            iso.param(f'bInvertActive{i}', False)
+        ml = self.pf.add('hkbModifierList')
+        ml.param('variableBindingSet', 'null')
+        ml.param('userData', 1)
+        ml.param('name', f'{name}_ModifierList')
+        ml.param('enable', True)
+        ml.param_array('modifiers', [iso.ref])
+        mg = self.pf.add('hkbModifierGenerator')
+        mg.param('variableBindingSet', 'null')
+        mg.param('userData', 1)
+        mg.param('name', f'{name}_MG')
+        mg.param('modifier', ml.ref)
+        mg.param('generator', generator_ref)
+        return mg
 
     def _blender(self, name, kids, bind_var, blend_param, flags):
         """A blender over (generator, anchor weight) children.

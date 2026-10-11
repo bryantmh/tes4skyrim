@@ -35,6 +35,48 @@ KEY_LINEAR = 1
 KEY_QUADRATIC = 2
 
 
+def transform_interpolator(tr, times):
+    """A NiTransformInterpolator keyed at `times` from one BoneTrack.
+
+    Quadratic quaternion keys, linear translation keys, scale keys only when
+    the scale moves; a missing channel gets Gamebryo's no-static-value marker.
+    """
+    interp = NifFormat.NiTransformInterpolator()
+    td = NifFormat.NiTransformData()
+    interp.data = td
+    trans0 = tr.translations[0] if tr.translations is not None else [NO_STATIC_VALUE] * 3
+    rot0 = tr.rotations[0] if tr.rotations is not None else [NO_STATIC_VALUE] * 4
+    interp.translation.x, interp.translation.y, interp.translation.z = (float(v) for v in trans0)
+    (interp.rotation.w, interp.rotation.x,
+     interp.rotation.y, interp.rotation.z) = (float(v) for v in rot0)
+    interp.scale = float(tr.scales[0]) if tr.scales is not None else 1.0
+    if tr.rotations is not None:
+        td.rotation_type = KEY_QUADRATIC
+        td.num_rotation_keys = len(times)
+        td.quaternion_keys.update_size()
+        for qk, t, q in zip(td.quaternion_keys, times, tr.rotations):
+            qk.time = float(t)
+            qk.value.w, qk.value.x, qk.value.y, qk.value.z = (float(v) for v in q)
+    if tr.translations is not None:
+        _linear_keys(td.translations, times, tr.translations)
+    if tr.scales is not None and np.ptp(tr.scales) > 1e-6:
+        _linear_keys(td.scales, times, tr.scales)
+    return interp
+
+
+def _linear_keys(group, times, values) -> None:
+    """Fill a KeyGroup with LINEAR keys (vector or float values)."""
+    group.interpolation = KEY_LINEAR
+    group.num_keys = len(times)
+    group.keys.update_size()
+    for key, t, v in zip(group.keys, times, values):
+        key.time = float(t)
+        if np.ndim(v):
+            key.value.x, key.value.y, key.value.z = (float(c) for c in v)
+        else:
+            key.value = float(v)
+
+
 def write_skyrim_kf(clip: DecodedClip, out_path: str,
                     skeleton_bone_names=None) -> int:
     """Write the clip as a Skyrim-format .kf. Returns the track count.
@@ -77,50 +119,7 @@ def write_skyrim_kf(clip: DecodedClip, out_path: str,
         cb.node_name = tr.bone.encode('latin-1')
         cb.controller_type = b'NiTransformController'
         cb.priority = 0
-
-        interp = NifFormat.NiTransformInterpolator()
-        td = NifFormat.NiTransformData()
-        interp.data = td
-
-        trans0 = tr.translations[0] if tr.translations is not None \
-            else [NO_STATIC_VALUE] * 3
-        rot0 = tr.rotations[0] if tr.rotations is not None \
-            else [NO_STATIC_VALUE] * 4
-        interp.translation.x, interp.translation.y, interp.translation.z = \
-            (float(v) for v in trans0)
-        (interp.rotation.w, interp.rotation.x,
-         interp.rotation.y, interp.rotation.z) = (float(v) for v in rot0)
-        interp.scale = float(tr.scales[0]) if tr.scales is not None else 1.0
-
-        if tr.rotations is not None:
-            td.rotation_type = KEY_QUADRATIC
-            td.num_rotation_keys = len(clip.times)
-            td.quaternion_keys.update_size()
-            for k, (t, q) in enumerate(zip(clip.times, tr.rotations)):
-                qk = td.quaternion_keys[k]
-                qk.time = float(t)
-                qk.value.w, qk.value.x, qk.value.y, qk.value.z = \
-                    (float(v) for v in q)
-
-        if tr.translations is not None:
-            td.translations.interpolation = KEY_LINEAR
-            td.translations.num_keys = len(clip.times)
-            td.translations.keys.update_size()
-            for k, (t, v) in enumerate(zip(clip.times, tr.translations)):
-                key = td.translations.keys[k]
-                key.time = float(t)
-                key.value.x, key.value.y, key.value.z = \
-                    (float(c) for c in v)
-
-        if tr.scales is not None and (np.ptp(tr.scales) > 1e-6):
-            td.scales.interpolation = KEY_LINEAR
-            td.scales.num_keys = len(clip.times)
-            td.scales.keys.update_size()
-            for k, (t, s) in enumerate(zip(clip.times, tr.scales)):
-                td.scales.keys[k].time = float(t)
-                td.scales.keys[k].value = float(s)
-
-        cb.interpolator = interp
+        cb.interpolator = transform_interpolator(tr, clip.times)
 
     data.roots = [seq]
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
