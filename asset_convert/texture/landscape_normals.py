@@ -21,7 +21,9 @@ CLI:
     python -m asset_convert.texture.landscape_normals <landscape_dir>
     python -m asset_convert.texture.landscape_normals <export_dir> <textures_root> <output_dir>
 """
-from asset_convert.game_paths import current_namespace, namespace_for, set_namespace
+from asset_convert.game_paths import (current_namespace, find_nocase,
+                                      folder_names, namespace_for,
+                                      set_namespace)
 import os
 import struct
 import sys
@@ -195,30 +197,41 @@ def _ltex_texture_rels(rec_dir):
     return rels
 
 
+class _Listings(dict):
+    """`folder_names` per folder, read once until the next `clear()`."""
+
+    def __missing__(self, folder):
+        names = self[folder] = folder_names(folder)
+        return names
+
+
 def ensure_ltex_normals(rec_dir, textures_root, output_dir,
                         alpha=SPECULAR_ALPHA):
     """Write a flat normal for every land texture that ships none.
 
     A landscape TXST names ``<diffuse>_n.dds`` whether or not the source game
     had one; Morrowind has no normal maps at all, and a missing landscape
-    normal renders at full specular. The file is looked for under every
-    plugin's output tree (a dependent's terrain borrows its master's
-    textures) and written under THIS plugin's when absent.
+    normal renders at full specular. The file is looked for, ignoring case,
+    under every plugin's output tree (a dependent's terrain borrows its
+    master's textures) and written under THIS plugin's when absent.
     Returns (checked, written).
     See: docs/commentary/asset_convert_texture.md#landscape-normal-maps-dxt1-shiny
     """
     output_dir = Path(output_dir)
-    trees = [p / 'textures' for p in output_dir.iterdir() if p.is_dir()]
+    trees = [p for p in output_dir.iterdir() if p.is_dir()]
     written = 0
+    seen = _Listings()
     rels = _ltex_texture_rels(rec_dir)
     for rel in sorted(rels):
         parts = (rel.rsplit('.', 1)[0] + '_n.dds').split('\\')
-        if any(tree.joinpath(*parts).is_file() for tree in trees):
+        if any(find_nocase(tree, 'textures', *parts, listing=seen.__getitem__)
+               for tree in trees):
             continue
         dest = Path(textures_root).joinpath(*parts)
         dest.parent.mkdir(parents=True, exist_ok=True)
         with open(dest, 'wb') as f:
             f.write(_flat_normal_bytes(alpha))
+        seen.clear()
         written += 1
     return len(rels), written
 

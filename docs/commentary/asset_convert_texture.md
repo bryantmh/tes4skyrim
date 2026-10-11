@@ -11,6 +11,7 @@
 - [Per-game asset namespace](#per-game-asset-namespace)
   - [A master is resolved by `record_dir`, never by joining its name](#master-resolved-by-record-dir)
     - [...and the ROOT it resolves against is found by marker, not by `.parent`](#export-root-by-marker)
+- [A lookup ignores case only after an exact miss](#case-blind-lookups)
 - [Loose .tga/.bmp textures are transcoded, not just copied](#loose-tgabmp-textures)
 - [The blacklist prune](#the-blacklist-prune)
 - [Texture repairs write in place, never by rename](#texture-repairs-write-in-place)
@@ -634,7 +635,7 @@ being mesh products.
 - Skyrim's landscape shader reads the normal map ALPHA channel as the specular mask. Oblivion's terrain shader never used it, so most Oblivion landscape `*_n.dds` are DXT1 (no alpha) → sampled alpha = 1.0 → full-strength specular over the whole terrain (user-visible "very shiny ground"). Oblivion normals that are already DXT5 carry a real mask (avg ~77/255) and are correct as-is.
 - Fix: `asset_convert/texture/landscape_normals.py` (pipeline step after the texture copy, so re-copies can't resurrect DXT1) re-containers DXT1 → DXT5 with constant dark alpha 32/255. DXT1 and DXT5 share the 8-byte color block format, so RGB is preserved losslessly; DXT1 3-color blocks (c0<=c1, ~0.05%) get endpoints swapped + indices 0↔1 remapped since DXT5 color blocks are always 4-color mode.
 - **A DXT5 landscape normal with a "real-looking" mask is not evidence of intent either.** Morroblivion's 127 terrain normals (`tes4\landscape\morro\`) are all DXT5; 97 classify as a per-texel mask with median alpha 102 and p90 119, against a median of 16 / p90 72 for Oblivion's own DXT5 landscape normals. In TES4 the normal alpha is the PARALLAX height field (what `parallax.py` turns into `_p` maps), never specular, so `run()` now gives every landscape normal the 32/255 constant whatever its format, skipping files already carrying it.
-- **A land texture with NO normal map at all renders shiny too.** `convert_LTEX` names `<diffuse>_n.dds` in every TXST, and Morrowind ships no normal maps: Tamriel Rebuilt's 294 LTEX all pointed at files that exist nowhere in `output/`. `landscape_normals.ensure_ltex_normals` (run for every plugin at the end of `convert_meshes`, even one with no texture tree of its own) looks for each LTEX's normal under every plugin's output tree and writes a flat DXT5 normal with the 32/255 mask under this plugin's tree when none ships it. Path spelling comes from `tes5_import.record_types.common.landscape_texture_path`, the same function the TXST writer uses. NOT yet in-game verified.
+- **A land texture with NO normal map at all renders shiny too.** `convert_LTEX` names `<diffuse>_n.dds` in every TXST, and Morrowind ships no normal maps: Tamriel Rebuilt's 294 LTEX all pointed at files that exist nowhere in `output/`. `landscape_normals.ensure_ltex_normals` (run for every plugin at the end of `convert_meshes`, even one with no texture tree of its own) looks for each LTEX's normal under every plugin's output tree, [ignoring case](#case-blind-lookups), and writes a flat DXT5 normal with the 32/255 mask under this plugin's tree when none ships it. Path spelling comes from `tes5_import.record_types.common.landscape_texture_path`, the same function the TXST writer uses. NOT yet in-game verified.
 - Related: LTEX SNAM is a Phong exponent (never write 0 — see convert_LTEX comment); the alpha mask is what actually controls specular *amount*.
 
 ### <a id="default-normal-is-dxt5"></a>The shared `default_n.dds` is DXT5, not the uncompressed form
@@ -877,6 +878,63 @@ harmless, explicit, and independent of environment inheritance.
 🛑 The environment is per-process GLOBAL state, so a parent that converts two
 plugins must call `set_namespace` for each -- it is the phase's entry point
 that owns this, not the pool.
+
+## A lookup ignores case only after an exact miss
+<a id="case-blind-lookups"></a>
+
+**Code:** `find_nocase`, `folder_names` in `asset_convert/game_paths.py`;
+`ensure_ltex_normals`, `_Listings` in `asset_convert/texture/landscape_normals.py`
+
+A record keeps its author's mixed case, and the file it names may be spelled
+otherwise on disk: a BSA stores every internal path lowercase and
+`bsa_extract.py` keeps that. A case-insensitive filesystem answers for every
+spelling; on a case-sensitive one an exact join misses, and nothing reports it.
+
+`find_nocase` is `win_join` followed by the lookup a case-insensitive filesystem
+does on its own:
+
+- **The exact join is probed first and returned untouched.** An exact hit lists
+  nothing, so where the filesystem ignores case a file that exists costs the one
+  probe it always did, and the result is the path the code always built.
+- After a miss, on any filesystem, each segment is matched ignoring case through
+  EVERY folder that spells it, so an empty `Oblivion/` beside `oblivion/` cannot
+  hide a file. Of two names that differ only by case, the first in sorted order
+  answers. Names are compared with `str.lower()`.
+- A miss is `None`, never a guess: a caller that reports the missing path keeps
+  naming the one it asked for.
+
+A miss costs one `os.listdir` per folder on the path. `folder_names` reads the
+folder on every call, so a file written between two lookups is seen by the
+second. `listing` replaces the lister: the tests pass an in-memory tree, and a
+caller with many names to look up may pass one that remembers what it read, as
+long as it forgets a folder the run writes into. A case-blind hit is probed
+again before it is returned, so a stale listing can miss a file created mid-run
+but cannot return one that is gone.
+
+`ensure_ltex_normals` is the first caller. An LTEX spells
+`Oblivion\TerrainHDOblivionRock01.dds` and the converted file is
+`oblivion/terrainhdoblivionrock01_n.dds`. Of the 166 land textures Oblivion.esm
+names, 160 ship a normal, and on a case-sensitive filesystem the exact probe
+found none of them. Run on a names-only copy of that build with no placeholder
+written yet, it wrote 166 flat placeholders, 160 beside the real normal and
+differing from it only by case; now it writes the 6 that ship none.
+
+- The `textures` folder is matched like every other segment, so a master whose
+  tree is `Textures/` is searched too.
+- It looks every land texture up through the same few folders, so it passes a
+  lister that reads each folder once (`_Listings`) and empties it whenever it
+  writes a placeholder, because the write changes a folder it searches. On that
+  copy the call takes about 3 ms where the exact probe took under 2 ms.
+- What that memory does not save: a plugin whose textures ship no normal at all
+  writes a placeholder per texture and lists the searched folders again after
+  each. With 294 such textures and three master trees whose folder holds 3,000
+  names, the first call took 0.5 s against 8 ms, and later calls 10 ms
+  (generated trees, not a Morrowind build).
+- A placeholder is still written under the record's spelling: for a texture
+  that ships no normal, a record that spells `Oblivion\` opens a folder beside
+  `oblivion/` (one such folder for Oblivion.esm, where there were four).
+- A placeholder an earlier build wrote beside a real normal is not removed: it
+  sits at the record's own spelling, so the exact probe finds it first.
 
 ## The blacklist prune
 <a id="the-blacklist-prune"></a>

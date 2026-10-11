@@ -1,9 +1,11 @@
 """Tests for the grass shader profile and landscape normal-map fixes."""
+import os
 import struct
 from pathlib import Path
 
 import pytest
 
+from asset_convert.game_paths import set_namespace
 from asset_convert.nif import grass_profile
 from asset_convert.texture import landscape_normals
 from asset_convert.nif.flipbook import decode_dxt
@@ -356,7 +358,6 @@ class TestLandscapeNormals:
     def test_ensure_ltex_normals_writes_only_missing(self, tmp_path):
         """A land texture whose normal any plugin ships is left alone; one
         shipping none gets a flat normal under this plugin's tree."""
-        from asset_convert.game_paths import set_namespace
         set_namespace('tes4')
         export = tmp_path / 'export'
         export.mkdir()
@@ -377,6 +378,123 @@ class TestLandscapeNormals:
         assert flat[84:88] == b'DXT5' and flat[128] == landscape_normals.SPECULAR_ALPHA
         assert not (mine / 'tes4' / 'Tx_has_n.dds').exists()
         assert landscape_normals.ensure_ltex_normals(export, mine, out) == (3, 0)
+
+    def test_find_nocase_alone_decides_which_normals_are_missing(
+            self, tmp_path, monkeypatch):
+        """The disk says the reverse of the lookup, and the lookup's answer is followed."""
+        set_namespace('tes4')
+        export = tmp_path / 'export'
+        export.mkdir()
+        (export / 'LTEX.txt').write_text(
+            '---RECORD_BEGIN---\nICON=here.dds\n---RECORD_END---\n'
+            '---RECORD_BEGIN---\nICON=gone.dds\n---RECORD_END---\n')
+        out = tmp_path / 'output'
+        mine = out / 'Plugin.esp' / 'textures'
+        mine.mkdir(parents=True)
+        shipped = (out / 'Master.esm' / 'textures' / 'tes4' / 'landscape'
+                   / 'gone_n.dds')
+        shipped.parent.mkdir(parents=True)
+        shipped.write_bytes(b'DDS shipped')
+
+        def scripted(root, *parts, **_kwargs):
+            """Claim only `here_n.dds` exists, which is the one the disk lacks."""
+            return parts[-1] == 'here_n.dds'
+
+        monkeypatch.setattr(landscape_normals, 'find_nocase', scripted)
+        assert landscape_normals.ensure_ltex_normals(export, mine, out) == (2, 1)
+        assert (mine / 'tes4' / 'landscape' / 'gone_n.dds').is_file()
+        assert not (mine / 'tes4' / 'landscape' / 'here_n.dds').exists()
+        assert shipped.read_bytes() == b'DDS shipped'
+
+    def test_two_spellings_of_one_missing_normal_write_one_file(self, tmp_path):
+        """The second spelling finds the placeholder the first one just wrote."""
+        set_namespace('tes4')
+        export = tmp_path / 'export'
+        export.mkdir()
+        (export / 'LTEX.txt').write_text(
+            '---RECORD_BEGIN---\nICON=Dirt02.dds\n---RECORD_END---\n'
+            '---RECORD_BEGIN---\nICON=dirt02.dds\n---RECORD_END---\n')
+        out = tmp_path / 'output'
+        mine = out / 'Plugin.esp' / 'textures'
+        mine.mkdir(parents=True)
+        assert landscape_normals.ensure_ltex_normals(export, mine, out) == (2, 1)
+        assert len(os.listdir(mine / 'tes4' / 'landscape')) == 1
+
+    def test_a_master_with_a_capital_textures_folder_is_searched(self, tmp_path):
+        """`Textures/` is one more spelling of the folder, not a miss."""
+        set_namespace('tes4')
+        export = tmp_path / 'export'
+        export.mkdir()
+        (export / 'LTEX.txt').write_text(
+            '---RECORD_BEGIN---\nICON=dirt02.dds\n---RECORD_END---\n')
+        out = tmp_path / 'output'
+        shipped = (out / 'Master.esm' / 'Textures' / 'tes4' / 'landscape'
+                   / 'dirt02_n.dds')
+        shipped.parent.mkdir(parents=True)
+        shipped.write_bytes(b'DDS shipped')
+        mine = out / 'Plugin.esp' / 'textures'
+        assert landscape_normals.ensure_ltex_normals(export, mine, out) == (1, 0)
+        assert not mine.exists()
+
+    def test_each_call_lists_each_folder_once_on_any_filesystem(
+            self, tmp_path, monkeypatch):
+        """A tree that misses is listed once per call, also where case is ignored."""
+        set_namespace('tes4')
+        export = tmp_path / 'export'
+        export.mkdir()
+        (export / 'LTEX.txt').write_text(''.join(
+            f'---RECORD_BEGIN---\nICON=Rock0{n}.dds\n---RECORD_END---\n'
+            for n in (1, 2, 3, 4)))
+        out = tmp_path / 'output'
+        for plug, numbers in (('A.esm', (1, 2)), ('B.esm', (3, 4))):
+            land = out / plug / 'textures' / 'tes4' / 'landscape'
+            land.mkdir(parents=True)
+            for n in numbers:
+                (land / f'Rock0{n}_n.dds').write_bytes(b'DDS shipped')
+        listed = []
+        real = landscape_normals.folder_names
+        monkeypatch.setattr(landscape_normals, 'folder_names',
+                            lambda folder: listed.append(folder) or real(folder))
+        mine = out / 'A.esm' / 'textures'
+        assert landscape_normals.ensure_ltex_normals(export, mine, out) == (4, 0)
+        first = list(listed)
+        assert first and len(first) == len(set(first))
+        assert landscape_normals.ensure_ltex_normals(export, mine, out) == (4, 0)
+        assert listed == first + first
+
+    def test_every_write_is_forgotten_whether_or_not_it_opens_a_folder(
+            self, tmp_path):
+        """The first write opens the folders, the second does not; the third lookup sees both."""
+        set_namespace('tes4')
+        export = tmp_path / 'export'
+        export.mkdir()
+        (export / 'LTEX.txt').write_text(''.join(
+            f'---RECORD_BEGIN---\nICON={icon}.dds\n---RECORD_END---\n'
+            for icon in ('Aaa', 'Bbb', 'bbb')))
+        out = tmp_path / 'output'
+        mine = out / 'Plugin.esp' / 'textures'
+        (out / 'Plugin.esp').mkdir(parents=True)
+        assert landscape_normals.ensure_ltex_normals(export, mine, out) == (3, 2)
+        assert sorted(os.listdir(mine / 'tes4' / 'landscape')) == [
+            'Aaa_n.dds', 'Bbb_n.dds']
+
+    def test_a_later_call_reads_the_folders_again(self, tmp_path):
+        """What one call listed is not what the next one sees."""
+        set_namespace('tes4')
+        export = tmp_path / 'export'
+        export.mkdir()
+        rock = '---RECORD_BEGIN---\nICON=Rock.dds\n---RECORD_END---\n'
+        sand = '---RECORD_BEGIN---\nICON=Sand.dds\n---RECORD_END---\n'
+        (export / 'LTEX.txt').write_text(rock)
+        out = tmp_path / 'output'
+        land = out / 'Master.esm' / 'textures' / 'tes4' / 'landscape'
+        land.mkdir(parents=True)
+        (land / 'rock_n.dds').write_bytes(b'DDS shipped')
+        mine = out / 'Plugin.esp' / 'textures'
+        assert landscape_normals.ensure_ltex_normals(export, mine, out) == (1, 0)
+        (export / 'LTEX.txt').write_text(rock + sand)
+        (land / 'sand_n.dds').write_bytes(b'DDS shipped')
+        assert landscape_normals.ensure_ltex_normals(export, mine, out) == (2, 0)
 
 
 def _make_dds(fourcc, width, height, mip_count, blocks_per_mip):
