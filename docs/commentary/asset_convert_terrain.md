@@ -11,6 +11,7 @@
 - [Object LOD: `_lod` in FO3/FNV, `_far` in Oblivion](#object-lod-suffix-differs-by-game)
 - [Prescreening the LODGen input](#prescreening-the-lodgen-input)
 - [`write_lodgen_input`: master modes and `only_cells`](#write-lodgen-input-master-modes)
+  - [The input file's shape, and the per-base memo](#lodgen-input-shape)
 - [Terrain LOD invents ground over cells that own no LAND](#lod-invents-terrain-over-cells-with-no-land)
 - [GENERATED `_far.nif` belong to the LOD mod](#generated-far-nif-belong-to-the-lod-mod)
   - [Why one LOD folder, not one per plugin](#one-lod-folder-not-one-per-plugin)
@@ -380,6 +381,56 @@ almost all of them -- **ElsweyrAnequina fed 189,702 references to bake 997 tiles
 and kept 127; DLCBattlehornCastle kept 8.** The refs are still needed
 (`replace_tiles` means rebuilt tiles must carry the master's objects), just only
 within the surviving tiles' footprint.
+
+### <a id="lodgen-input-shape"></a>The input file's shape, and the per-base memo
+
+**Code:** `asset_convert/lod/lod_gen.py` (`write_lodgen_input`, `_lod_candidate`,
+`_resolve_base_entry`, `_reference_lines`, `_write_input_file`)
+
+A row is the 9 REFR fields (FormID, flags, X/Y/Z, rotation in DEGREES -- the
+ESM stores radians, LODGen expects degrees -- and scale) followed by the base
+half (`_resolve_base_entry`: EditorID, flags, blank, model, lod4, lod8, lod16).
+`_drop_lodgen_refs` depends on the EditorID sitting at field 9.
+
+`_lod_candidate` decides per REFERENCE. The worldspace test accepts the REFR's
+own WRLD or its parent CELL's. The footprint test -- the cells whose objects can
+still reach a tile that survives pruning -- uses the REFR's position, not its
+parent CELL record: an override plugin's refs are merged from two files and a
+ref's own cell is not always present in `cells`, while its X/Y always place it
+on the grid (a cell is 4096 units; floor division is correct for negatives).
+`_screenable_mesh_paths` repeats the same tests in its own loop for the
+prefetch.
+
+The base half is memoised per BASE: Tamriel has 180,702 LOD references but only
+about 900 distinct bases, and resolving a base's LOD tiers stats several files
+while screening its meshes parses them. Doing that per reference instead of per
+base is what made the loop appear to hang.
+
+`_resolve_base_entry` answers two questions from two lists: `owned_meshes`
+(from `master_dirs`) -- does a master already SHIP LOD for this base? then skip
+it -- and `master_meshes` (from `master_mesh_dirs`) -- where can this base's
+meshes be SOURCED from? The skip is valid only when this plugin's tiles sit
+ALONGSIDE the master's: under `replace_tiles` it deleted every tree, rock and
+building from the rebuilt tiles (74 KB against the master's 9.8 MB). A mesh may
+be listed only if it exists in THIS output dir: a path that resolves in some
+other plugin's tree makes LODGen abort with "file not found" (exit 404) and no
+tiles at all get baked. So the FULL model is staged as well as the LOD meshes --
+LODGen falls back to it, and screening reads a missing file as unsafe and drops
+the object, which is how ElsweyrAnequina lost 882 meshes' worth of object LOD
+while their `_far.nif` files sat in the tree, readable. One mesh LODGen cannot
+parse aborts the whole worldspace, so each listed mesh and the full model are
+screened before the base is listed.
+
+Header: `CellSW` must equal the SW stored in `LODSettings/<WRLD>.lod`, so the
+effective SW that `write_lod_settings` returned (`cell_sw`) is used when given
+and the raw MNAM values otherwise. `PathData` is our output directory, so that
+LODGen finds the extracted `_far.nif` meshes there rather than looking in the
+Skyrim SE Data folder; it must end in a backslash or LODGen joins without a
+separator. `PathData` and `PathOutput` are resolved to absolute paths: LODGen is
+started with its own folder, `external\lodgen`, as the working directory
+(`_invoke_lodgen`), so a relative `PathData` would fail its Data-directory
+existence check and a relative `PathOutput` would write the `.bto` under that
+folder.
 
 
 ## <a id="prescreening-the-lodgen-input"></a>Prescreening the LODGen input

@@ -16,6 +16,7 @@ import re as _re
 import shutil
 import struct
 import sys
+from collections import namedtuple
 from pathlib import Path
 
 from asset_convert.game_paths import win_join
@@ -700,39 +701,17 @@ def _kept_tile_cells_by_level(only_cells, levels=_OBJ_LOD_LEVELS) -> dict:
     return by_level
 
 
-def write_lodgen_input(esm_path: Path, output_dir: Path,
-                       worldspace_edid: str,
-                       _parsed=None,
-                       cell_sw: tuple = None,
-                       master_dirs=None, master_mesh_dirs=None,
-                       replace_tiles=False, only_cells=None) -> Path:
-    """
-    Parse the converted ESM and write the LODGen input text file.
+#: What decides whether a reference is in scope for one worldspace's input.
+_Scope = namedtuple('_Scope', 'cell_wrld wrld_fid keep_cells')
 
-    `master_dirs` lists the converted output dirs of this plugin's MASTERS; a
-    ref whose LOD mesh the master already ships is DROPPED here. `replace_tiles`
-    turns that off, because a tile this plugin REPLACES must carry the master's
-    objects too. The two are mutually exclusive.
+#: Where a base's meshes are checked, sourced and staged; see `_resolve_base_entry`.
+_BaseRoots = namedtuple('_BaseRoots',
+                        'output_meshes_dir owned_meshes master_meshes '
+                        'replace_tiles')
 
-    `master_mesh_dirs` is where MESHES are sourced from, set even when THIS
-    plugin owns the worldspace: LODGen resolves every listed mesh under one
-    PathData root, so a master-owned model must be copied in to be listable.
 
-    `only_cells` restricts refs to those landing in a tile this run KEEPS (see
-    `_kept_tile_cells`). The mesh-safety cache is warmed concurrently first, and
-    must search `master_mesh_dirs` as well as this tree.
-    See: docs/commentary/asset_convert_terrain.md#write-lodgen-input-master-modes
-    See: docs/commentary/asset_convert_terrain.md#prescreening-the-lodgen-input
-
-    Returns path to the written file, or None if no LOD refs found.
-    """
-    if _parsed is not None:
-        worldspaces, cells, stats, refs = _parsed
-    else:
-        print(f"  Parsing ESM: {esm_path.name}")
-        worldspaces, cells, stats, refs = parse_esm(esm_path)
-
-    # Find worldspace form_id
+def _find_worldspace(worldspaces, worldspace_edid):
+    """`(fid, info)` of the named worldspace, else the first one (warned), else None."""
     wrld_fid = None
     wrld_info = None
     for fid, w in worldspaces.items():
@@ -741,7 +720,6 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
             wrld_info = w
             break
     if wrld_fid is None:
-        # Fall back to first worldspace
         if worldspaces:
             wrld_fid, wrld_info = next(iter(worldspaces.items()))
             print(f"  Warning: worldspace '{worldspace_edid}' not found, "
@@ -749,130 +727,100 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
         else:
             print("  Error: no worldspaces found in ESM")
             return None
+    return wrld_fid, wrld_info
 
-    edid = wrld_info['edid']
-    # Use the effective SW coords from LODSettings if provided; otherwise use raw MNAM values.
-    # CellSW= in the LODGen input MUST match the SW in the .lod file.
-    if cell_sw is not None:
-        sw_x, sw_y = cell_sw
-    else:
-        sw_x = wrld_info['sw_x']
-        sw_y = wrld_info['sw_y']
-    # LODGen resolves every listed mesh under the single PathData root, so a
-    # mesh may only be listed if it exists in THIS output dir — a path that
-    # resolves in some other plugin's tree makes LODGen abort with "file not
-    # found" (exit 404) and no tiles at all get baked.
-    output_meshes_dir = output_dir / 'meshes'
-    # Two different questions, two different lists (see the docstring):
-    #   owned_meshes  — does a master already SHIP LOD for this base? (skip it)
-    #   master_meshes — where can this base's meshes be SOURCED from? (import)
-    owned_meshes  = [Path(d) / 'meshes' for d in (master_dirs or [])]
-    master_meshes = [Path(d) / 'meshes' for d in (master_mesh_dirs or [])]
 
-    # Index cells by form_id → parent_wrld for fast lookup
-    cell_wrld = {fid: c['parent_wrld'] for fid, c in cells.items()}
+def _lod_candidate(ref, stats, scope) -> bool:
+    """True when `ref` passes the per-reference filters of the LODGen input.
 
-    # Cells whose objects can still reach a tile that survives pruning. Refs
-    # outside this footprint are baked into tiles that are deleted immediately
-    # afterwards, so screening and listing them is pure waste.
-    keep_cells = _kept_tile_cells(only_cells) if only_cells else None
+    In order: it is in this worldspace (by its own WRLD, else its parent
+    CELL's), inside the kept tiles' footprint when there is one (by position,
+    not by parent CELL), and its base is known, has a model and carries the
+    distant-LOD flag.
+    See: docs/commentary/asset_convert_terrain.md#lodgen-input-shape
+    """
+    cell_wrld, wrld_fid, keep_cells = scope
+    if ref['parent_wrld'] != wrld_fid:
+        pc = ref['parent_cell']
+        if cell_wrld.get(pc, 0) != wrld_fid:
+            return False
+    if keep_cells is not None:
+        if (int(math.floor(ref['x'] / 4096.0)),
+                int(math.floor(ref['y'] / 4096.0))) not in keep_cells:
+            return False
+    base_fid = ref['base_fid']
+    if base_fid not in stats:
+        return False
+    stat = stats[base_fid]
+    model = stat.get('model', '')
+    if not model:
+        return False
+    stat_flags_val = stat.get('flags', 0)
+    return bool(stat_flags_val & FLAG_DISTANT_LOD)
 
-    # Collect exterior REFR records in this worldspace whose base is a STAT/ACTI/etc.
+
+def _resolve_base_entry(base_fid, stat, roots, skipped_unsafe):
+    """The base half of a LODGen row, or None when this base is not listed.
+
+    None when a master already ships its LOD and this plugin's tiles sit
+    alongside (`owned_meshes` without `replace_tiles`), when it resolves no
+    LOD mesh, or when a listed mesh is unsafe; those paths are added to
+    `skipped_unsafe`. The full model is staged as well as the LOD meshes.
+    See: docs/commentary/asset_convert_terrain.md#lodgen-input-shape
+    """
+    output_meshes_dir, owned_meshes, master_meshes, replace_tiles = roots
+    model = stat.get('model', '')
+    stat_flags_val = stat.get('flags', 0)
+    base_entry = None
+    skip = (not replace_tiles
+            and any(_mesh_exists(far_nif_path(model, m), m)
+                    for m in owned_meshes))
+    if not skip:
+        lod4, lod8, lod16 = _lod_meshes_for(
+            stat, output_meshes_dir, master_meshes)
+        if lod4 or lod8 or lod16:
+            _import_master_mesh(model, output_meshes_dir,
+                                master_meshes)
+            unsafe = [m for m in (model, lod4, lod8, lod16)
+                      if m and not _lod_mesh_is_safe(
+                          m, output_meshes_dir)]
+            if unsafe:
+                for m in unsafe:
+                    skipped_unsafe.add(_normalize(m))
+            else:
+                stat_edid = stat.get('edid', f'{base_fid:08X}')
+                base_entry = (
+                    f"{stat_edid}\t{stat_flags_val:08X}\t\t"
+                    f"{_normalize(model)}\t{_normalize(lod4)}\t"
+                    f"{_normalize(lod8)}\t{_normalize(lod16)}")
+    return base_entry
+
+
+def _reference_lines(refs, stats, scope, roots):
+    """`(rows, unsafe mesh paths)` for every reference `_lod_candidate` passes.
+
+    A row is the 9 REFR fields (rotation in degrees) then the base half; a
+    base is resolved once and memoised, and a base that is not listed drops
+    each of its references.
+    See: docs/commentary/asset_convert_terrain.md#lodgen-input-shape
+    """
     lines = []
     skipped_unsafe = set()
-    # Per-BASE memo. Tamriel has 180,702 LOD references but only ~900 distinct
-    # bases, and resolving a base's LOD tiers stats several files while
-    # screening its meshes fully parses them. Doing that per REFERENCE instead
-    # of per base is what made this loop appear to hang.
     base_cache = {}
-
-    _prescreen_meshes(_screenable_mesh_paths(
-                          refs, stats, cell_wrld, wrld_fid, keep_cells,
-                          (output_meshes_dir, *master_meshes)),
-                      output_meshes_dir, source_meshes=master_meshes)
-
     for ref in refs:
-        # Must be in our worldspace
-        if ref['parent_wrld'] != wrld_fid:
-            pc = ref['parent_cell']
-            if cell_wrld.get(pc, 0) != wrld_fid:
-                continue
-
-        # Drop refs that cannot land in a surviving tile. Position decides the
-        # cell, not the parent CELL record: an override plugin's refs are
-        # merged from two files and a ref's own cell is not always present in
-        # `cells`, while its X/Y always place it on the grid. Skyrim cell size
-        # is 4096 units and floor division is correct for negatives.
-        if keep_cells is not None:
-            if (int(math.floor(ref['x'] / 4096.0)),
-                    int(math.floor(ref['y'] / 4096.0))) not in keep_cells:
-                continue
-
+        if not _lod_candidate(ref, stats, scope):
+            continue
         base_fid = ref['base_fid']
-        if base_fid not in stats:
-            continue
-
-        stat = stats[base_fid]
-        model = stat.get('model', '')
-        if not model:
-            continue
-
-        stat_flags_val = stat.get('flags', 0)
-        stat_is_lod = bool(stat_flags_val & FLAG_DISTANT_LOD)
-        if not stat_is_lod:
-            continue
-        # Resolve this BASE once (see base_cache): which LOD meshes it uses,
-        # whether they are safe for LODGen, and whether a master already
-        # covers it.
-        #
-        # That last skip is only valid when this plugin ships tiles ALONGSIDE
-        # the master's. When it REPLACES whole tiles (replace_tiles), the tile
-        # it writes is the only one the engine loads for those cells, so it
-        # must contain the master's objects too — skipping them deleted every
-        # tree, rock and building from the rebuilt tiles (74 KB against the
-        # master's 9.8 MB).
         base_entry = base_cache.get(base_fid, _MISSING)
         if base_entry is _MISSING:
-            base_entry = None
-            skip = (not replace_tiles
-                    and any(_mesh_exists(far_nif_path(model, m), m)
-                            for m in owned_meshes))
-            if not skip:
-                lod4, lod8, lod16 = _lod_meshes_for(
-                    stat, output_meshes_dir, master_meshes)
-                if lod4 or lod8 or lod16:
-                    # The FULL model is listed too (LODGen falls back to it),
-                    # so it must exist in THIS tree — a master-owned model is
-                    # otherwise absent, and screening reads "missing" as
-                    # "unsafe" and drops the object entirely. That is how
-                    # ElsweyrAnequina lost 882 meshes' worth of object LOD
-                    # while their _far.nif files sat here perfectly readable.
-                    _import_master_mesh(model, output_meshes_dir,
-                                        master_meshes)
-                    # One mesh LODGen cannot parse aborts the whole
-                    # worldspace, so screen each listed mesh (and the full
-                    # model it falls back to) up front.
-                    unsafe = [m for m in (model, lod4, lod8, lod16)
-                              if m and not _lod_mesh_is_safe(
-                                  m, output_meshes_dir)]
-                    if unsafe:
-                        for m in unsafe:
-                            skipped_unsafe.add(_normalize(m))
-                    else:
-                        stat_edid = stat.get('edid', f'{base_fid:08X}')
-                        base_entry = (
-                            f"{stat_edid}\t{stat_flags_val:08X}\t\t"
-                            f"{_normalize(model)}\t{_normalize(lod4)}\t"
-                            f"{_normalize(lod8)}\t{_normalize(lod16)}")
+            base_entry = _resolve_base_entry(base_fid, stats[base_fid], roots,
+                                             skipped_unsafe)
             base_cache[base_fid] = base_entry
         if base_entry is None:
             continue
-
-        # Reference line
         ref_fid   = f"{ref['form_id']:08X}"
         ref_flags = f"{ref['flags']:08X}"
         scale     = ref['scale']
-        # Rotations in ESM are radians; LODGen expects degrees
         rx = math.degrees(ref['rx'])
         ry = math.degrees(ref['ry'])
         rz = math.degrees(ref['rz'])
@@ -882,7 +830,11 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
                 f"{rx:.4f}\t{ry:.4f}\t{rz:.4f}\t"
                 f"{scale:.4f}\t{base_entry}")
         lines.append(line)
+    return lines, skipped_unsafe
 
+
+def _warn_unsafe(skipped_unsafe) -> None:
+    """Print the meshes screened out of the input, the first ten by name."""
     if skipped_unsafe:
         print(f"  WARNING: {len(skipped_unsafe)} LOD mesh(es) excluded — "
               f"unreadable or non-NiNode root (would crash LODGen and lose "
@@ -892,17 +844,14 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
         if len(skipped_unsafe) > 10:
             print(f"    ... and {len(skipped_unsafe) - 10} more")
 
-    if not lines:
-        print(f"  No LOD references found for worldspace '{edid}'")
-        return None
 
-    # Build header.
-    # PathData points to our output directory so LODGen finds the extracted
-    # _far.nif meshes there rather than looking in the Skyrim SE Data folder.
-    # Must have a trailing backslash or LODGen will concatenate without a separator.
-    # Resolve to absolute — LODGen runs with cwd=tools/ so a relative PathData
-    # ("output\...") would fail its Data-directory existence check, and a
-    # relative PathOutput would silently write the .bto under tools\.
+def _write_input_file(output_dir: Path, edid: str, sw_x, sw_y, lines) -> Path:
+    """Write the header and `lines` to `LODGen <edid>.txt` beside the exe.
+
+    PathData is `output_dir`, absolute and ending in a backslash; PathOutput
+    is absolute; CellSW must equal the SW stored in the `.lod`.
+    See: docs/commentary/asset_convert_terrain.md#lodgen-input-shape
+    """
     dest      = (Path(output_dir).resolve() / 'meshes' / 'terrain' / edid
                  / 'Objects')
     path_data = str(Path(output_dir).resolve()).rstrip('\\/') + '\\'
@@ -918,6 +867,66 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
     with open(out_txt, 'w', encoding='utf-8') as f:
         f.write('\n'.join(header) + '\n')
         f.write('\n'.join(lines) + '\n')
+    return out_txt
+
+
+def write_lodgen_input(esm_path: Path, output_dir: Path,
+                       worldspace_edid: str,
+                       _parsed=None,
+                       cell_sw: tuple = None,
+                       master_dirs=None, master_mesh_dirs=None,
+                       replace_tiles=False, only_cells=None) -> Path:
+    """Parse the converted ESM and write the LODGen input text file.
+
+    `master_dirs`: MASTERS whose shipped LOD drops a ref, unless
+    `replace_tiles` (mutually exclusive). `master_mesh_dirs`: where MESHES
+    are sourced, even when THIS plugin owns the worldspace; the warm-up
+    searches it too. `only_cells`: only refs in a tile this run KEEPS (see
+    `_kept_tile_cells`). Returns the file, or None if no LOD refs found.
+    See: docs/commentary/asset_convert_terrain.md#write-lodgen-input-master-modes
+    See: docs/commentary/asset_convert_terrain.md#prescreening-the-lodgen-input
+    """
+    if _parsed is not None:
+        worldspaces, cells, stats, refs = _parsed
+    else:
+        print(f"  Parsing ESM: {esm_path.name}")
+        worldspaces, cells, stats, refs = parse_esm(esm_path)
+
+    found = _find_worldspace(worldspaces, worldspace_edid)
+    if found is None:
+        return None
+    wrld_fid, wrld_info = found
+
+    edid = wrld_info['edid']
+    if cell_sw is not None:
+        sw_x, sw_y = cell_sw
+    else:
+        sw_x = wrld_info['sw_x']
+        sw_y = wrld_info['sw_y']
+    output_meshes_dir = output_dir / 'meshes'
+    owned_meshes  = [Path(d) / 'meshes' for d in (master_dirs or [])]
+    master_meshes = [Path(d) / 'meshes' for d in (master_mesh_dirs or [])]
+
+    cell_wrld = {fid: c['parent_wrld'] for fid, c in cells.items()}
+
+    keep_cells = _kept_tile_cells(only_cells) if only_cells else None
+    scope = _Scope(cell_wrld, wrld_fid, keep_cells)
+    roots = _BaseRoots(output_meshes_dir, owned_meshes, master_meshes,
+                       replace_tiles)
+
+    _prescreen_meshes(_screenable_mesh_paths(
+                          refs, stats, cell_wrld, wrld_fid, keep_cells,
+                          (output_meshes_dir, *master_meshes)),
+                      output_meshes_dir, source_meshes=master_meshes)
+
+    lines, skipped_unsafe = _reference_lines(refs, stats, scope, roots)
+    _warn_unsafe(skipped_unsafe)
+
+    if not lines:
+        print(f"  No LOD references found for worldspace '{edid}'")
+        return None
+
+    out_txt = _write_input_file(output_dir, edid, sw_x, sw_y, lines)
 
     if keep_cells is not None:
         print(f"  Restricted to the {len(keep_cells)} cell(s) covered by the "
