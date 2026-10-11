@@ -1576,16 +1576,13 @@ class TestRagdollBijection:
 
     @needs_landdreugh
     def test_forward_authored_joint_is_reversed_not_dropped(self):
-        # landdreugh's FIRST body (Pelvis) holds a joint to Spine01, a LATER
-        # body.  The root cannot have a parent, so the same joint is given to
-        # Spine01 with its ends exchanged -- an authored joint, not a
-        # synthetic one.
+        """The dreugh roots at NonAccum, the common ancestor of every body; Pelvis's joint to Spine01 is reversed, not synthetic."""
         _bones, parts = self._parts(LANDDREUGH_SKEL)
         plan, dfs = self._dfs_bodies(LANDDREUGH_SKEL)
         assert [p.name for p in parts] == dfs
-        assert parts[0].name == 'Ragdoll_Bip01 Pelvis'
+        assert parts[0].name == 'Ragdoll_Bip01 NonAccum'
         spine = next(p for p in parts if p.name == 'Ragdoll_Bip01 Spine01')
-        assert parts[spine.parent].name == 'Ragdoll_Bip01 Pelvis'
+        assert parts[spine.parent].name == 'Ragdoll_Bip01 NonAccum'
         rev = [r for (_con, r) in plan['edge_con'].values() if r]
         assert len(rev) == 1
         assert not plan['synthetic']
@@ -1862,3 +1859,29 @@ class TestSpeedBakeFrameFloor:
         for cap in (1.4, 2.0):
             got = speed_bake_factor((10000.0, cap), _Clip(), motion, 30.0)
             assert got == pytest.approx(cap)
+
+
+class TestCreepLadder:
+    """A gait blend's same-clip rungs step at most LADDER_STEP apart from the creep up.
+
+    Havok sync blends durations, so the two-anchor creep/walk blend played the
+    legs at a fraction of the ground speed between them: the land dreugh slid
+    at every speed change (in game 2026-10-10).
+    See: docs/commentary/asset_convert_creature.md#forward-blend-layout
+    """
+
+    def test_dreugh_walk_rungs(self):
+        """Creep first, natural clip last, rates = anchor/natural, no gap over LADDER_STEP."""
+        from asset_convert.havok.behavior_clips import (CREEP_SPEED, LADDER_STEP,
+                                                  creep_ladder)
+        plan = creep_ladder('MoveForward', 'forward.kf', 155.0)
+        anchors = [a for _n, _kf, _r, a in plan]
+        assert anchors[0] == CREEP_SPEED and anchors[-1] == 155.0
+        assert plan[0][0] == 'MoveForwardSlow' and plan[-1] == ('MoveForward', 'forward.kf', 1.0, 155.0)
+        assert all(b / a <= LADDER_STEP + 1e-6 for a, b in zip(anchors[1:], anchors[2:]))
+        assert anchors[1] >= CREEP_SPEED * 2.0
+        assert all(r == pytest.approx(a / 155.0, abs=0.002) for _n, _kf, r, a in plan)
+
+    def test_creep_speed_clip_stands_alone(self):
+        from asset_convert.havok.behavior_clips import creep_ladder
+        assert creep_ladder('SwimMove', 'swim.kf', 5.0) == [('SwimMove', 'swim.kf', 1.0, 5.0)]

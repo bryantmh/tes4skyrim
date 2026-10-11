@@ -55,7 +55,7 @@ REACH = (tuple((f'Bip01 {s}UpperArm', f'Bip01 {s}ForeArm', f'Bip01 {s}Hand')
          'Bip01 Spine03')
 
 #: (clip, (elbow, claw) blends): reach stance between the Skyblivion rest pose (0) and that clip's first frame (1).
-STANCE = ('idle', (0.65, 0.75))
+STANCE = ('idle', (1.0, 1.0))
 
 #: Bones that copy the source's world rotation (twist included) before the reach solve.
 MATCH_BONES = [f'Bip01 {s}{b}' for s in 'LR' for b in

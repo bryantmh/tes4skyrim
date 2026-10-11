@@ -2825,55 +2825,28 @@ into the shipped clips instead (`hkx_anim.timescale_clip` in
 final and rate 1.0 is correct by construction. See
 [§8](#8-ground-speed-baked-not).
 
-**The run blend is its own state**, never mixed with the walk clip. Vanilla
-sabrecat `forwardlocomotion`: `ForwardRunBlend` = `RunSlow@0.75` / `Run@1.15` —
-the SAME clip at two rates — in a `ForwardRunState` separate from the walk/trot
-family, switched by `runStart`/`walkStart`.
-
-**REVERTED — the 3-child single blend.** The first layout (2026-08-22) put the
-stalking walk clip (2.9 s cycle) directly beside the gallop (0.75 s) as its only
-neighbour. Every dip of `SpeedSampled` below the run anchor SYNC-blended a
-phase-warped walk pose into the gallop — the lion's "briefly breaks into a
-sprint then slows again".
-
-### <a id="state-defs-end-events"></a>Clip-end events in `state_defs`
-
-`end_evt` is the clip-END trigger registered in both the graph and the
-animationdata cache. Single-play clips fire `returnToDefault` (vanilla
-convention — the root state machine's global wildcard routes it back to
-`DefaultState`). The completion events the ENGINE listens for —
-`attackStop`/`recoilStop`/`staggerStop` — are state `exitNotify` events, not
-clip triggers.
-
-`CombatStance` is the looping combat-idle clip nested under the standing idle
-switch (`combatStanceStart`/`Stop` local transitions, routed from the engine's
-`ActionDraw`). The `weaponDraw` reply the combat controller waits for is sent by
-the root-level `StartCombat`/`StopCombat` expression-modifier pair (vanilla
-quadruped layout), not by a state.
-
-### <a id="forward-blend-layout"></a>The MoveForward and Run blend layouts
-
-**Code:** `asset_convert/havok/behavior_clips.py` — `speed_blend_plan`,
-`run_blend_plan`, `state_defs`.
-
-**The walk blend** is the vanilla MONOLITHIC-creature layout, verbatim from
-`chaurusbehavior`'s `Forward_Blend` (a single-file project like ours): a
-slow-creep child at anchor 5 u/s (the engine's sandbox creep) plus the walk and
-run clips at their NATURAL anchors, all at `playbackSpeed` 1.0. Every vanilla
-top anchor equals the clip's real root-motion speed AND the MOVT commanded
-speed — chaurus 350.267, wolf 555, sabrecat 563.
-
-The slow child keeps its rate-scaled form (chaurus `WalkSlow@0.058` → 5): that
-pair IS how vanilla stops sandbox-creep gliding.
-
-**REVERTED — the rate-scaled ladder.** A 2026-07 attempt used walk@1.4 and
-run@0.75/1.5/2.0 to stretch slow Oblivion gaits up to the attribute-formula
-speed at runtime. It had no vanilla precedent at the top anchor and the lion
-still ran in slow motion in game. Oblivion's higher ground speed is now BAKED
-into the shipped clips instead (`hkx_anim.timescale_clip` in
-`generate_creature_project`), so the speeds reaching these planners are already
-final and rate 1.0 is correct by construction. See
-[§8](#8-ground-speed-baked-not).
+**The creep ladder (confirmed in game 2026-10-10, Skyblivion land dreugh).**
+Reported: "creature attacks, slides forward slightly, finally starts walking",
+and a slide at every animation switch. The 60 s live trace
+(`tools/live/graph_trace.py`) showed the engine ramping `Speed` from 5 to
+199 u/s at ~580 u/s^2 after every `moveStart` (RACE accel 1.0, same as
+vanilla) and commanding 49/62/88/127 u/s while closing in. A Havok sync blend
+averages its children's DURATIONS, so between two anchors the clip's rate is
+the harmonic, not linear, interpolation: with only creep@5 and walk@155 the
+legs cycled at 23 u/s while the body moved at 127. Vanilla fills the range:
+wolf `ForwardWalkBlend` walk@1.0 / walk@1.4 / trot@0.7 / trot@1.0 / trot@1.5
+(anchors 74.5, 104, 201, 287, 425), sabrecat trot@1.0 / trot@2.0, horse
+trot@0.704 / trot@1.0 — neighbours 1.4-1.5x apart. `creep_ladder` does the
+same: the gait clip at rates stepping `LADDER_STEP` (1.5) down from natural
+until the anchor would drop under twice the creep, then the creep child.
+Dreugh walk: 5 / 13.6 / 20.5 / 30.7 / 46 / 69 / 103 / 155; worst leg/ground
+ratio at a gap midpoint 0.12 -> 0.96 (the 5 -> 13.6 creep gap stays at 0.79,
+vanilla's is 15x wide). The run-family start state now switches at the same
+`runStart` threshold instead of a literal 100. Ruled out on the way:
+transition-effect motion flags (changed nothing in game), `bAnimationDriven`
+on locomotion (stopped walking), vanilla foot IK (`lockFeetWhenPlanted` is
+false on every vanilla creature; dog/troll/mudcrab ship none), and
+`FLAG_USE_VELOCITY_SYNCHRONIZATION` (no code in 1.6.1170 tests bit 0x100).
 
 **The run blend is its own state**, never mixed with the walk clip. Vanilla
 sabrecat `forwardlocomotion`: `ForwardRunBlend` = `RunSlow@0.75` / `Run@1.15` —

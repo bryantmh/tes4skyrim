@@ -227,8 +227,10 @@ def record(args) -> int:
         b.request('trace', action='start', path=out, interval_ms=args.interval_ms,
                   meta=json.dumps(meta),
                   regions=regions_for(live, actor, hkb, len(model['variables']), nodes, ctrl))
-        for _ in range(int(args.seconds)):
+        for second in range(int(args.seconds)):
             time.sleep(1)
+            if args.console and second == args.console_at:
+                print('console:', args.console, '->', b.console(args.console, args.ref), flush=True)
             print(b.request('trace', action='status'), flush=True)
         print(b.request('trace', action='stop'))
         decode_file(live, out, model, args.all)
@@ -396,6 +398,8 @@ def main(argv=None) -> int:
     rec.add_argument('--interval-ms', type=int, default=8)
     rec.add_argument('--out', default='graph_trace.bin')
     rec.add_argument('--all', action='store_true', help='print every sample')
+    rec.add_argument('--console', help='console command to run on --ref mid-recording (e.g. kill)')
+    rec.add_argument('--console-at', type=int, default=2, help='seconds into the recording')
     dec = sub.add_parser('decode')
     dec.add_argument('file')
     dec.add_argument('--behavior', required=True)
