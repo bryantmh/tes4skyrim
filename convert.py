@@ -587,9 +587,17 @@ def _use_plugin_namespace(file_name: str) -> str:
 # Phase 3: CONVERT MESHES AND TEXTURES
 # ===========================================================================
 
+def _imported_mod_optimized(file_name, config):
+    entry = source_registry.get(SCRIPT_DIR / 'export', file_name) or {}
+    return bool(entry.get('group_id') and
+                config.get('importedModOptimizations') is not False)
+
+
 def phase_assets(file_name: str, config: dict, output_dir: str = None,
                  mesh_subdirs=None, winding_fix=None, parallax=False,
-                 textures_only=False, skip_hair=False):
+                 textures_only=False, skip_hair=False, plugin_assets_only=False,
+                 defer_textures=False, shared_texture_plugins=None,
+                 mesh_reuse_token=None):
     """Convert extracted NIF assets and copy textures to output (meshes only).
 
     `winding_fix` tri-states the collision winding repair: True/False force it,
@@ -602,6 +610,27 @@ def phase_assets(file_name: str, config: dict, output_dir: str = None,
 
     extract_dir = str(SCRIPT_DIR / "export")
     out_dir     = output_dir or str(SCRIPT_DIR / "output")
+    optimized = _imported_mod_optimized(file_name, config)
+    members = source_registry.group_members(extract_dir, file_name)
+    imported = bool((source_registry.get(extract_dir, file_name) or {}).get('group_id'))
+    if imported and not optimized:
+        plugin_assets_only = defer_textures = False
+        mesh_reuse_token = None
+    elif optimized:
+        plugin_assets_only = True
+        mesh_reuse_token = mesh_reuse_token or 'imported-mod'
+    if shared_texture_plugins is not None:
+        if imported and not optimized:
+            return True
+        from asset_convert.asset_pipeline import convert_shared_textures
+        stats = convert_shared_textures(file_name, shared_texture_plugins,
+                                        extract_dir=extract_dir, output_dir=out_dir)
+        print(f"[{file_name}] Shared textures complete "
+              f"({stats['textures_copied']} copied)")
+        return True
+    # An asset-only replacement has no plugin records to narrow its payload.
+    if plugin_assets_only and is_asset_only(file_name, extract_dir):
+        plugin_assets_only = False
 
     if winding_fix is None:
         winding_fix = default_for_plugin(file_name)
@@ -621,8 +650,18 @@ def phase_assets(file_name: str, config: dict, output_dir: str = None,
         parallax=parallax,
         textures_only=textures_only,
         skip_hair=skip_hair,
+        plugin_assets_only=plugin_assets_only,
+        defer_textures=defer_textures or optimized,
+        mesh_reuse_token=mesh_reuse_token,
     )
     total = sum(v for v in stats.values() if isinstance(v, int))
+    if optimized and not defer_textures and not mesh_subdirs:
+        from asset_convert.asset_pipeline import convert_shared_textures
+        owner = next((name for name in members if name.lower().endswith('.esm')),
+                     file_name)
+        convert_shared_textures(owner, members or [file_name],
+                                extract_dir=extract_dir, output_dir=out_dir,
+                                reuse=True)
     print(f"[{file_name}] Meshes complete ({total} items processed)")
 
     # Book inventory-art: bake each distinct BOOK model's textures onto the
@@ -687,7 +726,8 @@ def phase_speedtrees(file_name: str, config: dict, output_dir: str = None):
 # ===========================================================================
 
 def phase_creatures(file_name: str, tes5_data: str, config: dict,
-                    output_dir: str = None, only: list = None):
+                    output_dir: str = None, only: list = None,
+                    plugin_assets_only=False):
     """Convert creatures: generated behavior projects (skeleton.hkx,
     animations, behavior graph), skeleton/body NIF conversion, and
     registration in the merged animation singlefiles. `only` names the
@@ -698,6 +738,9 @@ def phase_creatures(file_name: str, tes5_data: str, config: dict,
     NPC_ humanoids are unaffected (they keep the Skyrim race overrides).
     """
     _use_plugin_namespace(file_name)
+    if (source_registry.get(SCRIPT_DIR / 'export', file_name) or {}).get('group_id'):
+        plugin_assets_only = (_imported_mod_optimized(file_name, config)
+                              and not is_asset_only(file_name, SCRIPT_DIR / 'export'))
     from asset_convert.havok.creature_pipeline import convert_creatures
 
     export_root = str(SCRIPT_DIR / "export")
@@ -711,7 +754,8 @@ def phase_creatures(file_name: str, tes5_data: str, config: dict,
 
     scope = f" (only {', '.join(only)})" if only else ""
     print(f"[{file_name}] Converting creatures (behavior projects + meshes){scope}...")
-    res = convert_creatures(export_subdir, out_meshes, names=only)
+    res = convert_creatures(export_subdir, out_meshes, names=only,
+                            plugin_assets_only=plugin_assets_only)
     print(f"[{file_name}] Creatures complete "
           f"({len(res['projects'])} projects, {len(res['errors'])} errors)")
     return not res['errors']
@@ -734,6 +778,10 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
     """Import using the Python tes5_import package."""
     _use_plugin_namespace(file_name)
     from tes5_import.pipeline import import_plugin
+    entry = source_registry.get(SCRIPT_DIR / 'export', file_name) or {}
+    os.environ['TESCONV_IMPORTED_MOD_OPTIMIZATIONS'] = (
+        '0' if entry.get('group_id') and not _imported_mod_optimized(file_name, config)
+        else '1')
     from tes5_import.overrides.master_index import MissingMasterOutputError
     from tes5_import.base.artifact_schema import StaleArtifactError
 
@@ -784,19 +832,26 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
 # Phase 7: CONVERT SOUNDS
 # ===========================================================================
 
-def phase_sounds(file_name: str, config: dict, output_dir: str = None):
+def phase_sounds(file_name: str, config: dict, output_dir: str = None,
+                 skip_shared_sounds=False):
     """Convert extracted sound files from BSA to XWM format in output."""
     _use_plugin_namespace(file_name)
     from asset_convert.asset_pipeline import convert_sounds
 
     extract_dir = str(SCRIPT_DIR / "export")
     out_dir     = output_dir or str(SCRIPT_DIR / "output")
+    imported = bool((source_registry.get(extract_dir, file_name) or {}).get('group_id'))
+    scope_voices = not imported or _imported_mod_optimized(file_name, config)
+    if not scope_voices:
+        skip_shared_sounds = False
 
     print(f"[{file_name}] Converting sounds to XWM...")
     stats = convert_sounds(
         source_file=file_name,
         extract_dir=extract_dir,
         output_dir=out_dir,
+        skip_shared_sounds=skip_shared_sounds,
+        scope_plugin_voices=scope_voices,
     )
     converted = stats.get('converted', 0)
     copied    = stats.get('copied', 0)
@@ -1113,14 +1168,20 @@ def _phase_runners(run) -> dict:
         'meshes': lambda fn: phase_assets(
             fn, cfg, output_dir=out, mesh_subdirs=a.mesh_subdirs,
             winding_fix=a.collision_winding_fix, parallax=a.parallax,
-            textures_only=a.textures_only, skip_hair=a.skip_hair),
+            textures_only=a.textures_only, skip_hair=a.skip_hair,
+            plugin_assets_only=a.plugin_assets_only,
+            defer_textures=a.defer_textures,
+            shared_texture_plugins=a.shared_texture_plugins,
+            mesh_reuse_token=a.mesh_reuse_token),
         'speedtrees': lambda fn: phase_speedtrees(fn, cfg, output_dir=out),
         'creatures': lambda fn: phase_creatures(fn, run.tes5_data, cfg,
                                                 output_dir=out,
-                                                only=run.args.only),
+                                                only=run.args.only,
+                                                plugin_assets_only=a.plugin_assets_only),
         'import': lambda fn: phase_import(fn, run.tes4_data, run.tes5_data,
                                           run.export_dir, cfg, output_dir=out),
-        'sounds': lambda fn: phase_sounds(fn, cfg, output_dir=out),
+        'sounds': lambda fn: phase_sounds(fn, cfg, output_dir=out,
+                                         skip_shared_sounds=a.skip_shared_sounds),
         'scripts': lambda fn: (phase_scripts(fn, cfg, output_dir=out)
                                and phase_compile(fn, cfg, output_dir=out)),
         'lod': lambda _fn: _create_lod(out),
@@ -1149,7 +1210,11 @@ def _work(steps, order, run) -> dict:
     masters = binary_master_chain(order, lambda name: resolve_plugin_path(
         name, run.tes4_data, run.export_dir))
     return {'plugins': list(order), 'steps': list(steps), 'masters': masters,
-            'scope': {'only': a.only, 'mesh_subdirs': a.mesh_subdirs},
+            'scope': {'only': a.only, 'mesh_subdirs': a.mesh_subdirs,
+                      'defer_textures': a.defer_textures,
+                      'mesh_reuse_token': a.mesh_reuse_token,
+                      'shared_texture_plugins': a.shared_texture_plugins,
+                      'skip_shared_sounds': a.skip_shared_sounds},
             'same': [run.output_dir, run.tes4_data, a.config, a.textures_only,
                      a.parallax, a.skip_hair, a.collision_winding_fix,
                      a.no_engine_branches, a.patch_plugins]}
@@ -1180,7 +1245,8 @@ def _run_steps(steps, order, run) -> tuple:
         for fn in targets:
             ok = bool(runners[step](fn))
             success = success and ok
-            if not (step == 'meshes' and run.args.mesh_subdirs):
+            if not (step == 'meshes' and (run.args.mesh_subdirs
+                                         or run.args.shared_texture_plugins)):
                 slot = step_ok.setdefault(key, {})
                 slot[fn] = slot.get(fn, True) and ok
         print()

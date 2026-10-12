@@ -403,3 +403,34 @@ def test_import_main_points_the_soun_converter_at_the_asset_root():
     assert 'set_sound_source_dir(str(assets_for(export_dir)))' in src, (
         'set_sound_source_dir is being handed a record dir again -- every '
         'directory-valued SOUN ANAM becomes an unplayable bare path')
+
+
+def test_imported_single_plugin_preserves_steps_and_parallax(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import core.gui.runner as runner
+    from convert_cli import build_parser
+    exp = _fake_group(tmp_path, ['A.esm', 'B.esp'])
+    monkeypatch.setattr(runner, 'EXPORT_DIR', exp)
+    monkeypatch.setattr(runner, 'navmesh_pins_dir', lambda: 'pins')
+    enabled = [True]
+    app = SimpleNamespace(
+        pack_default_var=SimpleNamespace(get=lambda: False),
+        imported_mod_optimizations_var=SimpleNamespace(get=lambda: enabled[0]),
+        navmesh_gen_var=SimpleNamespace(get=lambda: 'corridor'),
+        tes4_encoding_var=SimpleNamespace(get=lambda: 'auto'),
+        winding_on=lambda: False,
+        parallax_var=SimpleNamespace(get=lambda: True),
+        tex_only_var=SimpleNamespace(get=lambda: True))
+    steps = ['export', 'extract', 'meshes', 'speedtrees', 'creatures',
+             'import_', 'sounds', 'scripts']
+    cmds = runner.pipeline_argv(app, 'B.esp', 'out', steps, None)
+    args = [build_parser().parse_args(cmd[3:]) for cmd in cmds]
+    assert len(args) == len(steps)
+    assert args[2].parallax is True and args[2].textures_only is True
+    enabled[0] = False
+    # This is upstream's original combined command for the default selection.
+    legacy = runner.pipeline_argv(app, 'B.esp', 'out', steps, None)
+    assert len(legacy) == 1
+    parsed = build_parser().parse_args(legacy[0][3:])
+    from convert_cli import selected_steps
+    assert selected_steps(parsed) == [key.rstrip('_') for key in steps]
