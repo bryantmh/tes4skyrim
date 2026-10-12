@@ -230,6 +230,8 @@ class GuiApp:
         self.log_pane = self.log_text = None
         self.file_combo = self.scope_combo = None
         self.run_btn = self.cancel_btn = self.upgrade_btn = None
+        self.run_mod_btn = None
+        self.rebuild_mod_btn = None
         self.prog_bar = self.status_row = None
         self.menubar = None
         self.style = None
@@ -249,6 +251,7 @@ class GuiApp:
         self.file_var = self.scope_var = self.workers_var = None
         self.status_var = self.timer_var = None
         self.cache_dl_var = self.pack_default_var = None
+        self.imported_mod_optimizations_var = None
         self.winding_mode_var = self.parallax_var = self.tex_only_var = None
         self.lod_detail_var = self.navmesh_gen_var = None
         self.step_vars = {}
@@ -486,6 +489,8 @@ def build_state(root, cfg: dict) -> GuiApp:
         value=cfg.get(DOWNLOAD_CONFIG_KEY) is not False)
     app.pack_default_var = tk.BooleanVar(
         value=cfg.get(PACK_DEFAULT_CONFIG_KEY) is not False)
+    app.imported_mod_optimizations_var = tk.BooleanVar(
+        value=cfg.get("importedModOptimizations") is not False)
     app.winding_mode_var = tk.StringVar(value=_initial_winding(cfg))
     app.lod_detail_var = tk.IntVar(value=_initial_lod_detail(cfg))
     saved_gen = cfg.get(NAVMESH_GENERATOR_CONFIG_KEY)
@@ -579,6 +584,12 @@ def build_run_buttons(app, parent, sep_gap: int) -> None:
                              style="Run.TButton",
                              command=lambda: app.run_clicked())
     app.run_btn.pack(fill=tk.X, pady=(0, 6))
+    app.run_mod_btn = ttk.Button(frame, text="  Run Whole Mod",
+                                 command=lambda: app.run_mod_clicked())
+    app.run_mod_btn.pack(fill=tk.X, pady=(0, 6))
+    app.rebuild_mod_btn = ttk.Button(frame, text="  Rebuild Whole Mod",
+                                     command=lambda: app.rebuild_mod_clicked())
+    app.rebuild_mod_btn.pack(fill=tk.X, pady=(0, 6))
 
     row = ttk.Frame(frame, style="Panel.TFrame")
     row.pack(fill=tk.X)
@@ -992,6 +1003,9 @@ def build_window():
                                  partial(panels.open_mesh_subdir_panel, app))
 
     app.run_clicked = partial(runner.run_clicked, app, RC_MISSING_DEP)
+    app.run_mod_clicked = partial(runner.run_mod_clicked, app, RC_MISSING_DEP)
+    app.rebuild_mod_clicked = partial(runner.run_mod_clicked, app,
+                                      RC_MISSING_DEP, rebuild=True)
     app.cancel_clicked = partial(runner.cancel_run, app)
     build_run_buttons(app, sb_body, widgets.SEP_GAP)
     _bind_global_actions(app)

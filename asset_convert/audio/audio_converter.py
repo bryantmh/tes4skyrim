@@ -375,6 +375,8 @@ def convert_sounds(
     output_dir: str = 'output',
     ffmpeg_path: str = 'ffmpeg',
     formid_index: int = 1,
+    skip_shared_sounds: bool = False,
+    scope_plugin_voices: bool = True,
 ) -> dict:
     """Convert all extracted sounds (MP3/WAV → XWM) with multi-threaded ffmpeg.
 
@@ -427,8 +429,11 @@ def convert_sounds(
         convert_audio=(ffmpeg is not None),
         ffmpeg_path=ffmpeg_path,
         formid_index=formid_index,
-        voice_map=find_voice_map(output_dir, source_name),
-        lip_text=find_lip_text(output_dir, source_name),
+        voice_map=find_voice_map(output_dir, source_name, extract_dir),
+        lip_text=find_lip_text(output_dir, source_name, extract_dir),
+        record_source_dir=(record_dir(extract_dir, source_name)
+                           if scope_plugin_voices else None),
+        scope_plugin_voices=scope_plugin_voices,
     )
 
     # ── Non-voice sounds: keep .wav, transcode only .mp3 ────────────────────
@@ -456,7 +461,7 @@ def convert_sounds(
     # transcode to PCM .wav, which is what vanilla would have shipped.
     print('\n  [Non-voice sounds]')
     jobs = []
-    for root_dir, dirs, files in os.walk(snd_src):
+    for root_dir, dirs, files in (() if skip_shared_sounds else os.walk(snd_src)):
         # Skip the Voice subtree — already handled by organize_voice_files above
         if Path(root_dir).resolve() == snd_src.resolve():
             dirs[:] = [d for d in dirs if d.lower() != 'voice']
@@ -472,7 +477,9 @@ def convert_sounds(
             jobs.append((src, dst))
 
     count = failed = copied = 0
-    if not jobs:
+    if skip_shared_sounds:
+        print('  Shared non-voice sounds handled once by another mod member.')
+    elif not jobs:
         print('  No non-voice sound files to convert (all already present).')
     else:
         need_ffmpeg = any(s.suffix.lower() == '.mp3' for s, _ in jobs)
@@ -559,10 +566,10 @@ def load_voice_map(map_path) -> dict:
     return voice_map
 
 
-def find_voice_map(output_dir, source_name) -> 'dict | None':
+def find_voice_map(output_dir, source_name, extract_dir=None) -> 'dict | None':
     """Locate and load the voicemap written next to the converted ESM
     (output/<plugin>/<plugin>.voicemap.txt), if present."""
-    map_path = (_out_root(output_dir, source_name)
+    map_path = (_out_root(output_dir, source_name, extract_dir)
                 / (source_name + '.voicemap.txt'))
     if map_path.exists():
         return load_voice_map(map_path)
@@ -597,10 +604,10 @@ def load_lip_text(map_path) -> dict:
     return lip_text
 
 
-def find_lip_text(output_dir, source_name) -> 'dict | None':
+def find_lip_text(output_dir, source_name, extract_dir=None) -> 'dict | None':
     """Locate and load the lip transcript map written next to the converted
     ESM (output/<plugin>/<plugin>.liptext.txt), if present."""
-    map_path = (_out_root(output_dir, source_name)
+    map_path = (_out_root(output_dir, source_name, extract_dir)
                 / (source_name + '.liptext.txt'))
     if map_path.exists():
         return load_lip_text(map_path)
@@ -837,6 +844,8 @@ def organize_voice_files(
     lip_text: 'dict | str | None' = None,
     lipgenerator_path: 'str | None' = None,
     prune: bool = True,
+    record_source_dir=None,
+    scope_plugin_voices=True,
 ) -> dict:
     """Reorganise extracted TES4 voice files into the TES5 directory layout.
 
@@ -848,6 +857,9 @@ def organize_voice_files(
     voicemap value is a bare prefix or a (prefix, [vtyps]) pair, normalized here
     to the pair form.  `ffmpeg_path`, `xwmaencode_path` and `lipgenerator_path`
     are auto-detected when None.  `copy=False` moves instead of copying.
+    A named plugin reads its own recordings and only voicemap-matched lines
+    from other source folders. `record_source_dir` supplies its RACE/VTYP
+    exports when the sound tree is shared by several plugins.
 
     Returns a dict with keys: organized, skipped, no_match, errors,
     unmapped_races.
@@ -862,12 +874,6 @@ def organize_voice_files(
     if voice_map:
         voice_map = {k: (v if isinstance(v, tuple) else (v, []))
                      for k, v in voice_map.items()}
-    if voice_map:
-        print(f'  Voice map: {len(voice_map)} filename prefixes from importer')
-    else:
-        print('  WARNING: no voice map — keeping Oblivion filename prefixes; '
-              'lines whose quest/topic EditorIDs were truncated differently '
-              'will not play')
     if isinstance(lip_text, (str, Path)):
         lip_text = load_lip_text(lip_text)
 
@@ -880,6 +886,26 @@ def organize_voice_files(
         return {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0,
                 'unmapped_races': set()}
 
+    plugin_dirs = [p for p in voice_root.iterdir() if p.is_dir()
+                   and (not scope_plugin_voices or not plugin_name
+                        or p.name.casefold() == plugin_name.casefold()
+                        or voice_map)]
+    if not plugin_dirs:
+        print(f'  No voice recordings for {plugin_name}; skipping voice conversion.')
+        return {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0,
+                'unmapped_races': set()}
+    # Prefer this plugin's take if another folder supplies the same reply.
+    if scope_plugin_voices:
+        plugin_dirs.sort(key=lambda p: (
+            bool(plugin_name and p.name.casefold() != plugin_name.casefold()),
+            p.name.casefold()))
+    if voice_map:
+        print(f'  Voice map: {len(voice_map)} filename prefixes from importer')
+    else:
+        print('  WARNING: no voice map — keeping Oblivion filename prefixes; '
+              'lines whose quest/topic EditorIDs were truncated differently '
+              'will not play')
+
     ffmpeg, xwmaencode, lipgenerator = _find_voice_tools(
         convert_audio, voice_root, ffmpeg_path, xwmaencode_path,
         lipgenerator_path, lip_text)
@@ -887,7 +913,8 @@ def organize_voice_files(
     stats = {'organized': 0, 'skipped': 0, 'no_match': 0, 'errors': 0}
     unmapped_races: set = set()
 
-    race_voices = load_race_voices(source_dir)
+    record_source = Path(record_source_dir) if record_source_dir else source_dir
+    race_voices = load_race_voices(record_source)
     if race_voices:
         print(f'  Plugin races: {len(race_voices.keys)} voice identities '
               f'from {len(race_voices.by_race_edid)} RACE records')
@@ -898,12 +925,12 @@ def organize_voice_files(
     # prune so a VTYP relocation cannot strand the emptied source-race folder.
     plugin_roots: set = set()
 
-    for plugin_dir in voice_root.iterdir():
-        if not plugin_dir.is_dir():
-            continue
+    for plugin_dir in plugin_dirs:
+        borrowed = bool(scope_plugin_voices and plugin_name
+                        and plugin_dir.name.casefold() != plugin_name.casefold())
         effective_plugin = plugin_name or plugin_dir.name
         fallout = is_fallout_voice_root(plugin_dir)
-        fnv_edids = load_voice_type_edids(source_dir) if fallout else {}
+        fnv_edids = load_voice_type_edids(record_source) if fallout else {}
 
         for race_dir in plugin_dir.iterdir():
             if not race_dir.is_dir():
@@ -914,13 +941,7 @@ def organize_voice_files(
                 gender = (folder_gender(race) if fallout
                           else gender_dir.name.upper()[:1])
 
-                voice_type = _resolve_voice_type(race, gender, fallout,
-                                                 race_voices, unmapped_races,
-                                                 fnv_edids)
-
-                out_dir = dest_dir / 'sound' / 'Voice' / effective_plugin / voice_type
-                out_dir.mkdir(parents=True, exist_ok=True)
-                plugin_roots.add(out_dir.parent)
+                voice_type = None
 
                 for audio_file in gender_dir.iterdir():
                     if not audio_file.is_file():
@@ -929,6 +950,13 @@ def organize_voice_files(
                     if not m:
                         stats['no_match'] += 1
                         continue
+                    if borrowed and (int(m.group(2), 16) & 0xFFFFFF) not in voice_map:
+                        continue
+                    if voice_type is None:
+                        voice_type = _resolve_voice_type(race, gender, fallout,
+                                                         race_voices, unmapped_races,
+                                                         fnv_edids)
+                    out_dir = dest_dir / 'sound' / 'Voice' / effective_plugin / voice_type
 
                     dst_name, owned, text = _voice_destination(
                         m, voice_map, voice_type, lip_text, ffmpeg,
@@ -938,11 +966,16 @@ def organize_voice_files(
                                 if owned else [out_dir])
                     for od in out_dirs:
                         od.mkdir(parents=True, exist_ok=True)
+                        plugin_roots.add(od.parent)
                         dst_path = od / dst_name
                         # Record it as intended BEFORE the already-present
                         # skip: an existing file is still a wanted file and
                         # must not be pruned below.
-                        intended.add(dst_path.resolve())
+                        resolved = dst_path.resolve()
+                        if scope_plugin_voices and resolved in intended:
+                            stats['skipped'] += 1
+                            continue
+                        intended.add(resolved)
                         touched_dirs.add(od.resolve())
                         if dst_path.exists():
                             stats['skipped'] += 1

@@ -52,6 +52,9 @@ MANIFEST_NAME = 'textures_used.txt'
 #: Of those, the APPLY_HILIGHT2 detail overlays whose alpha is a blend weight.
 OVERLAY_MANIFEST_NAME = 'overlay_diffuses.txt'
 
+#: Per-plugin diffuse textures whose alpha is opacity, not parallax height.
+OPACITY_MANIFEST_NAME = 'alpha_opacity_diffuses.txt'
+
 #: Bytes that may appear in a texture path embedded in a binary asset.
 _TEX_PATH_BYTES = frozenset(
     c for c in range(256)

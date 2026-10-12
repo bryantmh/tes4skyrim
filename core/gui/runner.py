@@ -51,6 +51,7 @@ import os
 import queue
 import re
 import sys
+import struct
 import threading
 import time
 from pathlib import Path
@@ -519,6 +520,10 @@ def bind_set_running(app) -> None:
         if not state:
             app.cancel_evt.clear()
         app.run_btn.configure(state="disabled" if state else "normal")
+        for name in ('run_mod_btn', 'rebuild_mod_btn'):
+            button = getattr(app, name, None)
+            if button is not None:
+                button.configure(state="disabled" if state else "normal")
         app.cancel_btn.configure(state="normal" if state else "disabled",
                                  text="Cancel")
         app.file_combo.configure(state="disabled" if state else "normal")
@@ -998,7 +1003,13 @@ def pipeline_argv(app, fname, out_dir, steps, subdirs) -> list:
     One command when the selection is the default and nothing narrows it;
     otherwise one per step, so a failure can stop the rest.
     """
-    if _is_default_selection(app, steps) and fname and not subdirs:
+    entry = source_registry.get(EXPORT_DIR, fname) or {} if fname else {}
+    from core.gui.config import load_config
+    var = getattr(app, 'imported_mod_optimizations_var', None)
+    enabled = bool(var.get()) if var is not None else (
+        load_config().get('importedModOptimizations') is not False)
+    optimized = enabled and bool(entry.get('group_id'))
+    if _is_default_selection(app, steps) and fname and not subdirs and not optimized:
         cmd = [sys.executable, "-u", str(REPO_ROOT / "convert.py"),
                "-f", fname, winding_flag(app)] + navmesh_flags(app)
         cmd += [flag for key, flag, *_ in STEPS if key in set(steps)]
@@ -1009,22 +1020,66 @@ def pipeline_argv(app, fname, out_dir, steps, subdirs) -> list:
 
 
 def run_commands(app, cmds, q, env, missing_dep) -> int:
-    """Run each command until one fails; returns the run's exit code.
+    """Run commands, skipping records whose export failed in this run.
 
-    A missing dependency stops the rest: each step is its own process, so
-    nothing else would prevent the remainder from producing half-converted
-    output.
+    Independent plugins continue. Dependencies are read only after an export
+    failure; final packaging waits for a run with all exports successful.
+    A missing tool dependency still stops the run.
     """
     ret = 0
+    failed_exports = set()
+    dependencies = {}
+    sounds_ran = False
+
+    def blocked(name):
+        if not failed_exports or not name:
+            return False
+        key = name.lower()
+        if key in failed_exports:
+            return True
+        if key not in dependencies:
+            from core.plugin_masters import binary_master_chain, master_chain
+            from source_paths import resolve_plugin_path
+            try:
+                dependencies[key] = set(binary_master_chain(
+                    [name], lambda n: resolve_plugin_path(
+                        n, app.tes4_var.get(), str(EXPORT_DIR))))
+            except (OSError, ValueError, struct.error):
+                dependencies[key] = set()
+            dependencies[key].update(m.lower() for m in master_chain(
+                source_registry.record_dir(EXPORT_DIR, name)))
+        return bool(dependencies[key] & failed_exports)
+
     for cmd in cmds:
         if app.cancel_evt.is_set():
             return RC_CANCELLED
+        if failed_exports and any(flag in cmd for flag in ('--pack-only', '--pack-zip-only')):
+            q.put('Skipping packaging: one or more plugin exports failed.')
+            continue
+        if failed_exports and '--shared-textures-only' in cmd:
+            index = cmd.index('--shared-textures-only') + 1
+            members = [n for n in cmd[index:] if not blocked(n)]
+            if not members:
+                continue
+            cmd = cmd[:index] + members
+            cmd[cmd.index('-f') + 1] = members[0]
+        name = cmd[cmd.index('-f') + 1] if '-f' in cmd else None
+        if blocked(name):
+            q.put(f'Skipping {name}: its export or a master export failed.')
+            continue
+        if '--sounds-only' in cmd:
+            if failed_exports and not sounds_ran:
+                cmd = [arg for arg in cmd if arg != '--skip-shared-sounds']
+            sounds_ran = True
         q.put(f"Running: {' '.join(cmd)}")
         r = run_process(cmd, q.put, env=env, cancel_event=app.cancel_evt)
         if r == RC_CANCELLED:
             return RC_CANCELLED
         if r == missing_dep:
             return r
+        if r != 0 and '--export-only' in cmd:
+            if name:
+                failed_exports.add(name.lower())
         if r != 0:
             ret = r
     return ret
@@ -1182,6 +1237,101 @@ def run_clicked(app, missing_dep) -> None:
     q = queue.Queue()
     want_summary = [False]
     cmds = pipeline_argv(app, fname, out_dir, steps, subdirs)
+    start_worker(app, cmds, q, _run_env(app), missing_dep, want_summary)
+    app.root.after(50, make_drain(app, q, want_summary,
+                                  lambda ws: _run_finished(app, ws)))
+
+
+def mod_run_argv(app, runs, pack_with, pack_steps, out_dir, *, rebuild=False,
+                 texture_plugins=None):
+    """Commands for a mod run, with all exports first when rebuilding."""
+    if rebuild:
+        jobs = [(name, key) for key, *_ in STEPS
+                for name, steps in runs if key in steps]
+    else:
+        jobs = [(name, key) for name, steps in runs for key in steps]
+        if any(key == 'meshes' for name, key in jobs):
+            # Shared textures must be ready before any member is imported.
+            prepare = ('export', 'extract', 'meshes')
+            jobs = ([(name, key) for key in prepare
+                     for name, steps in runs if key in steps]
+                    + [(name, key) for name, key in jobs if key not in prepare])
+    if pack_with is not None:
+        jobs += [(pack_with, key) for key in pack_steps]
+    mesh_jobs = [i for i, (name, key) in enumerate(jobs) if key == 'meshes']
+    members = list(texture_plugins if texture_plugins is not None
+                   else [name for name, steps in runs])
+    texture_owner = next((name for name in members if name.lower().endswith('.esm')),
+                         members[0] if members else None)
+    cmds = []
+    import uuid
+    mesh_reuse_token = uuid.uuid4().hex
+    shared_sounds_planned = False
+    from core.gui.selection import imported_mod_optimizations_enabled
+    optimized = imported_mod_optimizations_enabled(app)
+    for i, (name, key) in enumerate(jobs):
+        cmd = build_cmd(app, key, name, out_dir, None)
+        if optimized and key in ('meshes', 'creatures'):
+            cmd.append('--plugin-assets-only')
+        if optimized and key == 'meshes':
+            cmd += ['--defer-textures', '--mesh-reuse-token', mesh_reuse_token]
+        if optimized and key == 'sounds':
+            if shared_sounds_planned:
+                cmd.append('--skip-shared-sounds')
+            shared_sounds_planned = True
+        cmds.append(cmd)
+        if optimized and mesh_jobs and i == mesh_jobs[-1]:
+            shared = build_cmd(app, 'meshes', texture_owner, out_dir, None)
+            shared += ['--shared-textures-only'] + members
+            cmds.append(shared)
+    return cmds
+
+def run_mod_clicked(app, missing_dep, *, rebuild=False) -> None:
+    """Run every plugin of the selected imported mod, masters first.
+
+    Each plugin gets the steps it still owes (shared steps convert once, the
+    pack runs once at the end); plugins owing nothing are skipped. Refuses
+    when the active source is not an imported mod. Rebuild ignores version
+    history and runs each stage over the mod before moving to the next.
+    """
+    from core.gui.selection import plan_mod_run
+
+    if app.running.is_set():
+        return
+    row = app.scope_rows.get(app.scope_var.get()) or {}
+    plugins = list(row.get('plugins') or []) if row.get('kind') == 'mod' else []
+    plugins = [p for p in plugins if source_registry.source_available(EXPORT_DIR, p)]
+    if not plugins:
+        app.info("Not A Mod",
+                 "Select an imported mod in Source first.\n"
+                 "Game folders convert one plugin per run.")
+        return
+    out_dir = app.output_var.get().strip()
+    runs, pack_with, pack_steps = plan_mod_run(app, plugins, rebuild=rebuild)
+    if not runs:
+        app.info("Up To Date",
+                 "Every plugin of this mod is already converted.")
+        return
+
+    label = row.get('label') or 'mod'
+    _begin_run(app, {"Command": "Rebuild Whole Mod" if rebuild else "Mod run",
+                     "File": f"{label} ({len(runs)} plugins)",
+                     "Steps": "; ".join(
+                         f"{name}: {step_names(steps)}"
+                         for name, steps in runs),
+                     "Output": out_dir,
+                     "Workers": str(app.get_workers())})
+    for name, steps in runs:
+        app.log(f"File: {name} ({step_names(steps)})")
+    app.log(f"Output: {out_dir}")
+    app.log(f"Workers: {app.get_workers()} (of {app.cpu_max})")
+    app.log_sink.note(app.log)
+    app.log("")
+
+    q = queue.Queue()
+    want_summary = [False]
+    cmds = mod_run_argv(app, runs, pack_with, pack_steps, out_dir,
+                        rebuild=rebuild, texture_plugins=plugins)
     start_worker(app, cmds, q, _run_env(app), missing_dep, want_summary)
     app.root.after(50, make_drain(app, q, want_summary,
                                   lambda ws: _run_finished(app, ws)))
