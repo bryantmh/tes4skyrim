@@ -30,6 +30,7 @@ from ..base.equivalents import (
     WEAPON_ANIM_VNAM,
     weapon_skill_stagger,
 )
+from .magic import effect_item_conditions
 from .magic_variants import (DELIVERY_CONTACT, MGEF_CAST_FOR_OWNER, RANGE_DELIVERY,
                              UNCASTABLE_SPELL_TYPES, ability_variant,
                              bound_assoc_is_armor,
@@ -304,8 +305,10 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
     ``pad_to``) takes zero-magnitude fillers.  Every slot is fitted to
     ``owner`` and ``spell_type`` (see _slot_mgef); a filler takes
     ``delivery`` when the owner fixes none, and carries no hit visuals on an
-    Ability.
+    Ability.  A slot's own conditions follow its EFIT
+    (magic.effect_item_conditions).
     See: docs/commentary/tes5_import_magic.md#aimed-ench-null-projectile
+    See: docs/commentary/tes5_import_magic.md#sun-damage-sunlight
     """
     effects = []
     for i in range(get_int(rec, count_key)):
@@ -316,7 +319,9 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
         if mgef_fid:
             effects.append((mgef_fid, float(get_int(rec, f'Effect[{i}].Magnitude')),
                             get_int(rec, f'Effect[{i}].Area'),
-                            get_int(rec, f'Effect[{i}].Duration')))
+                            get_int(rec, f'Effect[{i}].Duration'),
+                            effect_item_conditions(
+                                code, get_str(rec, f'Effect[{i}].MorrowindIndex'))))
 
     used = {fid for fid, *_ in effects}
     fillers = iter(fid for fid in _FILLER_EFFECTS if fid not in used)
@@ -326,12 +331,13 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
                                   filler_delivery, writer)
         if spell_type == SPELL_TYPE_ABILITY:
             filler = ability_variant(filler, '', 0, writer)
-        effects.append((filler, 0.0, 0, 0))
+        effects.append((filler, 0.0, 0, 0, b''))
 
     subs = b''
-    for mgef_fid, mag, area, dur in effects:
+    for mgef_fid, mag, area, dur, conditions in effects:
         subs += pack_formid_subrecord('EFID', mgef_fid)
         subs += pack_subrecord('EFIT', struct.pack('<fII', mag, area, dur))
+        subs += conditions
     return subs
 
 

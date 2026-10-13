@@ -95,6 +95,10 @@ FUNC_GET_STAGE = 58            # GetStage(quest)
 FUNC_GET_STAGE_DONE = 59       # GetStageDone(quest, stage)
 FUNC_GET_QUEST_RUNNING = 56    # GetQuestRunning(quest)
 FUNC_GET_GLOBAL_VALUE = 74     # GetGlobalValue(glob)
+#: IsInInterior(): true in an interior cell.
+FUNC_IS_IN_INTERIOR = 300
+#: GetInWorldspace(worldspace or form list of worldspaces).
+FUNC_GET_IN_WORLDSPACE = 310
 FUNC_GET_IS_VOICE_TYPE = 426   # GetIsVoiceType(vtyp)  — TES5-only, no TES4 source
 FUNC_HAS_MAGIC_EFFECT = 214
 FUNC_HAS_MAGIC_EFFECT_KEYWORD = 699

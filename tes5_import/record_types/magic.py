@@ -31,9 +31,10 @@ from tes4_export.record_types.morrowind import MW_ENCHANT_SKILL
 from . import magic_art, magic_art_morrowind
 from .common import pack_keywords
 from ..generated.vanilla_mgef_data import VANILLA_MGEF_DATA
-from ..base.constants import mgef_family_keyword_name
-from ..base.conditions import (FUNC_HAS_KEYWORD, FUNC_HAS_MAGIC_EFFECT_KEYWORD,
-                               build_ctda)
+from ..base.constants import ENGINE_GLOBAL_FORMIDS, mgef_family_keyword_name
+from ..base.conditions import (FUNC_GET_GLOBAL_VALUE, FUNC_GET_IN_WORLDSPACE,
+                               FUNC_HAS_KEYWORD, FUNC_HAS_MAGIC_EFFECT_KEYWORD,
+                               FUNC_IS_IN_INTERIOR, build_ctda)
 from ..base.owned_records import MGEF_FAMILY_KEYWORDS, WELL_KNOWN_PROPERTIES
 from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..base.writer import (
@@ -1018,6 +1019,89 @@ PARALYSIS_CONDITIONS = b''.join(
                      (FUNC_HAS_MAGIC_EFFECT_KEYWORD, KW_IMMUNE_PARALYSIS)))
 
 
+#: Morrowind's Sun Damage effect index.
+MW_SUN_DAMAGE = 135
+#: The first and last hour Skyrim.esm's `VampireSunDamage01`-`04` count as daylight.
+SUNLIGHT_HOURS = (5.0, 19.0)
+#: CTDA comparison operators (the type byte's high bits).
+_OP_GE, _OP_LE = 0x60, 0xA0
+#: EditorID of a plugin's generated list of worldspaces without Sun Damage; a dependent's own takes the next free number.
+SUNLESS_WORLDS_EDID = 'TES4SunDamageExceptionWorldSpaces'
+
+#: Skyrim's own daylight test, in the order its vampire sun spells store it on every effect item.
+SUNLIGHT_CONDITIONS = b''.join(
+    pack_subrecord('CTDA', ctda) for ctda in (
+        build_ctda(FUNC_GET_GLOBAL_VALUE, param1=ENGINE_GLOBAL_FORMIDS['gamehour'],
+                   comp_value=SUNLIGHT_HOURS[1], operator=_OP_LE),
+        build_ctda(FUNC_GET_GLOBAL_VALUE, param1=ENGINE_GLOBAL_FORMIDS['gamehour'],
+                   comp_value=SUNLIGHT_HOURS[0], operator=_OP_GE),
+        build_ctda(FUNC_IS_IN_INTERIOR, comp_value=0.0)))
+
+#: How many numbered names are looked up for a master's list: a gap in the names hides nothing behind it.
+_SUNLESS_NAMES = 256
+#: The lists of worldspaces without Sun Damage this plugin's items skip: its masters', then its own.
+_sunless_lists = []
+
+
+def effect_item_conditions(code: str, morrowind: str = '') -> bytes:
+    """What follows a slot's EFIT: the sunlight test on Sun Damage, else nothing."""
+    if code != 'SUDG' and morrowind != str(MW_SUN_DAMAGE):
+        return b''
+    worlds = b''.join(pack_subrecord('CTDA', build_ctda(FUNC_GET_IN_WORLDSPACE, param1=fid, comp_value=0.0))
+                      for fid in _sunless_lists)
+    return worlds + SUNLIGHT_CONDITIONS
+
+
+def sunless_worldspaces(worlds: list, climates: list, weathers: list) -> list:
+    """The records of `worlds` whose climate lists weathers of which none has Sun Damage.
+
+    A climate or a weather that is not among `climates` / `weathers` cannot be
+    judged, and its worldspace is left out.
+    """
+    sun = {get_str(w, 'FormID').upper(): get_int(w, 'DATA.SunDamage', -1) for w in weathers}
+    listed = {get_str(c, 'FormID').upper(): [get_str(c, f'Weather[{i}].FormID').upper()
+                                             for i in range(get_int(c, 'WeatherCount'))]
+              for c in climates}
+    out = []
+    for world in worlds:
+        its = listed.get(get_str(world, 'CNAM.Climate').upper())
+        if its and all(sun.get(w, -1) == 0 for w in its):
+            out.append(world)
+    return out
+
+
+def _sunless_edid(number: int) -> str:
+    """The EditorID of the `number`-th list down a chain; the first has no number."""
+    return f'{SUNLESS_WORLDS_EDID}{number or ""}'
+
+
+def settle_sunless_worlds(by_type: dict, writer, master_index=None) -> int:
+    """List this plugin's worldspaces without Sun Damage and note every list its items skip.
+
+    Returns how many worldspaces this plugin listed.  The masters' lists are
+    found by EditorID and named beside the plugin's own, which takes the
+    number after the highest name found.
+
+    See: docs/commentary/tes5_import_magic.md#sun-damage-sunlight
+    """
+    del _sunless_lists[:]
+    number = 0
+    for probe in range(_SUNLESS_NAMES if master_index is not None else 0):
+        found = master_index.find_all_by_edid(b'FLST', _sunless_edid(probe))
+        if found:
+            _sunless_lists.extend(found)
+            number = probe + 1
+    own = sorted({get_formid(w, 'FormID') for w in sunless_worldspaces(
+        by_type.get('WRLD', []), by_type.get('CLMT', []), by_type.get('WTHR', []))})
+    if own and writer is not None:
+        fid = writer.derive_formid('FLST', SUNLESS_WORLDS_EDID)
+        subs = pack_string_subrecord('EDID', _sunless_edid(number))
+        subs += b''.join(pack_formid_subrecord('LNAM', w) for w in own)
+        writer.add_record('FLST', pack_record('FLST', fid, 0, subs))
+        _sunless_lists.append(fid)
+    return len(own) if writer is not None else 0
+
+
 def effect_keywords(rec: dict, family: int = 0) -> bytes:
     """KSIZ/KWDA: the family keyword, plus ImmuneParalysis on Resist Paralysis.
 
@@ -1061,6 +1145,7 @@ def register_mgef_formids(mgef_records: list, master_index=None, own_records=())
     reset()
     code_to_fid.clear()
     _mgef_sources.clear()
+    del _sunless_lists[:]
     own = {get_str(r, 'EditorID') for r in own_records}
     for rec in mgef_records:
         code = get_str(rec, 'EditorID')
