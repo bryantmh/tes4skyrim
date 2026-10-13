@@ -90,6 +90,7 @@ from ..base.equivalents import (
     resolve_eye_by_fid,
 )
 from asset_convert.character.hair_plan import variant_edid, variant_tag
+from asset_convert.game_paths import find_nocase
 from . import hair_variants
 from ..base.text_reader import get_formid, get_str
 from ..base.writer import pack_formid_subrecord, pack_subrecord
@@ -196,13 +197,12 @@ def load_race_skin_tones(by_type: dict, export_dirs=None) -> None:
     roots = [d for d in (export_dirs or []) if d]
 
     def _asset(rel):
-        """Resolve a TES4 asset path against the export trees."""
-        rel = rel.replace('/', os.sep).replace('\\', os.sep).lstrip(os.sep)
+        """Resolve a TES4 asset path against the export trees, ignoring case."""
         for root in roots:
             for sub in ('textures', 'meshes'):
-                cand = os.path.join(root, sub, rel)
-                if os.path.isfile(cand):
-                    return cand
+                cand = find_nocase(root, sub, rel)
+                if cand:
+                    return str(cand)
         return None
 
     for rec in races:
