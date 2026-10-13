@@ -132,7 +132,7 @@ _IGNORED_CHANGES = frozenset({
     'ParentDIAL',           # grouping metadata, not a field on the record
     'ParentCELL',
     'ParentWRLD',
-    'RecordFlags',          # the master's flags are authoritative for an override
+    'RecordFlags',
 })
 
 # (sig, key) — or ('*', key) for any signature — whose TES4 field the
