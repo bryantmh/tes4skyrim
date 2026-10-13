@@ -255,6 +255,10 @@ Until 2026-09-25 this graph skipped all six. `IsSpellTarget VampDisease` then
 found no effects at import time and planned no property, while the scripts stage
 declared `TES4FX_drfa`. The Vampire quest's keyword stayed unbound, and
 `HasMagicEffectWithKeyword` rejected the None keyword every tick.
+`record_items`, each record's authored item list, and `leveled_templates`, the
+record each leveled creature list names as its template, are filled there as
+well; they decide how a `GetItemCount` read is written
+([the read](script_convert.md#getitemcount-before-the-inventory-is-built)).
 
 **A master record's id FIELDS must be re-keyed too**, not just the outer key.
 The graph chains them: `record_scri[fid] -> script_formid_to_edid[scri]`,

@@ -80,6 +80,7 @@
 - [A ref tested against `1` is still a null test](#ref-compared-to-one)
 - [A declaration can nest at ANY depth](#declarations-nest-at-any-depth)
 - [Not every INFO needs a fragment — the dialogue stutter](#info-fragment-stutter)
+- [`GetItemCount` before the engine has built the inventory](#getitemcount-before-the-inventory-is-built)
 
 ## Papyrus / Script Conversion Notes
 <a id="papyrus-script-conversion-notes"></a>
@@ -6433,3 +6434,110 @@ Blast radius on the rebuild: Oblivion 6 scripts (the three artifact spells,
 SE13Ally, SE13KnightOfOrder, SE14VoiceofSheogorathSpell), no CharacterGen or
 MQ script; Nehrim's arena fighters, the beggar and the IsPlayable2 line in
 AAGeneralUpdateQuest; Morrowind_ob 2 OnKnockout scripts. Everything compiles.
+
+## <a id="getitemcount-before-the-inventory-is-built"></a>`GetItemCount` before the engine has built the inventory
+
+**Code:** `script_convert/authored_items.py`, `commands.py:get_item_count`,
+`cross_ref.py` (`_index_items`, `listed_item_count`, `leveled_templates`,
+`is_fallout_source`), `TES4Polyfill.AuthoredItemCount`.
+**Tests:** `tests/test_authored_items.py`.
+
+**Symptom.** Oblivion.esm's `Dark12DeadDropScript` polls a dead-drop box:
+`if RottedBoxRef.GetItemCount DarkLachanceOrders1 < 1` sets `Dark12Harem 100`
+and `Dark13Justice 10`. The box's CONT record lists one copy of the orders, so
+Oblivion reads 1 until the player takes them. Converted, the poll can read 0
+before anyone has opened the box, and the next quest starts by itself.
+
+**The engine fact** is taken from public sources, not measured here. The CK
+wiki, `RemoveItem - ObjectReference`: "This function does not work on items
+pre-placed inside containers until that container is opened and its contents
+are finally loaded by the game." A Nexus forum answer says the same of reads:
+"Items pre-placed in a container are unknown to papyrus." (topic 7174696,
+"[LE] Huge Mystery with GetItemCount": a Legendary Edition thread, whose
+poster reads 0 from a chest until the chest has been opened once). In
+the script extender's `PapyrusObjectReference.cpp`, `GetContainerForms` fills
+its array only when the reference carries container-changes data, while
+`GetNumItems` walks the base record's list with or without it.
+
+**The read.** `TES4Polyfill.AuthoredItemCount(ref, item, N)` answers N, the
+count the base record lists, only while the native count is 0,
+`ref.GetNumItems() > 0` and `ref.GetContainerForms()` is empty: taken for
+"never built". Otherwise it answers the native count. The inventory can
+change between two natives, so a count that is not 0 is returned as read, a 0
+is read again after the state test, and `GetNumItems` is asked on both sides
+of `GetContainerForms`.
+
+**The rule.** `authored_items.call_text` writes that call only when all of
+this is known at conversion time; otherwise it declines and the command row's
+plain `GetItemCount` is emitted as before:
+
+- **Receiver.** The EditorID of a placed reference (its base is its `NAME`),
+  or a bare / `GetSelf.` call in an `ObjectReference` or `Actor` script, whose
+  own reference is an instance of ANY record carrying the script: every one of
+  them must list the same count.
+- **Item.** One argument naming a record that is not a leveled list.
+- **Count.** Each base lists the item in exactly one direct entry, above 0.
+
+It declines for: the player; a receiver or item that is a script variable
+(also one named like a record); a receiver naming a base record, nothing, or
+a raw FormID; a bare call in a quest, magic-effect or dialogue script, or in a
+script no record carries; a bare call in a script that a leveled creature
+list's template (`TNAM`) carries, which also runs on what the list spawns; an
+item listed twice, with a count of 0 or below, or only inside a leveled list;
+bases that disagree; an FO3/FNV export, where an actor can take items and
+script from a template.
+
+**A script that also removes the item keeps the plain read.** By the wiki
+note, reading N and then removing that many would act on items the engine
+cannot remove yet (`XPEbroccaCrematorySCRIPT` swaps an urn's bones for ash).
+The read stays plain when the same script, or the same stage or dialogue
+result, holds a call that converts to `RemoveItem`, `RemoveAllItems` or
+`DropObject` (TES4 `Drop`) whose item is the same record or cannot be told,
+and whose receiver is the same placed reference, the own reference on both
+sides, or cannot be told. The player and another placed reference do not
+count. Only that script's own calls are looked at: a removal of the same item
+from the same receiver in ANOTHER script, stage result or dialogue result is
+not seen.
+
+**The item lists.** `cross_ref._index_items` keeps `record_items[FormID]` for
+every record that exports an `ItemCount`, an empty list included, so a
+plugin's emptied copy replaces its master's. `leveled_templates` holds each
+LVLC's `TNAM`. `index_record_details` fills both, for the scan and for the
+importer's graph ([mirror](tes5_import_pipeline.md#phase-0-xref-mirrors-cli-scan));
+a master's `Item[n].FormID` and `TNAM.Template` are re-keyed like its other ids.
+The two builders agree on a record of the plugin itself and, for a master's
+record, on every id of that master's own file. They differ where a master is
+loaded at another index than it numbers itself AND its record names a record
+of ITS master: the scan maps each index byte by itself, the importer's
+re-keying (older code, the same for `SCRI` and `NAME`) moves every id of a
+record by the record's own shift. A master loaded one slot up that lists
+`0000B001` has `0000B001` in the scan and `0100B001` in the importer's graph,
+which then finds no such item and takes the read for a plain one. What that
+changes in an import's output was not measured.
+
+**Blast radius.** Five exports (Oblivion.esm, Knights.esp, DLCFrostcrag.esp,
+two third-party plugins; 19,772 `.psc` files, the 12 static scripts copied
+beside the base game's included) converted before and after:
+`TES4Polyfill.psc` gains the function and six scripts change, in the text of
+11 reads and nowhere else. Oblivion.esm: `CGChest02SCRIPT`,
+`Dark07CabinetScript` (3), `Dark11ChorrolDropScript`, `Dark12DeadDropScript`,
+`Dark15DeadDropScript`; one third-party plugin's copy of `Dark07CabinetScript`
+(4). N is 1 in all eleven and matches the export text. The other 1,261 reads
+the rule saw stay plain: 822 on the player, 382 whose base does not list the
+item, 2 that list it only inside a leveled list, 18 on a variable, 14 by the
+removal rule, 8 under a leveled template, 7 on a raw FormID, 5 bare in a
+dialogue or magic-effect script, 2 with a count of -1, 1 with bases that
+disagree.
+
+**Not covered.** A read left plain answers as before. `RemoveItem` on a
+never-opened container and conditions (CTDA `GetItemCount`) do not pass
+through this rule. An actor's worn items move to an outfit on import, so its
+converted record can list fewer items than the authored one. If the engine
+does not report a never-built list through `GetNumItems`, the function
+answers the plain 0, as before. N is the count in the converted plugin's own
+view of the base record at conversion time (its masters' lists, replaced by
+its own copy): a plugin loaded later that changes the list is not followed.
+`AuthoredItemCount` is in `TES4Polyfill.psc`, which is copied only beside a
+masterless plugin's scripts ([ownership](#static-scripts-ownership)): a
+dependent plugin converted with this rule needs its base game's scripts from
+a conversion at least as new.

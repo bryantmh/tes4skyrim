@@ -23,6 +23,7 @@ from script_convert.constants import (
 from script_convert.command_rows import (
     COMMAND_ROWS, ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
 )
+from script_convert import authored_items
 from script_convert import symbols as _symbols
 from script_convert.poll_motion import relative_sets
 from script_convert.emit import script as _script
@@ -242,6 +243,7 @@ def _load_facts(conv, tree) -> None:
     btypes = {b.btype.lower() for b in tree.blocks} if tree else set()
 
     sc.suppressed_fall_damage = 'resetfalldamagetimer' in called
+    sc.removals = authored_items.removals(exprs)
     _load_time_facts(sc, tree, called, btypes)
     sc.uses_timer = 'timer' in names
     sc.uses_say = bool(called & {'say', 'sayto'})
