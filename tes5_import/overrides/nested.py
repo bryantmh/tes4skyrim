@@ -31,6 +31,7 @@ from .builder import (RECONVERT_KEYS, apply_changes, join_subrecords,
                       rebuild_sndr_override, soun_companion_changes,
                       split_subrecords)
 from .master_index import load_master_index
+from .ref_state import with_authored_flags
 from ..actors.outfits import split_inventory
 from ..dialogue.converter import convert_INFO, service_menu_kind
 from ..dialogue.groups import service_gate
@@ -418,10 +419,7 @@ class OverrideContext:
             self.stats['reconverted'] += 1
             return Override('reconvert', out_fid, b'')
 
-        record_bytes, _applied, unmapped = apply_changes(
-            base, changes, rec, master_rec)
-        for key in unmapped:
-            self.unmapped_keys[key] += 1
+        record_bytes = self._spliced(base, changes, rec, master_rec)
 
         # An override whose every authored change was UNMAPPABLE comes back
         # byte-identical to the master.  diff_records saw a difference, so the
@@ -439,6 +437,18 @@ class OverrideContext:
 
         self.stats['emitted'] += 1
         return Override('emitted', out_fid, record_bytes)
+
+    def _spliced(self, base: bytes, changes: dict, rec: dict,
+                 master_rec: dict) -> bytes:
+        """`base` with the author's changes and, on a reference, header flags.
+
+        See: docs/commentary/tes5_import_override.md#override-reference-flags
+        """
+        record_bytes, _applied, unmapped = apply_changes(
+            base, changes, rec, master_rec)
+        for key in unmapped:
+            self.unmapped_keys[key] += 1
+        return with_authored_flags(record_bytes, master_rec, rec)
 
     def build_soun_companion(self, rec: dict, writer) -> bytes:
         """Override of the master's SNDR when a SOUN's volume/falloff changed.

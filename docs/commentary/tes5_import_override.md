@@ -1,6 +1,6 @@
 # tes5_import/overrides/nested.py - plugins with masters
 
-**Code:** `tes5_import/overrides/diff.py`, `tes5_import/overrides/manifest.py`, `tes5_import/overrides/builder.py`, `tes5_import/overrides/master_index.py`
+**Code:** `tes5_import/overrides/diff.py`, `tes5_import/overrides/manifest.py`, `tes5_import/overrides/builder.py`, `tes5_import/overrides/master_index.py`, `tes5_import/overrides/ref_state.py`
 
 ## Contents
 
@@ -11,6 +11,7 @@
 - [Scripts: the masters' export is part of the identifier namespace](#scripts-masters-export-part-identifier)
 - [One TES4 field can feed TWO output subrecord runs](#one-tes4-field-can-feed)
 - [A PGRD is never an override: it converts to a NEW NAVM](#pgrd-never-override-converts-new)
+- [Override reference flags](#override-reference-flags)
 - [Deleting a master's record: the three shapes](#deleting-masters-record-three-shapes)
 - [A quest-owned package must never be in an NPC's PKID list](#quest-owned-package-must-never)
 - [Generated records reuse the master's](#generated-records-reuse-the-masters)
@@ -844,6 +845,57 @@ in the master parent's children group:
   no marker anywhere to gate on is left out.
 
 ROAD remains genuinely unmappable: it converts to nothing at all.
+
+## Override reference flags
+<a id="override-reference-flags"></a>
+
+**Code:** `tes5_import/overrides/ref_state.py`, `OverrideContext._spliced` in `tes5_import/overrides/nested.py`
+
+A placed reference (REFR/ACHR/ACRE) carries authored state in its record
+HEADER: whether it starts disabled, whether it shows at a distance. The
+subrecord splice never reads the header, and `RecordFlags` is one of the
+builder's ignored changes, so an override that only switches a master's
+reference off came back byte-identical to the master's record and was dropped
+as unchanged; one that also moved it was written with the master's flags.
+
+- **Two bits are taken:** `0x800` Initially Disabled and `0x8000` Visible When
+  Distant. xEdit names both the same for TES4 and TES5 references
+  (`wbDefinitionsTES4.pas` and `wbDefinitionsTES5.pas`, REFR and ACHR record
+  flags; TES5 lists bit 15 for a STAT or TREE base and for ACHR).
+- **Only a CHANGED bit moves.** `changed = master export ^ plugin export`; a
+  bit the two exports agree on keeps the value of the master's converted
+  record, so whatever the master's run put in the header survives (the `0x400`
+  forced on a map marker, Starts Dead, a Morrowind source's settle bit).
+- **A change of `0x400` Persistent leaves the whole override as it was.** The
+  bit decides which children group of its cell a reference lives in (type 8
+  or type 9), and an override is written at the master's place. Skyrim.esm
+  never disagrees with itself: 703,837 REFR and ACHR, 41,430 in a type-8 group
+  and all of them persistent, 662,407 in a type-9 group and none of them.
+  Update.esm, Dawnguard.esm, HearthFires.esm and Dragonborn.esm hold 1,053
+  live overrides of Skyrim.esm references; 56 change the Persistent bit and
+  all 56 sit in the other kind of group than Skyrim.esm's record, while the
+  997 that keep the bit all keep the group. Writing the bit without moving
+  the record would ship a state the game's own files do not contain, so such
+  an override takes none of its author's flags until it can be moved.
+- **An override of a record its master DELETED takes no flag.** The master's
+  export is a stub there, so there is nothing to compare the plugin with.
+- **Every other header bit stays the master's**, and so does the header of
+  every record that is not a placed reference.
+
+`0x800` and `0x8000` can be taken alone because neither decides the group:
+Skyrim.esm holds Initially Disabled references in both kinds (2,594 in type-8
+groups, 1,478 in type-9 groups), and the four overrides in those masters that
+change `0x800` and keep the Persistent bit stay in the group Skyrim.esm had
+the record in.
+
+Measured on the exports, function level (no import): the Unofficial Oblivion
+Patch 3.5.9a overrides 73,288 references of Oblivion.esm and changes the header
+flags of 3,203. 3,018 keep the Persistent bit and now carry the author's flags
+(3,012 newly Initially Disabled, one of them no longer Visible When Distant;
+3 enabled again; 3 newly Visible When Distant); 2,741 of them were dropped as
+unchanged before. The other 185 change the Persistent bit and are untouched,
+as are all ten flag changes of Knights.esp (9) and DLCFrostcrag.esp (1), which
+are all `+0x400`.
 
 ## Deleting a master's record: the three shapes
 <a id="deleting-masters-record-three-shapes"></a>
