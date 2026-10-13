@@ -894,6 +894,38 @@ Bool Function IsInContainer(ObjectReference akRef) Global
   Return akRef.GetParentCell() == None
 EndFunction
 
+; TES4 `GetItemCount` of an item the reference's BASE record lists `aiAuthored`
+; of; Oblivion answers that count from the record.  Skyrim's native count is
+; reported to be 0 for such items until the engine has built the reference's
+; inventory (the sources are in the doc section below).  Read in the script
+; extender's source, not measured: on a reference with no inventory changes at
+; all GetContainerForms comes back empty while GetNumItems still counts the
+; base record's entries; once there are changes, both give what is left.  So
+; "the base lists something and no forms come back" is taken for an inventory
+; never built, and `aiAuthored` is the answer only then and only while the
+; native count is 0.
+; Every native is a call of its own and the inventory can change between two
+; of them.  A count that is not 0 is returned as read; a 0 is never returned
+; from before the state was known, it is read again last.  GetNumItems is
+; asked on both sides of GetContainerForms, so that a container emptied or
+; filled between two calls is not taken for one never built.
+; See docs/commentary/script_convert.md#getitemcount-before-the-inventory-is-built
+Int Function AuthoredItemCount(ObjectReference akRef, Form akItem, Int aiAuthored) Global
+  If akRef == None
+    Return 0
+  EndIf
+  Int count = akRef.GetItemCount(akItem)
+  If count != 0 || aiAuthored <= 0
+    Return count
+  EndIf
+  If akRef.GetNumItems() > 0 && akRef.GetContainerForms().Length == 0 && akRef.GetNumItems() > 0
+    If akRef.GetItemCount(akItem) == 0
+      Return aiAuthored
+    EndIf
+  EndIf
+  Return akRef.GetItemCount(akItem)
+EndFunction
+
 ; ==========================================================================
 ; Magic / Actor State
 ; ==========================================================================

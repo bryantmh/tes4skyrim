@@ -16,6 +16,7 @@ branch -- the lowercased name, the first argument's source, the authored
 argument text -- so those are properties of the CALL and live on it.
 """
 
+from script_convert import authored_items
 from script_convert import resolve_name as _resolve_name
 from script_convert.constants import (
     ANIM_GROUP_EVENTS, ATTRIBUTE_STUB_VALUE, AV_ARGUMENT_NAMES, CASTABLE, CONV_WALK_VAR,
@@ -1257,6 +1258,19 @@ def _is_faction(ctx, call, arg: str) -> bool:
     refs = ctx.sc.property_refs
     return 'Faction' in (refs.get(arg, ''),
                          refs.get(safe_property_name(src), ''))
+
+
+# ---------------------------------------------------------------------------
+# Inventory
+# ---------------------------------------------------------------------------
+
+@command('getitemcount')
+def get_item_count(ctx, call) -> str | None:
+    """GetItemCount of an item the receiver's base record lists; else it declines.
+
+    See: docs/commentary/script_convert.md#getitemcount-before-the-inventory-is-built
+    """
+    return authored_items.call_text(ctx, call)
 
 
 # ---------------------------------------------------------------------------

@@ -78,7 +78,8 @@ that is the same unchecked assumption this function exists to remove.
 same way** (`script_convert/cross_ref.py:_index_remaps`, 2026-10-09). It asks
 `master_index_map` for every master of the chain, found by `master_dir`, and
 `_scan_record_lines` moves a master record's own id and its id fields (`SCRI`,
-`NAME`, `ParentWRLD`, the two MGEF shader ids, every `AIPackage[n]`) before
+`NAME`, `ParentWRLD`, the two MGEF shader ids, `TNAM.Template`, every
+`AIPackage[n]` and `Item[n].FormID`) before
 anything is stored. A master whose every index already agrees is read as
 written: one whose own master list is the start of the plugin's list. A
 master the plugin does not list (a master's master) keeps what it says about

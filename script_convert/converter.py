@@ -23,6 +23,7 @@ from script_convert.command_rows import (
 )
 from script_convert import resolve_name as _resolve_name
 from script_convert import assemble as _assemble
+from script_convert import authored_items as _authored_items
 from script_convert import commands as _commands
 from script_convert.context import ScriptContext
 from script_convert.misc_stats import page_stat_global
@@ -576,6 +577,7 @@ class ScriptConverter:
         for var in tree.variables:
             self.sc.local_vars.add(var.name.lower())
             self.sc.var_types[var.name.lower()] = TYPE_MAP.get(var.vtype.lower(), 'Int')
+        self.sc.removals = _authored_items.removals(_tes4_nodes.walk_exprs_in(tree.body))
         body = _script.emit_body(self, tree.body, extends, 1)
         return [_script.fragment_local(self, v) for v in tree.variables] + body
 
