@@ -685,15 +685,22 @@ def _prescan_script_plans(by_type: dict, ctx, xref, fid_to_edid: dict,
 def _prescan_effect_families(by_type: dict, ctx, writer) -> None:
     """Index every MGEF and settle its family keyword, before any script plan binds one.
 
+    The Sun Damage exception lists are settled here too: after the effect index,
+    which forgets the last plugin's, and before any item converts.
+
     See: docs/commentary/tes5_import_magic.md#effect-families
+    See: docs/commentary/tes5_import_pipeline.md#phase-0-ordering-constraints
     """
-    from .record_types.magic import register_mgef_formids, settle_family_keywords
+    from .record_types.magic import (register_mgef_formids, settle_family_keywords,
+                                     settle_sunless_worlds)
 
     register_mgef_formids(_mgef_records_with_masters(by_type, ctx),
                           getattr(ctx, 'master_index', None), by_type.get('MGEF', []))
     n_fam = settle_family_keywords(by_type.get('MGEF', []), writer,
                                    getattr(ctx, 'master_index', None))
     print(f"  Magic effect families: {n_fam} keywords written")
+    n_sunless = settle_sunless_worlds(by_type, writer, getattr(ctx, 'master_index', None))
+    print(f"  Sun Damage: {n_sunless} worldspaces without Sun Damage listed")
 
 
 def _prescan_magic_effects(by_type: dict, ctx, writer, xref, fid_to_edid: dict,
