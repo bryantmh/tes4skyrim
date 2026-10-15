@@ -429,7 +429,7 @@ def shipped_lod_worldspaces(export_dir: Path):
 
 
 def parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel',
-                        overlay_paths=None):
+                        overlay_paths=None, world_settings=None):
     """Parse LAND + CELL water data for one worldspace from the output ESM.
 
     `overlay_paths` are plugins to apply ON TOP, in load order; everything is
@@ -442,11 +442,12 @@ def parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel',
       cell_water: (cell_x, cell_y) -> (has_water: bool, height: float or None)
                   height is the cell XCLW override; None = use worldspace default
       default_water_height: WRLD DNAM default water height (0.0 if absent)
+    When provided, world_settings also receives default_land_height from DNAM.
     See: docs/commentary/asset_convert_terrain.md#land-scan-scoping
     """
     lands = {}
     cell_water = {}
-    wrld_water = {'default': None}
+    wrld_water = {'default': None, 'land': None}
     cell_coords = {}       # cell FormID -> (x, y), shared across load order
 
     try:
@@ -470,6 +471,8 @@ def parse_land_records(esm_path: Path, worldspace_edid: str = 'TES4Tamriel',
                         known_wrld_fid=base_wrld_fid)
     default_wh = (wrld_water['default']
                   if wrld_water['default'] is not None else 0.0)
+    if world_settings is not None:
+        world_settings['default_land_height'] = wrld_water['land']
     return lands, cell_water, default_wh
 
 
@@ -532,6 +535,7 @@ def scan_land_file(esm_path: Path, worldspace_edid: str,
             if target_wrld_fid is not None and fid == target_wrld_fid:
                 dnam = rec.sub(b'DNAM')
                 if dnam and len(dnam) >= 8:
+                    wrld_water['land'] = struct.unpack_from('<f', dnam)[0]
                     wrld_water['default'] = struct.unpack_from('<f', dnam, 4)[0]
         elif rec.sig == b'LAND' and scoped(stack):
             cell = stack.cell
@@ -659,7 +663,7 @@ def _decode_land(body, _sub, remap=None):
 # Tile assembly
 # ---------------------------------------------------------------------------
 
-def _assemble_tile(lands, tile_x, tile_y, level):
+def _assemble_tile(lands, tile_x, tile_y, level, default_height=0.0):
     """Merge level×level cells into a ((level*32+1) × (level*32+1)) height+color grid.
 
     tile_x, tile_y: SW cell coordinates of this tile.
@@ -708,12 +712,12 @@ def _assemble_tile(lands, tile_x, tile_y, level):
     # Fill NaN regions (missing cells) by edge-extending from nearest real data.
     # Process row-by-row then column-by-column with forward/backward fill.
     if np.any(np.isnan(out_h)):
-        fill_missing(out_h, out_c)
+        fill_missing(out_h, out_c, default_height)
 
     return out_h, out_c
 
 
-def fill_missing(h: np.ndarray, c: np.ndarray):
+def fill_missing(h: np.ndarray, c: np.ndarray, default_height=0.0):
     """In-place fill of NaN cells in h (and corresponding rows in c) by
     edge-extending from the nearest valid row/column.
 
@@ -757,10 +761,10 @@ def fill_missing(h: np.ndarray, c: np.ndarray):
             h[:, empty] = h[:, nearest[empty]]
             c[:, empty] = c[:, nearest[empty]]
 
-    # Fallback: any remaining NaN → 0
+    # A tile without any authored heightmap uses the world's fallback plane.
     nan_mask = np.isnan(h)
     if nan_mask.any():
-        h[nan_mask] = 0.0
+        h[nan_mask] = default_height
 
 
 # ---------------------------------------------------------------------------
@@ -768,14 +772,16 @@ def fill_missing(h: np.ndarray, c: np.ndarray):
 # ---------------------------------------------------------------------------
 
 def _cell_water_height(cell_water, key, default_wh):
-    """Water height for a cell, or None if the cell has no water."""
+    """Use world water for missing cells; honor an explicitly dry CELL."""
     cw = cell_water.get(key)
-    if cw is None or not cw[0]:
+    if cw is not None and not cw[0]:
         return None
-    return cw[1] if cw[1] is not None else default_wh
+    wh = cw[1] if cw is not None and cw[1] is not None else default_wh
+    return wh if wh is not None and np.isfinite(wh) and -1e9 < wh < 1e9 else None
 
 
-def _tile_water_quads(lands, cell_water, tile_x, tile_y, level, default_wh):
+def _tile_water_quads(lands, cell_water, tile_x, tile_y, level, default_wh,
+                      default_lh=None):
     """Return [(cx, cy, water_height_world), ...] for cells in this tile that
     need a LOD water quad (cell has water and its terrain dips below the water
     surface), matching how vanilla terrain LOD only carries water quads where
@@ -790,6 +796,8 @@ def _tile_water_quads(lands, cell_water, tile_x, tile_y, level, default_wh):
             land = lands.get(key)
             if land is not None and float(land['heights'].min()) >= wh:
                 continue   # terrain entirely above water in this cell
+            if land is None and default_lh is not None and default_lh >= wh:
+                continue   # the world fallback ground is above the water
             quads.append((cx, cy, wh))
     return quads
 
@@ -1073,10 +1081,11 @@ _worker_ltex_map   = None
 _worker_tex_root   = None
 _worker_cell_water = None
 _worker_default_wh = 0.0
+_worker_default_lh = None
 
 
 def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
-                 cell_water, default_wh):
+                 cell_water, default_wh, default_lh=None):
     """Called once per worker process to stash shared read-only data.
 
     `lands` is either a plain dict (single-process fallback) or the tuple
@@ -1086,6 +1095,7 @@ def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
     global _worker_lands, _worker_mesh_dir, _worker_tex_dir
     global _worker_ltex_map, _worker_tex_root
     global _worker_cell_water, _worker_default_wh, _worker_shm
+    global _worker_default_lh
     if isinstance(lands, tuple):
         from multiprocessing import shared_memory
         shm_name, nbytes, index = lands
@@ -1106,6 +1116,7 @@ def _worker_init(lands, mesh_dir_s, tex_dir_s, ltex_map, tex_root_s,
                           else Path(tex_root_s))
     _worker_cell_water = cell_water
     _worker_default_wh = default_wh
+    _worker_default_lh = default_lh
 
 
 def _process_tile(args):
@@ -1118,10 +1129,12 @@ def _process_tile(args):
     tag = f'{worldspace_edid}.{level}.{tile_x}.{tile_y}'
 
     try:
-        heights, colors = _assemble_tile(_worker_lands, tile_x, tile_y, level)
+        heights, colors = _assemble_tile(_worker_lands, tile_x, tile_y, level,
+            _worker_default_lh if _worker_default_lh is not None else 0.0)
 
         water_quads = _tile_water_quads(_worker_lands, _worker_cell_water,
-                                        tile_x, tile_y, level, _worker_default_wh)
+                                        tile_x, tile_y, level, _worker_default_wh,
+                                        _worker_default_lh)
 
         solid = tile_solid_mask(_worker_lands, tile_x, tile_y, level)
         nif_bytes = build_terrain_nif(heights, tile_x, tile_y, level,
@@ -1156,11 +1169,12 @@ def _process_tile(args):
 # Top-level orchestration
 # ---------------------------------------------------------------------------
 
-def _queue_tiles(lands, bounds, worldspace_edid, only_cells):
+def _queue_tiles(lands, bounds, worldspace_edid, only_cells,
+                  cell_water=None, default_wh=0.0, default_lh=None):
     """The (tx, ty, level, edid) tile tasks to bake.
 
-    A tile is queued only when a cell it covers owns a LAND record, so no tile
-    is baked purely from heights edge-extended past the landmass.  `only_cells`
+    Queue authored ground and water, including ocean gaps within the known
+    cell extent. Missing cells inherit the world's water plane. `only_cells`
     restricts an override plugin to the tiles its edits touch, counting a tile
     as touched when ANY cell it composites changed -- an edit at a boundary
     alters the neighbouring tile's edge too.
@@ -1179,11 +1193,13 @@ def _queue_tiles(lands, bounds, worldspace_edid, only_cells):
             for tx in range(tx_start, tx_end, level):
                 cells = [(tx + cx, ty + cy)
                          for cy in range(level) for cx in range(level)]
-                if not any(c in lands for c in cells):
-                    continue
                 if only_cells is not None and not any(c in only_cells
                                                       for c in cells):
                     continue
+                if not any(c in lands for c in cells):
+                    if cell_water is None or not _tile_water_quads(
+                            lands, cell_water, tx, ty, level, default_wh, default_lh):
+                        continue
                 work.append((tx, ty, level, worldspace_edid))
                 n_level += 1
         print(f"  LOD {level}: {n_level} tiles queued")
@@ -1235,18 +1251,23 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     srcs = ', '.join([esm_path.name] + [Path(p).name
                                         for p in (overlay_paths or [])])
     print(f"\n[TerrainLOD] Parsing LAND records from {srcs}...")
+    world_settings = {}
     lands, cell_water, default_wh = parse_land_records(
-        esm_path, worldspace_edid, overlay_paths)
-    if not lands:
-        print("  No LAND records found.")
+        esm_path, worldspace_edid, overlay_paths, world_settings)
+    default_lh = world_settings['default_land_height']
+    if default_lh is not None and not np.isfinite(default_lh):
+        default_lh = None
+    extent = lands.keys() | cell_water.keys()
+    if not extent:
+        print("  No terrain or exterior cells found.")
         return False
     n_water = sum(1 for hw, _ in cell_water.values() if hw)
     print(f"  Found {len(lands)} LAND records; {n_water} water cells "
           f"(default water height {default_wh}).")
 
-    # Determine cell bounds
-    all_x = [k[0] for k in lands]
-    all_y = [k[1] for k in lands]
+    # Include water-only CELLs and fill ocean gaps inside this finite extent.
+    all_x = [k[0] for k in extent]
+    all_y = [k[1] for k in extent]
     min_x, max_x = min(all_x), max(all_x)
     min_y, max_y = min(all_y), max(all_y)
     print(f"  Cell range: X=[{min_x},{max_x}] Y=[{min_y},{max_y}]")
@@ -1271,7 +1292,8 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     print(f"  Using {n_workers} worker process(es).")
 
     work = _queue_tiles(lands, (min_x, min_y, max_x, max_y),
-                        worldspace_edid, only_cells)
+                        worldspace_edid, only_cells, cell_water, default_wh,
+                        default_lh)
 
     if not work:
         print("  No tiles to generate.")
@@ -1316,7 +1338,7 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
             max_workers=n_workers,
             initializer=_worker_init,
             initargs=(lands_arg, str(mesh_dir), str(tex_dir), ltex_map,
-                      [str(r) for r in tex_roots], cell_water, default_wh),
+                      [str(r) for r in tex_roots], cell_water, default_wh, default_lh),
         ) as pool:
             # chunksize=1: tiles differ in cost by ~20x, so batching would hand
             # one worker a run of expensive tiles and undo the ordering above.
