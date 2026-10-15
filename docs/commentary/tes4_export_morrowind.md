@@ -1247,6 +1247,30 @@ written under the NonAccum name, where `split_root_motion` extracts the
 locomotion and keeps frame 0 (measured: NonAccum first sample (4.3, 28.1,
 50.1) at 90°, forward motion 107.8 units).
 
+### Held and numbered creature idles
+
+An authored `Idle` whose Start equals Stop is a held pose, not an absent
+animation. The creature splitter emits a short looping KF with two identical
+samples from that exact source instant. It does not sample the next source
+frame. This handles Tamriel Data's `pc_packmule_01/02` without changing the
+shared timeline reader's rules for object animations.
+
+When no base Idle exists, an explicitly looping numbered idle supplies it
+(the nine `tr_le_{g,p,r}_but_{micro,small,tiny}` butterfly variants). If only
+one-shot numbered idles exist (`sky_deer01/02`), the base clip holds the
+skeleton reference pose; the original numbered KFs remain separate. Normal
+base idles and the swim-idle selection retain priority. A creature with no
+usable idle group still reports an error before skeleton/HKX generation.
+
+`--creatures-only --only <folder names>` limits the source splitting as well
+as project generation. Repaired projects require a subsequent Import step to
+create their RACE/ARMA records, followed by archive packaging. The existing
+CreatureRuntime composes the updated animation fragments when the game loads;
+its DLL does not need rebuilding. Ordinary NIF mesh conversion is not needed
+for this fix.
+
+See: [upstream issue #117](https://github.com/bryantmh/tes4skyrim/issues/117).
+
 ### <a id="rig-root-is-the-file-root"></a>A rig authored with no scene node
 
 **Code:** `find_skeleton_root` (`hkx_skeleton.py`), `prepare_creature_rig`

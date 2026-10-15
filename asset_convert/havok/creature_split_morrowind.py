@@ -12,6 +12,7 @@ See: docs/commentary/tes4_export_morrowind.md#creatures
 """
 
 import os
+import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -167,6 +168,12 @@ def _plan(groups: dict, known_only: bool) -> dict:
                 found.append((seg_stem, _segment_events(events, start, stop, hit)))
         for clip_stem, clip_events in found:
             span = clip_range(clip_events)
+            # TES3 accepts an Idle that holds one authored instant. Do not
+            # change clip_range globally: other consumers require motion.
+            if (span is None and clip_stem == 'idle'
+                    and clip_events.get('start') is not None
+                    and clip_events.get('start') == clip_events.get('stop')):
+                span = (clip_events['start'], clip_events['stop'], True)
             if span is not None:
                 plan.setdefault(clip_stem, (span, clip_events))
     return plan
@@ -209,16 +216,22 @@ def _clip(stem: str, span: tuple, tracks: list, events: dict, cues: list,
           fps: float) -> DecodedClip:
     """One group sampled into a DecodedClip the KF writer serialises."""
     start, stop, loops = span
-    duration = stop - start
+    held = stop == start
+    duration = 1.0 / fps if held else stop - start
     count = max(int(round(duration * fps)), 1) + 1
-    times = start + np.arange(count, dtype=np.float64) / fps
-    times[-1] = stop
+    sample_times = start + np.arange(count, dtype=np.float64) / fps
+    sample_times[-1] = stop
+    times = sample_times - start
+    if held:
+        times = np.array([0.0, duration], dtype=np.float64)
+        sample_times = np.full(count, start)
     clip = DecodedClip(name=stem, duration=duration,
                        cycle_type=CYCLE_LOOP if loops else CYCLE_CLAMP,
-                       frequency=1.0, times=times - start,
-                       text_keys=_clip_text_keys(events, cues, start, stop))
+                       frequency=1.0, times=times,
+                       text_keys=([(0.0, 'start'), (duration, 'end')] if held else
+                                  _clip_text_keys(events, cues, start, stop)))
     for node_name, kd in tracks:
-        track = _sample(kd, times)
+        track = _sample(kd, sample_times)
         track.bone = node_name
         if track.rotations is not None or track.translations is not None \
                 or track.scales is not None:
@@ -406,10 +419,29 @@ def split_creature(model_path, out_dir: str, body_name: str, base_anim=None,
         if tracks:
             clips.update({stem: (span, events, tracks, cues) for stem, (span, events)
                           in _plan(found, known_only).items()})
+    _supply_base_idle(clips, fps)
     for stem, (span, events, tracks, cues) in clips.items():
         clip = _clip(stem, span, tracks, events, cues, fps)
         write_skyrim_kf(clip, os.path.join(out_dir, stem + '.kf'))
     return list(clips)
+
+
+def _supply_base_idle(clips: dict, fps: float) -> None:
+    """Keep a numbered idle's authored loop, or hold the rig's reference pose.
+
+    Numbered one-shots remain separate source clips, never a perpetual gesture.
+    Empty tracks deliberately let hkx_anim fill every bone from the skeleton's
+    reference pose. A creature with no idle group at all still reports an error.
+    """
+    if 'idle' in clips or 'swimidle' in clips:
+        return
+    numbered = sorted((s for s in clips if re.fullmatch(r'idle[1-9][0-9]*', s)),
+                      key=lambda s: int(s[4:]))
+    if not numbered:
+        return
+    looping = next((s for s in numbered if clips[s][0][2]), None)
+    clips['idle'] = (clips[looping] if looping else
+                     ((0.0, 1.0 / fps, True), {}, [], []))
 
 
 def slashed(path: str) -> str:
@@ -473,15 +505,21 @@ def _split_pool(todo: list, workers: int, log) -> int:
     return failed
 
 
-def split_creatures(rec_dir, meshes_root, log=print, workers: int = None) -> int:
+def split_creatures(rec_dir, meshes_root, log=print, workers: int = None,
+                    names: list = None) -> int:
     """Split every Morrowind creature the export names; how many folders were written.
 
     Runs at the head of the creature stage so the folders exist when it scans.
     Source meshes resolve through this plugin's mesh tree, its masters', then
     the vanilla Morrowind install; a folder already newer than its inputs is
-    kept.
+    kept. An explicit `names` selection rebuilds those sources even if an old
+    running converter wrote a newer skeleton after the code was updated.
     """
     sources = _sources(rec_dir)
+    if names is not None:
+        wanted = {n.lower() for n in names}
+        sources = {src: row for src, row in sources.items()
+                   if os.path.basename(row[0]).lower() in wanted}
     if not sources:
         return 0
     roots = [Path(meshes_root)] + [Path(d) / 'meshes'
@@ -497,7 +535,7 @@ def split_creatures(rec_dir, meshes_root, log=print, workers: int = None) -> int
         if path is None:
             failed += 1
             log(f'  [skip] {source}: not found')
-        elif _up_to_date(path, out_dir, layered):
+        elif names is None and _up_to_date(path, out_dir, layered):
             kept += 1
         else:
             todo.append((source, folder, path, out_dir, body, layered))
