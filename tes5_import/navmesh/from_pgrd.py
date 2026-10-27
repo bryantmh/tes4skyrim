@@ -98,7 +98,7 @@ from ..base.navmesh_pins import (apply_hand_edits, cell_key, digest,
 from ..base.text_reader import get_int, get_float, get_str, get_formid
 from .lookup_grid import build_navmesh_grid
 from .spawn_nodes import add_spawn_nodes
-from .world import base_fid
+from .world import base_fid, cell_water_z, open_water_z
 from ..base.writer import pack_subrecord, pack_string_subrecord
 
 _log = logging.getLogger(__name__)
@@ -762,7 +762,7 @@ def pack_navm_record(form_id: int, subrecords: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 def geom_hash(tag, points, edges, refr_recs, base_model_by_fid, doors,
-              land_rec, origin_x, origin_y, pin_digest=''):
+              land_rec, origin_x, origin_y, pin_digest='', water_z=None):
     """Hash of everything the geometry build consumes.
 
     The `geom-vN` literal is bumped when the CACHED PAYLOAD's shape changes,
@@ -777,7 +777,7 @@ def geom_hash(tag, points, edges, refr_recs, base_model_by_fid, doors,
     from asset_convert.collision.collision_extract import collision_digest
     h = hashlib.sha1()
     h.update(b'geom-v4-permesh-collision')
-    h.update(repr((tag, origin_x, origin_y)).encode())
+    h.update(repr((tag, origin_x, origin_y, water_z)).encode())
     h.update(repr(points).encode())
     h.update(repr(edges).encode())
     base_model_by_fid = base_model_by_fid or {}
@@ -985,7 +985,8 @@ def cell_geom_key(rec, land_rec, cell_rec, refr_recs, base_model_by_fid,
     return geom_hash(geom_cache[1], points, edges, refr_recs,
                      base_model_by_fid, doors,
                      land_rec if is_exterior else None, origin_x, origin_y,
-                     pin_digest=cell_pins(rec, cell_rec, geom_cache)[1])
+                     pin_digest=cell_pins(rec, cell_rec, geom_cache)[1],
+                     water_z=open_water_z(cell_rec, is_exterior))
 
 
 def geom_cache_path(geom_cache, cell_fid, pgrd_fid):
@@ -1030,10 +1031,8 @@ def _geom_cache_store(path, geom_key, verts, tris, ledges=()):
 def _cell_frame(rec, cell_rec):
     """(cell_fid, wrld_fid, grid_x, grid_y, water_z) for one PGRD's cell.
 
-    grid_x/grid_y are 0 for an interior.  water_z is the cell's water height
-    only when the HasWater flag (DATA.Flags 0x02) is set and XCLW parses as a
-    float, else None -- an unflagged or malformed height must not stamp water
-    triangle flags.
+    grid_x/grid_y are 0 for an interior.  water_z is `cell_water_z`: an
+    unflagged or malformed height must not stamp water triangle flags.
     """
     cell_fid = get_formid(rec, 'ParentCELL')
     wrld_fid = get_formid(rec, 'ParentWRLD')
@@ -1041,16 +1040,7 @@ def _cell_frame(rec, cell_rec):
     if wrld_fid != 0 and cell_rec is not None:
         grid_x = get_int(cell_rec, 'XCLC.X', 0)
         grid_y = get_int(cell_rec, 'XCLC.Y', 0)
-
-    water_z = None
-    if cell_rec is not None and get_int(cell_rec, 'DATA.Flags', 0) & 0x02:
-        wz = cell_rec.get('XCLW.WaterHeight')
-        if wz is not None:
-            try:
-                water_z = float(wz)
-            except ValueError:
-                water_z = None
-    return cell_fid, wrld_fid, grid_x, grid_y, water_z
+    return cell_fid, wrld_fid, grid_x, grid_y, cell_water_z(cell_rec)
 
 
 def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
@@ -1069,11 +1059,12 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
     verts3d = tris = None
     ledges = []
     edits, pin_digest = cell_pins(rec, cell_rec, geom_cache)
+    water_z = open_water_z(cell_rec, is_exterior)
     if geom_cache is not None:
         geom_key = geom_hash(geom_cache[1], points, edges, refr_recs,
                              base_model_by_fid, doors,
                              land_rec if is_exterior else None,
-                             origin_x, origin_y, pin_digest=pin_digest)
+                             origin_x, origin_y, pin_digest=pin_digest, water_z=water_z)
         cache_path = geom_cache_path(geom_cache, cell_fid,
                                      get_formid(rec, 'FormID'))
         cached = _geom_cache_load(cache_path, geom_key)
@@ -1095,7 +1086,7 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
         door_bases=(set(door_fids.keys())
                     if isinstance(door_fids, dict)
                     else set(door_fids or ())),
-        lone=lone)
+        lone=lone, water_z=water_z)
     if verts3d:
         verts3d = [tuple(v) for v in
                    np.asarray(verts3d, dtype=np.float32).tolist()]

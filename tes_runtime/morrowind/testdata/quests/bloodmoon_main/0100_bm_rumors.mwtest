@@ -1,0 +1,26 @@
+# Bloodmoon "An Island to the North": rumors of Solstheim lead the player to
+# the Imperial outpost of Fort Frostmoth, where a guard greets the newcomer.
+# Position stands in for the boat from Khuul; ref FormIDs carry Morrowind.esm's
+# slot 05 and Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_c3_azura
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Any Imperial outside the beginners' town passes on the rumor, and asked
+# about Solstheim, tells of the fort and the boat from Khuul.
+case bm_rumors
+run
+player->PositionCell 504 330 -115 0 "Balmora, Clagius Clanler: Outfitter"
+until 600 GetPCCell "Balmora, Clagius Clanler: Outfitter" == 1
+talk clagius clanler
+ask latest rumors
+expect GetJournalIndex BM_Rumors == 10
+ask Solstheim
+expect GetJournalIndex BM_Rumors == 50
+bye
+run
+player->Position -173771 143037 908 0
+until 600 "vilbia herennia"->GetDistance player < 400
+talk vilbia herennia
+until 300 GetJournalIndex BM_Rumors == 100
+bye
+end

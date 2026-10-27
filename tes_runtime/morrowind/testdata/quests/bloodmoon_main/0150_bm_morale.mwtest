@@ -1,0 +1,81 @@
+# Bloodmoon "Rebellion at Frostmoth": Captain Falx Carius finds his garrison
+# edgy. A guard bribed with sujamma blames the dry fort and names the priest
+# Antonius Nuncius; his desk in the Armory holds the missing liquor, and once
+# confronted the player reports him to Carius.
+# AddItem stands in for buying the sujamma; the unlock stands in for picking
+# the desk's lock. Ref FormIDs carry Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_morale
+# See docs/commentary/headless_testing.md#quest-runs
+
+case bm_morale
+run
+player->AddItem potion_local_liquor_01 1
+player->PositionCell 4095 3800 15124 0 "Fort Frostmoth, Carius' Chambers"
+until 600 GetPCCell "Fort Frostmoth, Carius' Chambers" == 1
+talk falx carius
+ask Fort Frostmoth
+ask edgy
+expect GetJournalIndex BM_Morale == 10
+ask disturbing trends
+ask morale has been low
+expect GetJournalIndex BM_Morale == 20
+bye
+run
+player->Position -173771 143037 908 0
+until 600 "vilbia herennia"->GetDistance player < 400
+talk vilbia herennia
+ask booze
+choose 9
+expect GetJournalIndex BM_Morale == 30
+ask dry fort
+expect GetJournalIndex BM_Morale == 40
+bye
+run
+player->PositionCell 4095 3800 15124 0 "Fort Frostmoth, Carius' Chambers"
+until 600 GetPCCell "Fort Frostmoth, Carius' Chambers" == 1
+talk falx carius
+ask morale has been low
+expect GetJournalIndex BM_Morale == 50
+bye
+run
+player->Position -173771 143037 908 0
+until 600 "vilbia herennia"->GetDistance player < 400
+talk vilbia herennia
+ask booze
+expect GetJournalIndex BM_Morale == 55
+ask Antonius Nuncius
+expect GetJournalIndex BM_Morale == 60
+bye
+run
+player->PositionCell 3755 3400 15889 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 GetPCCell "Fort Frostmoth, Imperial Cult Shrine" == 1
+talk antonius nuncius
+ask dry fort
+choose 1
+ask shipments stopped arriving
+expect GetJournalIndex BM_Morale == 70
+bye
+run
+player->PositionCell 63 485 439 0 "Fort Frostmoth, Armory"
+until 600 GetPCCell "Fort Frostmoth, Armory" == 1
+console 069F253C.unlock
+activate 069F253C
+close ContainerMenu
+until 300 GetJournalIndex BM_Morale == 80
+run
+player->PositionCell 3755 3400 15889 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 GetPCCell "Fort Frostmoth, Imperial Cult Shrine" == 1
+talk antonius nuncius
+ask shipments stopped arriving
+expect GetJournalIndex BM_Morale == 90
+choose 1
+expect GetJournalIndex BM_Morale == 95
+bye
+run
+player->PositionCell 4095 3800 15124 0 "Fort Frostmoth, Carius' Chambers"
+until 600 GetPCCell "Fort Frostmoth, Carius' Chambers" == 1
+talk falx carius
+ask morale has been low
+expect GetJournalIndex BM_Morale == 100
+bye
+end

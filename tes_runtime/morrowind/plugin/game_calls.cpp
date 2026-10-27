@@ -563,6 +563,8 @@ float Distance(const std::string& from, const std::string& to) {
     return apart < 0.0f ? 0.0f : apart;
 }
 
+int Tes3GridIndex(float v) { return static_cast<int>(std::floor(v / kTes3CellSize)); }
+
 void* PlayerCell() {
     void* player = PlayerRef();
     return player && g_parentCell ? g_parentCell(PapyrusVm(), 0, player)
@@ -572,24 +574,24 @@ void* PlayerCell() {
 // 🛑 Skyrim keeps no name on an exterior CELL -- no vanilla one has FULL, and
 // the converted ones' read back empty -- so outdoors the name is the sidecar's
 // for the player's TES3 grid, else OpenMW's `sDefaultCellname`.
-constexpr float kTes3CellSize = 8192.0f;
-
 std::string ExteriorName(void* player) {
-    const int x = static_cast<int>(std::floor(
-        RefPositionAxis(PapyrusVm(), player, 0) / kTes3CellSize));
-    const int y = static_cast<int>(std::floor(
-        RefPositionAxis(PapyrusVm(), player, 1) / kTes3CellSize));
+    const int x = Tes3GridIndex(RefPositionAxis(PapyrusVm(), player, 0));
+    const int y = Tes3GridIndex(RefPositionAxis(PapyrusVm(), player, 1));
     const std::string* name = FindExteriorName(x, y);
     return name ? *name : GmstText("sDefaultCellname", "Wilderness");
 }
 
-std::string PlayerCellName() {
-    void* cell = PlayerCell();
-    if (!cell) return std::string();
-    if (!PlayerInInterior()) return ExteriorName(PlayerRef());
+std::string InteriorName(void* ref) {
+    void* cell = ref && g_parentCell ? g_parentCell(PapyrusVm(), 0, ref) : nullptr;
+    if (!cell || !g_isInterior || !g_isInterior(PapyrusVm(), 0, cell)) return std::string();
     const char* name = *reinterpret_cast<const char**>(
         static_cast<char*>(cell) + ids::kOffCellFullName);
     return name ? name : "";
+}
+
+std::string PlayerCellName() {
+    if (!PlayerCell()) return std::string();
+    return PlayerInInterior() ? InteriorName(PlayerRef()) : ExteriorName(PlayerRef());
 }
 
 // 🛑 Whether a GAME is loaded, which is the player standing in SOME cell --
@@ -1234,6 +1236,7 @@ void InstallGameCalls() {
     InstallAiCalls(hooks);
     InstallQueryCalls(hooks);
     InstallSpellCalls(hooks);
+    InstallWerewolfCalls(hooks);
     InstallControlCalls(hooks);
     InstallStateCalls(hooks);
     InstallCrimeCalls(hooks);

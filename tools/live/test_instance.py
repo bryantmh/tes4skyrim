@@ -30,6 +30,7 @@ import sys
 import time
 
 from asset_convert.lod.esm_scan import plugin_masters
+from core.chargen_source import candidates
 from source_paths import find_game_path
 from tools.live import hidden_launch
 from tools.live.game_bridge import Bridge, BridgeError
@@ -180,13 +181,17 @@ def link_mod(name: str, data: str) -> list:
     return plugins
 
 
-def link_runtime(data: str) -> None:
-    """Links the runtime DLLs and their INIs, and writes the menus and tables the package composes."""
+def link_runtime(data: str, plugins: list) -> None:
+    """Links the runtime DLLs and their INIs, and writes the menus and tables the package composes,
+    with the chargen of the first of `plugins` that has one (else the config's)."""
     required, optional = MODS[MOD_NAME]
     for source, target in required + optional:
         if os.path.isfile(source):
             link(str(source), os.path.join(data, str(target)))
-    composed = (morrowind_menus(EXPORT_ROOT, configured_choice()) or []) + chargen_table(EXPORT_ROOT)
+    games = {name.lower() for name in candidates(EXPORT_ROOT)}
+    chosen = next((name for name in plugins if name.lower() in games), None)
+    composed = ((morrowind_menus(EXPORT_ROOT, configured_choice(), chosen) or [])
+                + chargen_table(EXPORT_ROOT, chosen))
     for target, payload in composed:
         path = os.path.join(data, str(target))
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -218,7 +223,7 @@ def build(steam_exe: bool, plugins, mods=()) -> None:
     for mod in mods:
         enabled += link_mod(mod, data)
     if mods:
-        link_runtime(data)
+        link_runtime(data, enabled)
     link(os.path.join(root, 'SkyrimSE.exe') if steam_exe else UNPACKED_EXE,
          os.path.join(INSTANCE, 'SkyrimSE.exe'))
     for name in ROOT_FILES:

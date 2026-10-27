@@ -5,9 +5,12 @@ than placement geometry, so they live apart from the CELL/WRLD/REFR converters
 in world.py.
 """
 
+import os
 import struct
 
-from ..base.text_reader import get_hex_bytes
+from ..base.master_export import values_of
+from ..base.tes5_reader import records
+from ..base.text_reader import get_hex_bytes, remap_formid
 from .common import (
     TES4_DEFAULT_MUSIC_ENUM,
     get_float,
@@ -222,6 +225,59 @@ def _watr_dnam(rec: dict) -> bytes:
     for off, value in _WATR_DEFAULT_SHADER_FIELDS:
         _f(off, value)
     return bytes(dnam)
+
+
+#: DefaultWater's id in Skyrim.esm and, raw, in every TES4-family master that authors one.
+DEFAULT_WATER = 0x00000018
+
+#: The water a worldspace naming none uses; record_default_water points it at a still one.
+_FALLBACK_WATER = [DEFAULT_WATER]
+
+
+def default_water() -> int:
+    """The water a worldspace that names none is written with."""
+    return _FALLBACK_WATER[0]
+
+
+def still_default_water(skyrim_esm: str, formid: int) -> bytes:
+    """Skyrim's DefaultWater at `formid` with its current zeroed; b'' when unreadable."""
+    try:
+        with open(skyrim_esm, 'rb') as handle:
+            data = handle.read()
+    except OSError:
+        return b''
+    for rec in records(data, b'WATR'):
+        if rec.form_id != DEFAULT_WATER:
+            continue
+        subs = pack_string_subrecord('EDID', 'TES4DefaultWaterStill')
+        for tag, payload in rec.subs():
+            if tag in (b'NAM0', b'NAM1'):
+                payload = b'\x00' * len(payload)
+            if tag != b'EDID':
+                subs += pack_subrecord(tag.decode('ascii'), payload)
+        return pack_record('WATR', formid, 0, subs)
+    return b''
+
+
+def record_default_water(by_type: dict, master_export, writer, skyrim_data: str) -> None:
+    """Point every worldspace naming no water at the source's own DefaultWater, else a still copy.
+
+    TES4 masters author DefaultWater at a fixed id, which converts with no current. A source with
+    none, Morrowind's, gets Skyrim's copied once with its current zeroed.
+    See: docs/commentary/tes5_import_landscape.md#still-default-water
+    """
+    _FALLBACK_WATER[0] = DEFAULT_WATER
+    waters = (*values_of(master_export, 'WATR'), *by_type.get('WATR', []))
+    if any(int(rec.get('FormID') or '0', 16) == DEFAULT_WATER for rec in waters):
+        _FALLBACK_WATER[0] = remap_formid(DEFAULT_WATER)
+        return
+    if all(get_formid(w, 'NAM2.Water') for w in by_type.get('WRLD', [])):
+        return
+    fid = writer.derive_formid('WATR_STILL', 'DefaultWater')
+    still = still_default_water(os.path.join(skyrim_data or '', 'Skyrim.esm'), fid)
+    if still:
+        writer.add_record('WATR', still)
+        _FALLBACK_WATER[0] = fid
 
 
 def convert_WATR(rec: dict) -> bytes:

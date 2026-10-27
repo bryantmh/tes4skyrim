@@ -39,15 +39,12 @@ from asset_convert.game_paths import current_namespace
 from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..base.writer import (pack_obnd, pack_record, pack_string_subrecord,
                      pack_subrecord)
+from ..record_types.world import cell_water_height
 
 def lava_mesh_rel() -> str:
     """The generated lava plane, under the ACTIVE game namespace."""
     return current_namespace() + '\\water\\lavasurface.nif'
 
-
-# The worldspace default water height the WRLD converter writes (DNAM's second
-# float).  Exterior cells inherit it when they author no XCLW.
-_DEFAULT_WATER_HEIGHT = 0.0
 
 # A lava plane is one exterior cell across; interiors get the same mesh, which
 # is larger than most interior water bodies but is clipped by the room's own
@@ -112,22 +109,6 @@ def build_lava_stat(stat_fid: int) -> bytes:
     return pack_record('STAT', stat_fid, 0, subs)
 
 
-def _water_height(cell_rec: dict) -> float:
-    """The cell's water surface height."""
-    raw = get_str(cell_rec, 'XCLW.WaterHeight', '')
-    if raw:
-        # Oblivion writes a sentinel for "no water height authored"; anything
-        # non-finite falls back to the worldspace default.
-        try:
-            value = float(raw)
-        except ValueError:
-            return _DEFAULT_WATER_HEIGHT
-        if value != value or abs(value) > 1e9:      # NaN / sentinel
-            return _DEFAULT_WATER_HEIGHT
-        return value
-    return _DEFAULT_WATER_HEIGHT
-
-
 def build_lava_refr(refr_fid: int, stat_fid: int, x: float, y: float,
                     z: float) -> bytes:
     """A placed reference of the lava STAT at a cell's water height."""
@@ -142,6 +123,7 @@ class LavaPlanner:
     """Decides which cells get a lava plane, and mints their FormIDs."""
 
     def __init__(self, by_type: dict, writer):
+        """Find the lava waters; index each worldspace and its water, for cells with no XCWT."""
         self.writer = writer
         self.lava_fids = collect_lava_water_fids(by_type)
         self.enabled = bool(self.lava_fids)
@@ -149,10 +131,10 @@ class LavaPlanner:
         self.stat_fid = (writer.derive_formid('LAVA_STAT', 'TES4LavaSurface')
                          if self.enabled else 0)
         self.placed = 0
-
-        # Worldspace -> its water FormID, for cells that author no XCWT.
         self._world_water = {}
+        self._worlds = {}
         for rec in by_type.get('WRLD', []):
+            self._worlds[get_formid(rec, 'FormID')] = rec
             nam2 = get_formid(rec, 'NAM2.Water')
             if nam2:
                 self._world_water[get_formid(rec, 'FormID')] = nam2
@@ -173,6 +155,7 @@ class LavaPlanner:
         self.writer.add_record('STAT', build_lava_stat(self.stat_fid))
 
     def cell_has_lava(self, cell_rec: dict) -> bool:
+        """True when the cell's water, its own or its worldspace's, is lava."""
         if not self.enabled:
             return False
         own = get_formid(cell_rec, 'XCWT.Water')
@@ -197,7 +180,7 @@ class LavaPlanner:
             y = get_int(cell_rec, 'XCLC.Y', 0)
             wx = (x + 0.5) * _CELL_SIZE
             wy = (y + 0.5) * _CELL_SIZE
-        z = _water_height(cell_rec)
+        z = cell_water_height(cell_rec, self._worlds.get(get_formid(cell_rec, 'ParentWRLD')))
         # Keyed on the source cell FormID: authored data, so the id is stable
         # across builds and save games.
         refr_fid = self.writer.derive_formid('LAVA_REFR', cell_fid)

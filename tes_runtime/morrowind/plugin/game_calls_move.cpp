@@ -55,6 +55,14 @@ struct Goal : Pose {
 };
 std::unordered_map<void*, Goal> g_goals;
 
+// The position and angles SetPos/SetAngle last wrote on each reference, and
+// the tick it wrote them. The natives are queued, so `SetPos x` then `SetPos y`
+// in one tick would read the old x back and undo it. Game thread only.
+struct Written : Pose {
+    std::size_t tick;
+};
+std::unordered_map<void*, Written> g_written;
+
 float RefAngle(void* ref, int axis) { return RefAngleDegrees(ref, axis); }
 
 float RefPosition(void* ref, int axis) {
@@ -192,10 +200,25 @@ void RotateRefBy(const std::string& id, int axis, float degrees) {
     });
 }
 
+// The pose an instant SetPos/SetAngle builds on: what this tick already wrote
+// on `ref`, else where the reference is now. Only this tick's write counts --
+// a script setting z every frame must not pin a walking actor's x and y.
+Pose& WrittenPose(void* ref) {
+    const std::size_t tick = TicksRun();
+    auto it = g_written.find(ref);
+    if (it == g_written.end() || it->second.tick != tick) {
+        Written fresh;
+        static_cast<Pose&>(fresh) = RefPose(PapyrusVm(), ref);
+        fresh.tick = tick;
+        it = g_written.insert_or_assign(ref, fresh).first;
+    }
+    return it->second;
+}
+
 // `SetPos`/`SetAngle`: one axis, absolute. A reference mid-glide takes it as
 // its glide's goal, since the natives reload the 3D and fade it back in.
-// 🛑 The natives take ALL THREE axes, so the other two are read back first
-// and written unchanged.
+// 🛑 The natives take ALL THREE axes, so the other two come from WrittenPose:
+// `SetPos x` then `SetPos y` in one tick keeps both.
 // See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
 void SetAxis(const std::string& id, int axis, float value, bool isAngle) {
     void* ref = OwnerRef(id);
@@ -209,10 +232,8 @@ void SetAxis(const std::string& id, int axis, float value, bool isAngle) {
             return;
         }
         g_goals.erase(ref);
-        float xyz[kAxisCount];
-        for (int i = 0; i < kAxisCount; ++i) {
-            xyz[i] = isAngle ? RefAngle(ref, i) : RefPosition(ref, i);
-        }
+        Pose& pose = WrittenPose(ref);
+        float* xyz = isAngle ? pose.angle : pose.at;
         xyz[which] = value;
         (isAngle ? SetRefAngle : SetRefPosition)(PapyrusVm(), ref, xyz[0],
                                                  xyz[1], xyz[2]);
@@ -321,9 +342,12 @@ bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot) {
     const float rotation[kAxisCount] = {
         RefAngle(ref, 0) / kDegreesPerRadian,
         RefAngle(ref, 1) / kDegreesPerRadian, zRot / kDegreesPerRadian};
+    const bool leftCell = PlaceOf(ref) != place || (!interior &&
+        (Tes3GridIndex(RefPosition(ref, 0)) != Tes3GridIndex(x) ||
+         Tes3GridIndex(RefPosition(ref, 1)) != Tes3GridIndex(y)));
     g_moveToCell(ref, &noTarget, interior ? place : nullptr,
                  interior ? nullptr : place, position, rotation);
-    AiAfterScriptMove(ref, place, x, y, z);
+    AiAfterScriptMove(ref, place, x, y, z, leftCell);
     return true;
 }
 

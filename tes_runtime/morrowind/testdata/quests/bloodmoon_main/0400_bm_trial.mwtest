@@ -1,0 +1,123 @@
+# Bloodmoon "The Skaal Test of Wisdom" and "The Skaal Test of Strength":
+# Tharsten Heart-Fang has the player find who stole Engar Ice-Mane's
+# heirloom -- Rigmor Halfhand, betrayed by the note left in the Ice-Mane hut --
+# then sends the player with Korst Wind-Eye to Lake Fjalding, where the
+# ancient draugr Aesliip asks for help against the frost daedra in his lair.
+# PositionCell stands in for the walks, kills for the fights; ref FormIDs
+# carry Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_trial
+# See docs/commentary/headless_testing.md#quest-runs
+
+case bm_trial
+run
+player->PositionCell -27 -20 -244 180 "Skaal Village, The Greathall"
+until 600 GetPCCell "Skaal Village, The Greathall" == 1
+talk tharsten heart-fang
+ask prove your wisdom
+expect GetJournalIndex BM_Trial == 10
+ask investigate a crime
+expect GetJournalIndex BM_Trial == 20
+bye
+run
+player->PositionCell 0 100 -216 180 "Skaal Village, Shaman's Hut"
+until 600 GetPCCell "Skaal Village, Shaman's Hut" == 1
+talk korst wind-eye
+ask Engar Ice-Mane
+expect GetJournalIndex BM_Trial == 40
+bye
+run
+player->PositionCell 52 -50 -225 180 "Skaal Village, Ice-Mane's Hut"
+until 600 GetPCCell "Skaal Village, Ice-Mane's Hut" == 1
+talk risi ice-mane
+ask investigate a crime
+expect GetJournalIndex BM_Trial == 45
+bye
+activate 0674F563
+close Book Menu
+until 300 GetJournalIndex BM_Trial == 50
+take 0674F563
+talk risi ice-mane
+ask Rigmor Halfhand
+expect GetJournalIndex BM_Trial == 55
+bye
+run
+player->PositionCell -76 120 -220 180 "Skaal Village, Rigmor's Hut"
+until 600 GetPCCell "Skaal Village, Rigmor's Hut" == 1
+talk rigmor halfhand
+ask investigate a crime
+expect GetJournalIndex BM_Trial == 60
+bye
+run
+player->PositionCell -27 -20 -244 180 "Skaal Village, The Greathall"
+until 600 GetPCCell "Skaal Village, The Greathall" == 1
+talk tharsten heart-fang
+ask investigate a crime
+expect GetJournalIndex BM_Trial == 70
+ask verdict is yours
+expect GetJournalIndex BM_Trial == 80
+choose 1
+expect GetJournalIndex BM_Trial == 100
+bye
+end
+
+# Aesliip asks the player to fight the frost daedra beside him; with ten dead
+# he gives up his ring and his rest, and Korst hears of it at the lake.
+case bm_draugr
+run
+player->PositionCell -27 -20 -244 180 "Skaal Village, The Greathall"
+until 600 GetPCCell "Skaal Village, The Greathall" == 1
+talk tharsten heart-fang
+expect GetJournalIndex BM_Draugr == 10
+ask prove your strength
+expect GetJournalIndex BM_Draugr == 20
+bye
+run
+player->Position -158513 195075 190 0
+until 600 "korst wind-eye"->GetDistance player < 400
+talk korst wind-eye
+expect GetJournalIndex BM_Draugr == 30
+ask prove your strength
+expect GetJournalIndex BM_Draugr == 40
+ask Aesliip
+expect GetJournalIndex BM_Draugr == 50
+bye
+run
+player->PositionCell 854 1325 -191 0 "Solstheim, Aesliip's Lair"
+until 600 MenuMode == 1
+ask my story
+expect GetJournalIndex BM_Draugr == 60
+ask must act
+expect GetJournalIndex BM_Draugr == 62
+ask grew old
+expect GetJournalIndex BM_Draugr == 65
+ask greater purpose
+expect GetJournalIndex BM_Draugr == 67
+choose 1
+expect GetJournalIndex BM_Draugr == 70
+bye
+run
+player->PositionCell 1038 450 -589 0 "Solstheim, Aesliip's Lair, Caverns"
+until 600 GetPCCell "Solstheim, Aesliip's Lair, Caverns" == 1
+wait 30
+console 068C0269.kill
+console 06B42B9C.kill
+console 062FB5F8.kill
+console 0650926C.kill
+console 067A29EC.kill
+console 06D43B75.kill
+console 069E330D.kill
+console 06843360.kill
+console 063DFC9F.kill
+console 06934D1C.kill
+until 600 GetJournalIndex BM_Draugr == 80
+until 900 MenuMode == 1
+until 300 GetJournalIndex BM_Draugr == 85
+bye
+run
+player->Position -158513 195075 190 0
+until 600 "korst wind-eye"->GetDistance player < 400
+talk korst wind-eye
+ask Aesliip
+expect GetJournalIndex BM_Draugr == 100
+bye
+end

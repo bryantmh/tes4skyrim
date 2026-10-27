@@ -242,6 +242,7 @@ void RunOneTick() {
     AdvanceGameSeconds(g_tickDelta);
     if (Hooks().syncClock) Hooks().syncClock();
     if (Hooks().effectTick) Hooks().effectTick();
+    if (Hooks().werewolfTick) Hooks().werewolfTick();
     if (Hooks().animTick) Hooks().animTick();
     const bool cellChanged = PlayerCellChanged();
     DiscoverLoaded(cellChanged);

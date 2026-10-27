@@ -1,0 +1,548 @@
+# Bloodmoon "The Ritual of the Gifts": the six Standing Stones of Solstheim
+# each set a ritual -- follow the Swimmer to the Water of Life, play the Song
+# of the Earth, replant the First Trees, free the Good Beast, free the Sun from
+# the Halls of Penumbra, and release the Winds from the Greedy Man's bag. With
+# all six done Tharsten Heart-Fang hands over the Mace of Aevar Stonesinger.
+# Position, PositionCell and setting the player just behind the Swimmer stand
+# in for the walks and swims, kills for the
+# fights, and RemoveItem/AddItem for looting a body. Ref FormIDs carry
+# Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_water
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The Chamber of Song plays a tune on its steam pipes; playing it back twice
+# over teaches the Song of the Earth.
+case bm_earth
+run
+player->Position -207663 167082 1421 180
+wait 30
+activate 06E47777
+until 300 GetJournalIndex BM_Earth == 10
+run
+player->PositionCell 4449 9550 11700 0 "Solstheim, Chamber of Song"
+until 600 GetJournalIndex BM_Earth == 20
+activate 06AE89E4
+until 300 GetJournalIndex BM_Earth == 30
+wait 10
+activate 06CF7E60
+wait 10
+activate 0640D712
+wait 10
+activate 06CF7E60
+until 300 GetJournalIndex BM_Earth == 40
+wait 10
+activate 0640D712
+wait 10
+activate 06CF7E60
+wait 10
+activate 06AE89E4
+wait 10
+activate 0640D712
+until 900 GetJournalIndex BM_Earth == 50
+run
+player->Position -207663 167082 1421 180
+wait 30
+activate 06E47777
+until 300 GetJournalIndex BM_Earth == 100
+end
+
+# A riekling has stolen the Seeds of the First Trees and set spriggans to
+# guard him; the seeds go back into the fertile soil by the Stone.
+case bm_trees
+run
+player->Position -178382 174065 1426 180
+wait 30
+activate 06EAFD58
+until 300 GetJournalIndex BM_Trees == 10
+run
+player->Position -171528 175100 876 0
+until 600 GetJournalIndex BM_Trees == 20
+console 0657ABFB.kill
+run
+"BM_riekling_st_UNIQUE"->RemoveItem BM_Seeds_UNIQUE 1
+player->AddItem BM_Seeds_UNIQUE 1
+until 300 GetJournalIndex BM_Trees == 30
+run
+player->Position -179910 174220 1309 0
+button 0
+until 300 GetJournalIndex BM_Trees == 40
+run
+player->Position -178382 174065 1426 180
+wait 30
+activate 06EAFD58
+until 300 GetJournalIndex BM_Trees == 100
+end
+
+# Rieklings have shot the Good Beast, a bear in the south; once they are dead
+# the arrow comes out and the bear walks with the player back to the Stone.
+case bm_beasts
+run
+player->Position -159404 200971 1382 180
+wait 30
+activate 06627D68
+until 300 GetJournalIndex BM_Beasts == 10
+run
+player->Position -158694 183250 836 0
+until 600 GetJournalIndex BM_Beasts == 20
+console 066C4CB7.kill
+console 06DBD610.kill
+console 06C1AAC3.kill
+console 06BDCAEE.kill
+console 062FFC57.kill
+until 300 GetJournalIndex BM_Beasts == 30
+run
+"BM_bear_be_UNIQUE"->RemoveItem BM_arrow_riekling_uni 1
+player->AddItem BM_arrow_riekling_uni 1
+until 300 GetJournalIndex BM_Beasts == 50
+run
+player->Position -159404 200971 1382 180
+wait 30
+activate 06627D68
+until 300 GetJournalIndex BM_Beasts == 100
+end
+
+# The Sun is held behind an ice wall in the Halls of Penumbra; the ice troll
+# guarding it carries the flaming eye that melts the wall.
+case bm_sun
+run
+player->Position -161750 159674 1777 180
+wait 30
+activate 06D9EA51
+until 300 GetJournalIndex BM_Sun == 10
+run
+player->PositionCell -119 200 -140 0 "Solstheim, Halls of Penumbra"
+until 600 GetJournalIndex BM_Sun == 20
+run
+player->PositionCell 134 7000 -1600 0 "Solstheim, Halls of Penumbra"
+until 600 GetJournalIndex BM_Sun == 30
+console 067AE567.kill
+run
+"BM_ice_troll_sun"->RemoveItem ingred_eyeball_unique 1
+player->AddItem ingred_eyeball_unique 1
+activate 063197F4
+button 0
+until 300 GetJournalIndex BM_Sun == 40
+run
+player->Position -161750 159674 1777 180
+wait 30
+activate 06D9EA51
+until 300 GetJournalIndex BM_Sun == 100
+end
+
+# The Greedy Man of Glenschul's Tomb keeps the Winds in his bag.
+case bm_wind
+run
+player->Position -178242 205690 185 180
+wait 30
+activate 06C6B697
+until 300 GetJournalIndex BM_Wind == 10
+run
+player->PositionCell 14 -3552 -70 180 "Solstheim, Glenschul's Tomb"
+until 600 GetPCCell "Solstheim, Glenschul's Tomb" == 1
+wait 30
+activate 0653835F
+close ContainerMenu
+until 300 GetJournalIndex BM_Wind == 50
+run
+player->Position -178242 205690 185 180
+wait 30
+activate 06C6B697
+until 300 GetJournalIndex BM_Wind == 100
+end
+
+# The Swimmer, a horker off the western coast, leads the way to the sea cave
+# that holds the Water of Life.
+case bm_water
+run
+player->Position -208040 192678 1927 180
+wait 30
+activate 0651509C
+until 300 GetJournalIndex BM_Water == 10
+console player.moveto 06761748
+until 600 GetJournalIndex BM_Water == 50
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+wait 100
+run
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_horker_swim_UNIQUE"->GetPos y ) - 300 )
+player->SetPos y TestResult
+set TestResult to ( "BM_horker_swim_UNIQUE"->GetPos z )
+player->SetPos z TestResult
+until 1500 GetJournalIndex BM_Water == 60
+run
+player->PositionCell -2471 842 960 0 "Solstheim, Stahlman's Gorge"
+until 600 GetPCCell "Solstheim, Stahlman's Gorge" == 1
+wait 30
+activate 06C63815
+until 300 GetJournalIndex BM_Water == 70
+run
+player->Position -208040 192678 1927 180
+wait 30
+activate 0651509C
+until 300 GetJournalIndex BM_Water == 100
+end
+
+# Tharsten rewards the restored Oneness with the Mace of Aevar Stonesinger.
+case bm_stones_done
+until 300 GetJournalIndex BM_Stones == 80
+run
+player->PositionCell -27 -20 -244 180 "Skaal Village, The Greathall"
+until 600 GetPCCell "Skaal Village, The Greathall" == 1
+talk tharsten heart-fang
+ask restore the power of the Skaal
+expect GetJournalIndex BM_Stones == 100
+expect player->GetItemCount BM_Mace_Aevar_UNI == 1
+bye
+end

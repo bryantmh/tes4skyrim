@@ -1,0 +1,103 @@
+# Bloodmoon "The Frostmoth Smugglers": Captain Falx Carius believes weapons
+# are being smuggled out of Fort Frostmoth. With Gaea Artoria as partner the
+# player questions the garrison and the armorer, finds the smugglers' den in
+# Gandrung Caverns and, with Gaea at their side, fights Gualtierus Spurius's
+# band; back at the fort, werewolves have struck and Carius is gone.
+# PositionCell and Position stand in for the walks and kills stand in for the
+# fight; ref FormIDs carry Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_smugglers
+# See docs/commentary/headless_testing.md#quest-runs
+
+case bm_smugglers
+run
+player->PositionCell 4095 3800 15124 0 "Fort Frostmoth, Carius' Chambers"
+until 600 GetPCCell "Fort Frostmoth, Carius' Chambers" == 1
+talk falx carius
+ask fort business
+ask weapons being smuggled
+expect GetJournalIndex BM_Smugglers == 10
+ask bit of help
+expect GetJournalIndex BM_Smugglers == 20
+bye
+run
+player->PositionCell 5286 4150 12791 0 "Fort Frostmoth, General Quarters, Upper Level"
+until 600 GetPCCell "Fort Frostmoth, General Quarters, Upper Level" == 1
+talk gaea artoria
+ask assist you
+choose 3
+expect GetJournalIndex BM_Smugglers == 35
+ask weapons being smuggled
+expect GetJournalIndex BM_Smugglers == 45
+bye
+run
+player->Position -173771 143037 908 0
+until 600 "vilbia herennia"->GetDistance player < 400
+talk vilbia herennia
+ask weapons being smuggled
+expect GetJournalIndex BM_Smugglers == 50
+bye
+run
+player->PositionCell -237 400 -106 0 "Fort Frostmoth, Armory"
+until 600 GetPCCell "Fort Frostmoth, Armory" == 1
+talk zeno faustus
+ask weapons being smuggled
+expect GetJournalIndex BM_Smugglers >= 65
+bye
+run
+player->PositionCell 3972 5050 14334 0 "Solstheim, Gandrung Caverns"
+until 600 GetJournalIndex BM_Smugglers == 80
+run
+player->PositionCell 10103 9100 13331 0 "Solstheim, Gandrung Caverns"
+until 600 "gualtierus spurius"->GetDistance player < 400
+console 06A7B095.kill
+console 06BD6006.kill
+console 06BBB8D6.kill
+console 06A4CCDF.kill
+console 066645AD.kill
+until 600 GetJournalIndex BM_Smugglers == 97
+run
+player->Position -173703 141150 1047 180
+until 900 GetJournalIndex BM_Smugglers == 100
+end
+
+# Back at the fort Gaea Artoria finds it attacked; Saenus Lusius sends the
+# player to the Skaal village with a Skaal skull as a token; Tharsten
+# Heart-Fang tells of the attack, takes the skull, and sets the Test of
+# Loyalty: restore the six standing stones, as Korst explains.
+case bm_carius
+until 600 GetJournalIndex BM_Smugglers == 100
+until 600 MenuMode == 1
+bye
+run
+player->PositionCell -1451 -100 -111 0 "Fort Frostmoth, General Quarters"
+until 600 GetPCCell "Fort Frostmoth, General Quarters" == 1
+talk saenus lusius
+ask find the Captain
+expect GetJournalIndex BM_CariusGone == 10
+ask Nord village
+expect GetJournalIndex BM_CariusGone == 25
+bye
+run
+player->PositionCell -27 -20 -244 180 "Skaal Village, The Greathall"
+until 600 GetPCCell "Skaal Village, The Greathall" == 1
+talk tharsten heart-fang
+ask attack on the Imperial fort
+expect GetJournalIndex BM_CariusGone == 100
+ask your business here
+expect GetJournalIndex BM_Stones == 10
+ask much to atone for
+expect GetJournalIndex BM_Stones == 20
+ask defiled these lands
+ask restore the power of the Skaal
+expect GetJournalIndex BM_Stones == 30
+bye
+run
+player->PositionCell 0 100 -216 180 "Skaal Village, Shaman's Hut"
+until 600 GetPCCell "Skaal Village, Shaman's Hut" == 1
+talk korst wind-eye
+ask restore the power of the Skaal
+expect GetJournalIndex BM_Stones == 40
+ask Ritual of the Gifts
+expect GetJournalIndex BM_Stones == 50
+bye
+end

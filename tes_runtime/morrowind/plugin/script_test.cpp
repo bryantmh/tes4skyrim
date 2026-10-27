@@ -1146,9 +1146,9 @@ void FakeAiWander(const std::string& actor, float range, float duration) {
 }
 
 void FakeAiFollow(const std::string& actor, const std::string& target,
-                  float duration, float x, float y, float z) {
-    Record("follow|%s|%s|%g|%g,%g,%g", actor.c_str(), target.c_str(), duration,
-           x, y, z);
+                  const std::string& cell, float duration, float x, float y, float z) {
+    Record("follow|%s|%s|%s|%g|%g,%g,%g", actor.c_str(), target.c_str(), cell.c_str(),
+           duration, x, y, z);
 }
 
 void FakeAiEscort(const std::string& actor, const std::string& target,
@@ -1320,14 +1320,14 @@ void AiPackageCases(DialogueContext& context) {
     g_moved.clear();
     RunResultScript("AiFollow \"player\" 0 0 0 0", context);
     Check(g_moved.size() == 1 &&
-              g_moved[0] == "follow|test_actor|player|0|0,0,0",
+              g_moved[0] == "follow|test_actor|player||0|0,0,0",
           "the id comes FIRST, then the duration, then the point");
 
     g_moved.clear();
     RunResultScript("AiFollowCell \"player\" \"Balmora\" 2 1 2 3", context);
     Check(g_moved.size() == 1 &&
-              g_moved[0] == "follow|test_actor|player|2|1,2,3",
-          "the Cell form drops the cell and keeps the rest in order");
+              g_moved[0] == "follow|test_actor|player|balmora|2|1,2,3",
+          "the Cell form passes its cell on with the rest in order");
 
     g_moved.clear();
     RunResultScript("AiEscort \"player\" 1 4 5 6", context);
@@ -1427,6 +1427,62 @@ void SpellStackDiscipline(DialogueContext& context) {
                   State().Disposition("test_actor") == 53,
               script);
     }
+}
+
+// The fake world: "ataxia" sufferer is "sick_npc", "bitten_npc" was attacked,
+// and the hook is handed the TES3 type each command asks for.
+bool FakeHasDisease(const std::string& actor, int type) {
+    return actor == "sick_npc" && type == kSpellDisease;
+}
+
+bool FakeAttacked(const std::string& actor) { return actor == "bitten_npc"; }
+
+// `GetCommonDisease`, `GetBlightDisease` and `GetAttacked`: each answers 1 or
+// 0 from its hook, bare and with `id->`, and a missing hook answers 0.
+// See: docs/commentary/morrowind_runtime.md#disease-queries
+void DiseaseAndAttackedCases(DialogueContext& context) {
+    std::printf("disease and attacked queries\n");
+    const SpellDef* ataxia = FindSpell("Ataxia");
+    const SpellDef* blight = FindSpell("chanthrax blight");
+    Check(ataxia && ataxia->type == kSpellDisease && blight &&
+              blight->type == kSpellBlight && blight->Has(17) &&
+              FindSpell("fire bite")->type == -1,
+          "a spell row carries its TES3 type, after its effects");
+    Check(SpellsOfType(kSpellDisease).size() == 1 &&
+              SpellsOfType(kSpellBlight).size() == 1,
+          "spells are found by TES3 type");
+
+    Hooks().hasDisease = FakeHasDisease;
+    Hooks().attacked = FakeAttacked;
+    static const struct {
+        const char* script;
+        const char* what;
+    } kCases[] = {
+        {"\"sick_npc\"->GetCommonDisease", "GetCommonDisease is 1 when sick"},
+        {"\"well_npc\"->GetBlightDisease", "GetBlightDisease asks for blight"},
+        {"\"bitten_npc\"->GetAttacked", "GetAttacked is 1 once attacked"},
+    };
+    const bool expected[] = {true, false, true};
+    for (int i = 0; i < 3; ++i) {
+        State().SetDisposition("test_actor", 50);
+        const std::string source = std::string("if ( ") + kCases[i].script +
+                                   " == 1 )\n    ModDisposition 3\nendif\n";
+        Check(RunResultScript(source, context) &&
+                  (State().Disposition("test_actor") == 53) == expected[i],
+              kCases[i].what);
+    }
+    State().SetDisposition("test_actor", 50);
+    RunResultScript("if ( \"sick_npc\"->GetBlightDisease == 1 )\n    ModDisposition 3\nendif\n",
+                    context);
+    Check(State().Disposition("test_actor") == 50,
+          "a common disease is not a blight");
+    Hooks().hasDisease = nullptr;
+    Hooks().attacked = nullptr;
+    State().SetDisposition("test_actor", 50);
+    RunResultScript("if ( \"sick_npc\"->GetCommonDisease == 0 )\n    ModDisposition 3\nendif\n",
+                    context);
+    Check(State().Disposition("test_actor") == 53,
+          "with no hook the queries answer 0");
 }
 
 // What the last applyMovementFlag hook was handed.
@@ -1869,7 +1925,8 @@ void ButtonPressedCases(DialogueContext& context) {
 std::string StepKinds(const TestCase& test) {
     static const char* kNames[] = {"run",    "wait", "expect", "talk",     "ask",
                                    "choose", "bye",  "button", "activate", "until",
-                                   "pick",   "close", "take", "console", "persuade"};
+                                   "pick",   "close", "take", "console", "persuade",
+                                   "sleep",  "walk"};
     std::string kinds;
     for (const TestStep& step : test.steps) {
         kinds += (kinds.empty() ? "" : " ") + std::string(kNames[static_cast<int>(step.kind)]);
@@ -1917,6 +1974,11 @@ void TestCaseFileCases() {
               cases[3].steps[0].text == "chargen_door" && cases[3].steps[2].number == 40 &&
               cases[3].steps[2].text == "player->GetPos x > 5",
           "until keeps its ticks and condition, and is not an action; an id loses its quotes");
+    std::istringstream stroll("case stroll\nwalk 10 20 -5\n");
+    const std::vector<TestCase> walks = ParseTestCases(stroll);
+    Check(walks.size() == 1 && StepKinds(walks[0]) == "walk wait" &&
+              walks[0].steps[0].text == "10 20 -5",
+          "walk keeps its point and settles like any action");
     const std::vector<std::string> uncovered =
         UncoveredCommands(cases, {"additem", "getitemcount", "journal"});
     Check(uncovered == std::vector<std::string>{"journal"},
@@ -2035,6 +2097,7 @@ void Cases() {
     State().className.clear();
 
     SpellStackDiscipline(context);
+    DiseaseAndAttackedCases(context);
 }
 
 // Every authored result script under a sidecar root: how many compile and

@@ -554,8 +554,23 @@ def _ungrown_strip(strip, steep, prof):
     return strip
 
 
-def _steep_profiles(nodes, edges, node_z, degree, sample, flat=()):
-    """{(i, j): tread profile or None} for every steep edge not in `flat`.
+def _leaves_chord(sample, pa, pb):
+    """True where the pa->pb chord runs more than a step off every floor beside it."""
+    layers = getattr(sample, 'layers', None)
+    if layers is None:
+        return False
+    n = max(2, int(math.hypot(pb[0] - pa[0], pb[1] - pa[1]) // 32.0))
+    lo, hi = min(pa[2], pb[2]) - params.MAX_CLIMB, max(pa[2], pb[2]) + params.MAX_CLIMB
+    for s in range(1, n):
+        x, y, z = (pa[k] + (pb[k] - pa[k]) * s / n for k in range(3))
+        near = [abs(c - z) for c in layers(x, y) if lo <= c <= hi]
+        if near and min(near) > params.MAX_CLIMB:
+            return True
+    return False
+
+
+def _surface_profiles(nodes, edges, node_z, degree, sample, flat=()):
+    """{(i, j): tread profile or None} for every edge not in `flat` that is steep or leaves its chord.
 
     See: docs/commentary/tes5_import_navmesh.md#profile-samples-the-cross-section
     """
@@ -565,7 +580,7 @@ def _steep_profiles(nodes, edges, node_z, degree, sample, flat=()):
         if got is None or (i, j) in flat:
             continue
         pa, pb = _extended_ends(got, degree, i, j)
-        if _is_steep(pa, pb):
+        if _is_steep(pa, pb) or _leaves_chord(sample, pa, pb):
             out[(i, j)] = (_surface_profile(sample, pa, pb)
                            if sample is not None else None)
     return out
@@ -627,11 +642,11 @@ def _edge_strip(nodes, node_z, i, j, degree, grown_edges, widths, profiles,
     if land is not None:
         strip['land'] = land
     steep = land is None and _is_steep(pa, pb)
-    prof = profiles.get((i, j)) if steep else None
+    prof = profiles.get((i, j))
     entry = grown_edges.get((i, j)) if widths is not None else None
     if entry is None:
         return _ungrown_strip(strip, steep, prof)
-    strip = _grown_outline(strip, entry, widths, (-uy, ux), prof)
+    strip = _grown_outline(strip, entry, widths, (-uy, ux), prof if steep else None)
     if prof:
         strip['prof'] = prof
     return strip
@@ -763,7 +778,7 @@ def _build_corridor_strips(nodes, edges, node_z, wall_hit=None,
     degree.update((i, 0) for i in lone if i not in degree)
     flat = {e for e in edges if _stands_on_land(land, nodes, node_z, *e)}
     steep_count = _steep_counts(nodes, edges, node_z, flat)
-    profiles = _steep_profiles(nodes, edges, node_z, degree, sample, flat)
+    profiles = _surface_profiles(nodes, edges, node_z, degree, sample, flat)
 
     stations, plan, on_land = _plan_stations(nodes, edges, node_z, degree,
                                              grow, profiles, land, flat)
@@ -984,12 +999,12 @@ def _simplify(pts, tol):
 # ---------------------------------------------------------------------------
 
 def _cell_geometry(refr_recs, base_model_by_fid, get_collision, land_rec,
-                   origin_x, origin_y, door_bases):
+                   origin_x, origin_y, door_bases, water_z):
     """(walkable, blocking, land_from): LAND is walkable[land_from:], or no rows."""
     walkable, blocking, land_walk = world.gather_cell_geometry(
         refr_recs or [], base_model_by_fid or {}, get_collision,
         land_rec=land_rec, origin_x=origin_x, origin_y=origin_y,
-        split_land=True, skip_bases=door_bases)
+        split_land=True, skip_bases=door_bases, water_z=water_z)
     land_from = len(walkable)
     if land_walk is not None and len(land_walk):
         walkable = (np.concatenate([walkable, land_walk])
@@ -1329,12 +1344,12 @@ LIP_MARCH_STEP = 4.0
 
 def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
                     land_rec=None, origin_x=0.0, origin_y=0.0, doors=None,
-                    door_bases=None, lone=()):
+                    door_bases=None, lone=(), water_z=None):
     """Phase-1 corridor navmesh for one cell: (verts, tris, ledges) lists.
 
     doors: [(x, y, z, rot_z, is_teleport, width), ...] pivot-corrected door
     centers.  door_bases: low-24 DOOR base FormIDs contributing no collision.
-    lone: edgeless nodes that still get a disc (spawn_nodes).
+    lone: edgeless nodes that still get a disc (spawn_nodes).  water_z: or None.
     ledges: [(upper_tri, lower_tri, drop), ...] for NVNM Ledge Up/Down links.
     See: docs/commentary/tes5_import_navmesh.md#ribbon-construction
     """
@@ -1344,7 +1359,7 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
 
     walkable, blocking, land_from = _cell_geometry(
         refr_recs, base_model_by_fid, get_collision, land_rec,
-        origin_x, origin_y, door_bases)
+        origin_x, origin_y, door_bases, water_z)
     sample = _surface_sampler(walkable)
     node_z = [_snap_node_z(sample, nodes[i][0], nodes[i][1], nodes[i][2])
               for i in range(len(nodes))]

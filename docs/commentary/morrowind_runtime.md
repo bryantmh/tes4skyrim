@@ -4852,3 +4852,37 @@ remote `Set ErothinBankQuest.PlayerKontostand to` form. The interest is a
 that the runtime evaluates against each quest's current stage, the u16 at
 TESQuest `+0x228` that `Quest.GetCurrentStageID` returns on 1.6.1170, 1.5.97
 and VR alike. Both labels are English.
+
+## <a id="disease-queries"></a>GetCommonDisease, GetBlightDisease and GetAttacked
+
+**Code:** `script_ops_query.cpp`, `game_calls_spell.cpp`, `game_calls_flight.cpp`,
+`game_calls_query.cpp`, `tes5_import/dialogue/morrowind_sidecar_source.py`
+
+Not yet tested in game; the headless `script_test.exe` cases use fake hooks.
+
+**Disease and blight.** Follows OpenMW `Spells::hasCommonDisease` /
+`hasBlightDisease` (`hasSpellType` of `ST_Disease` / `ST_Blight`), answering 0 for a
+non-actor as `OpGetCommonDisease` does. The export folds both TES3 types into TES4
+`SPIT.Type` 1 (`_SPELL_TYPES` in `morrowind_magic.py`), so Skyrim's record cannot tell them
+apart. `spell_kinds` reads the TES3 SPDT type from the binaries and `SPEL.txt` rows gain a
+fourth field: `id=Plugin|FormID|effects|type`. The runtime asks whether an active effect on
+the actor came from a staged spell of type 3 (disease) or 2 (blight). That is the walk the
+engine's own `GetDisease` condition makes (handler 0x32a830 on 1.6.1170 calls 0x5c29a0,
+whose visitor 0x5c59d0 loads the spell at effect+0x40, asks its vtable slot 0x298 for the
+type and compares it to Disease, skipping effects with flag 0x40000); we read the same two
+fields. Skyrim keeps a contracted disease as an active effect, not in the spell list, so
+`Actor.HasSpell` would miss it. Old `SPEL.txt` files without the field read as type -1.
+
+**GetAttacked.** Follows `CreatureStats::mAttacked`, set in `Npc::onHit` / `Creature::onHit`
+when the attacker is an actor the victim is not already fighting. The DLL sets it from the
+same OnHit sink `HitOnMe` uses, comparing the victim's combat target to the attacker. Two
+differences from OpenMW: it is kept for the session and not saved, and nothing clears it
+(OpenMW clears it when a witnessed crime is paid off). Skyrim's own `GetAttacked`
+condition (0x32cb80) clears when combat ends, so it was not used.
+
+**Not ported:** `HurtStandingActor`, `GetStandingPC` and `GetStandingActor` (OpenMW
+`PhysicsSystem::getActorsStandingOn`, each actor's `mStandingOnPtr`). The condition table
+(xEdit `wbConditionFunctions`) and the CK wiki hold no standing-on query, and in the
+1.6.1170 character controller code read so far (`bhkCharProxyController` vtable, the state
+`Simulate` functions, `bhkCharacterPointCollector::addCdPoint`) no stored supporting body
+was found.

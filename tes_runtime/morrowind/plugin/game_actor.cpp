@@ -134,6 +134,10 @@ int GameActor::Level() const {
     return def ? def->level : Stub(kFirstLevel);
 }
 
+bool GameActor::IsWerewolf() const {
+    return Hooks().isWerewolf && Hooks().isWerewolf(mId);
+}
+
 bool GameActor::Detected() const { return true; }
 
 bool GameActor::Alarmed() const { return false; }

@@ -18,8 +18,11 @@ an empty world and emit no navmesh at all.
 
 import os
 
+from asset_convert.collision.collision_extract import get_collision
+
 from .from_pgrd import cached_geometry, convert_PGRD, geom_cache_path, geom_equal
 from .lattice.build import set_activators
+from .seeding import seeded_pathgrid
 
 # Per-worker read-only carving context, populated by _init in each child.
 _BASE_MODEL_BY_FID: dict = {}
@@ -107,9 +110,17 @@ def _verify_against_cache(job: dict, result: tuple) -> tuple:
 
 
 def convert_job(job: dict, base_model_by_fid: dict, door_fids, geom_cache=None):
-    """(navm_bytes, meta) for one gathered job (pool.gather_navm_jobs)."""
+    """(navm_bytes, meta) for one gathered job; a seeded job floods its pathgrid first.
+
+    See: docs/commentary/tes5_import_navmesh.md#seeded-cells
+    """
+    pgrd_rec = job['pgrd_rec']
+    if job.get('seeds'):
+        pgrd_rec = seeded_pathgrid(job, base_model_by_fid, door_fids, get_collision)
+        if pgrd_rec is None:
+            return None, None
     return convert_PGRD(
-        job['pgrd_rec'],
+        pgrd_rec,
         land_rec=job['land_rec'],
         cell_rec=job['cell_rec'],
         refr_recs=job['refr_recs'],

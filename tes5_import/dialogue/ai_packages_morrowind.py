@@ -22,7 +22,8 @@ import struct
 from ..packages.converter import (ANY_TIME_PSDT, build_alias_location,
                                   build_alias_target, build_pkdt,
                                   DEFAULT_INTERRUPT, Inputs, package_markers,
-                                  SPEED_WALK, T5_MUST_COMPLETE)
+                                  SPEED_WALK, T5_ALLOW_SWIMMING,
+                                  T5_MUST_COMPLETE)
 from ..packages.interrupt_morrowind import interrupt_for_kind
 from ..packages.escort_when_near import escort_template
 from ..packages.templates import ACTIVATE, FOLLOW, SANDBOX, TRAVEL
@@ -57,6 +58,9 @@ _WANDER_RADIUS = 512
 _TES4_TYPE = {'travel': 6, 'wander': 5, 'follow': 1, 'escort': 2,
               'activate': 0}
 
+#: Kinds whose path may cross water: OpenMW gives every package but Wander its swim flag.
+_SWIMMING_KINDS = frozenset({'travel', 'follow', 'escort', 'activate'})
+
 #: A pooled slot serves any actor, so it takes the Hello 2,278 of 2,673 Morrowind.esm NPCs ship.
 _POOLED_HELLO = 30
 
@@ -73,10 +77,14 @@ _KINDS = (
 _AI_COMMAND_SOURCES = ('SCPT', 'DIAL', 'INFO', 'NPC_', 'CREA')
 
 #: How many actors can run one package kind at the same time.
-_SLOTS = 8
+_SLOTS = 32
 
-#: Every slot name, `<kind><n>`, in ALST order.
-_SLOT_NAMES = tuple(f'{kind}{n}' for kind, _t in _KINDS for n in range(_SLOTS))
+#: Slots per kind that older builds shipped; their aliases keep those ALST places for saved games.
+_FIRST_SLOTS = 8
+
+#: Every slot name, `<kind><n>`, in ALST order: the first slots of every kind, then the rest.
+_SLOT_NAMES = tuple(f'{kind}{n}' for block in (range(_FIRST_SLOTS), range(_FIRST_SLOTS, _SLOTS))
+                    for kind, _t in _KINDS for n in block)
 
 #: Per slot: who RUNS the package, what it aims AT, and WHERE it is going.
 _ALIAS_NAMES = tuple(name for slot in _SLOT_NAMES
@@ -158,8 +166,9 @@ def pack_record_for(kind: str, slot: str, template, formid: int,
     actor's next evaluation, which is what a TES3 script expects.
     """
     subs = pack_string_subrecord('EDID', f'MWAI{slot.capitalize()}')
+    swims = T5_ALLOW_SWIMMING if kind in _SWIMMING_KINDS else 0
     subs += pack_subrecord('PKDT', build_pkdt(
-        T5_MUST_COMPLETE, SPEED_WALK,
+        T5_MUST_COMPLETE | swims, SPEED_WALK,
         interrupt_for_kind(_TES4_TYPE[kind], _POOLED_HELLO,
                            DEFAULT_INTERRUPT)))
     subs += pack_subrecord('PSDT', ANY_TIME_PSDT)

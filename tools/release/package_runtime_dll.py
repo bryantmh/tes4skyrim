@@ -130,15 +130,16 @@ def chargen_table(export_root: Path, chosen=None) -> list:
     return [(SHARED_CHARGEN, ('\n'.join(lines) + '\n').encode('utf-8'))]
 
 
-def morrowind_menus(export_root: Path, choice: tuple = (None, None)) -> "list | None":
+def morrowind_menus(export_root: Path, choice: tuple = (None, None), chargen=None) -> "list | None":
     """Every Morrowind menu movie as `(archive path, bytes)`, in `choice`'s
     look and icons, and the Skyrim skill table the stats window names them by.
+    The birthsign icons come from the game `chargen` (as `chargen_table`).
 
     None when a Morrowind look finds no install holding its art, so the
     caller skips the menus instead of failing.
     See: docs/commentary/morrowind_runtime.md#menu-styles
     """
-    icons = effect_icons(export_root, shared_lines(export_root, configured(CHARGEN_SOURCE_KEY))[2])
+    icons = effect_icons(export_root, shared_lines(export_root, chargen or configured(CHARGEN_SOURCE_KEY))[2])
     try:
         art = menu_art(str(export_root), *choice)
         menus = [(arc, build(art).serialize(compress=True)) for arc, build in MENUS]
@@ -150,8 +151,9 @@ def morrowind_menus(export_root: Path, choice: tuple = (None, None)) -> "list | 
 
 
 def package(out_root: Path, mod_name: str = MOD_NAME,
-            export_root: Path = EXPORT_ROOT, choice: tuple = (None, None)) -> int:
-    """Zip `mod_name`'s files into <out_root>/Finished Mods/<mod_name>.zip.
+            export_root: Path = EXPORT_ROOT, choice: tuple = (None, None), chargen=None) -> int:
+    """Zip `mod_name`'s files into <out_root>/Finished Mods/<mod_name>.zip,
+    with the chargen menus of the game `chargen` (the config's when None).
 
     Every runtime is its own DLL, so a fault in one cannot take the others
     down; MorrowindRuntime links GPL-3.0 OpenMW, which stays out of the MIT
@@ -182,14 +184,14 @@ def package(out_root: Path, mod_name: str = MOD_NAME,
         else:
             print(f"  - {arc} (not built, skipped)")
     if mod_name == MOD_NAME:
-        menus = morrowind_menus(export_root, choice)
+        menus = morrowind_menus(export_root, choice, chargen)
         if menus is None:
             print("  - Morrowind menus (no Morrowind install registered, skipped)")
         else:
             style, icons = resolve(str(export_root), *choice)
             print(f"  menus: {style} look, {icons or 'no'} icons")
             members += [(str(arc), data) for arc, data in menus]
-        members += [(str(arc), data) for arc, data in chargen_table(export_root)]
+        members += [(str(arc), data) for arc, data in chargen_table(export_root, chargen)]
     write_mod_zip(zip_path, members, lambda _i, arc: print(f"  + {arc}"))
 
     size = zip_path.stat().st_size
@@ -215,12 +217,15 @@ def main() -> int:
                     help="The menus' look (default: the config's menuStyle)")
     ap.add_argument("--menu-icons", choices=ICON_SETS, default=None,
                     help="The menus' icons (default: the config's menuIcons)")
+    ap.add_argument("--chargen-source", metavar="PLUGIN", default=None,
+                    help="The exported game whose classes and birthsigns the "
+                         "chargen menus show (default: the config's chargenSource)")
     args = ap.parse_args()
     out_root = (Path(args.output_dir) if args.output_dir
                 else SCRIPT_DIR / "output")
     style, icons = configured_choice()
     return package(out_root, args.mod, Path(args.export_root),
-                   (args.menu_style or style, args.menu_icons or icons))
+                   (args.menu_style or style, args.menu_icons or icons), args.chargen_source)
 
 
 if __name__ == "__main__":

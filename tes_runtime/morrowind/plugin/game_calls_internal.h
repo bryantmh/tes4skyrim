@@ -53,14 +53,23 @@ bool Has3D(void* ref);
 // already holds.
 float DistanceBetween(void* from, void* to);
 bool StartQuest(void* form, bool* justStarted);
+// Sets the stage, unless the start already ran it as a start-up stage.
+bool SetStage(void* form, int stage, bool justStarted);
+// `spell` cast from `source` at `target`, posted. game_calls_spell.cpp.
+void CastForm(void* spell, void* source, void* target);
 // Puts `ref` at a position with a Z rotation in degrees. game_calls_move.cpp.
 void PlaceAt(void* ref, float x, float y, float z, float zRot);
 // Puts `ref` at a spot inside `place`, a CELL or a WORLDSPACE form, in ONE
 // engine move; false when `place` is neither. Game thread only.
 bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot);
+// A TES3 exterior cell's width, and the grid index a coordinate falls in.
+constexpr float kTes3CellSize = 8192.0f;
+int Tes3GridIndex(float v);
 // The cell the player stands in, or null before a game is loaded.
 void* PlayerCell();
 bool PlayerInInterior();
+// The name of the interior `ref` stands in; empty outdoors.
+std::string InteriorName(void* ref);
 // `ref`'s worldspace, null in an interior. game_calls_teleport.cpp.
 void* WorldSpaceOf(void* ref);
 // Where `ref` is as MoveInto takes it: its cell indoors, its worldspace outdoors.
@@ -82,8 +91,10 @@ void SendToMarker(const std::vector<void*>& refs, const FormRef& marker);
 std::vector<void*> PlayerFollowers();
 // After a script moved `actor` there: an `AiWander 0` package's marker follows
 // it, and a Travel or Escort goal left in another cell or out of OpenMW's range
-// stops walking it, as TES3 AI never leaves the actor's cell. Game thread only.
-void AiAfterScriptMove(void* actor, void* place, float x, float y, float z);
+// stops walking it, as TES3 AI never leaves the actor's cell. An authored
+// package left behind in another TES3 cell (`leftCell`) idles at the new spot
+// too. Game thread only.
+void AiAfterScriptMove(void* actor, void* place, float x, float y, float z, bool leftCell);
 
 // Each file resolves its own natives and supplies its own hooks.
 void InstallMoveCalls(GameHooks& hooks);
@@ -92,6 +103,8 @@ void InstallQueryCalls(GameHooks& hooks);
 // The spell natives: the actor's spell list, casting, and active effects.
 // See: docs/commentary/morrowind_runtime.md#spell-commands
 void InstallSpellCalls(GameHooks& hooks);
+// BecomeWerewolf and its kin on Skyrim's beast form. game_calls_werewolf.cpp.
+void InstallWerewolfCalls(GameHooks& hooks);
 // The player's factions onto the converted FACTs, and the tick's copy of the
 // state barks test into their GLOBs. game_calls_state.cpp.
 // See: docs/commentary/morrowind_runtime.md#published-state
@@ -151,6 +164,10 @@ float ActiveMagnitude(void* actor, int tes3Index, int attribute = -1);
 // one walk of the list for a caller that needs many sums. Game thread.
 void ForEachActiveEffect(void* actor,
                          const std::function<void(const RuntimeEffect&, float)>& fn);
+// Whether a live active effect on `actor` came from a spell whose FormID
+// `match` accepts. Game thread. game_calls_flight.cpp.
+bool AnyEffectSource(void* actor,
+                     const std::function<bool(std::uint32_t)>& match);
 // Morrowind's attribute effects on the player, and the skill cap on its
 // skill use and trainers. game_calls_attributes.cpp.
 // See: docs/commentary/morrowind_runtime.md#attribute-effects

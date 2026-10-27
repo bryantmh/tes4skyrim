@@ -1,7 +1,8 @@
 # Chapter V opens: two of the Kanzler's guards take the player to the old
 # magician Calisto, whom the Kanzler wants dead. Calisto is an old friend; one
 # guard kills the other, and Calisto leaves his house.
-# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Position stands in for the walks the guards take no part in; where they
+# follow, the player walks. Ref FormIDs carry Arktwend's slot 05.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from theater_guards
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -15,13 +16,10 @@ bye
 expect GetJournalIndex A_V_TheaterTreffen == 3
 end
 
-# Calisto's house near Castle Grel. Moving the guards stands in for them
-# following the player on the walk; they stay outside.
+# Calisto's house near Castle Grel, the guards following the player; they
+# stay outside.
 case theater_calisto_house
-run
-player->Position 33300 37150 123 0
-"TheaterTreffenWache02"->Position 33250 37100 123 0
-"TheaterTreffenWache01"->Position 33350 37100 123 0
+walk 33300 37150 123
 until 300 GetJournalIndex A_V_TheaterTreffen == 4
 activate 055BCF10
 until 300 GetPCCell "Calisto's House" == 1

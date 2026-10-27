@@ -71,6 +71,7 @@ public:
     RefId Race() const override { return race; }
     RefId Class() const override { return clazz; }
     bool  IsFemale() const override { return female; }
+    bool  IsWerewolf() const override { return false; }
     RefId PrimaryFaction() const override { return faction; }
     int   PrimaryFactionRank() const override { return factionRank; }
     int   PlayerFactionRank(const RefId& f) const override {

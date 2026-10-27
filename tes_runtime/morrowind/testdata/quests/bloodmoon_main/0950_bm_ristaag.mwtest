@@ -1,0 +1,540 @@
+# Bloodmoon "The Ristaag": Korst Wind-Eye sends the player to hunt with Rolf
+# Long-Tooth; Sattir and Grerid fall on the way, werewolves strike, and the
+# player kills the Spirit Bear and brings its heart back. The player keeps
+# within reach of Rolf by moving beside him (trackerScript pauses the hunt past
+# 500 units); the hunt must finish by daylight, so the player sleeps to morning
+# first. Ref FormIDs carry Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_ristaag
+# See docs/commentary/headless_testing.md#quest-runs
+
+case bm_ristaag
+run
+player->PositionCell 0 100 -216 180 "Skaal Village, Shaman's Hut"
+until 600 GetPCCell "Skaal Village, Shaman's Hut" == 1
+expect GameHour == -1
+talk korst wind-eye
+ask please the All-Maker
+expect GetJournalIndex BM_BearHunt1 == 10
+ask Ristaag
+expect GetJournalIndex BM_BearHunt1 == 15
+bye
+run
+player->Position -172076 196700 990 180
+until 600 "rolf long-tooth"->GetDistance player < 400
+talk rolf long-tooth
+ask Ristaag
+expect GetJournalIndex BM_BearHunt1 == 20
+ask ensure our success
+expect GetJournalIndex BM_BearHunt1 == 25
+bye
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+until 900 GetJournalIndex BM_BearHunt1 == 30
+bye
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+player->Position -172482 194911 700 0
+until 600 GetJournalIndex BM_BearHunt1 == 40
+talk rolf long-tooth
+expect GetJournalIndex BM_BearHunt1 == 45
+bye
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+until 900 GetJournalIndex BM_BearHunt1 == 50
+bye
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+player->Position -169821 193800 200 0
+until 600 GetJournalIndex BM_BearHunt1 == 55
+talk rolf long-tooth
+expect GetJournalIndex BM_BearHunt1 == 60
+bye
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+run
+set TestResult to ( "rolf long-tooth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( ( "rolf long-tooth"->GetPos z ) + 20 )
+player->SetPos z TestResult
+wait 30
+until 1800 GetJournalIndex BM_BearHunt1 == 70
+console 0644DCAB.kill
+until 300 GetJournalIndex BM_BearHunt1 == 75
+run
+"0644DCAB"->RemoveItem BM_bearheart_UNIQUE 1
+player->AddItem BM_bearheart_UNIQUE 1
+until 300 GetJournalIndex BM_BearHunt1 == 80
+run
+player->PositionCell 0 100 -216 180 "Skaal Village, Shaman's Hut"
+until 600 GetPCCell "Skaal Village, Shaman's Hut" == 1
+talk korst wind-eye
+ask Ristaag
+expect GetJournalIndex BM_BearHunt1 == 100
+bye
+end

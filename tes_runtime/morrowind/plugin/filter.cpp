@@ -130,7 +130,6 @@ float PlainValue(const Condition& cond, const ActorView& actor, bool* known) {
         // 🛑 Not modelled, and the answer is NO -- which is what keeps the
         // "Get away from me, vampire!" greeting off every ordinary NPC.
         case Fn_PcVampire:
-        case Fn_Werewolf:
         case Fn_PcCorprus:
         case Fn_PcCommonDisease:
         case Fn_PcBlightDisease:
@@ -152,6 +151,9 @@ float PlainValue(const Condition& cond, const ActorView& actor, bool* known) {
         case Fn_Reputation:
         case Fn_PcReputation:
             return 0.0f;
+        // OpenMW: an NPC speaker a script has turned.
+        case Fn_Werewolf:
+            return actor.IsNpc() && actor.IsWerewolf() ? 1.0f : 0.0f;
         // The actor's AI settings, which scripts set and dialogue tests back.
         case Fn_Fight:  return static_cast<float>(actor.AiSetting(kAiFight));
         case Fn_Hello:  return static_cast<float>(actor.AiSetting(kAiHello));

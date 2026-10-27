@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <fstream>
 #include <set>
 #include <string>
@@ -33,6 +34,8 @@ constexpr int kSettleTicks = 2;
 // How long a menu other than the conversation may hold a step that needs the
 // world before the case fails naming it, rather than the run hanging.
 constexpr int kHeldTicks = 300;
+// How long a `walk` may take: room for crossing a region on foot.
+constexpr int kWalkTicks = 9000;
 // The world settles this long after a load before the first case, as no
 // player acts in the first instant: a load door activated sooner is ignored.
 constexpr int kStartTicks = 60;
@@ -288,6 +291,31 @@ void Click(const TestStep& step) {
     }
 }
 
+// `walk x y z`: the player walks to the point in the current cell, as a player
+// would, so what follows or watches the player sees a walk and not a jump.
+bool Walked(const TestStep& step) {
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    if (!Hooks().playerWalk || !Hooks().playerWalkDone ||
+        std::sscanf(step.text.c_str(), "%f %f %f", &x, &y, &z) != 3) {
+        g_case.error = "walk needs x y z and the walk hooks";
+        return true;
+    }
+    if (g_case.ticksLeft < 0) {
+        Hooks().playerWalk(x, y, z);
+        g_case.ticksLeft = kWalkTicks;
+        return false;
+    }
+    if (Hooks().playerWalkDone()) {
+        g_case.ticksLeft = -1;
+        return true;
+    }
+    if (--g_case.ticksLeft > 0) return false;
+    g_case.ticksLeft = -1;
+    if (Hooks().playerWalkStop) Hooks().playerWalkStop();
+    g_case.error = "walk: the player never reached " + step.text;
+    return true;
+}
+
 // `console <command>`: the harness runs a Skyrim console command -- one that
 // does a player's action faster -- and the case goes on once it has.
 void AskHarness(const std::string& command) {
@@ -320,6 +348,8 @@ bool Advance(const TestCase& test, const TestStep& step) {
         case Kind::kConsole:
             AskHarness(step.text);
             return true;
+        case Kind::kWalk:
+            return Walked(step);
         case Kind::kButton:
         case Kind::kPick:
         case Kind::kClose:
@@ -394,7 +424,7 @@ void RunSteps(const TestCase& test, bool held) {
     while (g_case.step < test.steps.size() && g_case.error.empty()) {
         const TestStep& step = test.steps[g_case.step];
         const bool needsWorld = step.kind == Kind::kRun || step.kind == Kind::kActivate ||
-                                step.kind == Kind::kUntil ||
+                                step.kind == Kind::kUntil || step.kind == Kind::kWalk ||
                                 (step.kind == Kind::kTalk && g_case.ticksLeft < 0);
         if (held && !Talking() && needsWorld) {
             if (++g_case.heldTicks > kHeldTicks) g_case.error = "a menu holds the game";
@@ -414,7 +444,8 @@ void SetTestConversation(const TestConversation& conversation) { g_talk = conver
 std::vector<TestCase> ParseTestCases(std::istream& in) {
     static const std::set<std::string> kDirectives = {
         "case", "run", "wait", "expect", "talk", "ask", "choose", "bye", "button",
-        "activate", "until", "pick", "close", "take", "console", "persuade", "sleep", "end"};
+        "activate", "until", "pick", "close", "take", "console", "persuade", "sleep", "walk",
+        "end"};
     std::vector<TestCase> cases;
     TestStep* body = nullptr;
     std::string line;
@@ -438,7 +469,7 @@ std::vector<TestCase> ParseTestCases(std::istream& in) {
         const std::vector<std::string> kinds = {"run",  "wait",   "expect", "talk",  "ask",
                                                 "choose", "bye", "button", "activate", "until",
                                                 "pick", "close", "take", "console", "persuade",
-                                                "sleep"};
+                                                "sleep", "walk"};
         const auto at = std::find(kinds.begin(), kinds.end(), word);
         if (at == kinds.end()) {
             // A script line after a step opens its own body rather than vanishing.

@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 
 #include "addresses.h"
@@ -239,12 +240,36 @@ int SleepStopHook(void* sink, const void* event, void* source) {
     return g_sleepStop(sink, event, source);
 }
 
+// The actors struck by another actor they were not already fighting, by
+// runtime FormID: OpenMW's `CreatureStats::mAttacked`, set in `Npc::onHit` and
+// `Creature::onHit`, and cleared only when a witnessed crime is paid off. Kept
+// for the session, not saved (OpenMW saves it).
+// See: docs/commentary/morrowind_runtime.md#disease-queries
+std::set<std::uint32_t> g_attacked;
+
+// Main thread.
+void NoteAttacked(std::uint32_t target, std::uint32_t attackerId) {
+    void* victim = RefByRuntimeId(target);
+    void* attacker = attackerId ? RefByRuntimeId(attackerId) : nullptr;
+    if (!victim || !attacker || !IsActorRef(victim) || !IsActorRef(attacker)) return;
+    void* fighting = g_combatTarget ? g_combatTarget(PapyrusVm(), 0, victim) : nullptr;
+    if (fighting == attacker) return;
+    g_attacked.insert(target);
+}
+
+bool WasAttacked(const std::string& actor) {
+    void* ref = OwnerRef(actor);
+    return ref && g_attacked.count(FormIdOf(ref)) != 0;
+}
+
 // A hit lands: the target remembers what struck it, and a hit by the PLAYER
 // raises the target's `OnPCHitMe`, as OpenMW's `Npc::onHit` and
 // `Creature::onHit` do. Main thread.
-void NoteHit(std::uint32_t target, std::uint32_t source, bool byPlayer) {
+void NoteHit(std::uint32_t target, std::uint32_t source, bool byPlayer,
+             std::uint32_t attacker) {
     LogVerbose("hit: %08X struck by %08X%s", target, source, byPlayer ? " (player)" : "");
     if (source) g_lastHit[target] = source;
+    NoteAttacked(target, attacker);
     if (!byPlayer) return;
     if (ObjectScript* instance = InstanceForRef(target)) {
         instance->Events().pcHitMe = true;
@@ -259,7 +284,10 @@ int HitHook(void* sink, const void* event, void* source) {
         const std::uint32_t id = FormIdOf(target);
         const std::uint32_t by = *reinterpret_cast<const std::uint32_t*>(e + ids::kOffHitSource);
         const bool byPlayer = attacker && attacker == PlayerRef();
-        PostToMainThread([id, by, byPlayer]() { NoteHit(id, by, byPlayer); });
+        const std::uint32_t attackerId = attacker ? FormIdOf(attacker) : 0;
+        PostToMainThread([id, by, byPlayer, attackerId]() {
+            NoteHit(id, by, byPlayer, attackerId);
+        });
     }
     return g_hit(sink, event, source);
 }
@@ -407,6 +435,7 @@ void InstallQueryCalls(GameHooks& hooks) {
     hooks.running = ActorRunning;
     hooks.itemEquipped = ItemIsEquipped;
     hooks.hitOnMe = TakeHitBy;
+    hooks.attacked = WasAttacked;
     hooks.spellReadied = SpellIsReadied;
     hooks.applyMovementFlag = ApplyMovementFlag;
     hooks.resurrect = ResurrectActor;

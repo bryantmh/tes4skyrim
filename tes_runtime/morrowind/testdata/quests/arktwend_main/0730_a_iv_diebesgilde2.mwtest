@@ -1,7 +1,8 @@
 # Chapter IV, the Thieves Guild's second round: Tate takes the player to
 # Nembrest and dies on the bridge, the Masterthief turns out to play a double
 # game, and Madame Blanche sends the player after a merchant's savings book.
-# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Position stands in for the walks Tate takes no part in; where he follows, the
+# player walks. Ref FormIDs carry Arktwend's slot 05.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from tate_hire
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -29,11 +30,9 @@ until 300 GetPCCell "Stormwend, Thieves Guild" == 0
 until 900 "DIEBTate"->GetDistance player < 600
 end
 
-# The road to Nembrest; Tate stands in for having walked it beside the player.
+# The road to Nembrest, Tate beside the player.
 case tate_nembrest
-run
-player->Position 79600 19600 160 0
-"DIEBTate"->Position 79650 19650 160 0
+walk 79600 19600 160
 until 300 Diebesgildevar == 11
 until 600 "DIEBTate".State == 2
 until 300 MenuMode == 1

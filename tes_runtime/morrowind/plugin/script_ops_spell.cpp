@@ -173,6 +173,26 @@ class OpRemoveSoulGem : public Interpreter::Opcode1 {
     }
 };
 
+// `BecomeWerewolf` / `UndoWerewolf` on the player or any NPC.
+template <class R, bool kOn>
+class OpSetWerewolf : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string actor = R::Target(runtime);
+        if (Hooks().setWerewolf) Hooks().setWerewolf(actor, kOn);
+    }
+};
+
+// `IsWerewolf`: whether the last of the two above turned the actor.
+template <class R>
+class OpIsWerewolf : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string actor = R::Target(runtime);
+        runtime.push(Hooks().isWerewolf && Hooks().isWerewolf(actor) ? 1 : 0);
+    }
+};
+
+template <class R> using OpBecomeWerewolf = OpSetWerewolf<R, true>;
+template <class R> using OpUndoWerewolf = OpSetWerewolf<R, false>;
 template <class R> using OpAddSpell = OpChangeSpell<R, true>;
 template <class R> using OpRemoveSpell = OpChangeSpell<R, false>;
 template <class R> using OpCastAt = OpCast<R, false>;
@@ -199,6 +219,11 @@ void InstallSpellOps(OpcodeInstaller& into) {
                              M::opcodeGetEffectExplicit);
     InstallPair<OpGetSpellEffects>(into, M::opcodeGetSpellEffects,
                                    M::opcodeGetSpellEffectsExplicit);
+    InstallPair<OpBecomeWerewolf>(into, S::opcodeBecomeWerewolf,
+                                  S::opcodeBecomeWerewolfExplicit);
+    InstallPair<OpUndoWerewolf>(into, S::opcodeUndoWerewolf,
+                                S::opcodeUndoWerewolfExplicit);
+    InstallPair<OpIsWerewolf>(into, S::opcodeIsWerewolf, S::opcodeIsWerewolfExplicit);
     namespace C = Compiler::Container;
     InstallPair<OpAddSoulGem>(into, M::opcodeAddSoulGem,
                               M::opcodeAddSoulGemExplicit);

@@ -2,8 +2,10 @@
 # a high-born Telvanni bride, so the wise woman Sonummu Zabamat's plan passes a
 # slave, Falura Llervu, off as one: dressed, perfumed and bought from Savile
 # Imayn at Tel Aruhn, she is escorted to the ashkhan's yurt.
-# PositionCell and Position stand in for the walks, AddItem for buying the
-# clothes, perfume and her price, and the console's damageav for the fight
+# PositionCell and Position stand in for the player's travel; on the escort
+# back each Position step waits for Falura to catch up on her own, killing the
+# creatures on the way so she does not stop to fight them; AddItem buys
+# the clothes, perfume and her price, and the console's damageav for the fight
 # with Calvario; ref FormIDs carry Morrowind.esm's slot 05.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b3_task
 # See docs/commentary/headless_testing.md#quest-runs
@@ -91,9 +93,41 @@ choose 5
 bye
 until 300 "falura llervu"->GetCurrentAiPackage == 3
 run
-player->Position 76766 83714 860 200
-"falura llervu"->Position 76766 83814 860 200
-until 300 "falura llervu"->GetDistance player < 500
+player->Position 119237 51750 4000 0
+console 05AC6B55.kill
+console 05CDE7CD.kill
+until 3000 "falura llervu"->GetDistance player < 600
+player->Position 114241 55511 4000 0
+console 053BAE90.kill
+console 05D74070.kill
+until 3000 "falura llervu"->GetDistance player < 600
+player->Position 109244 59271 4000 0
+console 05D92CDB.kill
+console 053629A6.kill
+console 05E97020.kill
+until 3000 "falura llervu"->GetDistance player < 600
+player->Position 104247 63032 4000 0
+console 05883A77.kill
+console 05B26D65.kill
+until 3000 "falura llervu"->GetDistance player < 600
+player->Position 99251 66792 4000 0
+console 05A4D854.kill
+console 054E7794.kill
+until 3000 "falura llervu"->GetDistance player < 600
+player->Position 94254 70553 4000 0
+console 05428D4A.kill
+console 0541440D.kill
+until 3000 "falura llervu"->GetDistance player < 600
+player->Position 89258 74313 4000 0
+console 056C59A3.kill
+until 3000 "falura llervu"->GetDistance player < 600
+player->Position 84261 78073 1060 0
+console 0575BD2D.kill
+until 3000 "falura llervu"->GetDistance player < 600
+player->Position 79264 81834 1380 0
+until 3000 "falura llervu"->GetDistance player < 600
+player->Position 76766 83714 860 0
+until 3000 "falura llervu"->GetDistance player < 500
 console 05AB7B01.activate player
 until 600 GetPCCell "Zainab Camp, Ashkhan's Yurt" == 1
 until 900 GetJournalIndex B3_ZainabBride == 47

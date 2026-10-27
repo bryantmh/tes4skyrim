@@ -1,3 +1,5 @@
 fire bite=Test.esm|00000801|14,45
 no effect spell=Test.esm|00000802
 frost bite=Test.esm|00000803|16
+ataxia=Test.esm|00000804||3
+chanthrax blight=Test.esm|00000805|17|2

@@ -314,9 +314,15 @@ std::size_t SoundCount();
 struct SpellDef {
     FormRef form;
     std::vector<int> effects;
+    // The TES3 SPDT type (OpenMW's ESM::Spell::SpellType), -1 when unstaged.
+    int type = -1;
 
     bool Has(int index) const;
 };
+
+// TES3 spell types `GetCommonDisease` and `GetBlightDisease` sort by.
+constexpr int kSpellBlight = 2;
+constexpr int kSpellDisease = 3;
 
 // The spell a TES3 id names -- SPEL.txt. Null when the chain defines none,
 // which AddSpell and its kin treat as nothing to do.
@@ -326,6 +332,9 @@ std::size_t SpellCount();
 // Every staged spell whose effect list holds `index`, by TES3 id -- what
 // `RemoveEffects` dispels.
 std::vector<std::string> SpellsWithEffect(int index);
+
+// Every staged spell of that TES3 type, by TES3 id.
+std::vector<std::string> SpellsOfType(int type);
 
 // A magic effect by the name `GetEffect` writes, or by the TES3 INDEX
 // `RemoveEffects` writes -- MGEF.txt carries both keys for that reason.

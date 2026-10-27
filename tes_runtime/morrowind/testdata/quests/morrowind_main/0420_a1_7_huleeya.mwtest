@@ -39,7 +39,7 @@ console 05AC32C1.activate player
 until 600 GetPCCell "Vivec, Foreign Quarter Lower Waistworks" == 1
 until 900 "huleeya"->GetDistance player < 500
 run
-player->Position 2316 3800 13540 0
+player->PositionCell 2316 3800 13540 0 "Vivec, Foreign Quarter Lower Waistworks"
 until 1800 "huleeya"->GetDistance player < 500
 console 053F6059.activate player
 until 600 GetPCCell "Vivec, Jobasha's Rare Books" == 1

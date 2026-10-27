@@ -681,6 +681,9 @@ void LoadMagicRows(int layer, const std::string& pluginDir) {
                                std::atoi(n.c_str()));
                        }
                    }
+                   if (f.size() > 3 && !f[3].empty()) {
+                       def.type = std::atoi(f[3].c_str());
+                   }
                    g_spells.Add(layer, Lower(id), def);
                });
     ForEachRow(pluginDir + kFileEffects,
@@ -890,6 +893,15 @@ std::vector<std::string> SpellsWithEffect(int index) {
     g_spells.ForEachVisible(
         [&out, index](const std::string& id, const SpellDef& def, int) {
             if (def.Has(index)) out.push_back(id);
+        });
+    return out;
+}
+
+std::vector<std::string> SpellsOfType(int type) {
+    std::vector<std::string> out;
+    g_spells.ForEachVisible(
+        [&out, type](const std::string& id, const SpellDef& def, int) {
+            if (def.type == type) out.push_back(id);
         });
     return out;
 }

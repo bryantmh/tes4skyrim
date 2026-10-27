@@ -15,6 +15,7 @@ subsystems live:
 
 - [WATR — the DNAM offset trap](#watr-dnam-offset-trap)
 - [WATR — fields deliberately not carried](#watr-fields-not-carried)
+- [WRLD NAM2 — the water a worldspace naming none gets](#still-default-water)
 - [LSCR — NNAM is mandatory](#lscr-nnam-mandatory)
 
 ## WATR — the DNAM offset trap
@@ -62,6 +63,29 @@ record with a damage value but no flag is not meant to hurt.
 | `FNAM` bits above 0 | Bit 0 (Causes Damage) means the same in both games. TES4 bit 1 is "Reflective", which TES5 reassigned (bit 3 Enable Flowmap, bit 4 Blend Normals in SSE). Passing the raw byte would set flowmap/normal-blend bits at random, so only bit 0 is carried. |
 | `GNAM` / `NAM0` / `NAM1` | Required by the xEdit definition and present on all 34 vanilla records, always zeroed. TES4's Scroll X/Y Speed is NAM0's closest analogue, but the units differ by orders of magnitude — TES4 authors 0.0011 where vanilla NAM0 carries 0.22 — so it is not carried. |
 | `MNAM` / `TNAM` | TES5 marks MNAM "Material ID (Unused)" and every vanilla record that writes it writes a zero byte array, not the TES4 material string. TNAM took over as the material reference and is a MATT FormID; Skyrim ships no lava MATT and only 5 of 34 vanilla records set TNAM at all. Neither is emitted. |
+
+## <a id="still-default-water"></a>WRLD NAM2 — the water a worldspace naming none gets
+
+**Code:** `tes5_import/record_types/region.py::record_default_water`. **Status:
+not yet confirmed in game.**
+
+Skyrim's `DefaultWater` (0x18) carries a current: `NAM0` linear velocity
+(0.22, 0.22, 0) pushes every swimmer north-east. A worldspace with no `NAM2`
+used to fall back to it, so a swimmer drifted where the source never moved
+them: an idle player in Morrowind's sea crossed about 3,400 units in 300 fast
+ticks, faster than a following NPC swims. Neither source water has a current.
+TES4 has no velocity field, and Morrowind has no water record at all.
+
+- **A source whose masters or plugin author a WATR at raw 0x18** (Oblivion.esm's
+  `DefaultWater`) falls back to that record, converted like every WATR with
+  `NAM0` zeroed. 30 of Oblivion's 84 worldspaces name no water. That this
+  record is the TES4 engine's own fallback is assumed by analogy with
+  [DefaultClimate](#wrld-climate), not verified in Oblivion.exe.
+- **A source with none** (Morrowind) gets one generated `TES4DefaultWaterStill`:
+  Skyrim.esm's DefaultWater copied subrecord for subrecord with `NAM0`/`NAM1`
+  zeroed, so the sea looks the same and stands still.
+
+`NAM3` (LOD water) stays on vanilla 0x18; it is never swum in.
 
 ## LSCR — NNAM is mandatory
 <a id="lscr-nnam-mandatory"></a>

@@ -20,7 +20,7 @@ end
 # walk), reads the hatch tip and climbs out on deck.
 case chargen_hatch
 run
-player->Position 120 -40 180 0
+player->PositionCell 120 -40 180 0 "Imperial Prison Ship"
 button 0
 activate chargen_shipdoor
 until 600 GetPCCell "Imperial Prison Ship" == 0
@@ -40,7 +40,7 @@ case chargen_class
 activate "chargen customs door"
 until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 1
 run
-player->Position 160 -111 220 90
+player->PositionCell 160 -111 220 90 "Seyda Neen, Census and Excise Office"
 pick Warrior
 pick The Warrior
 button 0
@@ -49,30 +49,33 @@ button 0
 until 300 "chargen class".state == -1
 end
 
-# The papers on the table: read them, take them.
+# The papers on the table: read them, take them. Taking them (OnPCAdd) shows
+# the inventory tip, then the right-click tip.
 case chargen_papers
 run
-player->Position 160 -170 220 90
+player->PositionCell 160 -170 220 90 "Seyda Neen, Census and Excise Office"
 activate "chargen statssheet"
 take "chargen statssheet"
 close Book Menu
+button 0
+button 0
 until 300 player->GetItemCount "chargen statssheet" == 1
 end
 
 # The door guard sees the papers and unlocks the hall; out the far door.
 case chargen_hall
 run
-player->Position 100 140 220 0
+player->PositionCell 100 140 220 0 "Seyda Neen, Census and Excise Office"
 until 300 "chargen door hall"->GetLocked == 0
 activate "chargen door hall"
 run
-player->Position 760 900 260 90
+player->PositionCell 760 900 260 90 "Seyda Neen, Census and Excise Office"
 activate "chargen door exit"
 until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 0
 end
 
 # The courtyard: the map tip, and the ring from the barrel (taking it stands
-# in for the container menu).
+# in for the container menu). Taking it (OnPCAdd) shows three magic tips.
 case chargen_courtyard
 run
 player->Position -10700 -71900 200 0
@@ -80,6 +83,9 @@ button 0
 run
 "chargen barrel fatigue"->RemoveItem "ring_keley" 1
 player->AddItem "ring_keley" 1
+button 0
+button 0
+button 0
 until 60 player->GetItemCount "ring_keley" == 1
 end
 
@@ -90,7 +96,7 @@ case chargen_captain
 activate "chargen door captain"
 until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 1
 run
-player->Position 1200 -380 220 90
+player->PositionCell 1200 -380 220 90 "Seyda Neen, Census and Excise Office"
 button 0
 talk chargen captain
 ask Morrowind

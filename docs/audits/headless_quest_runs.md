@@ -107,6 +107,9 @@ change.
 | Case files | A script line after a step opens its own `run` body | The parser silently dropped lines with no `run` in front, so cases skipped their moves (`mord_city`) | `test_runner.cpp` `ParseTestCases`, test in `script_test.cpp` | Test harness only |
 | Test tool | `mwtest` stops with `GAME EXITED` when the game dies | A dead game left the runner waiting out its whole timeout | `test_instance.py` `wait_results` | Test harness only |
 | Test tool | A failed run copies the runtime log to `_profile/mwtest_failed.log` | The next launch overwrote the only evidence of a failure | `test_instance.py` `keep_failed_log` | Test harness only |
+| Test tool | The instance and the package take the chargen classes and birthsigns from the game being installed (`--chargen-source` on the packager) | With no `chargenSource` set, both took Arktwend's lists for a Morrowind-only instance | `test_instance.py` `link_runtime`, `package_runtime_dll.py` | Test harness and packaging |
+| Morrowind main quest (rerun 2026-10-27) | **Runtime:** `GetAttacked`, `GetCommonDisease`, `GetBlightDisease` ported. Diseases walk the actor's active effects for a source spell of that TES3 type, as Skyrim's GetDisease condition does; the sidecar's SPEL rows now carry the TES3 SPDT type (the export folds blight into disease) | Unported; a disease or attacked test always read 0 | `script_ops_query.cpp`, `game_calls_spell.cpp`, `game_calls_flight.cpp`, `game_calls_query.cpp`, `morrowind_sidecar.py`, `morrowind_sidecar_source.py`. Tests in `script_test.cpp`, `test_morrowind_spell_kinds.py` | Not yet run in a quest. Needs a re-import of every TES3 plugin |
+| Morrowind main quest (rerun 2026-10-27) | Cases: interior moves use `PositionCell`; chargen presses the OnPCAdd tip boxes; `b2_escort` walks the player to the statue | `Position` now moves an indoor player outdoors, as Morrowind.exe and OpenMW do; OnPCAdd now raises the papers' and ring's tips; Sinnammu's `AiFollowCell` ends only near its point (OpenMW `AiFollow::execute`) | `morrowind_main/*.mwtest` | Test cases only. Every case then passed, chargen to Azura, in segments |
 
 With the guard rule in, `sohn_guard` through `final_arkt` (72 cases) passed in one continuous run,
 then all 191 cases from New Game.
@@ -156,6 +159,16 @@ passed. Always build the DLL itself (`build.bat`, then `build.bat test`).
   apiece), including the full stretch from `sohn_guard`. The logs were lost to the next launch, which is why
   failed runs now keep theirs. Cause unknown.
 
+**Morrowind: open**
+
+- **The game exits silently when the level-up menu opens** (`a1_v_levels`), twice in a row without
+  a debugger. With cdb attached it did not crash, and the run went on to `b2_escort`. The next
+  segment passed its level-ups too. Timing-dependent; no dump yet.
+- **`HurtStandingActor`, `GetStandingPC`, `GetStandingActor` are not ported.** Skyrim has no
+  standing-on query. CommonLibSSE names `bhkCharacterController::supportBody` at +0x2B0, but no
+  function of the controller reads or writes a pointer there on 1.5.97 or 1.6.1170, and +0x2B8
+  (CommonLib's float `bumpedForce`) is an integer counter in both. Not built on.
+
 **Engine behavior not matched yet**
 
 - **Bystanders joining a fight** (Judas in the Patriarch Inn) came from the same tier-2 mapping
@@ -163,15 +176,17 @@ passed. Always build the DLL itself (`build.bat`, then `build.bat test`).
   a TES3 actor has no ally relation, so it no longer finds a side to join. Not re-measured.
 
 - `OnPCDrop` is still not raised. `OnPCAdd` and `OnPCHitMe` are fixed above.
-- Dagoth Ur's second form falls into the pit. Levitation isn't converted.
+- Dagoth Ur's second form falls into the pit. Not levitation (converted, and confirmed in game):
+  `dagoth_ur_2` is a walking creature (flags 0x40, no Flies bit) with no Levitate spell, so he
+  should stand on the ledge. Not investigated.
 - A dead actor that a script then disables reports full health from `GetHealth` (Dagoth Ur read
   436). Not explained.
 - The console's `kill` leaves health untouched. Cases use `damageav health 10000`.
 - A world item and its carried copy keep separate script variables.
 - `ChangeWeather` does nothing (Arktwend VerlorenerSohn 41).
 - Unported commands seen in runs: `GetStandingPC`, `HurtStandingActor` (~20,000 calls per heart
-  run), `GetBlightDisease`, `GetCommonDisease`, `GetCollidingActor`, `EnableRest`,
-  `PCForce1stPerson`, `tcl`. Arktwend adds `GetAttacked`, `StreamMusic` and `BecomeWerewolf`.
+  run), `GetCollidingActor`, `EnableRest`, `PCForce1stPerson`, `tcl`, and the chargen menu
+  enables (`EnableInventoryMenu` and the like). Arktwend adds `StreamMusic` and `BecomeWerewolf`.
 
 **Side effects of shipped fixes**
 
@@ -188,9 +203,10 @@ passed. Always build the DLL itself (`build.bat`, then `build.bat test`).
   undecided.
 - Oblivion has not been rebuilt for the door-measurement change.
 - TR, Tamriel_Data and the compat patch were last imported before the exterior-names table, the
-  sound-id fix and statics in the reference table. Morrowind and Bloodmoon also need a re-import
-  for the statics.
-- Every TES3 plugin except Arktwend needs a **re-export and re-import** for the disposition
+  sound-id fix and statics in the reference table. Bloodmoon also needs a re-import for the
+  statics.
+- Every TES3 plugin except Arktwend and Morrowind.esm (rebuilt 2026-10-27, no FormID moved, five
+  new factions) needs a **re-export and re-import** for the disposition
   factions (`ACBS.Disposition` is new in the export; without it every actor reads 50), and a
   re-import for the guard and hostile-creature factions and the autocalc pools.
 - Morrowind's chargen case has not been rerun since the `MenuMode` latch and `OnPCAdd` changes.

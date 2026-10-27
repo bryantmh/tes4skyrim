@@ -8,7 +8,9 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "glide.h"
@@ -37,6 +39,10 @@ using AliasRefFn = void* (*)(void* vm, std::uint32_t stack, void* alias);
 // Actor.GetCurrentPackage() -> the PACK the actor runs, for
 // GetCurrentAiPackage.
 using CurrentPackageFn = void* (*)(void* vm, std::uint32_t stack, void* actor);
+// Game.SetPlayerAIDriven(bool): a global, so the tag is null.
+using AiDrivenFn = void (*)(void* vm, std::uint32_t stack, void* tag, bool on);
+// Game.ForceThirdPerson(), another global.
+using GlobalCallFn = void (*)(void* vm, std::uint32_t stack, void* tag);
 
 // XMarker, Skyrim.esm 0x3B: the invisible anchor a travel or sandbox package
 // aims at, since a package destination cannot be raw coordinates.
@@ -57,6 +63,11 @@ AliasRefFn       g_aliasReference = nullptr;
 CurrentPackageFn g_currentPackage = nullptr;
 RefCallFn        g_aliasClear = nullptr;
 RefCallFn        g_evaluatePackage = nullptr;
+AiDrivenFn       g_playerAiDriven = nullptr;
+GlobalCallFn     g_forceThirdPerson = nullptr;
+
+// The test runner's walking player, as the AI commands name it.
+constexpr const char* kPlayerId = "player";
 
 // The AI commands. Each fills the QUEST ALIAS that the import hung a real
 // PACK record off, and the engine runs an actual package from there -- so the
@@ -167,6 +178,16 @@ void ReleaseAiActor(void* ref) {
     });
 }
 
+// How many packages each actor has been ordered onto, so an order posted
+// earlier can tell a later one came after it.
+std::mutex g_aiOrdersLock;
+std::unordered_map<void*, unsigned> g_aiOrders;
+
+unsigned AiOrdersOf(void* ref) {
+    const std::lock_guard<std::mutex> hold(g_aiOrdersLock);
+    return g_aiOrders[ref];
+}
+
 // Starts one package kind on `actor`, aimed at `at`: the first EMPTY slot of
 // that kind takes both, and the engine picks the PACK up from the actor's
 // alias. One alias holds one reference, so the pool is what lets several
@@ -177,6 +198,10 @@ void ReleaseAiActor(void* ref) {
 // See: docs/commentary/morrowind_runtime.md#forcerefto-must-be-posted
 bool RunAiPackageOn(const char* kind, const std::string& actor, void* ref, void* at,
                     void* where = nullptr) {
+    {
+        const std::lock_guard<std::mutex> hold(g_aiOrdersLock);
+        ++g_aiOrders[ref];
+    }
     if (!ref || !at || !g_forceRefTo) {
         Log("ai: %s cannot %s -- %s", actor.c_str(), kind,
             !ref ? "no reference for it"
@@ -195,7 +220,9 @@ bool RunAiPackageOn(const char* kind, const std::string& actor, void* ref, void*
             const std::string slot = AiSlot(kind, n);
             void* alias = AiAlias(slot + "Actor");
             void* target = AiAlias(slot + "Target");
-            if (!alias || !target || AiAliasHolds(alias)) continue;
+            void* holder = alias ? AiAliasHolds(alias) : nullptr;
+            // A dead actor's package is over, so its slot serves the next order.
+            if (!alias || !target || (holder && !IsDead(holder))) continue;
             g_forceRefTo(PapyrusVm(), 0, target, at);
             // 🛑 The destination is filled BEFORE the actor's alias, which is
             // what makes the engine evaluate packages: a package that starts
@@ -206,6 +233,7 @@ bool RunAiPackageOn(const char* kind, const std::string& actor, void* ref, void*
                 }
             }
             g_forceRefTo(PapyrusVm(), 0, alias, ref);
+            if (ref == PlayerRef() && g_evaluatePackage) g_evaluatePackage(PapyrusVm(), 0, ref);
             const FormRef* staged = FindAiPack(slot);
             void* pack = staged ? Form(staged) : nullptr;
             Log("ai: %08X took %s slot %d, whose PACK is %08X",
@@ -228,8 +256,8 @@ bool RunAiPackage(const char* kind, const std::string& actor, void* at) {
 constexpr float kArrivedDistance = 128.0f;
 
 // The RUNTIME FormID of the marker each actor was last sent to, so arrival can
-// be measured. Only the kinds that HAVE a destination appear here -- follow
-// and activate track a moving target and end on their own terms.
+// be measured. Only the kinds that HAVE a destination marker appear here --
+// a follow keeps its point in FollowGoals, and activate ends on its own terms.
 //
 // 🛑 The id, not the pointer: the engine frees a reference, and a cached
 // pointer outlives it while this is polled every tick.
@@ -242,8 +270,33 @@ void RememberAiDestination(const std::string& actor, void* marker) {
     if (marker) AiDestinations()[actor] = FormIdOf(marker);
 }
 
+// A follow's point, and the interior it counts in (empty: outdoors only).
+struct FollowGoal {
+    std::string cell;
+    float x, y, z;
+};
+
+std::map<std::string, FollowGoal>& FollowGoals() {
+    static std::map<std::string, FollowGoal> goals;
+    return goals;
+}
+
 void ForgetAiDestination(const std::string& actor) {
     AiDestinations().erase(actor);
+    FollowGoals().erase(actor);
+}
+
+// OpenMW's AiFollow::execute: close to the point, outdoors for a plain follow,
+// or inside the named cell for the `...Cell` form.
+// See: docs/commentary/morrowind_runtime.md#a-package-finishes-when-it-arrives
+bool ReachedFollowPoint(const std::string& actor) {
+    const auto it = FollowGoals().find(actor);
+    void* ref = it == FollowGoals().end() ? nullptr : OwnerRef(actor);
+    if (!ref || _stricmp(InteriorName(ref).c_str(), it->second.cell.c_str()) != 0) return false;
+    const float dx = RefPositionAxis(PapyrusVm(), ref, 0) - it->second.x;
+    const float dy = RefPositionAxis(PapyrusVm(), ref, 1) - it->second.y;
+    const float dz = RefPositionAxis(PapyrusVm(), ref, 2) - it->second.z;
+    return dx * dx + dy * dy + dz * dz <= kArrivedDistance * kArrivedDistance;
 }
 
 // How far apart two references stand on the ground plane.
@@ -261,6 +314,7 @@ float HorizontalApart(void* a, void* b) {
 // still reached.
 // See: docs/commentary/morrowind_runtime.md#a-package-finishes-when-it-arrives
 bool ReachedAiDestination(const std::string& actor) {
+    if (ReachedFollowPoint(actor)) return true;
     const auto it = AiDestinations().find(actor);
     if (it == AiDestinations().end()) return false;
     void* ref = OwnerRef(actor);
@@ -356,15 +410,14 @@ void AiWanderAt(const std::string& actor, float range, float duration) {
 // `AiFollow id ...`: the Follow package handles distance, doors and pathing.
 // An empty `target` clears the alias, which ends the package.
 void AiFollowActor(const std::string& actor, const std::string& target,
-                   float duration, float x, float y, float z) {
-    (void)x; (void)y; (void)z;
+                   const std::string& cell, float duration, float x, float y,
+                   float z) {
     if (target.empty()) {
         StopAiPackage(actor);
         return;
     }
-    // Following ends when the script says so, never by arriving: the target
-    // moves, so there is no point to measure against.
     ForgetAiDestination(actor);
+    FollowGoals()[actor] = {cell, x, y, z};
     if (RunAiPackage("follow", actor, OwnerRef(target))) {
         Log("ai: %s follows %s for %g h", actor.c_str(), target.c_str(),
             duration);
@@ -597,6 +650,37 @@ bool AfterMoveIn(const std::string& kind, const std::string& slot, void* actor,
     return true;
 }
 
+// Whether `actor` runs any package a script gave it.
+bool HoldsAiSlot(void* actor) {
+    const int slots = AiAliasIndex("slots");
+    for (int i = 0; i < kAiKindCount; ++i) {
+        for (int n = 0; n < slots; ++n) {
+            if (AiAliasHolds(AiAlias(AiSlot(kAiKinds[i], n) + "Actor")) == actor) return true;
+        }
+    }
+    return false;
+}
+
+// 🛑 An actor on its AUTHORED package that a script sends to another TES3 cell
+// stays there: OpenMW's AiWander keeps its centre in the old cell and finds no
+// point to walk to, while Skyrim's "near editor location" walks it home --
+// Korst Wind-Eye left Lake Fjalding for his hut. It takes an AiWander 0 here,
+// unless the script that moved it gave it a package of its own since.
+void StillAtNewSpot(void* actor) {
+    char id[16];
+    std::snprintf(id, sizeof id, "%08X", FormIdOf(actor));
+    const std::string name = id;
+    const unsigned orders = AiOrdersOf(actor);
+    AfterPostedMoves([actor, name, orders]() {
+        if (AiOrdersOf(actor) != orders) return;
+        void* made = SpawnAiMarker("wander", name, actor);
+        if (!made) return;
+        Log("ai: %s was moved out of its cell -- it idles there", name.c_str());
+        State().SetVar(kStillWanderOwner, MarkerKey(made), 1.0f);
+        RunAiPackageOn("wander", name, actor, made);
+    });
+}
+
 }  // namespace
 
 // 🛑 A moved actor re-evaluates its package, posted after the move lands.
@@ -604,19 +688,23 @@ bool AfterMoveIn(const std::string& kind, const std::string& slot, void* actor,
 // so a stand-still actor a script moves walks back to its old spot -- the
 // Masterthief left the Ruins of Storm for the Thieves Guild. TES3 has no such
 // anchor: an actor without AI stays where the script put it.
-void AiAfterScriptMove(void* actor, void* place, float x, float y, float z) {
-    if (actor && actor != PlayerRef() && IsActorRef(actor) && g_evaluatePackage) {
+void AiAfterScriptMove(void* actor, void* place, float x, float y, float z, bool leftCell) {
+    if (!actor || actor == PlayerRef() || !IsActorRef(actor)) return;
+    if (g_evaluatePackage) {
         PostToMainThread([actor]() { g_evaluatePackage(PapyrusVm(), 0, actor); });
     }
     const int slots = AiAliasIndex("slots");
     for (const char* kind : {"wander", "travel", "escort"}) {
-        for (int n = 0; actor && n < slots; ++n) {
+        for (int n = 0; n < slots; ++n) {
             const std::string slot = AiSlot(kind, n);
             if (AiAliasHolds(AiAlias(slot + "Actor")) != actor) continue;
-            if (AfterMoveIn(kind, slot, actor, place, x, y, z)) ReleaseAiActor(actor);
+            if (!AfterMoveIn(kind, slot, actor, place, x, y, z)) return;
+            ReleaseAiActor(actor);
+            if (leftCell) StillAtNewSpot(actor);
             return;
         }
     }
+    if (leftCell && !IsDead(actor) && !HoldsAiSlot(actor)) StillAtNewSpot(actor);
 }
 
 namespace {
@@ -648,8 +736,77 @@ void ReportAliasLayoutMismatch() {
     }
 }
 
+// Hands the player to packages, or back to the controls.
+void SetPlayerAiDriven(bool on) {
+    if (!g_playerAiDriven) return;
+    PostToMainThread([on]() { g_playerAiDriven(PapyrusVm(), 0, nullptr, on); });
+}
+
+// The point a walk heads for once the camera has settled.
+struct PendingWalk {
+    int settleTicks = 0;
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    int ticks = 0;
+};
+
+// Ticks between the walk's progress lines, which show where a stalled walk stopped.
+constexpr int kWalkLogTicks = 300;
+
+PendingWalk& Walk() {
+    static PendingWalk walk;
+    return walk;
+}
+
+// 🛑 Ticks between the third-person switch and the travel package: a package
+// that starts during the camera switch leaves the player standing for good.
+// See: docs/commentary/morrowind_runtime.md#the-walk-step
+constexpr int kWalkSettleTicks = 30;
+
+// The test runner's `walk x y z`: the player walks there on the engine's own
+// pathing, AI driven in third person as the vanilla wedding drives it, so a
+// follower sees a real walk. The package starts from PlayerWalkDone.
+void PlayerWalkTo(float x, float y, float z) {
+    if (g_forceThirdPerson) PostToMainThread([]() { g_forceThirdPerson(PapyrusVm(), 0, nullptr); });
+    SetPlayerAiDriven(true);
+    Walk() = {kWalkSettleTicks, x, y, z, 0};
+}
+
+// Ends the walk, arrived or not, and gives the player back the controls.
+void PlayerWalkStop() {
+    Walk().settleTicks = 0;
+    void* player = PlayerRef();
+    void* pack = player && g_currentPackage ? g_currentPackage(PapyrusVm(), 0, player) : nullptr;
+    Log("ai: the player's walk ends at (%g, %g), running PACK %08X",
+        RefPositionAxis(PapyrusVm(), player, 0), RefPositionAxis(PapyrusVm(), player, 1),
+        pack ? FormIdOf(pack) : 0);
+    StopAiPackage(kPlayerId);
+    SetPlayerAiDriven(false);
+}
+
+// Whether the walk has arrived, which ends it.
+bool PlayerWalkDone() {
+    PendingWalk& walk = Walk();
+    if (walk.settleTicks > 0) {
+        if (--walk.settleTicks == 0) AiTravelTo(kPlayerId, walk.x, walk.y, walk.z);
+        return false;
+    }
+    if (++walk.ticks % kWalkLogTicks == 0) {
+        void* player = PlayerRef();
+        Log("ai: the player walks at (%g, %g, %g)", RefPositionAxis(PapyrusVm(), player, 0),
+            RefPositionAxis(PapyrusVm(), player, 1), RefPositionAxis(PapyrusVm(), player, 2));
+    }
+    if (!ReachedAiDestination(kPlayerId)) return false;
+    PlayerWalkStop();
+    return true;
+}
+
 void InstallAiCalls(GameHooks& hooks) {
     hooks.followerCount = FollowerCount;
+    g_playerAiDriven = Native<AiDrivenFn>("Game.SetPlayerAIDriven", ids::kGameSetPlayerAIDriven);
+    g_forceThirdPerson = Native<GlobalCallFn>("Game.ForceThirdPerson", ids::kGameForceThirdPerson);
+    hooks.playerWalk = PlayerWalkTo;
+    hooks.playerWalkDone = PlayerWalkDone;
+    hooks.playerWalkStop = PlayerWalkStop;
     g_questGetAlias = Native<GetAliasFn>("Quest.GetAlias",
                                          ids::kQuestGetAlias);
     g_forceRefTo = Native<ForceRefToFn>("ReferenceAlias.ForceRefTo",

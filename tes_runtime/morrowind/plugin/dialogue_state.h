@@ -278,10 +278,17 @@ struct GameHooks {
     void (*aiWander)(const std::string& actor, float range,
                      float duration) = nullptr;
     // `target` is who to follow; an empty one CLEARS the alias, which ends it.
+    // `cell` is the `...Cell` form's interior, empty for plain `AiFollow`.
     void (*aiFollow)(const std::string& actor, const std::string& target,
-                     float duration, float x, float y, float z) = nullptr;
+                     const std::string& cell, float duration, float x, float y,
+                     float z) = nullptr;
     void (*aiEscort)(const std::string& actor, const std::string& target,
                      float duration, float x, float y, float z) = nullptr;
+    // The test runner's `walk`: the player walks to a point in the current
+    // cell; `playerWalkDone` is true once there (and ends it), `Stop` gives up.
+    void (*playerWalk)(float x, float y, float z) = nullptr;
+    bool (*playerWalkDone)() = nullptr;
+    void (*playerWalkStop)() = nullptr;
     void (*aiActivate)(const std::string& actor,
                        const std::string& object) = nullptr;
     // `Face x y`: turns the actor toward a world point.
@@ -292,6 +299,13 @@ struct GameHooks {
     // `GetAiPackageDone`: whether the actor has finished the package a script
     // gave it, i.e. it no longer runs one of ours.
     bool (*packageDone)(const std::string& actor) = nullptr;
+    // `BecomeWerewolf` (`on`) / `UndoWerewolf`, on Skyrim's own beast form, and
+    // `IsWerewolf`, which reads back what the last of them asked.
+    void (*setWerewolf)(const std::string& actor, bool on) = nullptr;
+    bool (*isWerewolf)(const std::string& actor) = nullptr;
+    // Once a tick of unpaused play: keeps the player's beast form until a
+    // script undoes it, as TES3's does.
+    void (*werewolfTick)() = nullptr;
     // The one-call world QUERIES: each is a single Skyrim native on a
     // reference, or on the player when the command names nobody.
     // See: docs/commentary/morrowind_runtime.md#the-query-commands
@@ -461,6 +475,14 @@ struct GameHooks {
     void (*glideRef)(std::uint32_t runtimeFormId, const float pose[6],
                      float seconds) = nullptr;
     bool (*inCombat)(std::uint32_t runtimeFormId) = nullptr;
+    // `GetAttacked`: an actor struck by another it was not already fighting
+    // stays attacked, as OpenMW's `CreatureStats::mAttacked`.
+    // See: docs/commentary/morrowind_runtime.md#disease-queries
+    bool (*attacked)(const std::string& actor) = nullptr;
+    // `GetCommonDisease` / `GetBlightDisease`: does an active effect on the
+    // actor come from a staged spell of that TES3 type (kSpellDisease or
+    // kSpellBlight).
+    bool (*hasDisease)(const std::string& actor, int tes3Type) = nullptr;
 };
 
 // The loop count `PlayGroup` passes: a looping group repeats until replaced.

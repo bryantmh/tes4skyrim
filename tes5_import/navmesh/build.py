@@ -53,14 +53,14 @@ def teleport_door_positions(refr_recs):
 
 def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
                   land_rec=None, origin_x=0.0, origin_y=0.0, budget=None,
-                  doors=None, ledges_out=None, door_bases=None, lone=()):
+                  doors=None, ledges_out=None, door_bases=None, lone=(), water_z=None):
     """Build a navmesh for one cell.  Returns (verts3d, tris) or ([], []).
 
     doors: [(x, y, z, rot_z, is_teleport, width), ...] door REFRs (teleport AND
     interior).  When None, teleport doors are recovered from XTEL alone.
     door_bases: low-24 DOOR base FormIDs, whose panel collision is EXCLUDED.
-    lone: edgeless nodes that still get a disc.  Drop-down (Ledge Up/Down)
-    pairs go to `ledges_out`, keeping the (verts, tris) return intact.
+    lone: edgeless nodes that still get a disc.  water_z: the cell's water
+    height, or None.  Drop-down (Ledge Up/Down) pairs go to `ledges_out`.
     See: docs/commentary/tes5_import_navmesh.md#ledges-are-returned-out-of-band
     """
     if not nodes:
@@ -71,12 +71,12 @@ def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
         verts, tris, ledges = corridor.build_corridors(
             refr_recs, base_model_by_fid, get_collision, nodes, edges,
             land_rec=land_rec, origin_x=origin_x, origin_y=origin_y, doors=doors,
-            door_bases=door_bases, lone=lone)
+            door_bases=door_bases, lone=lone, water_z=water_z)
     else:
         verts, tris, ledges = build_lattice(
             refr_recs, base_model_by_fid, get_collision, nodes, edges,
             land_rec=land_rec, origin_x=origin_x, origin_y=origin_y, doors=doors,
-            door_bases=door_bases)
+            door_bases=door_bases, water_z=water_z)
     if ledges_out is not None:
         ledges_out.extend(ledges)
     return verts, tris

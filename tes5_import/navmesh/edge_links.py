@@ -277,6 +277,17 @@ def _drop_stale_links(view, ours) -> None:
         view.dirty = True
 
 
+def master_view(master_index, fid):
+    """(view, subs before NVNM, subs after) of a master's NAVM, or None when unreadable."""
+    blob, prefix, suffix = extract_nvnm(master_index.record(fid))
+    if blob is None:
+        return None
+    try:
+        return NavMeshView(fid, blob), prefix, suffix
+    except (struct.error, IndexError):
+        return None
+
+
 def _master_neighbour_views(views, master_index, master_navms):
     """Decode the MASTER meshes bordering ours; return {cell: view}.
 
@@ -304,18 +315,12 @@ def _master_neighbour_views(views, master_index, master_navms):
         if not fid:
             missing += 1
             continue
-        blob, prefix, suffix = extract_nvnm(master_index.record(fid))
-        if blob is None:
+        entry = master_view(master_index, fid)
+        if entry is None:
             no_record += 1
-            continue
-        try:
-            view = NavMeshView(fid, blob)
-        except (struct.error, IndexError):
-            no_record += 1
-            continue
-        if view.exterior:
-            _drop_stale_links(view, ours)
-            out[cell] = (view, prefix, suffix)
+        elif entry[0].exterior:
+            _drop_stale_links(entry[0], ours)
+            out[cell] = entry
     if missing or no_record:
         print(f"    Master neighbours: {len(out)} loaded, {missing} cell(s) "
               f"with no master navmesh, {no_record} unreadable")
@@ -348,7 +353,7 @@ def build_edge_links(navm_cache: dict, verbose: bool = True,
     Returns the number of links created.
     See: docs/commentary/tes5_import_navmesh.md#cross-plugin-edge-links
     """
-    views, holders = _exterior_views(navm_cache)
+    views, holders = exterior_views(navm_cache)
     if relinked_masters is None:
         relinked_masters = []
     masters = {}
@@ -373,7 +378,7 @@ def build_edge_links(navm_cache: dict, verbose: bool = True,
     return made
 
 
-def _exterior_views(navm_cache: dict) -> tuple:
+def exterior_views(navm_cache: dict) -> tuple:
     """({(wrld, gx, gy, fid): view}, {same key: (cache key, prefix, suffix, meta)}) per exterior mesh.
 
     Keyed by mesh, not cell: FO3/FNV author up to 8 navmeshes in one cell.

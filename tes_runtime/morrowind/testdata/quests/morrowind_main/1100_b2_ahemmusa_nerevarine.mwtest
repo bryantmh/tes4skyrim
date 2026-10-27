@@ -1,9 +1,11 @@
 # B2 "Ahemmusa Nerevarine": the wise woman Sinnammu Mirpal wants the ruins of
 # Ald Daedroth made a safe refuge for her tribe, and to be brought there before
 # the great statue of the inner shrine.
-# PositionCell and Position stand in for the walks, Sinnammu's Position for her
-# keeping up on the long one, and the console's advskill for training
-# Speechcraft; ref FormIDs carry Morrowind.esm's slot 05.
+# PositionCell stands in for the walks she takes no part in; where she follows,
+# the player moves in Position steps she must catch up to on her own (an
+# AI-driven player does not steer in water and deadlocks against a follower in
+# its path), killing the creatures on the way. Ref FormIDs carry Morrowind.esm's
+# slot 05.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b2_meet
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -57,6 +59,7 @@ end
 
 # Asked to come, she follows the player out of her yurt, over the water and
 # through the shrine's doors to the statue, and names the player Nerevarine.
+# Her script ends the walk near the statue, so the player leads her there.
 case b2_escort
 run
 player->PositionCell -130 630 -349 0 "Ahemmusa Camp, Wise Woman's Yurt"
@@ -70,15 +73,54 @@ expect "sinnammu mirpal"->GetCurrentAiPackage == 3
 console 05CD72DF.activate player
 until 600 GetPCCell "Ahemmusa Camp, Wise Woman's Yurt" == 0
 until 900 "sinnammu mirpal"->GetDistance player < 500
-run
-player->Position 94552 167550 1164 0
-"sinnammu mirpal"->Position 94552 167450 1164 0
-until 300 "sinnammu mirpal"->GetDistance player < 500
+console 0545A87A.kill
+console 054F600A.kill
+console 05D85846.kill
+player->Position 95564 136909 650 0
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 96100 138067 380 0
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 96869 138836 190 0
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 96644 141628 0 0
+console 05AE3C7B.kill
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 96354 145217 0 0
+console 059F1607.kill
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 96032 149205 0 0
+console 05DD082E.kill
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 95807 151997 0 0
+console 05E2D8D9.kill
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 95453 156383 0 0
+console 059DFAEC.kill
+console 05BE814E.kill
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 95196 159574 0 0
+console 05A2F58C.kill
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 95003 161967 0 0
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 94842 163961 640 0
+console 054803CD.kill
+console 05559817.kill
+console 05BB7739.kill
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 94777 164758 990 0
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 94681 165955 1230 0
+until 900 "sinnammu mirpal"->GetDistance player < 600
+player->Position 94552 167450 1220 0
+until 900 "sinnammu mirpal"->GetDistance player < 500
 console 059CC9D1.activate player
 until 600 GetPCCell "Ald Daedroth, Outer Shrine" == 1
 until 900 "sinnammu mirpal"->GetDistance player < 1000
 console 05428857.activate player
 until 600 GetPCCell "Ald Daedroth, Inner Shrine" == 1
+player->PositionCell 4471 3620 60 0 "Ald Daedroth, Inner Shrine"
+until 900 "sinnammu mirpal"->GetDistance player < 600
 until 1800 GetJournalIndex B2_AhemmusaSafe == 40
 until 600 MenuMode == 1
 ask name you Nerevarine

@@ -72,14 +72,15 @@ template <class R, bool Escort>
 class OpAiFollow : public Interpreter::Opcode1 {
 public:
     static void Apply(const std::string& actor, const std::string& target,
-                      float duration, float x, float y, float z) {
+                      const std::string& cell, float duration, float x, float y,
+                      float z) {
         ReleaseNpcHold(actor);
         if (Escort) {
             if (Hooks().aiEscort) {
                 Hooks().aiEscort(actor, target, duration, x, y, z);
             }
         } else if (Hooks().aiFollow) {
-            Hooks().aiFollow(actor, target, duration, x, y, z);
+            Hooks().aiFollow(actor, target, cell, duration, x, y, z);
         }
     }
 
@@ -92,25 +93,24 @@ private:
         const float y = PopFloat(runtime);
         const float z = PopFloat(runtime);
         DropOptional(runtime, optional);
-        Apply(actor, target, duration, x, y, z);
+        Apply(actor, target, std::string(), duration, x, y, z);
     }
 };
 
-// The `...Cell` forms name the cell between the id and the duration. The cell
-// only bounds where the package gives up, which a Skyrim follow package does
-// by distance instead, so it is popped and dropped.
+// The `...Cell` forms name the cell between the id and the duration. A follow
+// ends near its point only in that cell (OpenMW's AiFollow::execute).
 template <class R, bool Escort>
 class OpAiFollowCell : public Interpreter::Opcode1 {
     void execute(Interpreter::Runtime& runtime, unsigned int optional) override {
         const std::string actor = R::Target(runtime);
         const std::string target = PopString(runtime);
-        PopString(runtime);
+        const std::string cell = PopString(runtime);
         const float duration = PopFloat(runtime);
         const float x = PopFloat(runtime);
         const float y = PopFloat(runtime);
         const float z = PopFloat(runtime);
         DropOptional(runtime, optional);
-        OpAiFollow<R, Escort>::Apply(actor, target, duration, x, y, z);
+        OpAiFollow<R, Escort>::Apply(actor, target, cell, duration, x, y, z);
     }
 };
 

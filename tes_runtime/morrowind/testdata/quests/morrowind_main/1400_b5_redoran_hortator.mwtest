@@ -3,8 +3,11 @@
 # Manor; his word wins Arobar, Llethri, Morvayn and Ramoran; Bolvyn Venim
 # never agrees and must be beaten in a duel in the Vivec Arena Pit. Then
 # Sarethi names the player Hortator and gives the Ring of the Hortator.
-# PositionCell stands in for the walks (and Varvur's following), the
-# console's damageav for the duel; ref FormIDs carry Morrowind.esm's slot 05.
+# PositionCell stands in for the walks Varvur takes no part in and the
+# console's damageav for the duel; where he follows, the player moves in
+# PositionCell steps he must catch up to on his own (an AI-driven player
+# deadlocks against a follower in its path) and takes the doors. Ref FormIDs
+# carry Morrowind.esm's slot 05.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b5_sarethi
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -21,22 +24,35 @@ bye
 end
 
 # Varvur follows the player home; his script finishes the rescue when he is
-# near his father, and Sarethi then backs the player.
+# near his father, and Sarethi then backs the player. The player unlocks his
+# cell's door on the way in, which PositionCell skips past.
 case b5_varvur
 run
 player->PositionCell 900 -1080 -381 90 "Ald-ruhn, Venim Manor Right Wing"
 until 600 GetPCCell "Ald-ruhn, Venim Manor Right Wing" == 1
+console 05419D1B.unlock
 talk varvur sarethi
 ask travel together
 choose 1
 expect GetJournalIndex HR_RescueSarethi == 50
 bye
 until 300 "varvur sarethi"->GetCurrentAiPackage == 3
-run
-player->PositionCell 143 1885 -368 0 "Ald-ruhn, Sarethi Manor"
+player->PositionCell -256 576 128 0 "Ald-ruhn, Venim Manor Right Wing"
+until 900 "varvur sarethi"->GetDistance player < 600
+activate 05A29DF5
+until 600 GetPCCell "Ald-ruhn, Venim Manor Entrance" == 1
+until 900 "varvur sarethi"->GetDistance player < 600
+player->PositionCell 0 -272 16 0 "Ald-ruhn, Venim Manor Entrance"
+until 900 "varvur sarethi"->GetDistance player < 600
+activate 05968CEE
+until 600 GetPCCell "Ald-ruhn, Manor District" == 1
+until 900 "varvur sarethi"->GetDistance player < 600
+player->PositionCell -1545 -313 84 0 "Ald-ruhn, Manor District"
+until 1500 "varvur sarethi"->GetDistance player < 600
+activate 059809FD
 until 600 GetPCCell "Ald-ruhn, Sarethi Manor" == 1
-run
-"varvur sarethi"->PositionCell 143 1835 -368 0 "Ald-ruhn, Sarethi Manor"
+until 900 "varvur sarethi"->GetDistance player < 600
+player->PositionCell 143 1885 -368 0 "Ald-ruhn, Sarethi Manor"
 until 900 GetJournalIndex HR_RescueSarethi == 70
 talk athyn sarethi
 ask Redoran Hortator

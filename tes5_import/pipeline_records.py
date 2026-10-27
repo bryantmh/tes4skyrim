@@ -53,8 +53,11 @@ from .base.owned_records import (
 )
 from .navmesh.navi import NAVI_SINGLETON_FID, build_navi_record
 from .navmesh import pool as navm_pool
+from .navmesh.edge_links import build_edge_links
 from .navmesh.lattice.build import set_activators
 from .actors.lava_placement import LavaPlanner
+from .record_types.region import record_default_water
+from asset_convert.sources.skyrim_assets import find_skyrim_data
 from .base.locations import build_marker_locations
 from .base.master_export import records_of, values_of
 from .record_types.world import (
@@ -157,6 +160,8 @@ def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
                   for sig in sorted(simple_types)
                   for rec in st.by_type[sig]]
     _record_climates(st)
+    record_default_water(st.by_type, getattr(st.ctx, 'master_export', None), st.writer,
+                         find_skyrim_data())
 
     for sig, target_sig, rec in work_items:
         converter = IMPORT_DISPATCH[sig]
@@ -379,12 +384,14 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
     set_activators(acti_fids)
     st.navm_metas = []
 
+    _mi = getattr(st.ctx, 'master_index', None) if st.ctx else None
+    _mx = getattr(st.ctx, 'master_export', None) if st.ctx else None
+    master_navms = navm_pool.master_navm_grid(_mx, _mi)
     st.navm_cache = navm_pool.precompute_navmeshes(
         st.by_type, st.writer, st.base_model_by_fid, st.door_fids,
         collision_cache=navm_pool.collision_cache_chain(export_dir),
-        master_index=getattr(st.ctx, 'master_index', None) if st.ctx else None,
-        master_export=getattr(st.ctx, 'master_export', None) if st.ctx else None,
-        activator_fids=acti_fids)
+        master_index=_mi, master_export=_mx, activator_fids=acti_fids,
+        master_navms=master_navms)
 
     _dump_to = os.environ.get('TESCONV_DUMP_NAVM_CACHE', '').strip()
     if _dump_to:
@@ -394,19 +401,7 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
         print(f"  [debug] navm_cache dumped to {_dump_to} "
               f"({len(st.navm_cache)} entries)")
 
-    from .navmesh.edge_links import build_edge_links
-    _t_el = time.time()
-    _mi = getattr(st.ctx, 'master_index', None) if st.ctx else None
-    _relinked = []
-    build_edge_links(
-        st.navm_cache, master_index=_mi,
-        master_navms=navm_pool.master_navm_grid(
-            getattr(st.ctx, 'master_export', None) if st.ctx else None,
-            _mi) if st.navm_cache else {},
-        relinked_masters=_relinked)
-    if st.ctx is not None:
-        st.ctx.relinked_master_navms = _relinked
-    print(f"    Edge links: {time.time() - _t_el:.1f}s")
+    _link_navmeshes(st, _mi, master_navms if st.navm_cache else {})
 
     from .navmesh.split import split_disconnected_interiors
     _t_sp = time.time()
@@ -425,6 +420,17 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
     print(f"  Navmesh door links: {len(door_xndp)} doors bound to a "
           f"navmesh triangle (XNDP)")
     phase_done('navmesh generation')
+
+
+def _link_navmeshes(st, master_index, master_navms) -> None:
+    """Stitch the built exterior navmeshes across cell seams, masters' included."""
+    t0 = time.time()
+    relinked = []
+    build_edge_links(st.navm_cache, master_index=master_index,
+                     master_navms=master_navms, relinked_masters=relinked)
+    if st.ctx is not None:
+        st.ctx.relinked_master_navms = relinked
+    print(f"    Edge links: {time.time() - t0:.1f}s")
 
 
 def run_record_phases(st, export_dir: str, phase_done,
@@ -454,6 +460,7 @@ def run_record_phases(st, export_dir: str, phase_done,
         extents = _merge_world_extents(st.output_root, extents)
     if extents:
         set_world_land_extents(extents)
+    move_persistent_refs(st.by_type, getattr(st.ctx, 'master_export', None))
 
     if st.ctx:
         unattached = build_nested_overrides(
@@ -492,7 +499,6 @@ def _build_navi(st) -> None:
         n_edge = sum(len(m.get('edge_link_fids') or ()) for m in st.navm_metas)
         n_door = sum(len(m.get('door_refs') or ()) for m in st.navm_metas)
         from .navmesh.navi import read_master_nvpp
-        from asset_convert.sources.skyrim_assets import find_skyrim_data
         master_nvpp = read_master_nvpp(find_skyrim_data())
         navi_bytes = build_navi_record(NAVI_SINGLETON_FID, st.navm_metas,
                                        master_nvpp=master_nvpp)
@@ -804,18 +810,26 @@ def _pack_exterior_cell(cell_rec, sub_parts, ctx) -> int:
     return converted + 1
 
 
-def move_persistent_refs(exterior_cells, pcell_fid, ctx) -> None:
-    """Move each exterior cell's persistent refs into the world's persistent
-    cell, where Skyrim.esm and both DLCs keep every one; the navmeshes are built.
+def move_persistent_refs(by_type: dict, master_export) -> int:
+    """Re-parent each exterior cell's persistent refs onto its world's one
+    persistent cell (this plugin's, else a master's), where Skyrim.esm and both
+    DLCs keep every one; returns the count.  Runs once the navmeshes are built.
     See: docs/commentary/tes5_import_world.md#exterior-persistent-refs-live-in-the-persistent-cell
     """
-    for table in (ctx['refr_by_cell'], ctx['achr_by_cell']):
-        for cell in exterior_cells:
-            fid = get_formid(cell, 'FormID')
-            moved = [rec for rec in table.get(fid, []) if _is_persistent(rec)]
-            if moved:
-                table[fid] = [rec for rec in table[fid] if not _is_persistent(rec)]
-                table[pcell_fid] = table.get(pcell_fid, []) + moved
+    pcells, world_of = defaultdict(dict), {}
+    for cell in values_of(master_export, 'CELL') + by_type.get('CELL', []):
+        wrld = get_formid(cell, 'ParentWRLD')
+        if wrld and _is_persistent(cell):
+            pcells[wrld][get_formid(cell, 'FormID')] = cell.get('FormID')
+        elif wrld:
+            world_of[get_formid(cell, 'FormID')] = wrld
+    moved = 0
+    for rec in by_type.get('REFR', []) + by_type.get('ACHR', []) + by_type.get('ACRE', []):
+        target = pcells.get(world_of.get(get_formid(rec, 'ParentCELL')), {})
+        if _is_persistent(rec) and len(target) == 1:
+            rec['ParentCELL'] = next(iter(target.values()))
+            moved += 1
+    return moved
 
 
 def _build_one_world(wrld_fid, wrld_rec, anchor_wrld, ctx):
@@ -839,8 +853,6 @@ def _build_one_world(wrld_fid, wrld_rec, anchor_wrld, ctx):
         else:
             navm_pool.ensure_cell_grid(cell)
             exterior_cells.append(cell)
-    if len(persistent_cells) == 1:
-        move_persistent_refs(exterior_cells, get_formid(persistent_cells[0], 'FormID'), ctx)
 
     for persistent_cell in persistent_cells:
         pcell_fid = get_formid(persistent_cell, 'FormID')

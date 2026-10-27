@@ -94,9 +94,13 @@ def test_a_script_named_id_ships_its_first_placement_persistent(tmp_path):
 
 
 def test_exterior_persistent_refs_move_into_the_persistent_cell():
-    """A grid cell's persistent ref joins the world's persistent cell; its temporary one stays."""
-    grid, pcell = {'FormID': '00000C01'}, 0x0D01
-    kept, moved = {'RecordFlags': '0'}, {'RecordFlags': str(REFR_PERSISTENT)}
-    ctx = {'refr_by_cell': {0x0C01: [kept, moved]}, 'achr_by_cell': {}}
-    move_persistent_refs([grid], pcell, ctx)
-    assert ctx['refr_by_cell'] == {0x0C01: [kept], pcell: [moved]}
+    """A grid cell's persistent ref joins the world's persistent cell, a master's included."""
+    grid = {'FormID': '00000C01', 'ParentWRLD': '00000A01', 'RecordFlags': '0'}
+    pcell = {'Signature': 'CELL', 'FormID': '00000D01', 'ParentWRLD': '00000A01',
+             'RecordFlags': '1024'}
+    kept = {'RecordFlags': '0', 'ParentCELL': '00000C01'}
+    moved = {'RecordFlags': str(REFR_PERSISTENT), 'ParentCELL': '00000C01'}
+    for own, master in (([grid, pcell], None), ([grid], {0x0D01: pcell})):
+        moved['ParentCELL'] = '00000C01'
+        assert move_persistent_refs({'CELL': own, 'REFR': [kept, moved]}, master) == 1
+        assert (kept['ParentCELL'], moved['ParentCELL']) == ('00000C01', '00000D01')

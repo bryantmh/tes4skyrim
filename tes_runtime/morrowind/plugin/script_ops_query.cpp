@@ -16,6 +16,7 @@
 
 #include "dialogue_state.h"
 #include "object_tick.h"
+#include "script_tables.h"
 #include "script_ops.h"
 
 namespace tesruntime::mw {
@@ -176,6 +177,20 @@ class OpFall : public Interpreter::Opcode0 {
     }
 };
 
+// `GetCommonDisease` / `GetBlightDisease`: 1 when the actor carries a spell of
+// that TES3 type; OpenMW answers 0 for anything that is not an actor.
+// See: docs/commentary/morrowind_runtime.md#disease-queries
+template <class R, int Type>
+class OpHasDisease : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string actor = R::Target(runtime);
+        runtime.push(Hooks().hasDisease && Hooks().hasDisease(actor, Type) ? 1 : 0);
+    }
+};
+
+template <class R> using OpGetCommonDisease = OpHasDisease<R, kSpellDisease>;
+template <class R> using OpGetBlightDisease = OpHasDisease<R, kSpellBlight>;
+
 template <class R> using OpForceSneak = OpSetMovementFlag<R, true>;
 template <class R> using OpClearSneak = OpSetMovementFlag<R, false>;
 
@@ -202,6 +217,13 @@ void InstallQueryOps(OpcodeInstaller& into) {
         M::opcodeGetWeaponDrawn);
     into.Real<OpActorQuery<Explicit, &GameHooks::weaponDrawn>>(
         M::opcodeGetWeaponDrawnExplicit);
+    into.Real<OpActorQuery<Implicit, &GameHooks::attacked>>(M::opcodeGetAttacked);
+    into.Real<OpActorQuery<Explicit, &GameHooks::attacked>>(
+        M::opcodeGetAttackedExplicit);
+    InstallPair<OpGetCommonDisease>(into, S::opcodeGetCommonDisease,
+                                    S::opcodeGetCommonDiseaseExplicit);
+    InstallPair<OpGetBlightDisease>(into, S::opcodeGetBlightDisease,
+                                    S::opcodeGetBlightDiseaseExplicit);
     into.Real<OpPlayerQuery<&GameHooks::sneaking>>(C::opcodeGetPcSneaking);
     into.Real<OpPlayerQuery<&GameHooks::running>>(C::opcodeGetPcRunning);
     into.Real<OpActorQuery<Implicit, &GameHooks::spellReadied>>(

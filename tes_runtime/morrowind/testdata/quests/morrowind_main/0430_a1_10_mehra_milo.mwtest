@@ -19,7 +19,7 @@ end
 # never by a response, so a player cannot learn it; Caius does not need it.
 case a1_10_talk
 run
-player->Position -6 1680 -110 0
+player->PositionCell -6 1680 -110 0 "Vivec, Library of Vivec"
 talk mehra milo
 expect GetJournalIndex A1_10_MehraMilo == 20
 ask Progress of Truth

@@ -8,6 +8,7 @@ worse, get stale geometry:
   * one changed mesh must invalidate only the cells that place it,
   * the pre-push gate must fire for every file that can change cached geometry.
 """
+import contextlib
 import glob
 import json
 import os
@@ -1469,8 +1470,8 @@ def test_import_proves_on_the_pool_not_in_the_parent(monkeypatch):
                         lambda *a: ('dir', 'tag'))
     monkeypatch.setattr(navm_pool, 'navm_worker_count', lambda n: 4)
     monkeypatch.setattr(navm_verify, 'init_context', lambda *a, **k: None)
-    monkeypatch.setattr(navm_pool, '_run_inline', lambda jobs: {})
-    monkeypatch.setattr(navm_pool, '_run_pooled', lambda *a: {})
+    monkeypatch.setattr(navm_pool, '_pool', lambda *a: contextlib.nullcontext())
+    monkeypatch.setattr(navm_pool, '_run_jobs', lambda *a: {})
     monkeypatch.setattr(navm_pool, 'get_formid_index_offset', lambda: 0)
     monkeypatch.setattr(navm_pool, 'get_injected_formids', lambda: {})
     monkeypatch.setattr(navm_pool, 'stamp_navmesh_cache_tag', lambda *a: None)

@@ -29,6 +29,7 @@ public:
     RefId Race() const override;
     RefId Class() const override;
     bool  IsFemale() const override;
+    bool  IsWerewolf() const override;
 
     RefId PrimaryFaction() const override;
     int   PrimaryFactionRank() const override;

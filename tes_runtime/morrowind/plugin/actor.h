@@ -31,6 +31,8 @@ public:
     virtual RefId Race() const = 0;
     virtual RefId Class() const = 0;
     virtual bool  IsFemale() const = 0;
+    // Whether a script has changed this actor into a werewolf.
+    virtual bool  IsWerewolf() const = 0;
 
     // --- faction --------------------------------------------------------
     virtual RefId PrimaryFaction() const = 0;

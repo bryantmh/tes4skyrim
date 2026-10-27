@@ -35,9 +35,6 @@ enum TeleportEffect { kMark = 60, kRecall = 61, kDivine = 62, kAlmsivi = 63 };
 constexpr const char* kDivineKind = "divine";
 constexpr const char* kTempleKind = "temple";
 
-// A TES3 exterior cell's width, which OpenMW's nearest-marker ring counts in.
-constexpr float kCellSize = 8192.0f;
-
 constexpr const char* kPlayerId = "player";
 
 using RefFormFn = void* (*)(void* vm, std::uint32_t stack, void* ref);
@@ -117,8 +114,6 @@ bool PlayerSpot(Spot* out) {
     return true;
 }
 
-int GridIndex(float v) { return static_cast<int>(std::floor(v / kCellSize)); }
-
 // How far round a ring of cells `size` across a spot on its edge lies, walking
 // SW -> SE -> NE -> NW from the south-west corner.
 int EdgeDistance(int column, int row, int size) {
@@ -133,16 +128,16 @@ int EdgeDistance(int column, int row, int size) {
 // it, the tie going to the first met walking the ring's edge. A walled city
 // and its parent world count as one, as they share coordinates.
 const LiveMarker* NearestMarker(const std::string& kind, const Spot& at) {
-    const int px = GridIndex(at.x);
-    const int py = GridIndex(at.y);
+    const int px = Tes3GridIndex(at.x);
+    const int py = Tes3GridIndex(at.y);
     const std::uint32_t root = RootOf(at.world);
     const LiveMarker* best = nullptr;
     int bestRing = INT_MAX;
     int bestEdge = INT_MAX;
     for (const LiveMarker& marker : g_markers) {
         if (marker.row.kind != kind || marker.root != root) continue;
-        const int dx = GridIndex(marker.row.x) - px;
-        const int dy = GridIndex(marker.row.y) - py;
+        const int dx = Tes3GridIndex(marker.row.x) - px;
+        const int dy = Tes3GridIndex(marker.row.y) - py;
         const int ring = std::max(std::abs(dx), std::abs(dy)) * 2;
         if (ring == 0) return &marker;
         const int edge = EdgeDistance(ring / 2 + dx, ring / 2 + dy, ring);

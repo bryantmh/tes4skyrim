@@ -46,6 +46,6 @@ def test_plugin_with_scripts_gets_the_pool(tmp_path):
     (export / 'SCPT.txt').write_text('', encoding='utf-8')
     writer = _Writer()
     packs = write_ai_packages(writer, str(side), 'Mod.esp', str(export))
-    assert packs == 40
-    assert writer.records.count('PACK') == 40 and writer.records.count('QUST') == 1
+    assert packs == 160
+    assert writer.records.count('PACK') == 160 and writer.records.count('QUST') == 1
     assert os.path.isfile(side / ALIASES_TABLE)

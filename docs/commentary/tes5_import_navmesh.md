@@ -979,6 +979,78 @@ split reads it. Measured on Morrowind-Morroblivion-Compatibility.esp: navmesh
 phase 31.2 s → 15.9 s, output byte-identical. The rest builds indexes later
 phases need; master edge relinking is untouched.
 
+#### <a id="seeded-cells"></a>Cells with no pathgrid are seeded from their neighbours' seams
+
+**Code:** `navmesh/seeding.py`, `navmesh/pool.py::_seed_empty_cells`. **Status:
+not yet confirmed in game.**
+
+Jobs come from pathgrids, so an exterior land cell without one got no navmesh.
+Measured on the built ESMs: Morrowind.esm had navmesh in 357 of its 5,168 LAND
+cells and its exterior graph split into 462 pieces, the largest holding 5.1% of
+the triangles; Arktwend 775 of 5,180, largest piece 38.2%. No follower, escort or
+travel package could cross that ground (Ahemmusa Camp to Ald Daedroth,
+`REACHABLE: False` in `reach.py`).
+
+After the pathgrid jobs build, each wave takes every still-empty land cell that a
+built mesh reaches on a seam -- its border edges on the shared edge, exactly
+where an edge link can form -- and seeds the cell there (one seed per run of
+border edges, one more per 512u of a long run). In the worker the seeds flood a
+512u lattice over the cell's walkable ground: a node needs a floor and no wall in
+the actor's body, a link needs a straight walk with no step over `MAX_CLIMB` per
+32u and no wall. The reached nodes become a synthetic pathgrid, keyed by the
+cell's own FormID, that builds through `convert_PGRD` like an authored one; its
+mesh's far seams seed the next wave. A cell its master already navmeshed is left
+to the master; the masters' meshes also seed.
+
+Seeding stays inside the authored playable area, decided once before the first
+wave from WRLD and REGN records with the masters' merged in:
+
+- **A Small world (TES4 WRLD `DATA.Flags` 0x01) is never seeded.** Oblivion
+  flags every city, Imperial City district, Oblivion realm, Camoran's Paradise,
+  Pale Pass and test world this way, and their pathgrids already cover what is
+  played. Unflagged: Tamriel, SEWorld, the Fringe, and Morrowind's WrldMorrowind.
+  That also keeps navmesh off realm lava, since every lava realm is a small world.
+- **Where a worldspace authors Border regions (REGN record flag 0x40), a cell
+  is seeded only if a corner, edge midpoint or its centre lies in one of their
+  areas.** The areas enclose the playable land: 4,395 of Tamriel's 4,832
+  pathgrid navmeshes and all of SEWorld's and Camoran's Paradise's lie inside.
+- **Land is always meshed; open sea only near it.** A reached cell with any LAND
+  vertex above its water height is seeded with no limit, so a follower can walk
+  every stretch of land the flood reaches. A cell that is all water is seeded
+  only within `MAX_SEA_CELLS` = 2 cells of one with land. Measured from LAND
+  heights, every cell of the strait between the Ahemmusa coast (23,33) and Ald
+  Daedroth (23,40) has land above the water, so even a cap of 1 joins them; 2
+  leaves a margin for unmapped crossings. Unbounded, Oblivion's flood ran 90
+  waves and seeded 20,323 cells (ESM 559 MB -> 1,055 MB, about 3,100 s more
+  navmesh time), 8,778 of Tamriel's 9,185 past the border. A flat cap of three
+  waves was tried and dropped: it left Morrowind's pathgrid-less wilderness
+  (most of the Grazelands between Tel Aruhn and Zainab Camp) with no mesh, so
+  an escort could not follow there.
+
+Water needs nothing extra: terrain under water is walkable LAND, and
+`_compute_water_flags` marks every triangle below the cell's water height.
+Vanilla puts its water triangles on the bed, not the surface -- of 300,472
+water-flagged triangles in Skyrim.esm, 0.9% are flat, and most meshes' water
+triangles span hundreds of units of depth.
+
+`seeding.py` is outside the cache tag: its output is the synthetic pathgrid,
+which every seeded cell's geometry hash already covers.
+
+#### <a id="exterior-water-height"></a>A watered exterior cell with no XCLW still has water
+
+**Code:** `navmesh/pool.py::_with_water`, `record_types/world.py::cell_water_height`.
+
+`_cell_frame` flags water triangles below the cell's `XCLW.WaterHeight`, and
+exterior cells rarely author one: they render their water at the worldspace
+default. Morrowind's exterior cells carry the has-water flag and no `XCLW` at
+all, and Oblivion writes the -2147483648 "use the default" sentinel, so no
+exterior triangle in those cells was ever water-flagged. The parent now gives
+each such job's copy of its cell the height the engine renders its water at
+(`cell_water_height`: the cell's own valid `XCLW`, else the worldspace's
+`DNAM.DefaultWaterHeight`, else 0.0 -- the rule the CELL and WRLD writers and
+the lava planes already follow). A cell with a valid height of its own is
+untouched. Flags are applied after the geometry cache, so no cached cell changes.
+
 #### <a id="refs-overhang-their-cell"></a>A quarter of exterior refs overhang their own cell
 
 **Code:** `navmesh/pool.py::_overhang_index`. A cell's geometry was gathered

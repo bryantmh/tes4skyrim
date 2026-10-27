@@ -2,8 +2,9 @@
 # the past -- the Witch King's childhood in the Old Forest, the storm on the
 # city of Storm and Emperor Goth's camp, the dwarves' war under the Demon
 # King, and the burning galleon -- and sets them down in Melee.
-# Position stands in for the walks, damage for the fights and moving Daras
-# for him following; ref FormIDs carry Arktwend's slot 05.
+# Position stands in for the walks Daras takes no part in and damage for the
+# fights; once he follows, the player walks and takes the doors. Ref FormIDs
+# carry Arktwend's slot 05.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from void_time
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -108,9 +109,10 @@ end
 
 # Mert at the smelter sends everyone to work.
 case dwarves_mert
-run
-player->PositionCell 4086 100 11330 0 "Dwarven Smelter Cave"
-"VDaras"->PositionCell 4086 50 11330 0 "Dwarven Smelter Cave"
+walk 7060 9212 757
+activate 0563B701
+until 600 GetPCCell "Dwarven Smelter Cave" == 1
+walk 4086 100 11330
 until 600 MenuMode == 1
 wait 60
 bye
@@ -119,9 +121,10 @@ end
 
 # Eight picks from the storeroom.
 case dwarves_picks
-run
-player->PositionCell -1000 1750 -700 0 "Dwarven Storage Cave"
-"VDaras"->PositionCell -950 1750 -700 0 "Dwarven Storage Cave"
+walk 3063 -576 11357
+activate 05605F11
+until 600 GetPCCell "Dwarven Storage Cave" == 1
+walk -1000 1750 -700
 take 058A1D3E
 take 05ED31CF
 take 05A11E48
@@ -133,27 +136,28 @@ take 054579B1
 until 300 GetJournalIndex A_VIII_ZwergenKrieg == 3
 end
 
-# The lift down the shaft.
+# Back through the smelter to the lift down the shaft.
 case dwarves_shaft
-run
-player->PositionCell 4448 4100 124029 0 "Dwarven Shaft"
+walk 1966 2454 -1148
+activate 055E7346
+until 600 GetPCCell "Dwarven Smelter Cave" == 1
+walk 4088 8127 11365
+activate 054F19F2
+until 600 GetPCCell "Dwarven Shaft" == 1
+walk 4448 4100 124029
 button 0
 until 600 player->GetPos z < 10000
 end
 
-# Mao in the canyon of Grul. Daras follows only once the player's move has
-# landed: his companion script warps him back to the player's last spot when
-# the player is far from it and from him, and a move in the same tick races it.
-# Mao's script has Daras greet first ("That's Mao there", ending in Goodbye);
-# only once the player leaves it does Daras's own script, which returns in
-# menu mode, write journal 4 and greet again.
+# Mao in the canyon of Grul, out of the shaft's foot. Mao's script has Daras
+# greet first ("That's Mao there", ending in Goodbye); only once the player
+# leaves it does Daras's own script, which returns in menu mode, write journal
+# 4 and greet again.
 case dwarves_mao
-run
-player->PositionCell 5303 6700 12673 0 "Subterranean Canyon of Grul"
-until 300 GetPCCell "Subterranean Canyon of Grul" == 1
-wait 30
-run
-"VDaras"->PositionCell 5303 6650 12673 0 "Subterranean Canyon of Grul"
+walk 3175 3145 69
+activate 05D7D816
+until 600 GetPCCell "Subterranean Canyon of Grul" == 1
+walk 5303 6700 12673
 until 600 MenuMode == 1
 wait 30
 bye

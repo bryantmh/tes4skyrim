@@ -94,7 +94,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\scope.cpp ^
    plugin\game_calls_state.cpp plugin\game_calls_crime.cpp plugin\game_calls_combat.cpp ^
    plugin\game_calls_teleport.cpp plugin\game_calls_flight.cpp plugin\game_calls_still.cpp ^
    plugin\game_calls_sanctuary.cpp plugin\game_calls_anim.cpp ^
-   plugin\game_calls_attributes.cpp ^
+   plugin\game_calls_attributes.cpp plugin\game_calls_werewolf.cpp ^
    "%COMMON%\gamebryo_sequence.cpp" ^
    plugin\cosave.cpp plugin\main_thread.cpp /Fo:obj\
 if errorlevel 1 (

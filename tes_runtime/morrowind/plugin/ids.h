@@ -744,6 +744,11 @@ constexpr std::uint64_t kGameAdvanceSkill = 55449;
 // See: docs/commentary/morrowind_runtime.md#leveling
 constexpr std::uint64_t kActorGetBaseValue = 54678;
 constexpr std::uint64_t kActorGetRace = 54930;
+// Actor.SetRace(Race) (0x9ea6b0 on 1.6.1170, 0x98ba00 on 1.6.659), the
+// callback its registration beside 'SetRace' under 'Actor' stores; it opens
+// with `cmp r9,[r8+0x1f8]`, the race GetRace reads. None puts back the race
+// the actor was made with.
+constexpr std::uint64_t kActorSetRace = 54758;
 
 // Game.ShowTrainingMenu(Actor) (0xa127a0 on 1.6.1170, 0x9b3af0 on 1.6.659),
 // the r9 of its registration beside 'ShowTrainingMenu' under 'Game'. GLOBAL:
@@ -808,6 +813,13 @@ constexpr int kFirstSkillValue = 6;
 // read off the callback, which tests them at [rsp+0x50] through [rsp+0x80].
 // See: docs/commentary/morrowind_runtime.md#the-control-switches
 constexpr std::uint64_t kGameShowRaceMenu = 55580;
+// void Game.SetPlayerAIDriven(bool) (0xa12750 on 1.6.1170): the function the
+// `Game` registration passes beside its name string, as ShowRaceMenu's
+// 0xa12780 is 55580's. Lets packages drive the player (the test runner's walk).
+constexpr std::uint64_t kGameSetPlayerAIDriven = 55577;
+// void Game.ForceThirdPerson() (0xa12630 on 1.6.1170), found the same way: an
+// AI-driven player in first person never walks.
+constexpr std::uint64_t kGameForceThirdPerson = 55565;
 constexpr std::uint64_t kGameDisableControls = 55454;
 constexpr std::uint64_t kGameEnableControls = 55455;
 
@@ -1019,6 +1031,15 @@ constexpr std::size_t kOffEffectItemBase = 0x10;
 constexpr std::size_t kOffActiveEffectMagnitude = 0x78;
 constexpr std::size_t kOffActiveEffectFlags = 0x7C;
 constexpr std::uint32_t kActiveEffectInactive = 0x8000;
+
+// The spell an active effect came from, at effect+0x40 (SKSE64's `item`). The
+// engine's own GetDisease reads it: the condition handler (0x32a830) calls
+// 0x5c29a0, which walks this list with a visitor (0x5c59d0) that loads
+// [effect+0x40], asks its vtable slot 0x298 for the spell type, compares it to
+// Disease (1), and skips an effect whose flags (+0x7C) hold bit 0x40000.
+// See: docs/commentary/morrowind_runtime.md#disease-queries
+constexpr std::size_t kOffActiveEffectSource = 0x40;
+constexpr std::uint32_t kActiveEffectDispelled = 0x40000;
 
 // Game units per havok unit: what InAir's simulate scales the controller's
 // height by before comparing it with the fall start.

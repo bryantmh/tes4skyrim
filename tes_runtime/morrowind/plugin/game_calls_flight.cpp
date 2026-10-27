@@ -254,6 +254,24 @@ void ForEachActiveEffect(void* actor,
     }
 }
 
+// Whether a live active effect on `actor` came from a spell `match` accepts,
+// by its FormID: the walk the engine's own GetDisease makes.
+bool AnyEffectSource(void* actor, const std::function<bool(std::uint32_t)>& match) {
+    if (!actor) return false;
+    void* target = &At<char>(actor, ActorField(ids::kOffActorMagicTarget));
+    auto* node = VCall<EffectListFn>(target, ids::kActiveEffectListSlot)(target);
+    for (; node; node = static_cast<void**>(node[1])) {
+        void* effect = node[0];
+        void* source = effect ? At<void*>(effect, ids::kOffActiveEffectSource) : nullptr;
+        if (!source || (At<std::uint32_t>(effect, ids::kOffActiveEffectFlags) &
+                        ids::kActiveEffectDispelled)) {
+            continue;
+        }
+        if (match(FormIdOf(source))) return true;
+    }
+    return false;
+}
+
 // OpenMW's MagicEffects::getOrDefault: every active instance of the effect
 // adds its magnitude.
 float ActiveMagnitude(void* actor, int tes3Index, int attribute) {

@@ -22,6 +22,7 @@ from .npc_markers_morrowind import final_base, linked_ref_subrecord
 from .items import get_base_origin_shift
 from ..actors.starts_dead import STARTS_DEAD_FLAG, starts_dead
 from ..base.text_reader import remap_formid
+from .region import default_water
 from .common import (
     TES4_DEFAULT_MUSIC_ENUM,
     landscape_texture_path,
@@ -90,7 +91,7 @@ def _world_water_and_planes(rec: dict) -> bytes:
     See: docs/commentary/tes5_import_world.md#wrld-land-and-water-defaults
     """
     subs = pack_formid_subrecord(
-        'NAM2', get_formid(rec, 'NAM2.Water') or 0x00000018)
+        'NAM2', get_formid(rec, 'NAM2.Water') or default_water())
     subs += pack_formid_subrecord('NAM3', 0x00000018)
     subs += pack_float_subrecord('NAM4', get_float(rec, 'NAM4.LODWaterHeight'))
     subs += pack_subrecord('DNAM', struct.pack(
@@ -489,6 +490,14 @@ def build_cell_xclw(rec: dict):
     if not (-1e9 < whf < 1e9):
         return None
     return struct.pack('<f', whf)
+
+
+def cell_water_height(rec: dict, wrld_rec: dict = None) -> float:
+    """Where the engine puts a cell's water: its XCLW, else its worldspace's default."""
+    xclw = build_cell_xclw(rec)
+    if xclw is not None:
+        return struct.unpack('<f', xclw)[0]
+    return get_float(wrld_rec or {}, 'DNAM.DefaultWaterHeight', _TES4_DEFAULT_WATER_HEIGHT)
 
 
 def build_wrld_mnam(rec: dict):

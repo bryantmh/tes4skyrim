@@ -35,7 +35,8 @@ from .morrowind_placements import (PLACED_EXPORTS, SCRIPTED_EXPORTS, SCRIPTED_TY
                                    forget_folder_tables, master_scripted,
                                    placement, rebased_formid)
 from .morrowind_sidecar_source import (forget_gathered, gather,
-                                       own_dialogue_blocks, source_chain)
+                                       own_dialogue_blocks, source_chain,
+                                       spell_kinds)
 from .morrowind_temples import skyrim_rows
 from ..record_types.magic_morrowind import effect_form_rows
 from ..actors.disposition import disposition_rows
@@ -442,12 +443,13 @@ def _owned_lines(dirs: list, root: str, ids: dict, exports: tuple,
     return lines
 
 
-def _spell_effects(dirs: list) -> dict:
-    """`{lower spell id: comma-joined TES3 effect indices}` over the chain.
+def _spell_effects(dirs: list, kinds: dict) -> dict:
+    """`{lower spell id: 'effect indices|TES3 type'}` over the chain.
 
     EVERY effect, not just the first: `RemoveEffects` names one effect index
     and removes each spell CONTAINING it, so the runtime has to know a spell's
-    whole effect list to decide whether that spell matches.
+    whole effect list to decide whether that spell matches. The type (`kinds`)
+    is what `GetCommonDisease` and `GetBlightDisease` sort spells by.
     See: docs/commentary/morrowind_runtime.md#spell-commands
     """
     keys = tuple(f'Effect[{i}].MorrowindIndex' for i in range(_MAX_EFFECTS))
@@ -459,7 +461,8 @@ def _spell_effects(dirs: list) -> dict:
             indices = [rec[key] for key in keys if rec.get(key)]
             if edid and indices:
                 found.setdefault(edid.lower(), ','.join(indices))
-    return found
+    return {key: found.get(key, '') + (f'|{kinds[key]}' if key in kinds else '')
+            for key in set(found) | set(kinds)}
 
 
 def _effect_lines(dirs: list) -> list:
@@ -660,7 +663,8 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
     return (_write_lines(os.path.join(out_dir, SPELLS_TABLE),
                          _owned_lines(dirs, root, ids.get('spells', {}),
                                       _SPELL_EXPORTS, _SPELL_TYPES,
-                                      _spell_effects(loaded)))
+                                      _spell_effects(loaded, spell_kinds(
+                                          ids.get('table_records', [])))))
             + _write_lines(os.path.join(out_dir, EFFECTS_TABLE),
                            _effect_lines(loaded))
             + _write_lines(os.path.join(out_dir, SOULGEMS_TABLE),

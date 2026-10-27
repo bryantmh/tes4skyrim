@@ -2,9 +2,8 @@
 # player to Gron. On the way he fetches his goods from a house in Gor, the
 # dead rise, and the two escape through the old house's fireplace and the
 # caves beneath before reaching Gron.
-# Position stands in for the walks. Herbert follows the player (AIFollow), so
-# where a walk is skipped his Position stands in for his following; ref
-# FormIDs carry Arktwend's slot 05.
+# Position stands in for the walk to where Herbert waits; once he follows the
+# player (AIFollow), the player walks. Ref FormIDs carry Arktwend's slot 05.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from herbert_meet
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -30,9 +29,7 @@ end
 
 # In sight of Gor, Herbert tells of the goods he stored there.
 case herbert_gor
-run
-player->Position -68693 7482 163 180
-"Herbert"->Position -68693 7582 163 180
+walk -68693 7482 163
 until 600 "Herbert".State == 3
 wait 30
 bye
@@ -41,9 +38,7 @@ end
 
 # At the house on the hillside he goes in alone.
 case herbert_house
-run
-player->Position -66699 621 685 180
-"Herbert"->Position -66699 521 685 180
+walk -66699 621 685
 until 600 "Herbert".State == 5
 wait 30
 bye
@@ -52,8 +47,7 @@ end
 
 # The dead crawl out of the houses; Herbert comes back with the key.
 case herbert_dead_rise
-run
-player->Position -67270 1253 248 180
+walk -67270 1253 248
 until 600 "Herbert".State == 6
 wait 30
 bye
@@ -77,9 +71,7 @@ end
 # hunt the player, and Herbert's companion script returns while his weapon is
 # drawn, so the fight is fought first; damage stands in for it.
 case herbert_gron
-run
-player->PositionCell -47046 9735 128 180 "Hamlet of Gron"
-"Herbert"->PositionCell -47046 9835 128 180 "Hamlet of Gron"
+walk -47046 9735 128
 wait 120
 console 05984D48.damageav health 10000
 console 0534E741.damageav health 10000

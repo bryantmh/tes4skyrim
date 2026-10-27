@@ -18,7 +18,7 @@ import math
 
 import numpy as np
 
-from ..base.text_reader import get_float, get_formid, get_str
+from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..record_types.world import shifted_position
 from . import params
 
@@ -209,17 +209,41 @@ def _placed_soup(refr, base_model_by_fid, get_collision):
             place(soup.get('b'), rot, scale, pos))
 
 
-def _sort_refr_parts(refr_recs, base_model_by_fid, get_collision, skip_bases):
+def cell_water_z(cell_rec):
+    """The cell's water height when HasWater (DATA.Flags 0x02) is set and XCLW parses, else None."""
+    if cell_rec is None or not get_int(cell_rec, 'DATA.Flags', 0) & 0x02:
+        return None
+    try:
+        return float(cell_rec.get('XCLW.WaterHeight'))
+    except (TypeError, ValueError):
+        return None
+
+
+def open_water_z(cell_rec, is_exterior):
+    """An exterior's water height; an interior's ceiling may lie under water."""
+    return cell_water_z(cell_rec) if is_exterior else None
+
+
+def _submerged(w, b, water_z):
+    """True when every face of a placed soup lies an agent height or more below the water."""
+    if water_z is None:
+        return False
+    tops = [p[:, :, 2].max() for p in (w, b) if p is not None and len(p)]
+    return bool(tops) and max(tops) < water_z - params.AGENT_HEIGHT
+
+
+def _sort_refr_parts(refr_recs, base_model_by_fid, get_collision, skip_bases, water_z):
     """Return (walk_parts, block_parts, door_walk_parts) for a cell's REFRs.
 
-    A door's faces go to door_walk_parts whatever their cached class.
+    A door's faces go to door_walk_parts whatever their cached class.  A ref
+    wholly under `water_z` by an agent height is left out: swimmers pass over it.
     See: docs/commentary/tes5_import_navmesh.md#door-panels-are-never-blocking
     """
     walk_parts, block_parts, door_walk_parts = [], [], []
     for refr in refr_recs or []:
         base_low = base_fid(refr)
         w, b = _placed_soup(refr, base_model_by_fid, get_collision)
-        if w is None and b is None:
+        if (w is None and b is None) or _submerged(w, b, water_z):
             continue
         if base_low in skip_bases:
             door_walk_parts += [p for p in (w, b) if p is not None and len(p)]
@@ -268,17 +292,18 @@ def _terrain_parts(land_rec, origin_x, origin_y, block_parts):
 
 def gather_cell_geometry(refr_recs, base_model_by_fid, get_collision,
                          land_rec=None, origin_x=0.0, origin_y=0.0,
-                         split_land=False, skip_bases=None):
+                         split_land=False, skip_bases=None, water_z=None):
     """Return (walkable, blocking) float64 (N,3,3) world-space triangle arrays.
 
     `get_collision` is the cache accessor, injected so workers can bind their
     own module-global cache without this module importing asset_convert.
     `skip_bases` holds low-24 base FormIDs contributing no blocking collision.
+    `water_z` is the cell's open water height (open_water_z), or None.
     `split_land=True` returns (walkable, blocking, land_walkable) instead.
     See: docs/commentary/tes5_import_navmesh.md#land-split-for-the-grid-rasterizer
     """
     walk_parts, block_parts, door_walk_parts = _sort_refr_parts(
-        refr_recs, base_model_by_fid, get_collision, skip_bases or ())
+        refr_recs, base_model_by_fid, get_collision, skip_bases or (), water_z)
     walk_parts = _resplit_placed(walk_parts, block_parts, door_walk_parts)
 
     land_walk = np.zeros((0, 3, 3))

@@ -4,6 +4,7 @@
 
 #include "game_calls_internal.h"
 
+#include <set>
 #include <string>
 
 #include "ids.h"
@@ -106,6 +107,29 @@ bool SpellIsActive(const std::string& actor, const std::string& spell) {
     return false;
 }
 
+// `GetCommonDisease` / `GetBlightDisease`: OpenMW's `Spells::hasSpellType`,
+// answered the way Skyrim's own GetDisease does -- an active effect whose
+// source spell is a staged spell of that TES3 type. The staged forms are
+// resolved only once the actor has an effect to compare.
+// See: docs/commentary/morrowind_runtime.md#disease-queries
+bool HasSpellOfType(const std::string& actor, int tes3Type) {
+    void* ref = OwnerRef(actor);
+    if (!ref || !IsActorRef(ref)) return false;
+    std::set<std::uint32_t> wanted;
+    bool built = false;
+    return AnyEffectSource(ref, [&](std::uint32_t source) {
+        if (!built) {
+            built = true;
+            for (const std::string& id : SpellsOfType(tes3Type)) {
+                const SpellDef* def = FindSpell(id);
+                void* form = def ? Form(&def->form) : nullptr;
+                if (form) wanted.insert(FormIdOf(form));
+            }
+        }
+        return wanted.count(source) != 0;
+    });
+}
+
 // `RemoveSpellEffects`: just that spell's effects.
 void DispelOneSpell(const std::string& actor, const std::string& spell) {
     void* ref = OwnerRef(actor);
@@ -143,10 +167,8 @@ void CastAt(const std::string& caster, const std::string& target,
     void* from = OwnerRef(caster);
     void* at = OwnerRef(target);
     void* form = SpellForm(spell);
-    if (!from || !at || !form || !g_cast) return;
-    PostToMainThread([form, from, at]() {
-        g_cast(PapyrusVm(), 0, form, from, at);
-    });
+    if (!from || !at || !form) return;
+    CastForm(form, from, at);
 }
 
 // --- soul gems -----------------------------------------------------------
@@ -202,6 +224,13 @@ void TakeSoulGem(const std::string& actor, const std::string& creature,
 
 }  // namespace
 
+void CastForm(void* spell, void* source, void* target) {
+    if (!g_cast) return;
+    PostToMainThread([spell, source, target]() {
+        g_cast(PapyrusVm(), 0, spell, source, target);
+    });
+}
+
 void InstallSpellCalls(GameHooks& hooks) {
     g_addSpell = Native<AddSpellFn>("Actor.AddSpell", ids::kActorAddSpell);
     g_removeSpell = Native<SpellQueryFn>("Actor.RemoveSpell",
@@ -217,6 +246,7 @@ void InstallSpellCalls(GameHooks& hooks) {
     hooks.hasSpell = KnowsSpell;
     hooks.hasEffect = EffectActive;
     hooks.spellActive = SpellIsActive;
+    hooks.hasDisease = HasSpellOfType;
     hooks.dispelSpell = DispelOneSpell;
     hooks.dispelByEffect = DispelByEffect;
     hooks.castSpell = CastAt;

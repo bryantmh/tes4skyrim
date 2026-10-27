@@ -1,0 +1,32 @@
+# Bloodmoon "The Totem of Claw and Fang": the Skaal shaman Korst Wind-Eye asks
+# the player to fetch the totem from the Tombs of Skaalara for the Ristaag.
+# PositionCell stands in for the walks, and taking the totem from its chest for
+# the container menu; ref FormIDs carry Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_totem
+# See docs/commentary/headless_testing.md#quest-runs
+
+case bm_totem
+run
+player->PositionCell 0 100 -216 180 "Skaal Village, Shaman's Hut"
+until 600 GetPCCell "Skaal Village, Shaman's Hut" == 1
+talk korst wind-eye
+ask Ristaag
+expect GetJournalIndex BM_Ceremony1 == 10
+ask Totem of Claw and Fang
+expect GetJournalIndex BM_Ceremony1 == 20
+bye
+run
+player->PositionCell -16 -7150 -111 180 "Solstheim, Tombs of Skaalara"
+until 600 GetPCCell "Solstheim, Tombs of Skaalara" == 1
+run
+"067BAB04"->RemoveItem misc_BM_ClawFang_UNIQUE 1
+player->AddItem misc_BM_ClawFang_UNIQUE 1
+until 300 GetJournalIndex BM_Ceremony1 == 30
+run
+player->PositionCell 0 100 -216 180 "Skaal Village, Shaman's Hut"
+until 600 GetPCCell "Skaal Village, Shaman's Hut" == 1
+talk korst wind-eye
+ask Totem of Claw and Fang
+expect GetJournalIndex BM_Ceremony1 == 100
+bye
+end

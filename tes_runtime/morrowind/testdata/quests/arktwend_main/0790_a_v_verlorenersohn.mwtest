@@ -2,8 +2,9 @@
 # son Mauragin. His diary pages lead over the Norifjon mountains and down
 # through Gotros and the worm tunnels to the Demon King's crystal hall; the
 # two escape in an old airship and come home from the far north.
-# Position stands in for the walks, damage for the fights, and moving
-# Mauragin for him following; ref FormIDs carry Arktwend's slot 05.
+# Position stands in for the walks Mauragin takes no part in and damage for
+# the fights; once he follows, the player walks and takes the doors. Ref
+# FormIDs carry Arktwend's slot 05.
 # 🛑 Mauragin's landing line writes journal 47 before the markers write 41-46.
 # Journal only raises the index (OpenMW Quest::addEntry), so from there on the
 # cases follow Zwergenvar, which is what the authored scripts read.
@@ -221,19 +222,21 @@ expect GetJournalIndex A_V_VerlorenerSohn == 35
 expect player->GetItemCount a_SchwarzerStein01 == 10
 end
 
-# The star key opens the lift up to Naremar.
+# Out of the crystal hall through the ancient temple to the gorges, where the
+# star key opens the lift up to Naremar.
 case sohn_lift
-run
-player->PositionCell 448 1600 -2174 0 "Subterranean Gorges of Grul"
-"Mauragin01"->PositionCell 448 1550 -2174 0 "Subterranean Gorges of Grul"
+walk -199 -2885 38
+activate 0533CB28
+until 600 GetPCCell "Arpk, Ancient Temple" == 1
+walk -183 377 22
+activate 054BEC3A
+until 600 GetPCCell "Subterranean Gorges of Grul" == 1
+walk 448 1600 -2174
 activate 052D74DF
 until 300 GetJournalIndex A_V_VerlorenerSohn == 36
 until 300 GetPCCell "Naremar" == 1
-run
-player->PositionCell 4425 -1269 12792 0 "Naremar"
+walk 4425 -1269 12792
 until 300 GetJournalIndex A_V_VerlorenerSohn == 37
-run
-"Mauragin01"->PositionCell 4425 -1200 12792 0 "Naremar"
 until 600 MenuMode == 1
 wait 60
 bye
@@ -242,15 +245,15 @@ end
 # The old airship: Mauragin wonders whether it runs, then three cranks and
 # the launch lever.
 case sohn_airship
-run
-player->PositionCell -384 -1029 1150 0 "Old Airship"
-"Mauragin01"->PositionCell -384 -1100 1150 0 "Old Airship"
+walk 3738 -4783 12805
+activate 05931B03
+until 600 GetPCCell "Old Airship" == 1
+walk -384 -1029 1150
 until 300 GetJournalIndex A_V_VerlorenerSohn == 38
 until 600 MenuMode == 1
 wait 60
 bye
-run
-player->PositionCell -270 -2980 1212 0 "Old Airship"
+walk -270 -2980 1212
 activate 05E29AEF
 until 300 Zwergenvar == 3
 activate 05A4C1FC
@@ -267,15 +270,12 @@ end
 
 # Below deck the ship cannot be steered; Mauragin cannot stop the crash.
 case sohn_crash
-run
-player->PositionCell -368 950 1154 0 "Old Airship"
-"Mauragin01"->PositionCell -368 1100 1154 0 "Old Airship"
+walk -368 950 1154
 until 300 GetJournalIndex A_V_VerlorenerSohn == 40
 talk Mauragin01
 bye
 expect GetJournalIndex A_V_VerlorenerSohn == 47
-run
-"Mauragin01"->PositionCell -387 673 1154 0 "Old Airship"
+walk -387 673 1154
 until 300 Zwergenvar == 7
 until 600 MenuMode == 1
 wait 60
@@ -284,12 +284,11 @@ end
 
 # Landed in the far north; Grignir knows the way home.
 case sohn_worldend
-run
-player->Position 204154 87700 1342 0
-"Mauragin01"->Position 204100 87650 1342 0
+walk -768 -64 1216
+activate 0569E9C6
+until 600 GetPCCell "Old Airship" == 0
 until 300 Zwergenvar == 8
-run
-player->Position 167317 81800 1222 0
+walk 167317 81800 1222
 until 600 MenuMode == 1
 wait 60
 ask remote area
@@ -297,11 +296,12 @@ choose 2
 bye
 end
 
-# Home to Northron: the king has his son back.
+# Home to Northron by the frozen waterfall: the king has his son back.
 case sohn_home
-run
-player->PositionCell -4095 -170 458 0 "Great Hall of Northron"
-"Mauragin01"->PositionCell -4000 -170 458 0 "Great Hall of Northron"
+walk 119258 -5831 1387
+activate 05CFB21C
+until 600 GetPCCell "Great Hall of Northron" == 1
+walk -4095 -170 458
 talk ZwergenKonigOlim01
 bye
 expect Zwergenvar == 9

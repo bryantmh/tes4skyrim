@@ -426,6 +426,25 @@ def forget_gathered(keep: tuple = ()) -> None:
         _GATHERED.clear()
 
 
+def spell_kinds(table_records: list) -> dict:
+    """`{lower spell id: SPDT type}` over the chain's SPELs, a later plugin's winning.
+
+    The export folds blight and disease into one TES4 type, so the TES3 type
+    is read here. See: docs/commentary/morrowind_runtime.md#disease-queries
+    """
+    kinds = {}
+    for rec in table_records:
+        if rec.type != 'SPEL' or not rec.record_id:
+            continue
+        spdt = get_subrecord(rec, 'SPDT')
+        key = rec.record_id.lower()
+        if rec.deleted or spdt is None or len(spdt.data) < 4:
+            kinds.pop(key, None)
+        else:
+            kinds[key] = struct.unpack_from('<i', spdt.data)[0]
+    return kinds
+
+
 def _gather(chain: tuple, whole: bool) -> dict:
     """The chain's tables, each plugin read ONCE and a later one overriding
     an earlier: `factions` / `gmsts` `{lower id: line}`, `items` / `objects`

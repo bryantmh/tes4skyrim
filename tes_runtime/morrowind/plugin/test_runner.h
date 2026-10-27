@@ -20,7 +20,7 @@ namespace tesruntime::mw {
 struct TestStep {
     enum class Kind {
         kRun, kWait, kExpect, kTalk, kAsk, kChoose, kBye, kButton, kActivate, kUntil, kPick, kClose,
-        kTake, kConsole, kPersuade, kSleep
+        kTake, kConsole, kPersuade, kSleep, kWalk
     };
     Kind kind = Kind::kRun;
     std::string text;   // the script, condition, NPC id or topic
