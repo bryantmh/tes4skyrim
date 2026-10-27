@@ -1,0 +1,90 @@
+# B7 "Telvanni Hortator": the Telvanni council must vote unanimously, and a
+# dead councilor's vote counts as cast. Master Aryon agrees and advises
+# killing Archmagister Gothren, who will never answer; Neloth, Therana and
+# Dratha agree once well disposed (bribed). Aryon then counts the votes and
+# gives the Robe of the Hortator. PositionCell stands in for the walks,
+# AddItem for the gold, the console's damageav for the fight with Gothren;
+# ref FormIDs carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b7_aryon
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Aryon hears the player's story and casts the first vote.
+case b7_aryon
+run
+player->AddItem gold_001 9000
+player->PositionCell 3905 2835 15752 0 "Tel Vos, Aryon's Chambers"
+until 600 GetPCCell "Tel Vos, Aryon's Chambers" == 1
+talk aryon
+ask Telvanni Hortator
+choose 2
+expect GetJournalIndex B7_AryonHort >= 50
+bye
+end
+
+# Gothren never answers, so he dies.
+case b7_gothren
+run
+player->PositionCell 507 -534 64 0 "Tel Aruhn, Upper Tower"
+until 600 GetPCCell "Tel Aruhn, Upper Tower" == 1
+console 05A0CF30.damageav health 10000
+until 300 "gothren"->GetHealth <= 0
+end
+
+# Neloth, Therana and Dratha vote once they like the player well enough.
+case b7_council
+run
+player->PositionCell 255 1233 1061 0 "Sadrith Mora, Tel Naga Upper Tower"
+until 600 GetPCCell "Sadrith Mora, Tel Naga Upper Tower" == 1
+talk neloth
+persuade bribe1000
+persuade bribe1000
+persuade bribe100
+persuade bribe100
+expect "neloth"->GetDisposition >= 70
+ask Telvanni Hortator
+expect GetJournalIndex B7_NelothHort == 50
+bye
+run
+player->PositionCell 188 1444 -690 0 "Tel Branora, Upper Tower: Therana's Chamber"
+until 600 GetPCCell "Tel Branora, Upper Tower: Therana's Chamber" == 1
+talk therana
+persuade bribe1000
+persuade bribe1000
+persuade bribe100
+persuade bribe100
+persuade bribe100
+expect "therana"->GetDisposition >= 80
+ask Telvanni Hortator
+choose 2
+expect GetJournalIndex B7_TheranaHort == 50
+bye
+run
+player->PositionCell -236 -245 985 0 "Tel Mora, Upper Tower"
+until 600 GetPCCell "Tel Mora, Upper Tower" == 1
+talk dratha
+persuade bribe1000
+persuade bribe1000
+persuade bribe100
+persuade bribe100
+persuade bribe100
+expect "dratha"->GetDisposition >= 80
+ask Telvanni Hortator
+choose 1
+choose 4
+expect GetJournalIndex B7_DrathaHort >= 50
+bye
+end
+
+# Aryon's greeting counts the votes; with all six he names the player
+# Hortator and gives the robe.
+case b7_hortator
+run
+player->PositionCell 3905 2835 15752 0 "Tel Vos, Aryon's Chambers"
+until 600 GetPCCell "Tel Vos, Aryon's Chambers" == 1
+talk aryon
+expect HortatorVotes == 6
+ask Telvanni Hortator
+expect GetJournalIndex B7_TelvanniHort == 70
+expect player->GetItemCount hortatorrobe == 1
+bye
+end

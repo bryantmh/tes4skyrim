@@ -1,0 +1,61 @@
+# Chapter VII, the search for Arkt: Calisto's spell sends the player to the
+# old Normaden outpost, on through the Mytrehen fortress and Spear Gorge to
+# Arkt's temple, where the three faces of Arkt open the way into the Void.
+# Position stands in for the walks and damage for the fights; ref FormIDs
+# carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from arkt_calisto
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Calisto tells where Arkt fled, and his spell goes wrong.
+case arkt_calisto
+run
+player->PositionCell -129 360 131 180 "Calisto's House"
+talk CalistoHausCalisto02
+ask Arkt's escape
+choose 1
+choose 3
+choose 4
+choose 5
+choose 6
+bye
+expect GetJournalIndex A_VII_SucheArkt == 1
+end
+
+# By the door the spell takes hold.
+case arkt_spell
+run
+player->PositionCell -216 755 127 0 "Calisto's House"
+until 3000 GetJournalIndex A_VII_SucheArkt == 2
+end
+
+# The Mytrehen fortress.
+case arkt_mytrehen
+run
+player->Position 22512 -159600 3277 0
+until 300 GetJournalIndex A_VII_SucheArkt == 3
+end
+
+# Spear Gorge, on the way to the temple.
+case arkt_gorge
+run
+player->Position -21004 -150600 857 0
+until 300 GetJournalIndex A_VII_ArktsTempel == 1
+run
+player->Position -34002 -147100 1060 0
+until 300 GetJournalIndex A_VII_ArktsTempel == 2
+end
+
+# The three faces of Arkt fall; the ground gives way into the Void.
+case arkt_faces
+run
+player->Position -37755 -162000 1329 0
+until 300 "ArktsGesichter01"->GetDisabled == 0
+# Their scripts bind seconds after they load; a death before that raises no
+# OnDeath, so the fight lasts past the bind.
+wait 900
+console 05D99514.damageav health 100000
+console 05C3EFC8.damageav health 100000
+console 0579D972.damageav health 100000
+button 0
+until 600 GetPCCell "The Void" == 1
+end

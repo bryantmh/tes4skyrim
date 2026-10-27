@@ -156,9 +156,39 @@ void* EngineMenuObject(const char* name, void** view);
 // false when the variable is missing or not a string.
 bool MovieGetText(void* view, const char* path, std::string* out);
 void MovieSetText(void* view, const char* path, const char* text);
+void MovieSetNumber(void* view, const char* path, double number);
+// Calls the ActionScript function at `path` with up to four numbers. With a
+// `result`, true only when the call answered a number; without, when it ran.
+bool MovieInvoke(void* view, const char* path, const double* args, std::size_t count,
+                 double* result);
+
+// The name of the key or mouse button the player bound to Skyrim's gameplay
+// user event `userEvent` ("Forward", "Activate"), or "None" when unbound, as
+// OpenMW names an action binding.
+std::string BoundKeyName(const char* userEvent);
 
 // How many OPEN menus pause the game, ours included. 0 before any Install.
 // See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
 std::uint32_t PausingMenuCount();
+
+// A pausing menu the runtime asked to open, from the asking call until the
+// engine opens it (or a few seconds pass). TES3 opens a menu at once, so its
+// scripts must be in menu mode from the asking frame on; the engine opens
+// ours a frame or more later, and a chargen script that waits on `MenuMode`
+// would race through every menu in that gap. ForgetOpenedMenus drops the
+// ones now open; it runs every frame, so a menu is forgotten while it shows.
+// See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
+void NoteMenuOpening(const char* name);
+void ForgetOpenedMenus();
+bool MenuOpening();
+
+// The player is being moved. TES3 moves them at once, so a script's
+// `PositionCell` then `ForceGreeting` talks at the destination; the engine
+// lands the move a frame or more later and closes a menu opened before it.
+// Menus asked to open from here wait until the move's loading screen has come
+// and gone, or a second passes with none; ReleaseHeldMenus, run every frame,
+// opens them. A held menu counts toward MenuOpening, as it would be open in TES3.
+void HoldMenusForPlayerMove();
+void ReleaseHeldMenus();
 
 }  // namespace tesruntime::mw

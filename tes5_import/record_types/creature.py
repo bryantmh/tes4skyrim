@@ -25,7 +25,7 @@ from .actor_common import (GOLD001_FID, NAM5_UNKNOWN, SOUND_LEVEL_NORMAL,
                            T4C_NO_BLOOD_SPRAY, T4C_PC_LEVEL_OFFSET,
                            T4C_RESPAWN, T5_AUTOCALC, T5_DOESNT_BLEED,
                            T5_ESSENTIAL, T5_PC_LEVEL_MULT, T5_RESPAWN,
-                           build_aidt, build_outfit, origin_memberships,
+                           build_aidt, build_outfit, disposition_ranks, origin_memberships,
                            get_vendor_faction_fids_for_actor, npc_vtyp,
                            read_items)
 from .spell_tomes import tome_items
@@ -320,7 +320,7 @@ def _crea_snams(rec: dict, vendor_fids: list) -> bytes:
     ranked += [(vfid, 0) for vfid in vendor_fids]
     ranked += [(origin_fid, 0) for origin_fid in origin_memberships()]
     ranked += flee_memberships(rec)
-    ranked += stat_memberships(rec, creature=True)
+    ranked += stat_memberships(rec, creature=True) + disposition_ranks(rec)
     return b''.join(pack_subrecord('SNAM', struct.pack('<IbBBB', fid, rank, 0, 0, 0))
                     for fid, rank in ranked)
 

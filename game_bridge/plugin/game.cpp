@@ -12,6 +12,7 @@
 #include "ids.h"
 #include "game_types.h"
 #include "log.h"
+#include "main_thread.h"
 
 namespace bridge {
 
@@ -67,8 +68,14 @@ void CaptureLine(const char* text) {
         ++g_ringSeq;
     }
     if (!g_capturing) return;
+    // Capped: a `coc` keeps the console's print mode on through the cell load,
+    // and every condition the engine evaluates then echoes -- measured 10.5 MB
+    // for one `coc QASmoke`. The command's own output comes first.
+    constexpr std::size_t kCaptureMax = 64 * 1024;
+    if (g_captureBuffer.size() >= kCaptureMax) return;
     g_captureBuffer += text;
     g_captureBuffer.push_back('\n');
+    if (g_captureBuffer.size() >= kCaptureMax) g_captureBuffer += "[output truncated]\n";
 }
 
 }  // namespace
@@ -175,6 +182,30 @@ bool          g_gameLoaded = false;   // updated from SKSE messages
 //
 // So the flag is a fast path, and a successful console probe is the fallback:
 // `player.getav health` prints only when a player actually exists.
+namespace {
+
+// The ids MorrowindRuntime uses (tes_runtime/morrowind/plugin/ids.h).
+constexpr std::uint64_t kMenuManagerSlot = 400327;
+constexpr std::uint64_t kIsMenuOpen = 82074;
+constexpr std::uint64_t kFixedStringCtor = 69161;
+
+// Whether the engine has "Main Menu" open; false when the ids do not resolve.
+// The player object already exists at the main menu, so the console probe
+// alone reported a loaded game there. Main thread only.
+bool MainMenuOpen() {
+    using IsMenuOpenFn = bool (*)(void* manager, void** name);
+    using FixedStringFn = void* (*)(void* out, const char* text);
+    static void* name = nullptr;
+    const auto slot = reinterpret_cast<void**>(ResolveStableId(kMenuManagerSlot));
+    const auto isOpen = reinterpret_cast<IsMenuOpenFn>(ResolveStableId(kIsMenuOpen));
+    const auto intern = reinterpret_cast<FixedStringFn>(ResolveStableId(kFixedStringCtor));
+    if (!slot || !*slot || !isOpen || !intern) return false;
+    if (!name) intern(&name, "Main Menu");
+    return name && isOpen(*slot, &name);
+}
+
+}  // namespace
+
 bool IsGameLoaded() {
     if (g_gameLoaded) return true;
     if (!g_addr.consoleExecute) return false;
@@ -188,14 +219,23 @@ bool IsGameLoaded() {
     if (now - lastCheck < 500) return lastResult;
     lastCheck = now;
 
+    // 🛑 The probe runs on the MAIN thread. Its callers are on the pipe thread,
+    // and the engine's Script constructor faults off the main thread (its base
+    // constructor touches the game thread's TLS): every ping at the main menu
+    // came back as an SEH-caught "unknown" error.
     extern bool ConsoleExecute(const std::string& cmd, std::uint32_t refFormId,
                                std::string* err);
-    g_captureBuffer.clear();
-    g_capturing = true;
-    std::string err;
-    ConsoleExecute("player.getav health", 0, &err);
-    g_capturing = false;
-    lastResult = !g_captureBuffer.empty();
+    bool printed = false;
+    RunOnMainThread([&] {
+        if (MainMenuOpen()) return;
+        g_captureBuffer.clear();
+        g_capturing = true;
+        std::string err;
+        ConsoleExecute("player.getav health", 0, &err);
+        g_capturing = false;
+        printed = !g_captureBuffer.empty();
+    }, 2000);
+    lastResult = printed;
     return lastResult;
 }
 std::uint32_t RuntimeVersion() { return g_runtimeVersion; }

@@ -82,6 +82,7 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [ck_warnings.md](commentary/ck_warnings.md) | tes5_import/ - what the CK complains about |
 | [core_run_log.md](commentary/core_run_log.md) | core/run_log.py - per-run logs and their profiling timestamps |
 | [core_setup_check.md](commentary/core_setup_check.md) | TES Auto-Convert.cmd, core/setup_check.py - the launcher and its install checks |
+| [headless_testing.md](commentary/headless_testing.md) | tools/live/test_instance.py, game_bridge/sandbox/ - isolated, hidden, muted Skyrim for automated tests |
 | [ingame_testing.md](commentary/ingame_testing.md) | tools/dialog/ - in-game test methodology |
 | [morrowind_runtime.md](commentary/morrowind_runtime.md) | tes_runtime/morrowind/, external/openmw/ - Morrowind dialogue and MWScript in-engine |
 | [performance.md](commentary/performance.md) | the whole pipeline - performance and parallelism |
@@ -137,6 +138,7 @@ A dated sweep over a corpus, with counts. Frozen once written; a re-audit is a N
 | [ck_warnings.md](audits/ck_warnings.md) | CK Warnings Audit — Oblivion.esm |
 | [edit_gate_refusals.md](audits/edit_gate_refusals.md) | What agents hit at the code-rules and shell gates, the four shell holes closed, and a replay of the fix |
 | [diagnosis_sources.md](audits/diagnosis_sources.md) | Which sources actually solved bugs, from 46 fixes across 35 sessions — the evidence for CLAUDE.md's source order |
+| [headless_quest_runs.md](audits/headless_quest_runs.md) | Every fix from the headless Morrowind and Arktwend quest runs, by quest, and the findings left open |
 | [fallout_nv_mesh_conversion.md](audits/fallout_nv_mesh_conversion.md) | Fallout NV / FO3 mesh conversion — what already works, and the particle-NIF defect |
 | [morroblivion_mesh_axis_rotation.md](audits/morroblivion_mesh_axis_rotation.md) | Morroblivion's hand-authored pitch and Z re-seat fixes, and which a dependent plugin must re-apply |
 | [morrowind_opcode_testplan.md](audits/morrowind_opcode_testplan.md) | The fewest TR_Mainland quests that exercise every MWScript opcode, with quest giver and `coc` target |

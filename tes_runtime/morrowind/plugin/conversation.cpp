@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -32,6 +33,7 @@
 #include "script_runner.h"
 #include "script_tables.h"
 #include "session.h"
+#include "test_runner.h"
 
 namespace tesruntime::mw {
 
@@ -905,6 +907,9 @@ void OnTick() {
 }  // namespace
 
 void InstallConversation() {
+    SetTestConversation({ConversationOpen, ConversationTopics, ConversationAsk,
+                         ConversationChoose, ConversationGoodbye, ConversationLastText,
+                         ConversationChoices, ConversationPersuade});
     MenuInput input;
     input.hover = [](double x, double y) {
         const LayerScope scope(g_layer);
@@ -955,8 +960,12 @@ void SeedChargenTopics() {
 
 // Runs in the CALLER's layer, which is the speaker's; the conversation it
 // replaces is closed in its own.
+// 🛑 A greeting begun while the window is up restarts it in place, as OpenMW's
+// DialogueWindow::setPtr does: the engine ignores an open posted to an open
+// menu, so reopening left the window up with the conversation marked closed.
 void BeginConversation(const char* speaker, const char* displayName,
                        const char* playerName) {
+    const bool wasOpen = g_open;
     {
         const LayerScope previous(g_layer);
         OnClosed();
@@ -979,10 +988,81 @@ void BeginConversation(const char* speaker, const char* displayName,
         hello.text.empty() ? "(none matched)" : "ok", g_items.size(),
         g_actor->Stubbed());
     PushAll();
-    OpenMenu();
+    if (wasOpen) {
+        g_open = true;
+    } else {
+        OpenMenu();
+    }
 }
 
 bool ConversationOpen() { return g_open; }
+
+std::vector<std::string> ConversationTopics() {
+    std::vector<std::string> topics;
+    for (const Item& item : g_items) {
+        if (item.kind == Kind::Topic) topics.push_back(item.text);
+    }
+    return topics;
+}
+
+// Matched as the list shows it, ignoring case, since a case file names the
+// topic as a player reads it.
+bool ConversationAsk(const std::string& topic) {
+    const LayerScope scope(g_layer);
+    for (const Item& item : g_items) {
+        if (item.kind != Kind::Topic || _stricmp(item.text.c_str(), topic.c_str()) != 0) {
+            continue;
+        }
+        if (ListLocked()) return false;
+        SelectTopic(item.text);
+        return true;
+    }
+    return false;
+}
+
+bool ConversationChoose(int index) {
+    const LayerScope scope(g_layer);
+    for (const ChoiceLine& choice : State().choices) {
+        if (choice.index != index) continue;
+        AnswerChoice(index);
+        return true;
+    }
+    return false;
+}
+
+// Named as the case file writes it: admire, intimidate, taunt, bribe10,
+// bribe100 or bribe1000. A bribe the purse cannot pay is refused, as the
+// modal lists it disabled.
+bool ConversationPersuade(const std::string& name) {
+    static const char* const kNames[kPersuasionCount] = {
+        "admire", "intimidate", "taunt", "bribe10", "bribe100", "bribe1000"};
+    const LayerScope scope(g_layer);
+    for (int i = 0; i < kPersuasionCount; ++i) {
+        const auto type = static_cast<Persuasion>(i);
+        if (_stricmp(kNames[i], name.c_str()) != 0) continue;
+        if (!g_actor || ListLocked() || BribeCost(type) > PlayerGold()) return false;
+        OnPersuaded(type);
+        return true;
+    }
+    return false;
+}
+
+bool ConversationGoodbye() {
+    const LayerScope scope(g_layer);
+    if (ByeLocked()) return false;
+    Goodbye();
+    return true;
+}
+
+std::string ConversationLastText() {
+    return g_history.empty() ? std::string() : g_history.back().text;
+}
+
+std::vector<std::string> ConversationChoices() {
+    std::vector<std::string> texts;
+    for (const ChoiceLine& choice : State().choices) texts.push_back(choice.text);
+    return texts;
+}
 
 bool InResultScript() { return g_inResultScript; }
 

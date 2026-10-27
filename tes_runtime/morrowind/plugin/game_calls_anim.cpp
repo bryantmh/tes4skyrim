@@ -343,8 +343,7 @@ void GlideRef(std::uint32_t id, const float pose[6], float seconds) {
 }
 
 bool InCombat(std::uint32_t id) {
-    void* ref = RefByRuntimeId(id);
-    return ref && g_isInCombat && IsActorRef(ref) && g_isInCombat(PapyrusVm(), 0, ref);
+    return ActorInCombat(RefByRuntimeId(id));
 }
 
 void InstallActorAnimCalls(GameHooks& hooks) {
@@ -359,6 +358,10 @@ void InstallActorAnimCalls(GameHooks& hooks) {
 }
 
 }  // namespace
+
+bool ActorInCombat(void* actor) {
+    return actor && g_isInCombat && IsActorRef(actor) && g_isInCombat(PapyrusVm(), 0, actor);
+}
 
 void InstallAnimCalls(GameHooks& hooks) {
     InstallActorAnimCalls(hooks);

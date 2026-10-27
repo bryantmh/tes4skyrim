@@ -177,7 +177,9 @@ void DialogueState::SetGlobal(const std::string& name, float value) {
     // only when it differs from that.
     const bool changed = Global(name) != value;
     mGlobals[GlobalKey(name)] = value;
-    if (changed) LogVerbose("global: %s = %g", name.c_str(), value);
+    if (!changed) return;
+    LogVerbose("global: %s = %g", name.c_str(), value);
+    if (Hooks().setClockGlobal) Hooks().setClockGlobal(name, value);
 }
 
 void DialogueState::SyncGlobal(const std::string& name, float value) {

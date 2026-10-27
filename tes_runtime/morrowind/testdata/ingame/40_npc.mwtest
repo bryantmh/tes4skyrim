@@ -1,0 +1,121 @@
+# Commands on an NPC. The first case moves the player into Arrille's
+# Tradehouse, where `arrille` (High Elf trader) and `elone` stand.
+# See docs/commentary/headless_testing.md#mwscript-cases
+
+case positioncell
+run
+player->PositionCell 0 0 0 0 "Seyda Neen, Arrille's Tradehouse"
+wait 150
+expect GetPCCell "Seyda Neen, Arrille's Tradehouse" == 1
+expect GetInterior == 1
+end
+
+case npc_disposition
+run
+arrille->SetDisposition 60
+arrille->ModDisposition 5
+expect arrille->GetDisposition == 65
+end
+
+case npc_fight
+run
+arrille->SetFight 10
+arrille->ModFight 5
+expect arrille->GetFight == 15
+end
+
+case npc_hello
+run
+arrille->SetHello 20
+arrille->ModHello 5
+expect arrille->GetHello == 25
+end
+
+case npc_alarm
+run
+arrille->SetAlarm 30
+arrille->ModAlarm 5
+expect arrille->GetAlarm == 35
+end
+
+case npc_flee
+run
+arrille->SetFlee 40
+arrille->ModFlee 5
+expect arrille->GetFlee == 45
+end
+
+case npc_strength
+run
+arrille->SetStrength 60
+expect arrille->GetStrength == 60
+end
+
+case npc_skill
+run
+arrille->SetMercantile 70
+expect arrille->GetMercantile == 70
+end
+
+case npc_race
+expect arrille->GetRace "High Elf" == 1
+expect arrille->GetRace "Dark Elf" == 0
+end
+
+case npc_level
+expect arrille->GetLevel >= 1
+end
+
+case npc_distance
+expect player->GetDistance arrille < 10000
+end
+
+case npc_deadcount
+expect GetDeadCount arrille == 0
+end
+
+case npc_items
+run
+arrille->AddItem "iron dagger" 3
+arrille->RemoveItem "iron dagger" 1
+expect arrille->GetItemCount "iron dagger" == 2
+end
+
+case npc_disable
+run
+arrille->Disable
+wait 5
+expect arrille->GetDisabled == 1
+end
+
+case npc_enable
+run
+arrille->Enable
+wait 5
+expect arrille->GetDisabled == 0
+end
+
+case npc_samefaction
+expect arrille->SameFaction == 0
+end
+
+case npc_spell
+run
+arrille->AddSpell "hearth heal"
+expect arrille->GetSpell "hearth heal" == 1
+end
+
+case npc_combat
+run
+arrille->StartCombat player
+wait 30
+expect arrille->GetTarget player == 1
+end
+
+case npc_stopcombat
+run
+arrille->StopCombat
+player->StopCombat
+wait 30
+expect arrille->GetTarget player == 0
+end

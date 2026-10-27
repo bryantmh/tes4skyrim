@@ -538,7 +538,7 @@ void ReleaseNpcHold(const std::string& npcIn) {
         if (it != g_live.end()) Leave(id, it->second);
         LogVerbose("anim: %s (%08X) is let go", npcIn.c_str(), id);
     };
-    if (!RunOnGameThread(release)) release();
+    if (!PostToMainThread(release)) release();
 }
 
 void SetNpcAnimRollForTest(float (*roll)()) { g_roll = roll; }

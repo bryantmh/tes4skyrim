@@ -41,6 +41,8 @@ from tes5_import.actors.confidence import (
     FACTION_EDID as CONFIDENCE_FACTION, FLEE_SPELL_EDID as CONFIDENCE_FLEE_SPELL,
     MARGIN_FACTION_EDID as FLEE_MARGIN_FACTION, SCALE_EDID as FLEE_HEALTH_SCALE)
 from tes5_import.dialogue.say_topics import flee_key
+from tes5_import.actors.disposition import (AGGRESSION_FACTION, DISPOSITION_FACTION,
+                                            HOSTILE_FACTION)
 from script_convert.stat_access import actor_subject, attribute_call, kept_skill_call
 from script_convert.misc_stats import is_script_kept, misc_stat_global
 from tes5_import.base.owned_records import CHARGEN_REQUEST_GLOBAL
@@ -634,19 +636,52 @@ def stop_combat(ctx, call) -> str:
     return ctx._end_combat_call(ref)
 
 
+def _targets_player(call) -> bool:
+    """True when the call's first argument names the player."""
+    return bool(len(call)) and call.source(0).rstrip(',').strip().lower() in PLAYER_TOKENS
+
+
+@command('getdisposition')
+def get_disposition(ctx, call) -> str:
+    """GetDisposition toward the player: the subject's TES4DispositionFaction rank.
+
+    Declines any other target, which the row reads as 50.
+    See: docs/commentary/tes5_import_actors.md#faction-player-disposition
+    """
+    if not _targets_player(call):
+        return None
+    ctx.sc.property_refs[DISPOSITION_FACTION] = 'Faction'
+    ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)
+    return f'TES4Polyfill.GetDisposition({actor_subject(ref, call.extends)}, {DISPOSITION_FACTION})'
+
+
+def _disposition_factions(ctx) -> str:
+    """Register the three disposition faction properties; return them as arguments."""
+    names = (DISPOSITION_FACTION, AGGRESSION_FACTION, HOSTILE_FACTION)
+    ctx.sc.property_refs.update(dict.fromkeys(names, 'Faction'))
+    return ', '.join(names)
+
+
+def _mod_player_disposition(ctx, call, ref: str) -> str:
+    """TES4Polyfill.ModDisposition: the caller's rank moves, then the attack rule."""
+    return (f'TES4Polyfill.ModDisposition({actor_subject(ref, call.extends)}, '
+            f'({call.arg(1)}) as Int, {_disposition_factions(ctx)})')
+
+
 @command('moddisposition')
 def mod_disposition(ctx, call) -> str:
-    """ModDisposition -- disposition was removed in Skyrim.
+    """ModDisposition -- toward the player, the caller's TES4DispositionFaction rank.
 
-    A full -100 drop is Oblivion's "make them hostile" idiom, so it becomes
-    StartCombat.  DIRECTION MATTERS: TES4's signature is
-    `<actor>.ModDisposition <target> <value>` and it changes the CALLING
-    actor's disposition toward the target, so `UngolimRef.ModDisposition
-    player -100` means Ungolim now hates the player and Ungolim is the
-    aggressor.  Emitting `<target>.StartCombat(<ref>)` inverted that and made
-    the PLAYER attack Ungolim, which in Dark16Kiss framed the player for the
-    murder the quest wanted Ungolim to commit.
+    Between NPCs there is no rank to move, so only a full -100 drop,
+    Oblivion's "make them hostile" idiom, survives, as combat.  DIRECTION
+    MATTERS: `<actor>.ModDisposition <target> <value>` changes the CALLING
+    actor's disposition toward the target, so the caller is the aggressor
+    (Dark16Kiss: Ungolim turns on the player, never the reverse).
+    See: docs/commentary/tes5_import_actors.md#faction-player-disposition
     """
+    if _targets_player(call) and len(call) >= 2:
+        return _mod_player_disposition(
+            ctx, call, ctx._resolve_self_ref(call.ref, call.extends, actor_func=True))
     parts = ctx.arg_srcs()
     try:
         hostile = len(parts) >= 2 and int(parts[-1]) <= -100
@@ -1579,6 +1614,12 @@ def _unmapped_actor_value(ctx, call, raw: str) -> str:
     return f';Fallout actor value {raw} has no Skyrim equivalent -- write dropped'
 
 
+def _set_aggression(ctx, call, subject: str, tier: str) -> str:
+    """TES4Polyfill.SetAggression: the tier, the TES4 value, then the attack rule."""
+    return (f'TES4Polyfill.SetAggression({subject}, {tier}, ({call.arg(1)}) as Int, '
+            f'{_disposition_factions(ctx)})')
+
+
 @command(*sorted(ACTOR_VALUE_FUNCTIONS))
 def actor_value(ctx, call) -> str:
     """Get/Set/Mod ActorValue with the AV name quoted; attributes and kept skills through
@@ -1615,6 +1656,8 @@ def actor_value(ctx, call) -> str:
         return kept
     ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)
     subject = actor_subject(ref, call.extends)
+    if av.lower() == 'aggression' and papyrus == 'SetActorValue' and len(args) > 1:
+        return _set_aggression(ctx, call, subject, args[1])
     split = SPLIT_SKILLS.get(raw.lower())
     if split and papyrus in _SPLIT_READS:
         return f'TES4Polyfill.HigherActorValue({subject}, "{split[0]}", "{split[1]}")'

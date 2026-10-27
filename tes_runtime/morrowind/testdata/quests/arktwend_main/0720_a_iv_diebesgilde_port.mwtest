@@ -1,0 +1,128 @@
+# Chapter IV, Stormwend: the Thieves Guild's jobs at the port. A whispered
+# message for the Korynthian captain, then the Masterthief's stolen letter,
+# taken back from the Kanzler's mercenaries with a drugged bottle of wine.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from port_korynth
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Captain Korynth hears the code words, and the player asks about the stones.
+case port_korynth
+run
+player->Position 1150 58950 213 0
+talk DIEBKapitanKorynth
+ask what can I
+choose 1
+choose 3
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 13
+expect GetJournalIndex A_IV_SchwarzeSteine == 1
+end
+
+# Black Eye Piet pays 300 gold, and will say nothing about the stones.
+case port_piet
+run
+player->PositionCell -144 2481 325 0 "Stormwend, Thieves Guild"
+talk DIEBSchwarzaugenPiet
+ask What did you find out?
+choose 1
+choose 2
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 14
+expect GetJournalIndex A_IV_SchwarzeSteine == 2
+end
+
+# Jarko the Juggler: the mercenaries at the port killed a courier.
+case port_jarko
+run
+player->PositionCell -880 2456 323 0 "Stormwend, Thieves Guild"
+talk DIEBJarkoderGaukler
+ask What's the mark?
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 15
+end
+
+# One of the mercenaries sends the player to their captain.
+case port_mercenary
+run
+player->Position -57 51300 226 0
+until 300 "DIEBSoldner01"->GetDisabled == 0
+talk DIEBSoldner01
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 16
+end
+
+# The captain wants wine rather than a fight.
+case port_captain
+run
+player->Position -180 51350 235 0
+talk DIEBSoldnerHautmann
+ask Message of the Masterthief
+choose 2
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 18
+end
+
+# Bernward sells a sleeping draught for 12 gold.
+case port_draught
+run
+player->Position 738 51730 215 0
+until 300 "Bernward"->GetDisabled == 0
+talk Bernward
+ask insect miticide
+choose 1
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 19
+expect player->GetItemCount Betaubungsmittel == 1
+end
+
+# The mercenaries drink it and fall asleep for good.
+case port_wine
+run
+player->Position -180 51350 235 0
+until 300 "DIEBSoldnerHautmann"->GetDisabled == 0
+talk DIEBSoldnerHautmann
+ask wine
+choose 1
+choose 2
+bye
+until 300 "DIEBSoldnerHautmann"->GetHealth <= 0
+expect GetJournalIndex A_IV_Diebesgilde == 20
+end
+
+# Take All from the captain's body: the letter, its seal already broken.
+case port_letter
+console 05B95279.removeallitems player
+until 300 GetJournalIndex A_IV_Diebesgilde == 21
+expect player->GetItemCount MeisterdiebinBrief == 1
+end
+
+# Jarko takes the letter and believes the player did not read it.
+case port_jarko_letter
+run
+player->PositionCell -880 2456 323 0 "Stormwend, Thieves Guild"
+talk DIEBJarkoderGaukler
+ask Message of the Masterthief
+choose 1
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 22
+expect player->GetItemCount MeisterdiebinBrief == 0
+end
+
+# The Masterthief pays 800 gold and raises the player's rank.
+case port_masterthief
+run
+player->PositionCell -803 1914 323 0 "Stormwend, Thieves Guild"
+talk DIEBMeisterdieb
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 23
+expect GetPCRank Diebesgilde >= 1
+end
+
+# Jarko has heard of the promotion.
+case port_jarko_promoted
+run
+player->PositionCell -880 2456 323 0 "Stormwend, Thieves Guild"
+talk DIEBJarkoderGaukler
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 24
+end

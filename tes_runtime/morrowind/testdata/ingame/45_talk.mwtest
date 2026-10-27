@@ -1,0 +1,116 @@
+# Conversations and MessageBox buttons, driven by the clicks a player makes,
+# plus locks, soul gems and resurrection. Runs in Arrille's Tradehouse, where
+# 40_npc.mwtest left the player.
+# See docs/commentary/headless_testing.md#mwscript-cases
+
+case talk_ask_bye
+talk arrille
+ask little advice
+bye
+end
+
+case activate_opens_conversation
+run
+arrille->Activate
+wait 30
+bye
+end
+
+case forcegreeting
+run
+arrille->ForceGreeting
+wait 30
+ask popular potions
+bye
+end
+
+case choice_then_choose
+talk arrille
+ask little advice
+run
+Choice "Yes" 1 "No" 2
+choose 2
+bye
+end
+
+case goodbye_locks_the_list
+talk arrille
+run
+Goodbye
+bye
+end
+
+case messagebox_button
+run
+MessageBox "Pick one" "First" "Second"
+wait 10
+button 1
+wait 10
+expect GetButtonPressed == 1
+end
+
+# The South Wall Cornerclub's rented room, in Balmora: authored locked at 50,
+# and renting it unlocks it from a conversation. The import ships every
+# placement a script names persistent, so it answers from Seyda Neen.
+case lock_unlock_remote
+expect rent_balmora_south_door->GetLocked == 1
+run
+rent_balmora_south_door->Unlock
+wait 5
+expect rent_balmora_south_door->GetLocked == 0
+run
+rent_balmora_south_door->Lock 50
+wait 5
+expect rent_balmora_south_door->GetLocked == 1
+end
+
+case soulgems
+run
+player->AddSoulGem "rat" "Misc_SoulGem_Petty"
+expect player->HasSoulGem "rat" == 1
+run
+player->RemoveSoulGem "rat"
+expect player->HasSoulGem "rat" == 0
+# GetItemCount does not see an AddItem from the same frame, so the drop that
+# looks the gem up comes a frame later.
+run
+player->AddSoulGem "rat" "Misc_SoulGem_Petty"
+run
+player->DropSoulGem "rat"
+wait 5
+expect player->HasSoulGem "rat" == 0
+end
+
+# Current health drained to 0 kills, as OpenMW's Actors::update does, and
+# Resurrect brings it back to the base. (`SetHealth 0` would set the BASE to 0,
+# which OpenMW's resurrect restores too, leaving the actor at 0.)
+case drained_health_kills
+run
+arrille->ModCurrentHealth -10000
+wait 30
+expect arrille->GetHealth <= 0
+expect GetDeadCount arrille == 1
+end
+
+case resurrect
+run
+arrille->Resurrect
+wait 30
+expect arrille->GetHealth > 0
+end
+
+case sethealth_zero_kills
+run
+arrille->SetHealth 0
+wait 30
+expect GetDeadCount arrille == 2
+end
+
+# 50_world.mwtest drives arrille next: his base back, then alive.
+case arrille_restored
+run
+arrille->SetHealth 100
+arrille->Resurrect
+wait 30
+expect arrille->GetHealth > 0
+end

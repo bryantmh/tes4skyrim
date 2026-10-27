@@ -54,12 +54,14 @@ using ScriptSetText_t = void  (*)(void* script, const char* text);
 void FreeScriptObject(void* script);
 
 void* AllocScriptObject(const std::string& text) {
-    if (!g_addr.memAlloc || !g_addr.scriptCtor || !g_addr.scriptSetText) return nullptr;
+    if (!g_addr.memAlloc || !g_addr.memoryManager || !g_addr.scriptCtor || !g_addr.scriptSetText)
+        return nullptr;
 
     auto alloc = reinterpret_cast<MemAlloc_t>(g_addr.memAlloc);
 
-    // Matches the console's own allocation: 0x80 bytes, unaligned.
-    void* mem = alloc(nullptr, ids::kScriptSize, 0, false);
+    // Matches the console's own allocation: 0x80 bytes, unaligned, from the
+    // engine's MemoryManager (a null heap faults at [this+0x28]).
+    void* mem = alloc(reinterpret_cast<void*>(g_addr.memoryManager), ids::kScriptSize, 0, false);
     if (!mem) return nullptr;
 
     // DO NOT memset the block before the constructor.

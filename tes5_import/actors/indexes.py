@@ -23,7 +23,7 @@ from ..record_types.sound import (load_soun_identity, reset_sound_descriptors,
 from ..record_types.projectile_falloutnv import index_gun_projectiles
 from ..record_types.reference_falloutnv import index_convertible_records
 from ..record_types.world_falloutnv import register_fallout_source
-from ..record_types.world_morrowind import register_tes3_locks
+from ..record_types.world_morrowind import persist_script_named_refs, register_tes3_locks
 from ..registry import IMPORT_DISPATCH, SKIP_TYPES
 
 
@@ -54,6 +54,9 @@ def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
     n_locks = register_tes3_locks(by_type, export_dir, master_export)
     if n_locks:
         print(f'  TES3 door locks: {n_locks} exit-only lock(s) dropped')
+    n_named = persist_script_named_refs(by_type, export_dir)
+    if n_named:
+        print(f'  TES3 script-named refs: {n_named} placement(s) made persistent')
     index_convertible_records(by_type, IMPORT_DISPATCH, SKIP_TYPES, master_export)
     n_ammo = index_gun_projectiles(by_type, master_export)
     if n_ammo:

@@ -23,24 +23,27 @@ import struct
 
 from asset_convert.sources import source_registry
 from output_layout import plugin_esm
+from core.skyrim_language import text_codec
 from core.plugin_masters import (export_root, export_source,
                                  get_masters_from_binary,
                                  masters_from_export_header)
 from tes4_export.morrowind_ids import encode_editor_id, load_index
 from tes4_export.morrowind_patch import PATCH_NAME, START_SCRIPTS_SIG
 
-from .morrowind_placements import (SCRIPTED_EXPORTS, TES4_PLUGIN_PREFIX,
-                                   export_records, folder_tables,
+from .morrowind_placements import (PLACED_EXPORTS, SCRIPTED_EXPORTS, SCRIPTED_TYPES, TES4_PLUGIN_PREFIX,
+                                   cell_place, export_records, first_placements, folder_tables,
                                    forget_folder_tables, master_scripted,
                                    placement, rebased_formid)
 from .morrowind_sidecar_source import (forget_gathered, gather,
                                        own_dialogue_blocks, source_chain)
 from .morrowind_temples import skyrim_rows
 from ..record_types.magic_morrowind import effect_form_rows
+from ..actors.disposition import disposition_rows
 from .morrowind_teleport import (ANCHORS_TABLE, EFFECT_FORMS_TABLE, MARKERS_TABLE,
                                  TELEPORTS_TABLE, WORLDS_TABLE, marker_lines,
                                  target_lines, teleport_lines, world_lines)
-from .morrowind_travel import TRAVEL_TABLE, marker_index, travel_lines
+from .morrowind_travel import (EXTERIOR_NAMES_TABLE, TRAVEL_TABLE, exterior_name_lines,
+                               marker_index, travel_lines)
 from .say_morrowind import SAY_TABLE, say_rows
 
 #: Where the runtime looks, relative to a plugin's output root.
@@ -121,8 +124,8 @@ SOULS_TABLE = 'CREA_soul.txt'
 #: A TES5 record's body starts after its 24-byte header.
 _TES5_HEADER = slice(24, None)
 
-#: The export the actor index is built from.
-_NPC_EXPORT = 'NPC_.txt'
+#: The exports the actor index is built from.
+_ACTOR_EXPORTS = ('NPC_.txt', 'CREA.txt')
 
 #: The exports whose records can sit in an inventory.
 _ITEM_EXPORTS = ('ALCH.txt', 'AMMO.txt', 'APPA.txt', 'ARMO.txt', 'BOOK.txt',
@@ -148,7 +151,6 @@ _MAX_EFFECTS = 8
 
 #: The same types as the index names them.
 _ITEM_TYPES = tuple(name[:-4] for name in _ITEM_EXPORTS)
-_SCRIPTED_TYPES = tuple(name[:-4] for name in SCRIPTED_EXPORTS)
 _SPELL_TYPES = tuple(name[:-4] for name in _SPELL_EXPORTS)
 _FACTION_TYPES = tuple(name[:-4] for name in _FACTION_EXPORTS)
 _GLOBAL_EXPORT = 'GLOB.txt'
@@ -175,7 +177,7 @@ def _scripted_records(folder: str, name: str) -> list:
 
 
 def _actor_index(export_dir: str) -> str:
-    """`FormID=EditorID` for every NPC: the TES3 id dialogue filters on.
+    """`FormID=EditorID` for every NPC and creature: the TES3 id dialogue filters on.
 
     The runtime routes activation by FormID but filters by TES3 id, so without
     this index it can tell an actor is Morrowind's and still not know who they
@@ -183,7 +185,7 @@ def _actor_index(export_dir: str) -> str:
     See: docs/commentary/morrowind_runtime.md#activation
     """
     lines = [f"{rec['FormID']}={rec['EditorID']}"
-             for rec in _scripted_records(export_dir, _NPC_EXPORT)
+             for name in _ACTOR_EXPORTS for rec in _scripted_records(export_dir, name)
              if rec.get('FormID') and rec.get('EditorID')]
     return '\n'.join(lines) + ('\n' if lines else '')
 
@@ -550,7 +552,7 @@ def _base_lines(dirs: list, root: str, ids: dict) -> list:
     """`id=Plugin|FormID` for each TES3 id's BASE record, never a placement.
     See: docs/plans/morrowind_object_scripts.md#placeatpc
     """
-    return _owned_lines(dirs, root, ids, SCRIPTED_EXPORTS, _SCRIPTED_TYPES)
+    return _owned_lines(dirs, root, ids, SCRIPTED_EXPORTS, SCRIPTED_TYPES)
 
 
 def _ref_lines(dirs: list, root: str, ids: dict) -> list:
@@ -563,60 +565,59 @@ def _ref_lines(dirs: list, root: str, ids: dict) -> list:
     because `id->Disable` acts on the thing in the world, not its template.
     See: docs/commentary/morrowind_runtime.md#placed-references
     """
-    wanted = _wanted_ids(dirs, ids, SCRIPTED_EXPORTS)
+    wanted = _wanted_ids(dirs, ids, PLACED_EXPORTS)
     seen = {}
     for folder, plugin, own in _loaded_dirs(root, *dirs[0]):
-        placed = folder_tables(folder)['first']
-        if not placed:
-            continue
-        index = load_index(folder, _SCRIPTED_TYPES, {own: own})
-        for key, edid in wanted.items():
-            base = index.lookup(edid) if key not in seen else None
-            ref = placed.get(base) if base else None
-            if ref:
-                seen[key] = f'{edid}={plugin}|{ref}'
+        unseen = {key: edid for key, edid in wanted.items() if key not in seen}
+        for key, ref in first_placements(folder, own, unseen).items():
+            seen[key] = f'{wanted[key]}={plugin}|{ref}'
     return list(seen.values())
 
 
-def _cell_rows(folder: str, plugin: str) -> set:
+def _cell_rows(folder: str, plugin: str, wilderness: str) -> set:
     """`cell name=Plugin|FormID` for each cell the export at `folder` names:
     the CELL of an interior, the WORLDSPACE of an exterior, attributed to the
     loaded plugin its index byte names.
 
-    Both names a cell carries are keyed, because a script may write either:
-    the export keeps the cell's own name as its `EditorID`, while `FULL`
-    repeats that for an interior and names the REGION for an exterior.
+    Both names a cell carries are keyed: its own name (`EditorID`) and `FULL`,
+    which names the REGION of an exterior. An exterior is also keyed by
+    `wilderness`, OpenMW's name for an exterior with neither.
     See: docs/commentary/morrowind_runtime.md#positioncell-moves-into-the-cell
     """
     masters = masters_from_export_header(folder)
     rows = set()
     for rec in folder_tables(folder)['cells']:
-        place = rec.get('ParentWRLD') or rec.get('FormID', '')
+        place = cell_place(rec, masters, plugin)
         if not place:
             continue
-        index = int(place[:2], 16)
-        owner = masters[index] if index < len(masters) else plugin
-        rows.update(f'{rec[key]}={owner}|{place}'
-                    for key in ('EditorID', 'FULL') if rec.get(key))
+        names = [rec[key] for key in ('EditorID', 'FULL') if rec.get(key)]
+        rows.update(f'{name}={place}'
+                    for name in names + ([wilderness] if rec.get('ParentWRLD') else []))
     return rows
 
 
+def _wilderness(gathered: dict) -> str:
+    """`sDefaultCellname`: OpenMW's name for an exterior with no name or region."""
+    line = gathered.get('gmsts', {}).get('sdefaultcellname', '')
+    return line.partition('=')[2][2:] or 'Wilderness'
+
+
 def _cell_names(gathered: dict) -> set:
-    """The lowercased cell ids and region names the TES3 chain authors."""
-    return gathered.get('cells', set()) | {
+    """The lowercased cell, region and wilderness names the TES3 chain authors."""
+    return gathered.get('cells', set()) | {_wilderness(gathered).lower()} | {
         name.lower() for name in gathered.get('regions', {}).values()}
 
 
-def _cell_lines(loaded: list, keeps, names: set) -> list:
+def _cell_lines(loaded: list, keeps, names: set, wilderness: str) -> list:
     """This plugin's cell rows that no master's export repeats -- a renamed
     override is its own -- plus the rows naming a TES3 cell or region in
     `names` of each master it `keeps`, which has no sidecar to stage them.
 
     See: docs/plans/morrowind_object_scripts.md#cumulative-gather-must-go
     """
-    lines = _cell_rows(*loaded[0][:2])
+    lines = _cell_rows(*loaded[0][:2], wilderness)
     for folder, plugin, _own in loaded[1:]:
-        rows = _cell_rows(folder, plugin)
+        rows = _cell_rows(folder, plugin, wilderness)
         if keeps(plugin):
             lines |= {row for row in rows
                       if row.partition('=')[0].lower() in names}
@@ -696,7 +697,9 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
             + _write_lines(os.path.join(out_dir, CELLS_TABLE),
                            _cell_lines(loaded,
                                        _row_keeper(export_dir, plugin_name),
-                                       _cell_names(ids))))
+                                       _cell_names(ids), _wilderness(ids)))
+            + _write_lines(os.path.join(out_dir, EXTERIOR_NAMES_TABLE),
+                           exterior_name_lines(ids)))
 
 
 def _export_starts(export_dir: str) -> dict:
@@ -814,7 +817,7 @@ def _converted_sounds(esm_path: str, own_only: bool = False) -> dict:
         sdsc = first_sub(body, b'SDSC')
         if edid is None or sdsc is None or len(sdsc) < 4:
             continue
-        key = edid.rstrip(b'\0').decode('ascii', 'replace')
+        key = edid.rstrip(b'\0').decode(text_codec(), 'replace')
         out.setdefault(key if own_only else key.lower(),
                        struct.unpack_from('<I', sdsc, 0)[0])
     return out
@@ -989,7 +992,8 @@ def _teleport_tables(export_dir: str, output_path: str, plugin_name: str,
                            teleport_lines(_effect_lines(loaded), plugin_name,
                                           len(writer.masters)))
             + _write_lines(os.path.join(out_dir, EFFECT_FORMS_TABLE),
-                           effect_form_rows(plugin_name, writer.masters)))
+                           effect_form_rows(plugin_name, writer.masters)
+                           + disposition_rows(plugin_name, writer.masters)))
 
 
 def _apparatus(export_dir: str, output_path: str, plugin_name: str,

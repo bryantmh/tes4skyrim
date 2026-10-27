@@ -1,0 +1,46 @@
+# A2_2 "Sixth House Base": Caius sends the player to the Sixth House shrine at
+# Ilunibi, where the priest Dagoth Gares greets Lord Nerevar and, dying, curses
+# the player with corprus.
+# PositionCell stands in for the walks; damage stands in for the fight, and ref
+# FormIDs carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a2_2_orders
+# See docs/commentary/headless_testing.md#quest-runs
+
+# "I'm ready for anything" and a Continue: the mission, 400 drakes, and Dagoth
+# Gares enabled.
+case a2_2_orders
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Orders
+choose 1
+choose 3
+expect GetJournalIndex A2_2_6thHouse == 5
+bye
+end
+
+# Near the player his script force-greets; he speaks for his lord.
+case a2_2_gares
+run
+player->PositionCell 4159 4486 12224 0 "Ilunibi, Soul's Rattle"
+until 600 GetPCCell "Ilunibi, Soul's Rattle" == 1
+until 600 MenuMode == 1
+ask Dagoth Ur
+expect GetJournalIndex A2_2_6thHouse == 40
+ask Sixth House
+expect GetJournalIndex A2_2_6thHouse == 42
+ask Lord's friendship
+choose 1
+expect GetJournalIndex A2_2_6thHouse == 49
+bye
+end
+
+# His dying curse: corprus, a message box, and the journal.
+case a2_2_curse
+console 05D254C5.damageav health 10000
+button 0
+until 300 "dagoth gares"->GetHealth <= 0
+until 300 GetJournalIndex A2_2_6thHouse == 50
+expect player->GetSpell Corprus == 1
+end

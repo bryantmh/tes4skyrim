@@ -1,5 +1,7 @@
 #include "activation.h"
 
+#include <windows.h>
+
 #include <bitset>
 #include <cstdlib>
 #include <cstring>
@@ -11,6 +13,7 @@
 #include "addresses.h"
 #include "conversation.h"
 #include "dialogue_state.h"
+#include "game_actor.h"
 #include "game_calls.h"
 #include "game_calls_internal.h"
 #include "ids.h"
@@ -19,6 +22,7 @@
 #include "object_script.h"
 #include "scope.h"
 #include "script_tables.h"
+#include "session.h"
 #include "store.h"
 
 namespace tesruntime::mw {
@@ -91,6 +95,15 @@ OpenContainerFn   g_openContainer = nullptr;
 // The reference a script's `Activate` is activating right now, or null.
 void* g_scriptActivation = nullptr;
 
+// The reference a script's `Activate` last passed, and until when its
+// engine-made follow-up activation passes too.
+struct ScriptPass {
+    void* ref = nullptr;
+    ULONGLONG until = 0;
+};
+ScriptPass g_scriptPass;
+constexpr ULONGLONG kScriptPassMs = 2000;
+
 // The GMST OpenMW's Npc::activate shows for an actor fighting the player.
 constexpr const char* kInCombatGmst = "sActorInCombat";
 
@@ -157,8 +170,20 @@ ObjectScript* ScriptInstance(void* ref) {
 // 🛑 Only the PLAYER's. Skyrim's NPCs activate every door they path through,
 // and TES3 has no such thing: taken, the door's `if ( OnActivate == 1 )` would
 // fire for the NPC and its `Activate` would then act as the player.
+//
+// 🛑 A load door activates TWICE: once to open, then again after the call
+// returns, to carry the player through. The second is the same activation
+// finishing, so a script's pass also covers the next one of that ref, once,
+// within kScriptPassMs -- claimed, the door's speech restarted forever.
 bool ScriptTakesActivation(void* ref, void* activator) {
-    if (ref == g_scriptActivation) return false;
+    if (ref == g_scriptActivation) {
+        g_scriptPass = {ref, GetTickCount64() + kScriptPassMs};
+        return false;
+    }
+    if (ref == g_scriptPass.ref && GetTickCount64() < g_scriptPass.until) {
+        g_scriptPass = {};
+        return false;
+    }
     ObjectScript* instance = ScriptInstance(ref);
     if (!instance || activator != gamecalls::PlayerRef()) return false;
     if (!instance->ActivationClaimed()) return false;
@@ -251,6 +276,17 @@ bool ActivateSpeaker(void* base, void* ref, std::uint32_t baseId) {
     return true;
 }
 
+// Whether this placement is a creature with no greeting to give. A creature
+// answers only the responses naming it, and OpenMW opens no window when no
+// greeting matches, so a mute one is Skyrim's to activate.
+bool MuteCreature(void* ref, std::uint32_t baseId) {
+    const GameActor actor(SpeakerId(baseId));
+    if (actor.IsNpc()) return false;
+    const LayerScope scope(SpeakerLayer(baseId));
+    SetSpeakerRef(SpeakerId(baseId), ref);
+    return Greet(actor).text.empty();
+}
+
 // Our Activate. The FIRST test is one bit on the ref's load-order
 // index, so a vanilla or Oblivion-converted NPC reaches the engine's own
 // Activate having cost nothing measurable.
@@ -267,7 +303,7 @@ bool ActivateHook(void* base, void* ref, void* activator, std::uint8_t unk,
     // Checking the base is what makes one indexed NPC match all its refs.
     const std::uint32_t baseId = FormIdOf(base);
     if (baseId && IsMorrowindSpeaker(baseId) && !IsCorpse(ref) &&
-        ActivateSpeaker(base, ref, baseId)) {
+        !MuteCreature(ref, baseId) && ActivateSpeaker(base, ref, baseId)) {
         return true;
     }
     const ActivateFn original = OriginalActivate(base);

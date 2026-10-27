@@ -1,0 +1,164 @@
+# Chapter IV, the Thieves Guild's second round: Tate takes the player to
+# Nembrest and dies on the bridge, the Masterthief turns out to play a double
+# game, and Madame Blanche sends the player after a merchant's savings book.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from tate_hire
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Tate greets the new Thief and asks for company on the road to Nembrest.
+case tate_hire
+run
+player->PositionCell -1100 2175 323 0 "Stormwend, Thieves Guild"
+until 300 "DIEBTate".State == 1
+until 300 MenuMode == 1
+wait 60
+ask travel with me
+choose 11
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 1
+expect Diebesgildevar == 10
+end
+
+# He follows the player out through the guild's secret door.
+case tate_door
+run
+player->PositionCell 46 -60 833 0 "Stormwend, Thieves Guild"
+until 900 "DIEBTate"->GetDistance player < 400
+activate 05E9C307
+until 300 GetPCCell "Stormwend, Thieves Guild" == 0
+until 900 "DIEBTate"->GetDistance player < 600
+end
+
+# The road to Nembrest; Tate stands in for having walked it beside the player.
+case tate_nembrest
+run
+player->Position 79600 19600 160 0
+"DIEBTate"->Position 79650 19650 160 0
+until 300 Diebesgildevar == 11
+until 600 "DIEBTate".State == 2
+until 300 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 2
+expect Diebesgildevar == 12
+end
+
+# The gloomy dwarf in Nembrest has bad news about the guild.
+case tate_dwarf
+run
+player->Position 80700 20200 190 0
+talk "DIEBDüstererZwerg"
+choose 1
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 3
+end
+
+# Back on the bridge, Tate hears it, and three shadows come for him. He has
+# 9000 health, so the fight runs over 12000 ticks.
+case tate_bridge
+run
+player->Position 63000 23687 140 0
+until 600 "DIEBTate".State == 3
+until 300 MenuMode == 1
+wait 60
+ask What did you find out?
+choose 3
+choose 5
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 4
+expect GetJournalIndex A_IV_SchwarzeSteine == 3
+until 40000 Diebesgildevar == 15
+end
+
+# Jarko hears that Tate is dead.
+case blanche_jarko
+run
+player->PositionCell -880 2456 323 0 "Stormwend, Thieves Guild"
+talk DIEBJarkoderGaukler
+choose 10
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 5
+end
+
+# The Masterthief is told nothing, and points at Madame Blanche.
+case blanche_masterthief
+run
+player->PositionCell -803 1914 323 0 "Stormwend, Thieves Guild"
+talk DIEBMeisterdieb
+choose 1
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 6
+end
+
+# Madame Blanche has the merchant Kaufmann's key.
+case blanche_mark
+run
+player->PositionCell -1440 2444 321 0 "Stormwend, Thieves Guild"
+talk DIEBMadameBlanche
+ask What's the mark?
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 7
+expect player->GetItemCount key_kaufmann1 == 1
+end
+
+# Kaufmann's savings book.
+case blanche_book
+run
+player->PositionCell -440 124 446 0 "Stormwend, Kaufmann's House"
+activate 054CEE23
+take 054CEE23
+close Book Menu
+until 300 GetJournalIndex A_IV_Diebesgilde2 == 8
+expect player->GetItemCount SparbuchKaufmann == 1
+end
+
+# Blanche sends the player to the bank with it.
+case blanche_book_shown
+run
+player->PositionCell -1440 2444 321 0 "Stormwend, Thieves Guild"
+talk DIEBMadameBlanche
+ask have the book?
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 9
+end
+
+# The Bank of Stormwend pays out 8000 gold and keeps the book.
+case blanche_bank
+run
+player->PositionCell 11 980 575 0 "Stormwend, Bank"
+talk Bankangestellter01
+ask savings book
+choose 1
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 10
+expect player->GetItemCount SparbuchKaufmann == 0
+end
+
+# Blanche keeps 7000 of it.
+case blanche_paid
+run
+player->PositionCell -1440 2444 321 0 "Stormwend, Thieves Guild"
+talk DIEBMadameBlanche
+ask have the money
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 11
+end
+
+# The Masterthief has the next job.
+case blanche_masterthief_job
+run
+player->PositionCell -803 1914 323 0 "Stormwend, Thieves Guild"
+talk DIEBMeisterdieb
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 12
+end
+
+# Jarko knows of the abandoned house where the Baron meets the Masterthief.
+case blanche_jarko_house
+run
+player->PositionCell -880 2456 323 0 "Stormwend, Thieves Guild"
+talk DIEBJarkoderGaukler
+choose 111
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 13
+end

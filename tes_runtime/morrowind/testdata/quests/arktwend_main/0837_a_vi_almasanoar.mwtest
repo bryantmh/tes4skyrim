@@ -1,0 +1,63 @@
+# Chapter VI, the desert: Calisto's friends join the player near Almasanoar,
+# the captain of the guard brings the player to the Sultan, and the player
+# drives the Mytrehen from the old Normaden outpost.
+# Position stands in for the walks and damage for the fight; ref FormIDs carry
+# Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from desert_friends
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Calisto and his friends wait in the stone desert.
+case desert_friends
+run
+player->Position 48574 -100700 193 0
+talk WusteCalisto02
+bye
+expect GetJournalIndex A_VI_AlmasanoarFreunde == 1
+end
+
+# The captain of the guard stops the player: the Sultan wants to see them.
+case desert_captain
+run
+player->Position 50847 -106990 1161 0
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_VI_SultansAufgabe == 1
+end
+
+# The Sultan asks for help against the Mytrehen; the player agrees.
+case desert_sultan
+run
+player->Position 48234 -107600 1502 0
+until 600 MenuMode == 1
+wait 60
+ask against the Mytrehen
+choose 1
+choose 2
+choose 3
+bye
+expect GetJournalIndex A_VI_SultansAufgabe == 11
+wait 30
+expect "AlmasanoarHauptmann"->GetDistance "AlmasanoarSultan" < 1500
+end
+
+# The captain has found a few brave men.
+case desert_men
+run
+player->Position 49033 -107620 1512 0
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_VI_SultansAufgabe == 16
+end
+
+# The Mytrehen leader at the old outpost. Taking the Sultan's task set
+# Mytrehen to 10, so he attacks rather than greets; his death is the entry.
+case desert_outpost
+run
+player->Position 42825 -150450 3240 0
+expect Mytrehen == 10
+wait 60
+console 05EB0A10.damageav health 100000
+until 600 GetJournalIndex A_VI_SultansAufgabe == 21
+end

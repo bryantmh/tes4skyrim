@@ -804,6 +804,20 @@ def _pack_exterior_cell(cell_rec, sub_parts, ctx) -> int:
     return converted + 1
 
 
+def move_persistent_refs(exterior_cells, pcell_fid, ctx) -> None:
+    """Move each exterior cell's persistent refs into the world's persistent
+    cell, where Skyrim.esm and both DLCs keep every one; the navmeshes are built.
+    See: docs/commentary/tes5_import_world.md#exterior-persistent-refs-live-in-the-persistent-cell
+    """
+    for table in (ctx['refr_by_cell'], ctx['achr_by_cell']):
+        for cell in exterior_cells:
+            fid = get_formid(cell, 'FormID')
+            moved = [rec for rec in table.get(fid, []) if _is_persistent(rec)]
+            if moved:
+                table[fid] = [rec for rec in table[fid] if not _is_persistent(rec)]
+                table[pcell_fid] = table.get(pcell_fid, []) + moved
+
+
 def _build_one_world(wrld_fid, wrld_rec, anchor_wrld, ctx):
     """Build one worldspace's records as (list of payloads, converted).
 
@@ -825,6 +839,8 @@ def _build_one_world(wrld_fid, wrld_rec, anchor_wrld, ctx):
         else:
             navm_pool.ensure_cell_grid(cell)
             exterior_cells.append(cell)
+    if len(persistent_cells) == 1:
+        move_persistent_refs(exterior_cells, get_formid(persistent_cells[0], 'FormID'), ctx)
 
     for persistent_cell in persistent_cells:
         pcell_fid = get_formid(persistent_cell, 'FormID')

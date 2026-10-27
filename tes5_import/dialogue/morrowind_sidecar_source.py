@@ -33,7 +33,7 @@ from tes4_export.tes3_reader import (get_all_subrecords, get_string,
 from ..base.equivalents import (RACE_MAP, SKYRIM_VAMPIRE_RACES,
                                 TES4_RACE_FID_TO_EDID)
 from .morrowind_travel import take_place
-from .morrowind_autocalc import (autocalc_attributes, autocalc_skills,
+from .morrowind_autocalc import (autocalc_attributes, autocalc_pools, autocalc_skills,
                                  parse_class, parse_race, parse_skill)
 
 #: The 52-byte NPDT: level, 8 attributes, 27 skills, health, magicka, fatigue, disposition, reputation, rank, gold.
@@ -41,6 +41,10 @@ _NPDT_FULL = '<h8B27BxHHHBBBxi'
 
 #: The 12-byte autocalc NPDT: level, disposition, reputation, rank, gold.
 _NPDT_AUTOCALC = '<hBBB3xi'
+
+#: The 96-byte CREA NPDT: type, level, 8 attributes, health/magicka/fatigue, soul, combat/magic/stealth, 6 attacks, gold.
+_CREA_NPDT = '<10i4i3i6ii'
+_CREA_LEVEL, _CREA_ATTRIBUTES, _CREA_SPECIALIZED, _CREA_GOLD = 1, slice(2, 10), slice(14, 17), 23
 
 #: TES3 attribute and skill indices the persuasion formula reads.
 _PERSONALITY, _LUCK = 6, 7
@@ -140,10 +144,11 @@ def npc_is_autocalc(rec) -> bool:
     return len(_npdt(rec)) < struct.calcsize(_NPDT_FULL)
 
 
-def npc_stats(rec, tables: dict) -> dict:
+def npc_stats(rec, tables: dict, magicka_mult: float = None) -> dict:
     """`{level, disposition, reputation, rank, gold, attributes, skills}` for
     one NPC_: authored from the 52-byte NPDT, else derived from its race and
-    class as OpenMW derives them for the 12-byte form.
+    class as OpenMW derives them for the 12-byte form, plus the derived
+    `health`/`magicka`/`fatigue` when `magicka_mult` (fNPCbaseMagickaMult) is given.
 
     See: docs/commentary/morrowind_runtime.md#npc-stats
     """
@@ -169,6 +174,26 @@ def npc_stats(rec, tables: dict) -> dict:
                                                 out['level'], female)
         out['skills'] = autocalc_skills(race, clazz, tables['skills'],
                                         out['level'])
+        if magicka_mult is not None:
+            out.update(autocalc_pools(out['attributes'], clazz, out['level'], magicka_mult))
+    return out
+
+
+def creature_stats(rec, tables: dict) -> dict:
+    """`npc_stats`' keys for one CREA, from its NPDT: each skill is the combat,
+    magic or stealth value its specialization names, as OpenMW's
+    Creature::getSkill reads it."""
+    out = {'level': 1, 'disposition': _NEUTRAL_DISPOSITION, 'reputation': 0,
+           'rank': 0, 'gold': 0, 'attributes': [0] * 8, 'skills': [0] * 27}
+    raw = _npdt(rec)
+    if len(raw) < struct.calcsize(_CREA_NPDT):
+        return out
+    fields = struct.unpack_from(_CREA_NPDT, raw)
+    specialized = fields[_CREA_SPECIALIZED]
+    out.update(level=fields[_CREA_LEVEL], gold=fields[_CREA_GOLD],
+               attributes=list(fields[_CREA_ATTRIBUTES]),
+               skills=[specialized[tables['skills'][index]['specialization']]
+                       if index in tables['skills'] else 0 for index in range(27)])
     return out
 
 
@@ -200,18 +225,23 @@ def _ai_settings(rec) -> tuple:
 def _actor_line(rec, tables: dict) -> str:
     """`id=race|class|faction|rank|disposition|female|name|level|reputation|
     personality|luck|speechcraft|mercantile|services|gold|hello|fight|flee|
-    alarm|8 attributes|27 skills` for one NPC_, the last two comma-joined in
-    TES3's own order."""
-    stats = npc_stats(rec, tables)
-    fields = (_text(rec, 'RNAM'), _text(rec, 'CNAM'), _text(rec, 'ANAM'),
+    alarm|8 attributes|27 skills|creature` for one NPC_ or CREA, the
+    attributes and skills comma-joined in TES3's own order. A creature has no
+    race, class, faction or sex: its CNAM is its sound creature, and its
+    FLAG bits mean other things."""
+    creature = rec.type == 'CREA'
+    stats = creature_stats(rec, tables) if creature else npc_stats(rec, tables)
+    identity = ('', '', '') if creature else tuple(_text(rec, sig) for sig in ('RNAM', 'CNAM', 'ANAM'))
+    fields = (*identity,
               stats['rank'], stats['disposition'],
-              1 if _npc_flags(rec) & _FEMALE else 0, _text(rec, 'FNAM'),
+              1 if not creature and _npc_flags(rec) & _FEMALE else 0, _text(rec, 'FNAM'),
               stats['level'], stats['reputation'],
               stats['attributes'][_PERSONALITY], stats['attributes'][_LUCK],
               stats['skills'][_SPEECHCRAFT], stats['skills'][_MERCANTILE],
-              npc_services(rec, tables), stats['gold'], *_ai_settings(rec),
+              aidt_services(rec) if creature else npc_services(rec, tables),
+              stats['gold'], *_ai_settings(rec),
               ','.join(str(value) for value in stats['attributes']),
-              ','.join(str(value) for value in stats['skills']))
+              ','.join(str(value) for value in stats['skills']), 1 if creature else 0)
     return f'{rec.record_id}=' + '|'.join(str(field) for field in fields)
 
 
@@ -301,9 +331,9 @@ def _take_dial(out: dict, rec, topic: str) -> str:
 
 
 def _take_tables(out: dict, rec) -> None:
-    """One NPC_, RACE, CLAS, GMST or FACT into its table."""
+    """One NPC_ or CREA, RACE, CLAS, GMST or FACT into its table."""
     key = rec.record_id.lower()
-    if rec.type == 'NPC_':
+    if rec.type in ('NPC_', 'CREA'):
         out['npcs'][key] = rec
         out['own']['npcs'].add(key)
     elif rec.type in _STAT_TABLES:
@@ -351,7 +381,7 @@ def _take(out: dict, rec, topic: str) -> str:
 
 
 #: The tables `gather` stages as the plugin's own records alone; a master stages its own.
-_OWN_TABLES = ('npcs', 'factions', 'gmsts', 'skills', 'races')
+_OWN_TABLES = ('npcs', 'factions', 'gmsts', 'skills', 'races', 'exteriors')
 
 
 def _reset_own(out: dict) -> None:

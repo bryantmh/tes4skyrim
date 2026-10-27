@@ -1,0 +1,33 @@
+# B1 "Urshilaku Nerevarine": with Moon-and-Star, Sul-Matuul gives his counsel,
+# speaks of need and duty, and names the player Urshilaku Nerevarine.
+# PositionCell stands in for the walk.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b1_urshilaku
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Each answer names the next topic: counsel, then need and duty, then the
+# naming itself.
+case b1_urshilaku
+run
+player->PositionCell 47 380 -185 0 "Urshilaku Camp, Ashkhan's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Ashkhan's Yurt" == 1
+talk sul-matuul
+ask Urshilaku Nerevarine
+ask counsel of Sul-Matuul
+choose 1
+expect GetJournalIndex B1_UnifyUrshilaku == 1
+ask Urshilaku Nerevarine
+ask need
+expect GetJournalIndex B1_UnifyUrshilaku == 5
+ask curse of Dagoth Ur
+expect GetJournalIndex B1_UnifyUrshilaku == 10
+ask False Gods
+expect GetJournalIndex B1_UnifyUrshilaku == 15
+ask Moon-and-Star
+expect GetJournalIndex B1_UnifyUrshilaku == 20
+ask duty
+expect GetJournalIndex B1_UnifyUrshilaku == 25
+ask Urshilaku Nerevarine
+expect GetJournalIndex B1_UnifyUrshilaku == 50
+expect player->GetItemCount Teeth == 1
+bye
+end

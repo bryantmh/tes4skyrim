@@ -36,6 +36,7 @@
 #include "ids.h"
 #include "leveling.h"
 #include "log.h"
+#include "main_thread.h"
 #include "object_tick.h"
 #include "script_tables.h"
 
@@ -254,6 +255,22 @@ bool LevelProgress(float* points, float* most) {
     return *most > 0.0f;
 }
 
+void FillLevelProgress() {
+    RunOnGameThread([]() {
+        float points = 0.0f;
+        float most = 0.0f;
+        if (!LevelProgress(&points, &most)) {
+            Log("leveling: EnableLevelUpMenu -- the level bar cannot be read");
+            return;
+        }
+        if (points < most) {
+            std::memcpy(const_cast<std::uint8_t*>(SkillData()) + ids::kLevelPoints, &most,
+                        sizeof(float));
+        }
+        Log("leveling: EnableLevelUpMenu fills the level bar (%g of %g)", points, most);
+    });
+}
+
 // The player's {points, pointsMax} toward the next point of Skyrim skill
 // `skill`, as a fraction.
 float SkillProgress(const char* skill) {
@@ -363,6 +380,7 @@ void InstallAttributeCalls(GameHooks& hooks) {
     hooks.attributeEffect = AttributeEffect;
     hooks.skillProgress = SkillProgress;
     hooks.levelProgress = LevelProgress;
+    hooks.fillLevelProgress = FillLevelProgress;
     hooks.syncAttributeGlobals = SyncAttributeGlobals;
     InstallSkillCap();
 }

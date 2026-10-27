@@ -5,12 +5,21 @@
 
 #include "game_calls_internal.h"
 
+#include <algorithm>
+#include <cstring>
 #include <string>
 #include <vector>
 
+#include <components/interpreter/defines.hpp>
+
+#include "activation.h"
+#include "game_actor.h"
+#include "hook.h"
 #include "ids.h"
 #include "log.h"
 #include "main_thread.h"
+#include "script_context.h"
+#include "ui_message.h"
 
 namespace tesruntime::mw {
 namespace gamecalls {
@@ -84,6 +93,49 @@ constexpr std::uint32_t kArg5 = 0xa;
 //: Both engines cap a message box at 10 buttons.
 constexpr std::size_t kMaxButtons = 10;
 
+// The engine's BSString: the text, then its length and capacity as 16-bit counts.
+struct EngineString {
+    const char* data;
+    std::uint16_t size;
+    std::uint16_t capacity;
+    std::uint32_t pad;
+};
+
+// BookMenu::OpenBookMenu(text, extra, ref, book, pos, rot, scale, useDefaultPos),
+// which every book open passes through; it copies `text` into the menu's own.
+using OpenBookFn = void (*)(const EngineString* text, void* extra, void* ref, void* book,
+                            const void* pos, const void* rot, float scale, bool defaultPos);
+
+OpenBookFn g_openBook = nullptr;
+
+// A Morrowind book's `%PCName`, `%PCRace` and `%PCClass` filled in as the book
+// opens, as OpenMW's `fixDefinesBook` does; every other book goes through as is.
+// See: docs/commentary/morrowind_runtime.md#book-text-defines
+void OpenBookHook(const EngineString* text, void* extra, void* ref, void* book, const void* pos,
+                  const void* rot, float scale, bool defaultPos) {
+    const bool ours = text && text->data && book && IsMorrowindForm(FormIdOf(book)) &&
+                      std::strchr(text->data, '%');
+    if (!ours) {
+        g_openBook(text, extra, ref, book, pos, rot, scale, defaultPos);
+        return;
+    }
+    GameActor player("player");
+    DialogueContext context(player, PlayerName(), PlayerName());
+    const std::string filled = Interpreter::fixDefinesBook(text->data, context);
+    const auto size = static_cast<std::uint16_t>(std::min<std::size_t>(filled.size(), 0xFFFF));
+    const EngineString copy{filled.c_str(), size, size, 0};
+    g_openBook(&copy, extra, ref, book, pos, rot, scale, defaultPos);
+}
+
+void InstallBookDefines() {
+    const std::uintptr_t open = Resolve("BookMenu::OpenBookMenu", ids::kOpenBookMenu, nullptr);
+    g_openBook = reinterpret_cast<OpenBookFn>(open);
+    const int patched = open ? PatchAllCalls(open, reinterpret_cast<void*>(&OpenBookHook),
+                                             "BookMenu::OpenBookMenu")
+                             : 0;
+    Log("message: book defines %s (%d call site(s))", patched ? "hooked" : "NOT hooked", patched);
+}
+
 }  // namespace
 
 // The click lands in `buttonPressed`, which `GetButtonPressed` hands out once.
@@ -108,6 +160,15 @@ void ShowButtonMessage(const std::string& text,
     });
 }
 
+// What clicking button `button` of the open box does, for a headless run:
+// the box goes, and the engine's callback gets the index.
+void PressButton(int button) {
+    PostToMainThread([button]() {
+        PostMenuMessage(ids::kMessageBoxMenu, kMessageForceHide);
+        OnButton(static_cast<unsigned int>(button));
+    });
+}
+
 void Notify(const std::string& text) {
     void* message = nullptr;
     if (text.empty() || !g_notification ||
@@ -124,6 +185,8 @@ void InstallMessageCalls(GameHooks& hooks) {
                                             ids::kDebugNotification);
     g_playBink = Native<PlayBinkFn>("Game.PlayBink", ids::kGamePlayBink);
     hooks.playBink = PlayBink;
+    hooks.pressButton = PressButton;
+    InstallBookDefines();
 }
 
 }  // namespace gamecalls

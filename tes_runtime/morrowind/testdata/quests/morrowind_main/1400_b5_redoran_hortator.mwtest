@@ -1,0 +1,110 @@
+# B5 "Redoran Hortator": the Redoran council must agree unanimously. Athyn
+# Sarethi backs an outlander once his son Varvur is brought home from Venim
+# Manor; his word wins Arobar, Llethri, Morvayn and Ramoran; Bolvyn Venim
+# never agrees and must be beaten in a duel in the Vivec Arena Pit. Then
+# Sarethi names the player Hortator and gives the Ring of the Hortator.
+# PositionCell stands in for the walks (and Varvur's following), the
+# console's damageav for the duel; ref FormIDs carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b5_sarethi
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Sarethi believes the player's story, but first wants his son rescued.
+case b5_sarethi
+run
+player->PositionCell 143 1885 -368 0 "Ald-ruhn, Sarethi Manor"
+until 600 GetPCCell "Ald-ruhn, Sarethi Manor" == 1
+talk athyn sarethi
+ask Redoran Hortator
+choose 2
+expect GetJournalIndex HR_RescueSarethi == 10
+bye
+end
+
+# Varvur follows the player home; his script finishes the rescue when he is
+# near his father, and Sarethi then backs the player.
+case b5_varvur
+run
+player->PositionCell 900 -1080 -381 90 "Ald-ruhn, Venim Manor Right Wing"
+until 600 GetPCCell "Ald-ruhn, Venim Manor Right Wing" == 1
+talk varvur sarethi
+ask travel together
+choose 1
+expect GetJournalIndex HR_RescueSarethi == 50
+bye
+until 300 "varvur sarethi"->GetCurrentAiPackage == 3
+run
+player->PositionCell 143 1885 -368 0 "Ald-ruhn, Sarethi Manor"
+until 600 GetPCCell "Ald-ruhn, Sarethi Manor" == 1
+run
+"varvur sarethi"->PositionCell 143 1835 -368 0 "Ald-ruhn, Sarethi Manor"
+until 900 GetJournalIndex HR_RescueSarethi == 70
+talk athyn sarethi
+ask Redoran Hortator
+expect GetJournalIndex B5_SarethiHort == 50
+bye
+end
+
+# On Sarethi's word the four other councilors agree.
+case b5_council
+run
+player->PositionCell 24 582 -102 0 "Ald-ruhn, Arobar Manor Bedrooms"
+until 600 GetPCCell "Ald-ruhn, Arobar Manor Bedrooms" == 1
+talk miner arobar
+ask Redoran Hortator
+expect GetJournalIndex B5_ArobarHort == 50
+bye
+run
+player->PositionCell -313 -32 -351 0 "Ald-ruhn, Llethri Private Quarters"
+until 600 GetPCCell "Ald-ruhn, Llethri Private Quarters" == 1
+talk garisa llethri
+ask Redoran Hortator
+expect GetJournalIndex B5_LlethriHort == 50
+bye
+run
+player->PositionCell -239 391 -91 0 "Ald-ruhn, Morvayn Quarters"
+until 600 GetPCCell "Ald-ruhn, Morvayn Quarters" == 1
+talk brara morvayn
+ask Redoran Hortator
+expect GetJournalIndex B5_MorvaynHort == 50
+bye
+run
+player->PositionCell -205 1327 128 0 "Ald-ruhn, Ramoran Private Quarters"
+until 600 GetPCCell "Ald-ruhn, Ramoran Private Quarters" == 1
+talk hlaren ramoran
+ask Redoran Hortator
+expect GetJournalIndex B5_RamoranHort == 50
+bye
+end
+
+# Venim challenges the player; entering the Arena Pit brings him there, and
+# his death in the duel settles the council.
+case b5_venim
+run
+player->PositionCell -989 -598 1 0 "Ald-ruhn, Venim Manor Private Quarters"
+until 600 GetPCCell "Ald-ruhn, Venim Manor Private Quarters" == 1
+talk bolvyn venim
+ask Redoran Hortator
+expect GetJournalIndex B5_VenimHort == 30
+bye
+run
+player->PositionCell 300 1 -325 90 "Vivec, Arena Pit"
+until 600 GetPCCell "Vivec, Arena Pit" == 1
+until 300 "bolvyn venim"->GetDistance player < 1000
+console 0563F55F.damageav health 10000
+until 300 GetJournalIndex B5_VenimHort == 50
+end
+
+# Sarethi announces the council's agreement and gives the ring, and a sealed
+# package from the Temple.
+case b5_hortator
+run
+player->PositionCell 143 1885 -368 0 "Ald-ruhn, Sarethi Manor"
+until 600 GetPCCell "Ald-ruhn, Sarethi Manor" == 1
+talk athyn sarethi
+ask Redoran Hortator
+choose 3
+expect GetJournalIndex B5_RedoranHort >= 50
+expect player->GetItemCount hortatorring == 1
+expect GetJournalIndex B8_MeetVivec == 1
+bye
+end

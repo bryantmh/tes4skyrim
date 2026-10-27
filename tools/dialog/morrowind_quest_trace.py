@@ -140,8 +140,45 @@ def scan_dialogue(info_path):
             setters.setdefault(quest.lower(), []).append({
                 'index': int(index), 'topic': topic,
                 'actor': rec.get('Actor', ''), 'source': 'dialogue',
-                'commands': commands_of(script)})
+                'commands': commands_of(script), 'info': rec})
     return entries, setters
+
+
+#: The INFO fields that pick who may say a response, and the value meaning "anyone".
+_SPEAKER_FILTERS = (('Actor', ''), ('Race', ''), ('Class', ''), ('Faction', ''),
+                    ('Rank', '-1'), ('Cell', ''), ('PCFaction', ''), ('PCRank', '-1'),
+                    ('Gender', '-1'), ('Disposition', '0'))
+
+#: A TES3 condition's comparison codes, in order.
+_COMPARISONS = ('==', '!=', '>', '>=', '<', '<=')
+
+
+def condition_texts(rec):
+    """Each of an INFO's conditions as `<type> <name> <op> <value>`."""
+    out = []
+    for i in range(int(rec.get('ConditionCount', '0') or 0)):
+        field = lambda key: rec.get('Condition[%d].%s' % (i, key), '')
+        name = field('Variable') or 'function %s' % field('Function')
+        op = int(field('Comparison') or 0)
+        out.append('%s %s %s %s' % (field('VarType'), name,
+                                    _COMPARISONS[op] if op < len(_COMPARISONS) else op,
+                                    field('Value')))
+    return out
+
+
+def print_detail(setter):
+    """Who may say a dialogue setter, its conditions and its result script."""
+    rec = setter.get('info')
+    if not rec:
+        return
+    said_by = ['%s=%s' % (key, rec[key]) for key, anyone in _SPEAKER_FILTERS
+               if rec.get(key, anyone) != anyone]
+    print('           said by: %s' % (', '.join(said_by) or 'anyone'))
+    for text in condition_texts(rec):
+        print('           if %s' % text)
+    for line in unescape(rec.get('ResultScript', '')).splitlines():
+        if line.strip():
+            print('           | %s' % line.strip())
 
 
 def scan_object_scripts(scpt_path):
@@ -208,8 +245,9 @@ def stage_rows(quest, entries, setters):
     return name, worst, rows
 
 
-def report_quest(quest, entries, setters, problems_only):
-    """Print one quest's stages; returns its worst verdict."""
+def report_quest(quest, entries, setters, problems_only, detail=False):
+    """Print one quest's stages, with each setter's speaker, conditions and
+    script when `detail`; returns its worst verdict."""
     found = stage_rows(quest, entries, setters)
     if not found:
         return None
@@ -225,6 +263,8 @@ def report_quest(quest, entries, setters, problems_only):
             print('         via %-13s %s' % (setter['source'],
                                              setter['topic']
                                              or setter['actor']))
+            if detail:
+                print_detail(setter)
     print()
     return worst
 
@@ -291,6 +331,8 @@ def main():
                     help='name only quests that are not fully OK')
     ap.add_argument('--blockers', action='store_true',
                     help='rank what blocks stages instead of listing quests')
+    ap.add_argument('--detail', action='store_true',
+                    help="print each dialogue setter's speaker, conditions and result script")
     ap.add_argument('--export-root', default='export')
     ap.add_argument('--output-root', default='output')
     args = ap.parse_args()
@@ -312,7 +354,7 @@ def main():
         return 0
     tally = {}
     for quest in wanted:
-        worst = report_quest(quest, entries, setters, args.problems)
+        worst = report_quest(quest, entries, setters, args.problems, args.detail)
         if worst:
             tally[worst] = tally.get(worst, 0) + 1
     print('%d quest(s): %s' % (

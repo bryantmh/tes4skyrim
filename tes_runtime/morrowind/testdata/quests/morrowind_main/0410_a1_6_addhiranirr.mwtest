@@ -1,0 +1,40 @@
+# A1_6 "Addhiranirr Informant": she will not talk while a Census and Excise
+# agent hunts her, so the player sends him off to the mainland.
+# PositionCell stands in for the walks.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a1_6_agent
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Hiding in the underworks, she names her trouble.
+case a1_6_agent
+run
+player->PositionCell 5850 473 170 90 "Vivec, St. Olms Underworks"
+until 600 GetPCCell "Vivec, St. Olms Underworks" == 1
+talk addhiranirr
+ask Census and Excise agent
+expect GetJournalIndex A1_6_AddhiranirrInformant == 12
+bye
+end
+
+# The agent upstairs hears she took a gondola to the mainland (choice 1).
+case a1_6_lie
+run
+player->PositionCell 490 248 -80 90 "Vivec, St. Olms Waistworks"
+until 600 GetPCCell "Vivec, St. Olms Waistworks" == 1
+talk duvianus platorius
+ask Addhiranirr
+choose 1
+expect GetJournalIndex A1_6_AddhiranirrInformant == 15
+bye
+end
+
+# Grateful, she greets the player and tells of the Sixth House cult.
+case a1_6_report
+run
+player->PositionCell 5850 473 170 90 "Vivec, St. Olms Underworks"
+until 600 GetPCCell "Vivec, St. Olms Underworks" == 1
+talk addhiranirr
+expect GetJournalIndex A1_6_AddhiranirrInformant == 30
+ask Sixth House cult
+expect GetJournalIndex A1_6_AddhiranirrInformant == 45
+bye
+end

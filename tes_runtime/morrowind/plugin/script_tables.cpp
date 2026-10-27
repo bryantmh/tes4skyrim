@@ -49,6 +49,8 @@ LayeredTable<SayLineDef> g_sayLines{false};
 LayeredTable<FormRef> g_refs;
 LayeredTable<FormRef> g_bases;
 LayeredTable<FormRef> g_cells;
+// Exterior names by TES3 grid, `x|y`.
+LayeredTable<std::string> g_exteriorNames{false};
 LayeredTable<TeleportMarker> g_markers{false};
 LayeredTable<CellAnchor> g_anchors{false};
 LayeredTable<RuntimeEffect> g_teleports{false};
@@ -86,6 +88,8 @@ constexpr const char* kFileBases = "bases_formid.txt";
 
 // The CELL of each named interior and the WORLDSPACE of each named exterior.
 constexpr const char* kFileCells = "cells_formid.txt";
+// Skyrim keeps no name on an exterior CELL, so GetPCCell reads these outdoors.
+constexpr const char* kFileExteriorNames = "exterior_names.txt";
 
 // The Divine and Temple markers, and where each interior opens onto the world.
 // See: docs/commentary/morrowind_runtime.md#teleport-effects
@@ -234,6 +238,7 @@ ActorDef ParseActor(const std::string& value) {
     if (f.size() < 21) return out;
     ParseInts(f[19], out.attributes, 8);
     ParseInts(f[20], out.skills, 27);
+    out.creature = f.size() > 21 && f[21] == "1";
     return out;
 }
 
@@ -505,6 +510,7 @@ void ClearScriptTables() {
     g_refs.clear();
     g_bases.clear();
     g_cells.clear();
+    g_exteriorNames.clear();
     g_markers.clear();
     g_anchors.clear();
     g_teleports.clear();
@@ -635,6 +641,10 @@ void LoadRecordRows(int layer, const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileCells,
                [layer](const std::string& name, const std::string& value) {
                    g_cells.Add(layer, Lower(name), ParseFormRef(value));
+               });
+    ForEachRow(pluginDir + kFileExteriorNames,
+               [layer](const std::string& grid, const std::string& name) {
+                   g_exteriorNames.Add(layer, grid, name);
                });
     ForEachRow(pluginDir + kFileTravel,
                [layer](const std::string& actor, const std::string& value) {
@@ -838,7 +848,9 @@ const ActorDef* FindActor(const std::string& actor) {
 }
 
 const FormRef* FindItem(const std::string& item) {
-    return g_items.Find(Lower(item));
+    const std::string key = Lower(item);
+    const FormRef* found = g_items.Find(key);
+    return found ? found : g_filledGems.Find(key);
 }
 
 const FormRef* FindQuest(const std::string& quest) {
@@ -942,6 +954,10 @@ const FormRef* FindCell(const std::string& cell) {
 
 std::size_t CellCount() { return g_cells.size(); }
 
+const std::string* FindExteriorName(int x, int y) {
+    return g_exteriorNames.Find(std::to_string(x) + "|" + std::to_string(y));
+}
+
 void ForEachTeleportMarker(const std::function<void(const TeleportMarker&)>& fn) {
     g_markers.ForEachRow(
         [&fn](const std::string&, const TeleportMarker& row, int) { fn(row); });
@@ -1033,7 +1049,8 @@ const std::vector<EquipWatch>& EquipWatchList() {
             const LayerScope scope(layer);
             if (g_actorScripts.FindLayer(item) != layer) return;
             const ScriptLocals* locals = FindScriptLocals(script);
-            if (locals && locals->TypeOf("onpcequip") != ' ') {
+            if (locals && (locals->TypeOf("onpcequip") != ' ' ||
+                           locals->TypeOf("onpcadd") != ' ')) {
                 g_watchList.push_back({item, script, layer});
             }
         });

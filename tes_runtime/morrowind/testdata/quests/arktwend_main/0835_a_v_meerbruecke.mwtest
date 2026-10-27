@@ -1,0 +1,31 @@
+# Chapter V, the sea route: the lock gate on the Bridge of Saybar'dar, the two
+# levers in the regulator rooms, and the boat that sails to Rortgorn.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from meer_gate
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The closed lock gate.
+case meer_gate
+run
+player->Position 39299 -60200 367 0
+until 300 GetJournalIndex "A_V_Meerbrücke" == 1
+end
+
+# The two levers open the gate.
+case meer_levers
+run
+player->PositionCell 680 2200 -8 0 "Bridge of Saybar'dar: Regulator Rooms"
+activate 05EAC64A
+until 300 GetJournalIndex "A_V_Meerbrücke" == 2
+activate 05241FF0
+until 300 GetJournalIndex "A_V_Meerbrücke" == 3
+end
+
+# The boat sets sail and lands on Rortgorn.
+case meer_ship
+run
+player->Position 38195 -59700 169 0
+button 0
+until 300 GetJournalIndex A_V_RortgornInsel == 1
+expect Stormwendvar == 30
+end

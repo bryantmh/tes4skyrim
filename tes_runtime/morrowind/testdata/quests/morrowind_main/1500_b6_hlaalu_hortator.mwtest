@@ -1,0 +1,90 @@
+# B6 "Hlaalu Hortator": every Hlaalu councilor must vote for the player.
+# Crassius Curio takes a 1000-drake gift, Yngling Half-Troll a 2000-drake
+# bribe (outsiders pay double), Dram Bero only wants to be found, and Orvas Dren of the Camonna Tong
+# -- won over by the player's wish to protect Morrowind from the Empire --
+# brings Nevena Ules and Velanda Omani into line. Curio then gives the Belt of
+# the Hortator. PositionCell stands in for the walks, AddItem for the gold
+# earned on the way; ref FormIDs carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b6_curio
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Curio sighs that Orvas Dren is against the player; to an outsider he is
+# not fond of yet he names a price of 1000 drakes.
+case b6_curio
+run
+player->AddItem gold_001 5000
+player->PositionCell 491 -316 -490 0 "Vivec, Curio Manor"
+until 600 GetPCCell "Vivec, Curio Manor" == 1
+talk crassius curio
+ask Hlaalu Hortator
+choose 8
+choose 1
+expect GetJournalIndex B6_CurioHort == 65
+bye
+end
+
+# Yngling wants 2000 drakes from a non-Hlaalu; Dram Bero, found in his hidden manor, agrees.
+case b6_yngling_bero
+run
+player->PositionCell 365 -400 -232 0 "Vivec, St. Olms Yngling Manor"
+until 600 GetPCCell "Vivec, St. Olms Yngling Manor" == 1
+talk yngling half-troll
+ask Hlaalu Hortator
+choose 4
+expect GetJournalIndex B6_YnglingHort == 20
+choose 1
+expect GetJournalIndex B6_YnglingHort == 50
+bye
+run
+player->PositionCell 7128 500 -500 0 "Vivec, St. Olms Haunted Manor"
+until 600 GetPCCell "Vivec, St. Olms Haunted Manor" == 1
+talk dram bero
+ask Hlaalu Hortator
+choose 2
+expect GetJournalIndex B6_BeroHort == 50
+bye
+end
+
+# Orvas Dren, well disposed, backs a Hortator who would keep the Empire out;
+# his puppets Omani and Ules then vote as told.
+case b6_dren
+run
+player->PositionCell 3395 3193 16221 0 "Dren Plantation, Dren's Villa"
+until 600 GetPCCell "Dren Plantation, Dren's Villa" == 1
+talk Orvas Dren Druglord
+persuade bribe1000
+persuade bribe100
+persuade bribe100
+persuade bribe100
+expect "Orvas Dren Druglord"->GetDisposition >= 70
+ask Hlaalu Hortator
+choose 2
+expect GetJournalIndex B6_DrenHortator == 50
+bye
+run
+player->PositionCell 4389 3187 16151 0 "Omani Manor"
+until 600 GetPCCell "Omani Manor" == 1
+talk velanda omani
+ask Hlaalu Hortator
+expect GetJournalIndex B6_OmaniHort == 50
+bye
+run
+player->PositionCell 144 924 -112 0 "Ules Manor"
+until 600 GetPCCell "Ules Manor" == 1
+talk nevena ules
+ask Hlaalu Hortator
+expect GetJournalIndex B6_UlesHort == 50
+bye
+end
+
+# With every vote in, Curio confirms the title and gives the belt.
+case b6_hortator
+run
+player->PositionCell 491 -316 -490 0 "Vivec, Curio Manor"
+until 600 GetPCCell "Vivec, Curio Manor" == 1
+talk crassius curio
+ask Hlaalu Hortator
+expect GetJournalIndex B6_HlaaluHort == 50
+expect player->GetItemCount hortatorbelt == 1
+bye
+end

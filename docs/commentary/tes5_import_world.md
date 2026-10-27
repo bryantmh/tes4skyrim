@@ -14,6 +14,8 @@ owns it, and what it is linked to. Region decoration (REGN, LSCR, WATR) lives in
 - [Teleport doors bucketed by worldspace](#teleport-doors-by-worldspace)
 - [TES3 exit-only door locks](#tes3-exit-only-door-locks)
 - [TES3 refs ship Don't Havok Settle](#tes3-dont-havok-settle)
+- [TES3 script-named refs ship persistent](#tes3-script-named-refs-persist)
+- [Exterior persistent refs live in the persistent cell](#exterior-persistent-refs-live-in-the-persistent-cell)
 - [Nested interiors inherit a location](#nested-interiors-inherit-location)
 - [LAND DATA flags pass through VERBATIM](#land-data-flags-verbatim)
 - [LAND quadrants with alpha layers and no base layer](#land-quadrants-without-a-base-layer)
@@ -176,6 +178,55 @@ community's, not a disassembly.
 
 Morroblivion mode is untouched: `Morrowind_ob.esm` is a TES4 source whose
 placements its authors made under Oblivion's own settling.
+
+## <a id="tes3-script-named-refs-persist"></a>TES3 script-named refs ship persistent
+
+**Code:** `tes5_import/record_types/world_morrowind.py:persist_script_named_refs`
+
+A Morrowind script acts on a placed reference by id (`"caius cosades"->AddItem`,
+`id->Disable`) wherever it stands. OpenMW's `searchPtr` looks through the active
+cells first and then every cell store, so the target never needs to be loaded.
+Skyrim keeps a non-persistent reference in memory only while its cell is loaded.
+Elsewhere `Game.GetForm` answers nothing, and the runtime logs `reference '<id>'
+does not resolve in this load order`. The headless tester showed it on
+`de_p_chest_02_caius`: the chest is authored locked at 75, but `GetLocked` read 0
+from Seyda Neen, and neither `Lock` nor `Unlock` did anything.
+
+TES3 has no per-reference persistence to carry over. Before this pass, all
+10,111 converted NPC placements in Morrowind.esm were temporary, Caius Cosades
+among them.
+
+The pass flags Persistent on the placement each named id resolves to. That is
+the refs table's own placement (`first_placements`, shared with
+`refs_formid.txt`), so the sidecar and the ESM agree on which reference an id
+means. "Named" means a quoted name or bare word in an `SCPT` body (`SCTX`) or an
+`MWIN` result script, outside a `;` comment. That set is a superset of the ids
+the scripts name, and it only ever meets an id that has a placement. In
+Morrowind.esm, 836 of the table's 6,558 ids are named: 390 REFR, 341 ACHR and
+101 ACRE placements were temporary, and 4 were already persistent.
+
+FormIDs do not move: only the record flag and the group the reference sits in
+change. An exterior placement moves into the world's persistent cell; see
+[below](#exterior-persistent-refs-live-in-the-persistent-cell).
+
+Not covered: a dependent plugin's script naming a reference its MASTER places.
+The flag would need an override of the master's record.
+
+## <a id="exterior-persistent-refs-live-in-the-persistent-cell"></a>Exterior persistent refs live in the persistent cell
+
+**Code:** `tes5_import/pipeline_records.py:move_persistent_refs`
+
+Vanilla keeps every persistent exterior reference in its worldspace's
+persistent cell. Not one grid cell carries a persistent children group (type 8):
+Skyrim.esm has 584 such groups under interiors and 36 under world persistent
+cells, Dawnguard.esm 82 and 16, Dragonborn.esm 87 and 4. Before this change the
+converted Morrowind.esm had 22 grid cells with one, holding 177 references.
+
+When a worldspace has exactly one persistent cell, its exterior cells'
+persistent REFR/ACHR records move into that cell's children as the worldspace is
+packed. The navmeshes are already built by then (`precompute_navmeshes`), so
+they still see each reference in its grid cell. A worldspace without a
+persistent cell keeps the old layout.
 
 ## <a id="nested-interiors-inherit-location"></a>Nested interiors inherit a location
 

@@ -1,5 +1,6 @@
 #include "object_tick.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
@@ -13,6 +14,7 @@
 #include "object_script.h"
 #include "scope.h"
 #include "script_tables.h"
+#include "test_runner.h"
 
 namespace tesruntime::mw {
 
@@ -28,10 +30,13 @@ constexpr float kTickDelta = 1.0f / kTickRate;
 constexpr int kTickMs = static_cast<int>(1000.0f / kTickRate);
 
 // An elapsed span this long is a load screen or a stall; catching up on it
-// would run hundreds of ticks at once, so it is clamped instead.
-constexpr float kMaxCatchUp = 0.25f;
+// would run hundreds of ticks at once, so it is clamped instead. One game
+// second per tick leaves room for a game run up to 30x by iFPSClamp.
+constexpr float kMaxCatchUp = 1.0f;
 
 float g_accumulated = 0.0f;
+// The game seconds the running tick covers (TickDelta).
+float g_tickDelta = kTickDelta;
 // Seconds of unpaused play, which is the clock every runtime timer reads.
 double g_gameSeconds = 0.0;
 std::size_t g_lastCount = 0;
@@ -94,6 +99,14 @@ void DiscoverLoaded(bool cellChanged) {
             Hooks().loadedRef(row->plugin, row->localFormId);
         if (!ref) continue;
         BindInstance(ref, row->plugin, row->localFormId);
+        // 🛑 A reference loads because the player changed cell, and TES3 runs
+        // its first frame with `CellChanged` set. The sweep binds it a few
+        // ticks AFTER the change, so without this every `if ( CellChanged ==
+        // 0 ) return` guard missed its only chance -- measured, the Vivec
+        // arena script never brought Bolvyn Venim to his duel.
+        if (ObjectScript* bound = InstanceForRef(ref)) {
+            bound->Events().cellChanged = true;
+        }
         Log("object: %s bound from the world (%08X)", row->script.c_str(), ref);
     }
 }
@@ -109,6 +122,7 @@ bool PlayerCellChanged() {
     // exterior IS a cell, so an emptiness test swallowed every transition out
     // of one and re-armed itself on the way back in.
     const bool moved = g_cellSampled;
+    Log("cell: the player is in '%s'", now.c_str());
     g_lastCell = now;
     g_cellSampled = true;
     return moved;
@@ -143,8 +157,8 @@ bool GameHeldByMenu() {
 }
 
 // Runs the script of every scripted object the PLAYER carries whose body reads
-// `OnPCEquip`. An inventory item has no placement, so the world-discovery
-// sweep above can never reach it.
+// `OnPCEquip` or `OnPCAdd`. An inventory item has no placement, so the
+// world-discovery sweep above can never reach it.
 //
 // 🛑 The watch list is the objects whose script DECLARES the local, which is
 // the only set that can answer; asking the engine about all 1,547 scripted
@@ -155,7 +169,7 @@ std::size_t RunCarriedScripts(bool cellChanged) {
     static std::size_t announced = 0;
     if (announced != EquipWatchList().size()) {
         announced = EquipWatchList().size();
-        Log("object: %zu carried object(s) watch OnPCEquip", announced);
+        Log("object: %zu carried object(s) watch OnPCEquip/OnPCAdd", announced);
     }
     // 🛑 Every record is polled, and the instance runs at most once per tick.
     // Several item records share one script, so stopping at the first carried
@@ -219,11 +233,13 @@ void RunOneTick() {
     ++g_ticks;
     const bool inWorld = SessionLive();
     if (inWorld && Hooks().crimeTick) Hooks().crimeTick();
+    if (inWorld && Hooks().combatTick) Hooks().combatTick();
+    if (inWorld) TickTestRunner(GameHeldByMenu());
     if (!inWorld || GameHeldByMenu()) {
         g_lastCount = 0;
         return;
     }
-    AdvanceGameSeconds(kTickDelta);
+    AdvanceGameSeconds(g_tickDelta);
     if (Hooks().syncClock) Hooks().syncClock();
     if (Hooks().effectTick) Hooks().effectTick();
     if (Hooks().animTick) Hooks().animTick();
@@ -271,13 +287,13 @@ void RunOneTick() {
         instance->RunOnce();
         ++ran;
     }
-    g_lastCount = ran + RunGlobalScripts() + RunCarriedScripts(cellChanged);
+    g_lastCount = ran + RunGlobalScripts(cellChanged) + RunCarriedScripts(cellChanged);
     if (g_sleep == Sleep::kWoke) g_sleep = Sleep::kAwake;
 }
 
 }  // namespace
 
-float TickDelta() { return kTickDelta; }
+float TickDelta() { return g_tickDelta; }
 
 double GameSeconds() { return g_gameSeconds; }
 
@@ -306,13 +322,34 @@ void TickObjectScripts(float frameSeconds) {
     }
 }
 
+namespace {
+
+std::uint32_t g_lastClockMs = 0;
+
+// Each fixed-rate wake runs ONE tick covering the game time since the last
+// wake, so a game sped up by iFPSClamp ticks its scripts at its own pace and
+// every tick still gets its own frame: an AddItem is not visible until the
+// next frame, so two ticks inside one would break a script reading it back.
+// A held game, or one with no clock, gets a plain 1/30 s tick as before.
+// See: docs/commentary/headless_testing.md#speed
+void OnWake() {
+    const std::uint32_t now = Hooks().frameClockMs ? Hooks().frameClockMs() : 0;
+    const std::uint32_t passedMs = g_lastClockMs ? now - g_lastClockMs : 0;
+    g_lastClockMs = now;
+    const bool timed = now && passedMs && SessionLive() && !GameHeldByMenu();
+    g_tickDelta = timed ? std::min(static_cast<float>(passedMs) / 1000.0f, kMaxCatchUp) : kTickDelta;
+    RunOneTick();
+}
+
+}  // namespace
+
 // 🛑 Posted through PostToMainThread, not the task interface directly: its
 // task records the game thread's id, which RunOnGameThread needs to run a
 // script's calls inline during the tick instead of a frame later.
 // See: docs/plans/morrowind_object_scripts.md#tick-rate
 void StartObjectTick() {
     if (g_started) return;
-    if (!CanPostToMainThread() || !StartTick(PostToMainThread, kTickMs, RunOneTick)) {
+    if (!CanPostToMainThread() || !StartTick(PostToMainThread, kTickMs, OnWake)) {
         Log("object: no task interface -- object scripts will NOT tick");
         return;
     }

@@ -45,6 +45,7 @@ import math
 import numpy as np
 
 from . import corridor_grow, params, world
+from .door_routes import route_doors
 from .spawn_nodes import drop_covered_discs, standing_spawns
 
 # Trim node-disc rays at stair nodes so the FLAT disc never rides out over a
@@ -1069,8 +1070,40 @@ def _door_quad_strip(fp, steep_list):
     return ps, (b0, b1, apex, fp['z']), pins
 
 
-def _door_geometry(corridors, door_list, nodes, edges, wall_hit, cell_clip):
-    """(door strips, door base edges, wedge pins) from a probe union.
+def _strips_and_doors(geo, nodes, edges, node_z, door_list, lone, standing,
+                      unreached=None):
+    """(corridors, kept spawn nodes, door strips, door edges, door pins) for one pathgrid."""
+    corridors = _build_corridor_strips(
+        nodes, edges, node_z, blocking=geo['blocking'], walkable=geo['walkable'],
+        sample=geo['sample'], land_from=geo['land_from'], land=geo['land'],
+        lone=standing)
+    corridors, kept = drop_covered_discs(corridors, lone)
+    return (corridors, kept) + _door_geometry(
+        corridors, door_list, nodes, edges, geo['wall_hit'], geo['clip'],
+        unreached)
+
+
+def _door_reaching_geometry(geo, nodes, edges, node_z, door_list, lone,
+                            standing):
+    """(nodes, edges, node_z) plus _strips_and_doors, with every unbridged door routed (door_routes).
+
+    A cell whose doors all bridge builds exactly once.
+    """
+    unreached = []
+    got = _strips_and_doors(geo, nodes, edges, node_z, door_list, lone,
+                            standing, unreached)
+    routed = route_doors(unreached, nodes, node_z, edges, geo['sample'],
+                         geo['wall_hit'])
+    if routed is None:
+        return (nodes, edges, node_z) + got
+    nodes, node_z, edges = routed
+    return (nodes, edges, node_z) + _strips_and_doors(
+        geo, nodes, edges, node_z, door_list, lone, standing)
+
+
+def _door_geometry(corridors, door_list, nodes, edges, wall_hit, cell_clip,
+                   unreached=None):
+    """(door strips, door base edges, wedge pins) from a probe union; unbridged doors go to `unreached`.
 
     See: docs/commentary/tes5_import_navmesh.md#door-mesh-stays-in-the-union
     """
@@ -1085,7 +1118,8 @@ def _door_geometry(corridors, door_list, nodes, edges, wall_hit, cell_clip):
     steep_list = _steep_strips(corridors)
     for fp in corridor_doors.door_footprints(rv, rt, door_list,
                                              wall_hit=wall_hit, nodes=nodes,
-                                             pg_edges=edges):
+                                             pg_edges=edges,
+                                             unreached=unreached):
         got = _door_quad_strip(fp, steep_list)
         if got is None:
             continue
@@ -1316,19 +1350,17 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
               for i in range(len(nodes))]
     wall_hit = _lazy_wall_hit(blocking)
     standing = standing_spawns(lone, nodes, node_z, sample, wall_hit)
-
-    corridors = _build_corridor_strips(
-        nodes, edges, node_z, blocking=blocking, walkable=walkable,
-        sample=sample, land_from=land_from,
-        land=world.land_field(land_rec, origin_x, origin_y), lone=standing)
-    corridors, kept = drop_covered_discs(corridors, lone)
     cell_clip = None
     if land_rec is not None:
         cell_clip = (origin_x, origin_y, origin_x + 4096.0, origin_y + 4096.0)
 
     door_list = list(doors or ())
-    door_strips, door_edges, door_pins = _door_geometry(
-        corridors, door_list, nodes, edges, wall_hit, cell_clip)
+    geo = {'blocking': blocking, 'walkable': walkable, 'sample': sample,
+           'land_from': land_from, 'wall_hit': wall_hit, 'clip': cell_clip,
+           'land': world.land_field(land_rec, origin_x, origin_y)}
+    (nodes, edges, node_z, corridors, kept, door_strips, door_edges,
+     door_pins) = _door_reaching_geometry(geo, nodes, edges, node_z,
+                                          door_list, lone, standing)
 
     verts, tris = corridor_union.build_union_mesh(
         corridors, extra_strips=door_strips, door_edges=door_edges,

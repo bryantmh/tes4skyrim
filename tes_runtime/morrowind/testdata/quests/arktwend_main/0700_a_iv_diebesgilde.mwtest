@@ -1,0 +1,104 @@
+# Chapter IV, Stormwend: the main story runs through the Thieves Guild. Golia
+# sets a test -- steal a chicken cutlet from Salvadore the butcher -- and the
+# guild takes the player in.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from thief_golia
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Golia, by the city wall, wants proof before naming the guild.
+case thief_golia
+run
+player->Position -5971 41036 232 0
+until 600 "DIEBGolia".State == 2
+wait 30
+ask join the Thieves Guild
+choose 1
+choose 2
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 1
+end
+
+# Salvadore watches his stand too closely.
+case thief_salvadore
+run
+player->Position -43 52119 214 0
+talk SalvadoreDerMetzger
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 2
+end
+
+# Huxley the farmer can be talked into a quarrel with him.
+case thief_huxley
+run
+player->Position -249 50766 260 0
+talk DIEBHuxley
+ask Salvadore
+choose 2
+choose 4
+bye
+until 600 GetJournalIndex A_IV_Diebesgilde == 4
+end
+
+# While they argue, the cutlet is there for the taking.
+case thief_cutlet
+until 600 player->GetPos Y > 52000
+wait 60
+take 0598DB15
+until 300 player->GetItemCount SalvadoreHuhnerschnitzel01 == 1
+end
+
+# Golia is impressed, and names the secret entrance.
+case thief_golia_cutlet
+run
+player->Position -5971 41036 232 0
+talk DIEBGolia
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 5
+end
+
+# Through the secret entrance; the Masterthief explains the code.
+case thief_masterthief
+run
+player->PositionCell -803 1914 323 0 "Stormwend, Thieves Guild"
+talk DIEBMeisterdieb
+ask join the Thieves Guild
+choose 1
+choose 2
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 8
+end
+
+# Jarko the juggler sends the player for a guild cape.
+case thief_jarko
+run
+player->PositionCell -880 2456 323 0 "Stormwend, Thieves Guild"
+talk DIEBJarkoderGaukler
+ask about the Thieves Guild
+choose 1
+choose 3
+choose 5
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 9
+end
+
+# Arille sells the cape for the code words.
+case thief_arille
+run
+player->PositionCell -126 -331 127 0 "Stormwend, Arille's Trading House"
+talk DIEBArille
+ask special attire
+choose 1
+choose 6
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 11
+end
+
+# Black Eye Piet has a first job: a message for the Korynthian at the port.
+case thief_piet
+run
+player->PositionCell -144 2481 325 0 "Stormwend, Thieves Guild"
+talk DIEBSchwarzaugenPiet
+ask What's the mark?
+bye
+expect GetJournalIndex A_IV_Diebesgilde == 12
+end

@@ -1,0 +1,156 @@
+# A2_6 "The Path of the Incarnate": with the lost prophecies, Nibani Maesa
+# judges the player after the moons have passed; Sul-Matuul sets the Warrior's
+# Test (three tokens from Kogoruhn) and the riddle of the Cavern of the
+# Incarnate, whose door opens only at dawn and dusk. Inside waits Moon-and-Star.
+# PositionCell and Position stand in for the walks, the console's timescale for
+# waiting, and taking each token for looting it; ref FormIDs carry
+# Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a2_6_prophecies
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Told of the lost prophecies, she asks the player to return when the moons
+# have come and gone; she counts the days herself.
+case a2_6_prophecies
+run
+player->PositionCell 92 180 -150 0 "Urshilaku Camp, Wise Woman's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Wise Woman's Yurt" == 1
+talk nibani maesa
+ask lost prophecies
+expect GetJournalIndex A2_6_Incarnate == 1
+bye
+console set timescale to 2000
+until 3600 "nibani maesa".localdaysPassed >= 2
+console set timescale to 20
+talk nibani maesa
+ask My judgement
+choose 1
+choose 2
+expect GetJournalIndex A2_6_Incarnate == 5
+bye
+end
+
+# Sul-Matuul names the Warrior's Test.
+case a2_6_warrior
+run
+player->PositionCell 47 380 -185 0 "Urshilaku Camp, Ashkhan's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Ashkhan's Yurt" == 1
+talk sul-matuul
+ask Third trial
+choose 1
+choose 2
+expect GetJournalIndex A2_6_Incarnate == 10
+bye
+end
+
+# The goblet and corprus weepings in the Dome of Pollock's Eve, the shield in
+# the Bleeding Heart.
+case a2_6_tokens
+run
+player->PositionCell 3663 3850 17330 0 "Kogoruhn, Dome of Pollock's Eve"
+until 600 GetPCCell "Kogoruhn, Dome of Pollock's Eve" == 1
+wait 30
+take 052D578B
+take 054DE402
+run
+player->PositionCell -6770 2100 -75 0 "Kogoruhn, Bleeding Heart"
+until 600 GetPCCell "Kogoruhn, Bleeding Heart" == 1
+wait 30
+take 05E39373
+until 300 player->GetItemCount shadow_shield == 1
+expect player->GetItemCount misc_goblet_dagoth == 1
+expect player->GetItemCount ingred_corprus_weepings_01 >= 1
+end
+
+# The tokens pass the Warrior's Test; the riddle and the belt follow.
+case a2_6_riddle
+run
+player->PositionCell 47 380 -185 0 "Urshilaku Camp, Ashkhan's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Ashkhan's Yurt" == 1
+talk sul-matuul
+ask Third trial
+choose 1
+choose 2
+expect GetJournalIndex A2_6_Incarnate == 15
+expect player->GetItemCount "Malipu_Ataman's_Belt" == 1
+bye
+end
+
+# The tribe's hunters read the rest of the riddle; the last names the mouth of
+# the cave.
+case a2_6_hunter
+run
+player->PositionCell 104 -18 -107 0 "Urshilaku Camp, Shimsun's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Shimsun's Yurt" == 1
+talk shimsun
+ask eye of the needle
+expect GetJournalIndex A2_6_Incarnate == 20
+ask teeth of the wind
+expect GetJournalIndex A2_6_Incarnate == 22
+ask skin of the pearl
+expect GetJournalIndex A2_6_Incarnate == 24
+bye
+end
+
+# The wise woman reads the riddle: the star is the key, the door opens at dawn
+# and dusk. "mouth of the cave" (stage 29) is never learned: only Sul-Matuul's
+# riddle names it, and OpenMW teaches a topic from text only when the speaker
+# has a response to it, which a Champion lacks.
+case a2_6_reading
+run
+player->PositionCell 92 180 -150 0 "Urshilaku Camp, Wise Woman's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Wise Woman's Yurt" == 1
+talk nibani maesa
+ask the star is the key
+expect GetJournalIndex A2_6_Incarnate == 26
+ask the dream is the door
+expect GetJournalIndex A2_6_Incarnate == 28
+bye
+end
+
+# At dusk the cavern door (its own script) speaks and opens.
+case a2_6_door
+run
+player->Position 52060 109300 6263 0
+until 600 GetPCCell "Cavern of the Incarnate" == 0
+wait 60
+console set timescale to 2000
+until 3600 GameHour < 18
+until 3600 GameHour > 18.2
+console set timescale to 20
+activate in_ci_door_01
+until 900 GetPCCell "Cavern of the Incarnate" == 1
+end
+
+# Taken from Azura's hand, Moon-and-Star wakes the ghosts of the false
+# incarnates; Peakstar speaks for them. "Hortator and Nerevarine" (stage 54)
+# is never learned, as stage 29 is not: only speakers without a response to
+# it (Nibani, Sul-Matuul) ever say it.
+case a2_6_ring
+wait 60
+activate moon_and_star
+until 600 GetJournalIndex A2_6_Incarnate == 50
+until 300 MenuMode == 0
+expect player->GetItemCount moon_and_star == 1
+talk ghost_npc_peakstar
+ask Moon-and-Star
+expect GetJournalIndex A2_6_Incarnate == 52
+bye
+end
+
+# Back at the camp, the wise woman names the Fourth and Fifth trials.
+case a2_6_trials
+run
+player->PositionCell 92 180 -150 0 "Urshilaku Camp, Wise Woman's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Wise Woman's Yurt" == 1
+talk nibani maesa
+ask Seven trials
+ask Fourth trial
+expect GetJournalIndex A2_6_Incarnate == 60
+ask Hortator
+expect GetJournalIndex A2_6_Incarnate == 62
+ask Fifth trial
+expect GetJournalIndex A2_6_Incarnate == 64
+ask Nerevarine
+expect GetJournalIndex A2_6_Incarnate == 66
+bye
+end

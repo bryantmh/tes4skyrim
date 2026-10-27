@@ -1,0 +1,67 @@
+# Arktwend from New Game: the harness clicks New and answers TESGameSelect's
+# prompt with Arktwend (button 5), and the game's own CharGen script places
+# the player in the monastery of Melee. Brother Ventin and Paul greet the
+# player in the hall, High Bishop Derminus leads the way to the old statue,
+# whose menus are the chargen, and gives back the ring the player was found with.
+# PositionCell stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --new-game 5 --fast --checkpoints --stop-on-fail
+# See docs/commentary/headless_testing.md#quest-runs
+
+case chargen_start
+until 900 GetPCCell "Melee, Monastery" == 1
+end
+
+# Brother Ventin stops the player in the hallway.
+case chargen_ventin
+run
+player->PositionCell -2646 1950 745 180 "Melee, Monastery"
+wait 120
+bye
+expect GetJournalIndex A_I_Kloster == 1
+end
+
+# Paul asks the player to the Fur Seal Tavern tonight.
+case chargen_paul
+run
+player->PositionCell -3286 1950 740 180 "Melee, Monastery"
+wait 120
+choose 10
+bye
+expect GetJournalIndex A_I_Kloster == 2
+end
+
+# Into the church, where Derminus greets the player at Mass and walks to the
+# statue.
+case chargen_derminus
+activate 05657AD8
+until 600 GetPCCell "Melee, Monastery Church" == 1
+run
+player->PositionCell 4283 5100 416 0 "Melee, Monastery Church"
+wait 120
+bye
+until 900 "ANFBischofDerminus"->GetDistance "MarkerANFCharGen01" <= 300
+end
+
+# At the statue Derminus tells the player of the ring; the statue opens the
+# race, class, sign and review menus, then gives up the ring.
+case chargen_statue
+run
+player->PositionCell 4320 3100 418 0 "Melee, Monastery Church"
+wait 120
+bye
+activate MeleeKlosterCharGenStatue
+close RaceSex Menu
+pick Warrior
+pick The Warrior
+until 600 CharGenState == -1
+take RingDesKaisers
+run
+player->Equip RingDesKaisers
+until 120 Anfangvar == 1
+end
+
+# Derminus says farewell.
+case chargen_farewell
+talk ANFBischofDerminus
+bye
+end

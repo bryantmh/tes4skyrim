@@ -1,0 +1,38 @@
+# A1_1 "Report to Caius Cosades", picked up where chargen leaves the player
+# in Seyda Neen. PositionCell stands in for the trip to Balmora.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a1_1_south_wall
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The publican knows where Caius lives.
+case a1_1_south_wall
+run
+player->PositionCell 210 537 270 90 "Balmora, South Wall Cornerclub"
+until 600 GetPCCell "Balmora, South Wall Cornerclub" == 1
+talk bacola closcius
+ask Caius Cosades
+bye
+expect GetJournalIndex A1_1_FindSpymaster >= 10
+end
+
+# Caius asks to see the package (Yes is 1), reads it, and asks whether the
+# player will follow his orders (Yes is 3).
+case a1_1_report
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Report to Caius Cosades
+choose 1
+choose 3
+expect GetJournalIndex A1_1_FindSpymaster == 14
+expect GetPCRank Blades >= 0
+bye
+end
+
+# His first orders: money, and the Antabolis lead.
+case a1_1_orders
+talk caius cosades
+ask Orders
+expect GetJournalIndex A1_1_FindSpymaster >= 18
+bye
+end

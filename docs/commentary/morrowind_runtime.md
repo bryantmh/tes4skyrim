@@ -1512,8 +1512,9 @@ not, so **one representative per class proves the class works**.
 
 The class is read out of the `Real<...>` registrations rather than guessed
 from names, because names mislead in both directions: `GetScale` and
-`SetScale` look like a pair and are separate classes, while `ModHealth` and
-`ModCurrentHealth` look distinct and are the same `OpModDynamic`.
+`SetScale` look like a pair and are separate classes. `ModHealth` and
+`ModCurrentHealth` share `OpModDynamic` but differ by its `Base` flag (the
+first moves the maximum too, as OpenMW does), so each needs its own case.
 
 🛑 **`OpStat` must be split further, and the split is not cosmetic.** It
 branches on whether the stat maps to a Skyrim actor value: `SetBlock` writes
@@ -1521,6 +1522,8 @@ through `setActorValue` into the engine, while `SetPersonality` writes the
 DLL's own number, because Skyrim has no personality. Those are different code
 paths, and a plan that tested only one would claim coverage it does not have.
 The verb splits too — `Get` only reads, so it proves nothing about a writer.
+And a Skyrim-backed magic-effect stat writes through `modActorValue`, a third
+path ([the stat commands](#stat-commands)).
 
 🛑 **The representative must be one a quest can REACH.** Choosing
 alphabetically picked commands no quest calls, stranding their whole class and
@@ -1849,6 +1852,51 @@ No locking: the engine reports the click on the main thread, and object scripts
 tick on the main thread too (`main_thread.h:RunOnGameThread`), so the write and
 the poll never race.
 
+#### <a id="action-keys-in-text"></a>`^ActionForward` names the player's key
+
+**Code:** `plugin/script_context.cpp:getActionBinding`, `plugin/menu.cpp:BoundKeyName`
+
+OpenMW's `fixDefinesMsgBox` turns `^ActionForward` into `#{sForward}` and asks
+the context's `getActionBinding` for the key; OpenMW's own context answers the
+bound key's name, or "None". Ours returned the placeholder, so every chargen
+tutorial read `#{sForward} and #{sBack} move forward and back`. Now each
+binding maps to the Skyrim gameplay user event that does the same (`sForward`
+Forward, `sUse` Right Attack/Block, `sInventory` Tween Menu, `sRestKey` Wait;
+the weapon and spell switches are Favorites), and `BoundKeyName` reads the
+player's key off the ControlMap (gameplay context at `+0x60`, keyboard then
+mouse mappings; SKSE `GameInput.h`) and names it with `GetKeyNameTextA`.
+Confirmed headless: the boat guard's tip reads "W and S move forward and back.
+A and D move side to side".
+
+#### <a id="book-text-defines"></a>Book text fills in `%PCName`
+
+**Code:** `plugin/game_calls_message.cpp:OpenBookHook`
+
+10 Morrowind.esm books carry `%PCName`, `%PCRace` or `%PCClass` (33 tokens):
+the chargen papers, Caius's directions, the decoded package, the Nerevarine
+notice and the stronghold deeds among them. OpenMW fills them as the book opens
+(`fixDefinesBook`); Skyrim showed them raw. Every call to
+`BookMenu::OpenBookMenu` (id 51053) is repointed at a wrapper that runs the
+same `fixDefinesBook` with the player as the context, for a book owned by a
+Morrowind plugin whose text has a `%`, and hands the engine a BSString over
+the filled text. The function reads only that string's data pointer and copies
+it into the menu's own, so a string on the wrapper's stack is enough. AE only:
+the id is not in `pre_ae_ids.txt`, so SE 1.5.97 and VR show the raw text.
+
+#### <a id="player-race-class-sex"></a>The player's race, class and sex are the game's
+
+**Code:** `plugin/game_actor.cpp:PlayerRace`, `PlayerClass`, `PlayerIsFemale`;
+`plugin/script_context.cpp:getPCRace`
+
+All three were stubs answering empty and male, so the chargen papers read
+"Race: / Class:", every `SameRace` condition failed, and a female player
+passed male-gated lines. Now the race is the TES3 id the race table gives the
+player's Skyrim race (the table the starting attributes read), the class is the
+one chosen at chargen, and the sex is the engine's. `%PCRace` shows the race's
+NAME, as OpenMW's `getPCRace` does. Morrowind.esm reach: 109 `SameRace`, 110
+`SameSex` and 77 `PcGender` conditions, and 117 responses naming `%PCRace` or
+`%PCClass`. Confirmed headless: the papers read "Race: Nord, Class: Warrior".
+
 ### <a id="vanilla-morrowind-chargen"></a>🛑 Vanilla Morrowind's opening is a GLOBAL, not a quest
 
 **Code:** `plugin/game_calls_query.cpp:SyncMirroredGlobals`,
@@ -2000,13 +2048,50 @@ now goes through `LocalsOwner(id)`:
 
 ### <a id="the-clock"></a>The clock globals are Skyrim's
 
-**Code:** `plugin/game_calls.cpp:SyncClock`
+**Code:** `plugin/game_calls_query.cpp:SyncClock`, `SetClockGlobal`
 
 Each tick copies Skyrim.esm's `GameHour` (0x38), `GameDay` (0x37), `GameMonth`
 (0x36), `GameYear` (0x35), `GameDaysPassed` (0x39) and `TimeScale` (0x3A) into
 the TES3 globals of the same meaning. The value is the float at `+0x34`, which
 is all `GlobalVariable.GetValue` (0x9c2b30) reads. Month is 0-based and Day
 1-based in both games. The year is Skyrim's.
+
+The copy runs the other way too. A script's changed value of one of these
+(`set GameHour to 13`) is stored into the Skyrim GLOB at once, through the
+`setClockGlobal` hook in `DialogueState::SetGlobal`. Before that, the next tick's
+copy put the old hour back, so a TES3 script could not move the time of day.
+The headless tester found this (`mwtest`, case `global`).
+
+### <a id="scale"></a>Scale is the reference's own
+
+**Code:** `plugin/game_calls_move.cpp:RefScale`, `SetRefScale`
+
+`GetScale` reads `TESObjectREFR`'s own scale, a uint16 percent at 0x98 on
+1.6.1170 (0x90 pre-AE, through `ActorField`), as OpenMW's returns the
+reference's scale. Papyrus `GetScale` was wrong twice: it multiplies in the
+race height (1.03 after `SetScale 1` on a Nord male), and `SetScale` is
+queued, so it lagged a set made the same frame. A scale a script set is
+answered until the field shows it, so `ModScale` right after `SetScale`
+adds to the new value. Found by the headless tester (`scale_one`,
+`scale_mod`). The offset was measured: `player.setscale` 1.5 then 0.75 left
+150 then 75 at 0x98 and nowhere else in 0x80-0x110.
+
+### <a id="place-at"></a>An absolute move is ONE engine move
+
+**Code:** `plugin/game_calls_move.cpp:PlaceAt`, `plugin/game_calls.cpp:PlaceOf`
+
+`Position`, `PlaceItem`, and the `AiTravel`/`AiEscort` destination markers
+all go through `PlaceAt`, which calls `MoveInto` (`TESObjectREFR::MoveTo_Impl`)
+with the reference's own cell indoors or its worldspace outdoors, position and
+Z angle together. It used to call Papyrus `SetPosition` then `SetAngle`. Both
+are queued, and `SetAngle` re-placed the reference at the position it read
+before the first landed, so nothing moved. Measured by the headless tester:
+`player->Position 32 48 0 0` left x and y unchanged, and moves the player to
+(32.1, 48.7) now. Morrowind.esm calls `Position` 5 times and
+`AiTravel`/`AiEscort` 20 times. The markers took the same two calls, so they
+were most likely left where they spawned, beside the actor. That was not
+measured on the old code. Case `aitravel_far` now checks that a travel 3000
+units away is not done after 15 ticks.
 
 ### <a id="published-state"></a>What a converted bark tests, the runtime writes into a GLOB
 
@@ -2475,6 +2560,23 @@ there, because it is a real travel package.
 🛑 **`Actor.PathToReference` is not the alternative.** It is latent — it
 suspends its caller until the path ends — and neither a script hook nor the
 tick may block.
+
+#### <a id="a-package-finishes-when-it-arrives"></a>A package finishes when it arrives
+
+**Code:** `plugin/game_calls_ai.cpp:AiPackageDoneFor`, `ReachedAiDestination`
+
+`GetAiPackageDone` asks whether the package has FINISHED; Skyrim's
+`GetCurrentPackage` only says what is assigned, and our own pack keeps winning
+while its alias holds. So arrival is our test: within 128 units of the
+destination marker, after which the actor is released.
+
+🛑 **Height does not count.** OpenMW's `AiTravel::execute` ends on
+`distanceIgnoreZ` (`apps/openmw/mwmechanics/aitravel.cpp`), and authored
+targets rely on it: chargen's `CharGenWalkNPC` sends the boat guard to
+`(90, -90, -88)`, about 240 units under the deck he walks on. Measured in 3D he
+stood at `(110, -101, 154)` for good, `GetAiPackageDone` never went true, and
+the movement tip and the rest of chargen never came (headless run from a New
+Game save, 2026-10-24).
 
 ### <a id="ai-packages"></a>REVERTED: the hand-rolled package queue
 
@@ -2953,8 +3055,16 @@ six opcode bases per family. The audit over TR_Mainland went from 129 ported
 commands to 307, and the stubbed call sites from 4,045 to 3,581.
 
 - A stat Skyrim HAS reads and writes that actor value, so what a script sets
-  is what the engine acts on. `Mod` is a read plus a write of the current
-  value, which bakes in an active buff.
+  is what the engine acts on. `Get` reads the current value. An attribute's
+  or skill's `Set` writes the base, and `Mod` adds to the BASE
+  (`GetBaseActorValue`), so an active buff is not baked in.
+- A magic-effect stat moves Skyrim's permanent modifier (`ModActorValue`,
+  id 54721), as OpenMW's `OpSetMagicEffect`/`OpModMagicEffect` move the effect
+  magnitude: `Set n` adds `n - current`, so the total becomes `n`, and `Mod`
+  adds its operand. A base write does not take for every one of them:
+  measured, `setav damageresist 0` left the player's 65 (armor derives it),
+  while `modav damageresist 10` gave 75. A Nord's racial 50 FrostResist made
+  `SetResistFrost 20` read 70 under the old base write.
 - A stat Skyrim lacks -- every attribute, Athletics, Acrobatics, and the
   effects with no actor value -- is the DLL's own number under the owner
   `stat|<locals owner>`, in the co-save, starting at the NPC_ record's
@@ -2970,6 +3080,16 @@ commands to 307, and the stubbed call sites from 4,045 to 3,581.
   [the character sheet plan](../plans/character_sheet.md#bug-blade-blunt).
 - The magic-effect family is typed `long` by the compiler, so it pushes and
   pops integers.
+- **A health write that leaves current health at 0 or below kills**
+  (`KillIfDrained` in `game_calls.cpp`, through `Actor.Kill`, id 54720). In
+  OpenMW, `Actors::update` kills any actor whose current health is at or below
+  0. Skyrim kills only through damage, so `SetActorValue` left the actor
+  standing at 0 health. The headless tester saw it: after `arrille->SetHealth
+  0`, `GetDeadCount arrille` stayed 0. Vanilla relies on the OpenMW rule:
+  `girasScript` kills Dagoth Ur and the Ash Vampires with `SetHealth 0` once the
+  Heart is destroyed, and `dreamerWorkerScript`, `boneScript` and
+  `mastriusScript` use it too (12 uses in 4 scripts). `Kill` takes essential
+  actors too, as OpenMW's death does.
 
 NOT done: `SetLevel` (Skyrim has no setter).
 
@@ -3288,6 +3408,18 @@ Two sidecar tables carry what that needs:
 `AddSoulGem creature gem` therefore resolves the creature's soul size, picks
 that gem's `_Filled<n>` record, and adds it. The query and removal commands
 scan the actor's inventory for any filled gem whose `SOUL` equals that size.
+
+🛑 **A filled gem's id is an item too.** `FindItem` falls back to the
+`SLGM.txt` table, so `AddItem`, `GetItemCount` and `Drop` resolve
+`Misc_SoulGem_Petty_Filled1`. Without that fallback, `AddSoulGem` handed
+`AddItem` an id it could not resolve (`item 'misc_soulgem_petty_filled1' does
+not resolve`), and the headless tester's `HasSoulGem` read 0 straight after.
+
+Measured limit: `GetItemCount` does not see an `AddItem` made in the same frame.
+So a `DropSoulGem` or `RemoveSoulGem` in the same script as the `AddSoulGem`
+finds no gem, while one a frame later works. Vanilla Morrowind.esm never uses
+`AddSoulGem` or `DropSoulGem`. Its 42 `RemoveSoulGem` calls take a gem the
+player has long carried.
 
 🛑 **A soul gem is recognised by its ID PREFIX**, `misc_soulgem`, exactly as
 OpenMW's `mwclass/misc.cpp:isSoulGem` does it — TES3 has no soul-gem flag.
@@ -3765,6 +3897,11 @@ crime faction (`Actor.GetCrimeFaction`), else the realm's from
 the one the guards' `Greeting 0` lines test. `SetPCCrimeLevel`/`ModPCCrimeLevel`
 write it (violent part cleared, the rest set). The `DialogueState` copy only
 stands in when no faction resolves.
+
+The writes go through `RunOnGameThread`, so a script on the main thread
+writes at once. When they were always POSTED, `SetPCCrimeLevel 100` then
+`ModPCCrimeLevel 50` read the engine's old 0 and left 50; the headless tester
+found it (`mwtest`, case `crimelevel`).
 
 The guards' lines also test and print five globals the engine keeps
 (`PCHasCrimeGold`, `PCHasGoldDiscount`, `CrimeGoldDiscount`,

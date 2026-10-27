@@ -70,7 +70,7 @@ void StartBridge() {
     g_pipe.Start([](const std::string& line) { return HandleRequest(line); });
 
     g_started = true;
-    Log("bridge: ready on %s", kPipeName);
+    Log("bridge: ready on %s", PipeName());
 }
 
 void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {

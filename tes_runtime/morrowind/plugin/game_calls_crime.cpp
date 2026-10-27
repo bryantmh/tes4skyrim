@@ -62,8 +62,9 @@ void* g_sentenced = nullptr;
 
 // The speaker's crime faction, else the realm's from crime_formid.txt.
 void* CrimeFaction() {
-    if (g_speakerRef && g_getCrimeFaction) {
-        if (void* own = g_getCrimeFaction(PapyrusVm(), 0, g_speakerRef)) return own;
+    void* speaker = SpeakerRef();
+    if (speaker && g_getCrimeFaction) {
+        if (void* own = g_getCrimeFaction(PapyrusVm(), 0, speaker)) return own;
     }
     const FormRef* realm = RealmCrimeFaction();
     return realm ? FormFromFile(realm->plugin.c_str(), realm->formId & kLocalMask)
@@ -93,7 +94,7 @@ void ClearAndSet(void* faction, float gold) {
 
 void SetCrimeGold(float gold) {
     void* faction = CrimeFaction();
-    PostToMainThread([faction, gold]() { ClearAndSet(faction, gold); });
+    RunOnGameThread([faction, gold]() { ClearAndSet(faction, gold); });
 }
 
 // OpenMW's PayFine: the bounty goes and the stolen goods are confiscated;
@@ -101,7 +102,7 @@ void SetCrimeGold(float gold) {
 // RemoveItem, so the engine is asked to pay what is left -- nothing.
 void PayFine(bool confiscate) {
     void* faction = CrimeFaction();
-    PostToMainThread([faction, confiscate]() {
+    RunOnGameThread([faction, confiscate]() {
         if (confiscate && faction && g_payCrimeGold) {
             ClearAndSet(faction, 0.0f);
             g_payCrimeGold(PapyrusVm(), 0, faction, true, false);

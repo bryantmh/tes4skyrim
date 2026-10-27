@@ -1,0 +1,42 @@
+# A1_V "Vivec Informants": Caius wants the player at level 3 before he sends
+# them to his three informants in Vivec.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a1_v_conditioning
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Still under level 3, Caius has nothing yet.
+case a1_v_conditioning
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Orders
+expect GetJournalIndex A1_V_VivecInformants == 0
+bye
+end
+
+# The freelance adventuring he asks for: sword practice earns two levels of
+# experience, each level is taken in Skyrim's skills menu (advlevel), and
+# Morrowind's attribute step follows it.
+case a1_v_levels
+console player.advskill onehanded 3000
+console player.advlevel
+pick Strength
+pick Endurance
+pick Agility
+pick OK
+console player.advlevel
+pick Strength
+pick Endurance
+pick Agility
+pick OK
+until 300 player->GetLevel >= 3
+end
+
+# Now the orders: three informants, the written details and 200 drakes.
+case a1_v_orders
+talk caius cosades
+ask Orders
+expect GetJournalIndex A1_V_VivecInformants == 1
+expect player->GetItemCount bk_a1_v_vivecinformants == 1
+bye
+end

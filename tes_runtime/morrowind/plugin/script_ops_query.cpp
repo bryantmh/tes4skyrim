@@ -89,16 +89,21 @@ class OpWakeUpPc : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime&) override { WakePlayer(); }
 };
 
-// `HasItemEquipped "id"`: the item is named, the actor is the target.
-template <class R>
-class OpHasItemEquipped : public Interpreter::Opcode0 {
+// A query of an actor about a named ITEM: `HasItemEquipped "id"` and
+// `HitOnMe "id"`. The item is the argument, the actor is the target.
+template <class R, bool (*GameHooks::*Ask)(const std::string&,
+                                           const std::string&)>
+class OpItemQuery : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
         const std::string actor = R::Target(runtime);
         const std::string item = PopString(runtime);
-        const auto ask = Hooks().itemEquipped;
+        const auto ask = Hooks().*Ask;
         runtime.push(ask && ask(actor, item) ? 1 : 0);
     }
 };
+
+template <class R> using OpHasItemEquipped = OpItemQuery<R, &GameHooks::itemEquipped>;
+template <class R> using OpHitOnMe = OpItemQuery<R, &GameHooks::hitOnMe>;
 
 // The forced-SNEAK latch. TES3 keeps it on the actor until cleared and reads
 // the stance as `Flag_Sneak || Flag_ForceSneak`, so the DLL owns the flag and
@@ -207,6 +212,7 @@ void InstallQueryOps(OpcodeInstaller& into) {
     into.Real<OpWakeUpPc>(M::opcodeWakeUpPc);
     InstallPair<OpHasItemEquipped>(into, N::opcodeHasItemEquipped,
                                    N::opcodeHasItemEquippedExplicit);
+    InstallPair<OpHitOnMe>(into, M::opcodeHitOnMe, M::opcodeHitOnMeExplicit);
     InstallPair<OpForceSneak>(into, C::opcodeForceSneak,
                               C::opcodeForceSneakExplicit);
     InstallPair<OpClearSneak>(into, C::opcodeClearForceSneak,

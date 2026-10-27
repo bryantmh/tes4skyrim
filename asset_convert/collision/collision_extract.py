@@ -74,7 +74,12 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from asset_convert.collision.door_geometry import door_closed_geometry, mat_mul, quat_mat
+from asset_convert.nif.pyffi_monkey_patch import apply_patches
 from core.worker_budget import worker_count
+from pyffi.formats.nif import NifFormat
+
+apply_patches()
 
 # --- Constants ----------------------------------------------------------------
 
@@ -224,11 +229,6 @@ def read_nif_data(nif_path: str):
 
     Split out so one parse can feed several analyses (bounds + collision).
     """
-    import time as _t
-    if not hasattr(_t, 'clock'):
-        _t.clock = _t.perf_counter  # pyffi 2.2.3 still calls the removed time.clock
-    from pyffi.formats.nif import NifFormat
-
     data = NifFormat.Data()
     with open(nif_path, 'rb') as fh:
         data.read(fh)
@@ -302,8 +302,8 @@ def bounds_from_data(data):
 BOUNDS_SCHEMA_VERSION = 4
 _BOUNDS_SCHEMA_KEY = '__schema__'
 
-#: Bumped when a door axis entry gains a field or a field changes meaning.
-DOOR_AXIS_SCHEMA_VERSION = 1
+#: Bumped when a door axis entry gains a field or a field changes meaning, or the reader measures more doors.
+DOOR_AXIS_SCHEMA_VERSION = 3
 
 
 def door_axis_cache_is_current(axis_cache: str) -> bool:
@@ -457,20 +457,6 @@ def _unwrap_shapes(shape, depth=0):
     yield shape
 
 
-def _pal_name(sp, off):
-    """Resolve a NiStringPalette offset to a node name, or None."""
-    if sp is None or off is None or off < 0:
-        return None
-    try:
-        pal = sp.palette.palette
-    except AttributeError:
-        return None
-    if isinstance(pal, str):
-        pal = pal.encode('latin1')
-    end = pal.find(b'\x00', off)
-    return pal[off:end if end >= 0 else None].decode('ascii', 'replace')
-
-
 def _body_tris(body):
     """Game-unit triangles for one rigid body, or [] if it does not path.
 
@@ -530,7 +516,7 @@ def _body_placements(data):
         ls = getattr(node, 'scale', 1.0) or 1.0
         Tw = [sum(R[i][k] * lt[k] * sc for k in range(3)) + T[i]
               for i in range(3)]
-        Rw = _mat_mul(R, lr)
+        Rw = mat_mul(R, lr)
         sw = sc * ls
         co = getattr(node, 'collision_object', None)
         body = getattr(co, 'body', None) if co is not None else None
@@ -555,7 +541,7 @@ def _body_transform(body):
     if type(body).__name__ != 'bhkRigidBodyT':
         return None
     q, t = body.rotation, body.translation
-    R = _quat_mat(q.w, q.x, q.y, q.z)
+    R = quat_mat(q.w, q.x, q.y, q.z)
     T = [t.x * CMS_TO_GAME, t.y * CMS_TO_GAME, t.z * CMS_TO_GAME]
     return None if _is_identity(R, T, 1.0) else _placer(R, T, 1.0)
 
@@ -576,194 +562,6 @@ def _placer(R, T, s):
         return tuple(sum(R[i][k] * q[k] for k in range(3)) + T[i]
                      for i in range(3))
     return place
-
-
-def _mat_mul(A, B):
-    return [[sum(A[i][k] * B[k][j] for k in range(3)) for j in range(3)]
-            for i in range(3)]
-
-
-def _quat_mat(w, x, y, z):
-    return [
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ]
-
-
-def _euler_xyz_mat(ax, ay, az):
-    import math as _m
-    cx, sx = _m.cos(ax), _m.sin(ax)
-    cy, sy = _m.cos(ay), _m.sin(ay)
-    cz, sz = _m.cos(az), _m.sin(az)
-    Rx = [[1, 0, 0], [0, cx, -sx], [0, sx, cx]]
-    Ry = [[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]]
-    Rz = [[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]]
-    return _mat_mul(_mat_mul(Rx, Ry), Rz)
-
-
-def _close_pose_overrides(data):
-    """{node name: (R|None, T|None, keyed)} from the 'Close' sequence.
-
-    Each controlled node's local transform in the fully-CLOSED pose: the FINAL
-    key values of its interpolator's data (XYZ rotation groups or quaternion
-    keys, plus translation keys), else the interpolator's direct transform
-    when finite.  `keyed` is True only when real key data exists — that is
-    what distinguishes the moving door leaf from a statically-retargeted
-    frame piece.
-    """
-    seq = None
-    for b in data.blocks:
-        if type(b).__name__ != 'NiControllerSequence':
-            continue
-        nm = b.name
-        if isinstance(nm, bytes):
-            nm = nm.decode('ascii', 'replace')
-        if nm.lower() == 'close':
-            seq = b
-            break
-    if seq is None:
-        return {}
-    out = {}
-    for cb in (getattr(seq, 'controlled_blocks', None) or []):
-        nn = _pal_name(getattr(cb, 'string_palette', None),
-                       getattr(cb, 'node_name_offset', None))
-        itp = getattr(cb, 'interpolator', None)
-        if not nn or itp is None:
-            continue
-        R = T = None
-        keyed = False
-        dt = getattr(itp, 'translation', None)
-        if dt is not None and abs(dt.x) < 1e30:
-            T = [dt.x, dt.y, dt.z]
-        dr = getattr(itp, 'rotation', None)
-        if dr is not None and abs(getattr(dr, 'w', 3e38)) < 1e30:
-            R = _quat_mat(dr.w, dr.x, dr.y, dr.z)
-        d = getattr(itp, 'data', None)
-        if d is not None:
-            if int(getattr(d, 'rotation_type', 0) or 0) == 4:
-                angs = []
-                got = False
-                for g in d.xyz_rotations:
-                    ks = getattr(g, 'keys', None) or []
-                    got = got or bool(len(ks))
-                    angs.append(float(ks[-1].value) if len(ks) else 0.0)
-                if got:
-                    # An all-zero final rotation is still a CLOSED pose (the
-                    # leaf swings back to identity) — key data existing is
-                    # what marks the node as the moving door.
-                    R = _euler_xyz_mat(*angs)
-                    keyed = True
-            else:
-                qk = getattr(d, 'quaternion_keys', None) or []
-                if len(qk):
-                    q = qk[-1].value
-                    R = _quat_mat(q.w, q.x, q.y, q.z)
-                    keyed = True
-            tks = getattr(d.translations, 'keys', None) or []
-            if len(tks):
-                v = tks[-1].value
-                T = [v.x, v.y, v.z]
-                keyed = True
-        if R is not None or T is not None:
-            out[nn] = (R, T, keyed)
-    return out
-
-
-def door_closed_geometry(data):
-    """Doorway as ('X'|'Y', width, center_x, center_y, z_min) — WORLD units.
-
-    Reads the ORIGINAL Oblivion NIF's render graph at the CLOSED pose: the
-    'Close' controller sequence's final key values override each animated
-    node's local transform, then the union bbox of the shapes under the KEYED
-    nodes — the door leaf/leaves themselves — gives the doorway span, its
-    center relative to the REFR pivot, and the slab's base height.
-
-    This is the AUTHORED closed door, which no static measurement recovers:
-    idgate01's two leaves are STORED mid-open (bbox nowhere near the doorway)
-    and swing 90 degrees on 'Close'; the converted collision (previous source
-    for this cache) additionally baked the leaf transforms wrong, which is
-    what rotated and offset the CharacterGen pen gate's Door Triangle.
-
-    Frames, arches and static fence sections carry no keys, so they never
-    widen the doorway (idgate01's fixed side grates span 269u; its keyed
-    leaves close to 133u).  A model with no Close sequence measures all its
-    shapes at rest pose — plain static doors are stored closed.
-
-    Returns None when the closed union is thin in Z (a trapdoor/hatch: swings
-    about a horizontal axis, no vertical threshold line exists).
-    """
-    ovr = _close_pose_overrides(data)
-    shapes = []                              # (keyed, lo3, hi3)
-
-    ident = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-
-    def walk(node, R, T, s, keyed):
-        name = getattr(node, 'name', b'')
-        if isinstance(name, bytes):
-            name = name.decode('ascii', 'replace')
-        o = ovr.get(name)
-        my_keyed = keyed or bool(o and o[2])
-        if o and o[0] is not None:
-            lr = o[0]
-        else:
-            m = getattr(node, 'rotation', None)
-            lr = ([[m.m_11, m.m_12, m.m_13],
-                   [m.m_21, m.m_22, m.m_23],
-                   [m.m_31, m.m_32, m.m_33]] if m is not None else ident)
-        if o and o[1] is not None:
-            lt = o[1]
-        else:
-            tr = getattr(node, 'translation', None)
-            lt = [tr.x, tr.y, tr.z] if tr is not None else [0.0, 0.0, 0.0]
-        ls = getattr(node, 'scale', 1.0) or 1.0
-        Tw = [R[i][0] * lt[0] * s + R[i][1] * lt[1] * s
-              + R[i][2] * lt[2] * s + T[i] for i in range(3)]
-        Rw = _mat_mul(R, lr)
-        sw = s * ls
-        ln = type(node).__name__
-        if ln in ('NiTriShape', 'NiTriStrips') \
-                and getattr(node, 'data', None) is not None:
-            vs = node.data.vertices
-            if len(vs):
-                lo = [1e30] * 3
-                hi = [-1e30] * 3
-                for v in vs:
-                    q = (v.x * sw, v.y * sw, v.z * sw)
-                    for i in range(3):
-                        p = (Rw[i][0] * q[0] + Rw[i][1] * q[1]
-                             + Rw[i][2] * q[2] + Tw[i])
-                        if p < lo[i]:
-                            lo[i] = p
-                        if p > hi[i]:
-                            hi[i] = p
-                shapes.append((my_keyed, lo, hi))
-        for ch in (getattr(node, 'children', None) or []):
-            if ch is not None:
-                walk(ch, Rw, Tw, sw, my_keyed)
-
-    for r in data.roots:
-        try:
-            walk(r, ident, [0.0, 0.0, 0.0], 1.0, False)
-        except Exception:
-            continue
-    if not shapes:
-        return None
-    pick = [sh for sh in shapes if sh[0]] or shapes
-    lo = [min(sh[1][i] for sh in pick) for i in range(3)]
-    hi = [max(sh[2][i] for sh in pick) for i in range(3)]
-    ex, ey, ez = hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]
-    if max(ex, ey) <= 1e-9:
-        return None
-    # Thin in Z => swings about a HORIZONTAL axis (trapdoor, hatch, grate,
-    # display case, manhole cover).  No vertical-axis threshold line exists,
-    # so the caller must skip it rather than lay a door quad in a made-up
-    # direction.
-    if ez < max(ex, ey) * 0.5:
-        return None
-    axis = 'Y' if ey > ex else 'X'
-    return (axis, max(ex, ey),
-            0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1]), lo[2])
 
 
 def _worker(args: tuple):

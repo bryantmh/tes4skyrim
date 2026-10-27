@@ -21,6 +21,9 @@ from .morrowind_placements import folder_tables
 #: What the runtime reads: `npc id=name|interior|x|y|z|zRot degrees|marker;...`, the marker `Plugin|FormID` or empty.
 TRAVEL_TABLE = 'NPC_travel.txt'
 
+#: What GetPCCell reads outdoors, where Skyrim keeps no CELL name: `TES3 grid x|grid y=name`.
+EXTERIOR_NAMES_TABLE = 'exterior_names.txt'
+
 #: A TES3 exterior cell is this many units across.
 _CELL_SIZE = 8192
 
@@ -46,13 +49,25 @@ def take_place(out: dict, rec) -> None:
     region = get_subrecord(rec, 'RGNN')
     out['exteriors'][(grid_x, grid_y)] = (
         rec.record_id, get_string(region).lower() if region else '')
+    out['own']['exteriors'].add((grid_x, grid_y))
+
+
+def _grid_name(out: dict, grid: tuple) -> str:
+    """The shown name of the exterior cell at a grid, or ''."""
+    name, region = out['exteriors'].get(grid, ('', ''))
+    return name or out['regions'].get(region, '')
 
 
 def _exterior_name(out: dict, x: float, y: float) -> str:
     """The shown name of the exterior cell at a position, or ''."""
-    grid = (math.floor(x / _CELL_SIZE), math.floor(y / _CELL_SIZE))
-    name, region = out['exteriors'].get(grid, ('', ''))
-    return name or out['regions'].get(region, '')
+    return _grid_name(out, (math.floor(x / _CELL_SIZE), math.floor(y / _CELL_SIZE)))
+
+
+def exterior_name_lines(gathered: dict) -> list:
+    """`x|y=name` for each named exterior grid the plugin authors."""
+    names = ((grid, _grid_name(gathered, grid))
+             for grid in sorted(gathered.get('own', {}).get('exteriors', ())))
+    return [f'{x}|{y}={name}' for (x, y), name in names if name]
 
 
 def marker_index(folders: list) -> dict:

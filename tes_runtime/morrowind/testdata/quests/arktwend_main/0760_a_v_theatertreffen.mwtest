@@ -1,0 +1,58 @@
+# Chapter V opens: two of the Kanzler's guards take the player to the old
+# magician Calisto, whom the Kanzler wants dead. Calisto is an old friend; one
+# guard kills the other, and Calisto leaves his house.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from theater_guards
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The two guards in front of the theater greet the player and come along.
+case theater_guards
+run
+player->Position -343 49200 220 0
+until 300 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_TheaterTreffen == 3
+end
+
+# Calisto's house near Castle Grel. Moving the guards stands in for them
+# following the player on the walk; they stay outside.
+case theater_calisto_house
+run
+player->Position 33300 37150 123 0
+"TheaterTreffenWache02"->Position 33250 37100 123 0
+"TheaterTreffenWache01"->Position 33350 37100 123 0
+until 300 GetJournalIndex A_V_TheaterTreffen == 4
+activate 055BCF10
+until 300 GetPCCell "Calisto's House" == 1
+end
+
+# Inside.
+case theater_inside
+run
+player->PositionCell -216 740 127 0 "Calisto's House"
+until 300 GetJournalIndex A_V_TheaterTreffen == 5
+end
+
+# Calisto remembers that night, and proposes a pact against the Kanzler.
+case theater_calisto
+run
+player->PositionCell -257 200 136 0 "Calisto's House"
+talk CalistoHausCalisto01
+ask remember that night
+choose 1
+choose 2
+choose 3
+bye
+expect GetJournalIndex A_V_TheaterTreffen == 6
+until 300 "TheaterTreffenWache01"->GetHealth <= 0
+end
+
+# Outside, the surviving guard explains, and leaves to report to the Kanzler.
+case theater_guard_report
+activate 052ED5FB
+until 300 GetPCCell "Calisto's House" == 0
+talk TheaterTreffenWache02
+bye
+expect GetJournalIndex A_V_TheaterTreffen == 7
+end

@@ -1,0 +1,115 @@
+# Chapter VI, Enderal: the pass through the Black Mountains, the siege of the
+# Trun Telur fortress (Enderalvar 1 to 12), the dead city, and the player's
+# brother at the portal. The fortress steps follow its scripts: arrive, open
+# the outer gate, scout until the fireball cannons fire, the inner gate, the
+# wall, a night's rest in the camp, the wall again, the gate square, the
+# collapsing walls, the wall a last time, and the gate out.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from enderal_pass
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The pass. The third marker force-greets Mauragin in the frame his own
+# script still holds him disabled, which OpenMW's ForceGreeting skips; his
+# line only says he will follow later.
+case enderal_pass
+run
+player->Position 98947 -146450 3266 0
+until 300 GetJournalIndex A_VI_EnderalPass == 1
+run
+player->Position 108391 -146070 7497 0
+until 300 GetJournalIndex A_VI_EnderalPass == 2
+run
+player->Position 116740 -163130 10985 0
+until 300 GetJournalIndex A_VI_EnderalPass == 3
+end
+
+# Trun Telur: the arrival and the outer gate.
+case enderal_burg_gate
+run
+player->Position 135936 -143680 4634 0
+until 300 GetJournalIndex A_VI_EnderalBurg == 1
+activate 05BC8A49
+until 300 GetJournalIndex A_VI_EnderalBurg == 2
+end
+
+# Scouting the walls sets off the fireball cannons; the inner gate.
+case enderal_burg_scout
+run
+player->Position 143566 -148300 4536 0
+until 300 GetJournalIndex A_VI_EnderalBurg == 3
+run
+player->Position 142964 -145880 5269 0
+until 300 Enderalvar == 3
+activate 05D5AC07
+until 300 Enderalvar == 5
+end
+
+# The wall, then the camp: a soldier sends the player to bed.
+case enderal_burg_camp
+run
+player->Position 139557 -144080 6626 0
+until 300 GetJournalIndex A_VI_EnderalBurg == 4
+run
+player->Position 138519 -142600 5899 180
+until 300 MenuMode == 1
+wait 60
+bye
+run
+player->Position 137012 -140520 5453 0
+activate 05289DC2
+sleep 8
+button 0
+expect Enderalvar == 7
+end
+
+# Morning: the wall, the gate square, the walls come down, the wall again.
+case enderal_burg_battle
+run
+player->Position 139557 -144080 6626 0
+until 300 GetJournalIndex A_VI_EnderalBurg == 5
+run
+player->Position 140330 -143180 5610 0
+until 300 GetJournalIndex A_VI_EnderalBurg == 6
+run
+player->Position 138800 -141910 5479 0
+until 300 Enderalvar == 10
+expect "a_Enderal_Mauer_Einsturz01"->GetDisabled == 1
+run
+player->Position 139557 -144080 6626 0
+until 300 GetJournalIndex A_VI_EnderalBurg == 7
+activate 05BC8A49
+until 300 Enderalvar == 12
+end
+
+# The dead city, and the bridge of Mergtwen.
+case enderal_city
+run
+player->Position 143606 -155330 4170 0
+until 300 GetJournalIndex A_VI_EnderalStadt == 1
+run
+player->Position 151404 -176610 5127 0
+until 300 GetJournalIndex A_VI_EnderalStadt == 2
+end
+
+# The marked figure at the portal is the player's brother.
+case enderal_brother
+run
+player->Position 142712 -190400 10550 180
+until 600 MenuMode == 1
+wait 60
+choose 5
+choose 6
+choose 7
+choose 8
+bye
+expect GetJournalIndex A_VI_EnderalBruder == 2
+expect EnderalTurmvar == 8
+run
+player->Position 142753 -186600 10542 0
+button 0
+until 300 GetPCCell "Calisto's House" == 1
+end
+# The player flees; the tower wavers and the player wakes in Calisto's house.
+# Its marker flies north at MoveWorld Y 300 from EnderalTurmvar 8, so the run
+# to it shares the brother's case: no checkpoint lands between them.
+# See: docs/audits/headless_quest_runs.md#3-found-not-fixed

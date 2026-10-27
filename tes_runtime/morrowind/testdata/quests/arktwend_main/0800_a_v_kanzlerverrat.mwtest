@@ -1,0 +1,51 @@
+# Chapter V, the Kanzler's betrayal: once the dwarf prince is home
+# (Zwergenvar 9), pairs of the Kanzler's mages wait on every road into
+# Stormwend. They carry the player to Brutus in Stormwend Tower, who throws
+# the player into the Gargart prison; Rakhissh cracks the locks and a dragon
+# flies the player off the docks.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from verrat_arrest
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The mages by the tournament plaza force-greet the player.
+case verrat_arrest
+run
+player->Position -1700 34400 200 0
+until 900 Zwergenvar == 10
+until 300 MenuMode == 1
+wait 60
+bye
+until 600 GetJournalIndex A_V_KanzlerVerrat == 1
+until 600 GetPCCell "Stormwend Tower" == 1
+end
+
+# Brutus greets the player himself, asks for his stones, and sends the
+# player to Gargart.
+case verrat_brutus
+run
+until 600 MenuMode == 1
+wait 60
+expect GetJournalIndex A_V_KanzlerVerrat == 2
+choose 2
+choose 4
+until 600 GetJournalIndex A_V_KanzlerVerrat == 3
+until 600 GetPCCell "Gargart, Prison" == 1
+end
+
+# In the cell; Rakhissh fights his way over and offers to crack the locks.
+# His authored run-over is StartCombat on the player until he is within 150.
+case gargart_cell
+until 300 GetJournalIndex A_V_Gargart == 1
+until 6000 "GargartRakhissh01"->GetDistance player <= 150
+wait 30
+talk GargartRakhissh01
+bye
+expect GetJournalIndex A_V_Gargart == 2
+end
+
+# Out on the docks the dragon answers the call and flies the player away.
+case gargart_escape
+run
+player->Position -48244 35600 139 0
+until 900 GetJournalIndex A_V_Gargart >= 6
+end

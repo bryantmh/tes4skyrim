@@ -56,6 +56,9 @@ bool EnsureObjectScript(const std::string& script, const std::string& source);
 // See: docs/plans/morrowind_object_scripts.md#instances
 const ScriptLocals* ObjectScriptLocals(const std::string& script);
 
+// Every command keyword that reaches a real opcode rather than a stub.
+std::vector<std::string> RealCommands();
+
 // Every unported command a script has reached so far, which is the port's
 // worklist as the content itself orders it.
 std::vector<std::string> UnportedCommandsSeen();

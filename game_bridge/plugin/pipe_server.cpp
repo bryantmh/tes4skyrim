@@ -10,6 +10,15 @@ namespace bridge {
 
 PipeServer g_pipe;
 
+const char* PipeName() {
+    static const std::string name = [] {
+        char buf[256] = {};
+        const DWORD n = GetEnvironmentVariableA("TES_BRIDGE_PIPE", buf, sizeof(buf));
+        return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string(R"(\\.\pipe\tes_game_bridge)");
+    }();
+    return name.c_str();
+}
+
 bool PipeServer::Start(RequestHandler handler) {
     if (running_.load()) return true;
     handler_ = std::move(handler);
@@ -31,11 +40,11 @@ void PipeServer::Stop() {
 }
 
 void PipeServer::ThreadMain() {
-    Log("pipe: listening on %s", kPipeName);
+    Log("pipe: listening on %s", PipeName());
 
     while (running_.load()) {
         HANDLE h = CreateNamedPipeA(
-            kPipeName,
+            PipeName(),
             PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
             1,                    // one instance: one client at a time

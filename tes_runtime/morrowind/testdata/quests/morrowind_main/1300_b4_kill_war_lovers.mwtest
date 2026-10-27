@@ -1,0 +1,84 @@
+# B4 "Erabenimsun Nerevarine": the wise woman Manirai says no outlander is
+# named Nerevarine while Ashkhan Ulath-Pal and his gulakhans Ahaz, Ashu-Ahhe
+# and Ranabi live. With them dead, the timid Han-Ammu must be made ashkhan by
+# giving him the tribe's tokens of power, and as ashkhan he names the player.
+# PositionCell stands in for the walks, the console's damageav for the fights,
+# and AddItem for looting the robe, amulet and axe from the dead; ref FormIDs
+# carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b4_manirai
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Manirai refuses while the war-loving Erabenimsun rule, and sets the task.
+case b4_manirai
+run
+player->PositionCell -10 422 -327 90 "Erabenimsun Camp, Wise Woman's Yurt"
+until 600 GetPCCell "Erabenimsun Camp, Wise Woman's Yurt" == 1
+talk manirai
+ask Nerevarine prophecies
+choose 1
+expect GetJournalIndex B4_KillWarLovers == 5
+bye
+end
+
+# Ulath-Pal and his bodyguard Ahaz share the ashkhan's yurt; Ashu-Ahhe and
+# Ranabi each keep their own.
+case b4_kill
+run
+player->PositionCell 0 520 -260 0 "Erabenimsun Camp, Ashkhan's Yurt"
+until 600 GetPCCell "Erabenimsun Camp, Ashkhan's Yurt" == 1
+console 05ECDCD5.damageav health 10000
+console 055BDDEF.damageav health 10000
+until 300 "ahaz"->GetHealth <= 0
+until 300 "ulath-pal"->GetHealth <= 0
+run
+player->PositionCell 30 624 -257 0 "Erabenimsun Camp, Ashu-Ahhe's Yurt"
+until 600 GetPCCell "Erabenimsun Camp, Ashu-Ahhe's Yurt" == 1
+console 05B680C8.damageav health 10000
+until 300 "ashu-ahhe"->GetHealth <= 0
+run
+player->PositionCell 60 92 -125 0 "Erabenimsun Camp, Ranabi's Yurt"
+until 600 GetPCCell "Erabenimsun Camp, Ranabi's Yurt" == 1
+console 05C780C9.damageav health 10000
+until 300 "ranabi"->GetHealth <= 0
+end
+
+# With the war-lovers dead Manirai sends the player to make Han-Ammu ashkhan;
+# given Ranabi's robe, Ahaz's amulet and his father's axe, he accepts and
+# names the player Nerevarine, and Manirai hands over the Seizing.
+case b4_ashkhan
+run
+player->PositionCell -10 422 -327 90 "Erabenimsun Camp, Wise Woman's Yurt"
+until 600 GetPCCell "Erabenimsun Camp, Wise Woman's Yurt" == 1
+talk manirai
+ask Nerevarine prophecies
+expect GetJournalIndex B4_KillWarLovers == 10
+bye
+run
+player->AddItem robe_of_erur_dan 1
+player->AddItem heart_of_fire 1
+player->AddItem war_axe_airan_ammu 1
+player->PositionCell -10 596 -252 90 "Erabenimsun Camp, Han-Ammu's Yurt"
+until 600 GetPCCell "Erabenimsun Camp, Han-Ammu's Yurt" == 1
+talk han-ammu
+ask want to be ashkhan
+choose 1
+expect GetJournalIndex B4_Robe == 1
+ask want to be ashkhan
+choose 1
+expect GetJournalIndex B4_HeartFire == 1
+ask want to be ashkhan
+choose 1
+expect GetJournalIndex B4_KillWarLovers >= 40
+ask name you Nerevarine
+expect GetJournalIndex B4_KillWarLovers == 50
+bye
+run
+player->PositionCell -10 422 -327 90 "Erabenimsun Camp, Wise Woman's Yurt"
+until 600 GetPCCell "Erabenimsun Camp, Wise Woman's Yurt" == 1
+talk manirai
+ask Nerevarine prophecies
+ask Seizing of the Erabenimsun
+expect GetJournalIndex B4_KillWarLovers == 55
+expect player->GetItemCount Seizing == 1
+bye
+end

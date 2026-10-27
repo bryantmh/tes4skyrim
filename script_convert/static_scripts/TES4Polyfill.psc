@@ -579,6 +579,74 @@ Int Function ClampRank(Int aiValue) Global
   Return aiValue
 EndFunction
 
+; ==========================================================================
+; Disposition
+; ==========================================================================
+; An Oblivion actor's disposition toward the player is its rank in
+; TES4DispositionFaction, set at conversion from its Personality and its
+; factions' reactions to the player; dialogue conditions read the same rank.
+; Oblivion attacks on sight while disposition, read as 0-100, is below
+; aggression - 5 (so aggression 5 or less never attacks), the TES4 Aggression
+; being the actor's rank in TES4AggressionFaction.  A script that lowers
+; disposition or raises aggression past that line puts the actor in
+; TES4DispositionHostileFaction, an Enemy of the player, so its own aggression
+; tier attacks on sight; a change back the other way takes it out.  Only a
+; script's change applies the rule: the converted tier already covers where
+; the actor starts.
+; See docs/commentary/tes5_import_actors.md#faction-player-disposition
+
+; TES4 GetDisposition toward the player; Oblivion's neutral 50 for an actor without a rank.
+Int Function GetDisposition(Actor akActor, Faction akDisposition) Global
+  If akActor == None || akDisposition == None || !akActor.IsInFaction(akDisposition)
+    Return 50
+  EndIf
+  Return akActor.GetFactionRank(akDisposition)
+EndFunction
+
+; Oblivion's attack rule after a change that made it worse (abWorse) or better for the player.
+Function ApplyAttackRule(Actor akActor, Bool abWorse, Faction akDisposition, Faction akAggression, Faction akHostile) Global
+  If akActor == None || akHostile == None || akAggression == None || !akActor.IsInFaction(akAggression)
+    Return
+  EndIf
+  Int disp = GetDisposition(akActor, akDisposition)
+  If disp < 0
+    disp = 0
+  ElseIf disp > 100
+    disp = 100
+  EndIf
+  Bool attacks = disp < akActor.GetFactionRank(akAggression) - 5
+  If abWorse && attacks
+    akActor.AddToFaction(akHostile)
+  ElseIf !abWorse && !attacks && akActor.IsInFaction(akHostile)
+    akActor.RemoveFromFaction(akHostile)
+  EndIf
+EndFunction
+
+; TES4 ModDisposition toward the player.
+Function ModDisposition(Actor akActor, Int aiDelta, Faction akDisposition, Faction akAggression, Faction akHostile) Global
+  If akActor == None || akDisposition == None || aiDelta == 0
+    Return
+  EndIf
+  akActor.SetFactionRank(akDisposition, ClampRank(GetDisposition(akActor, akDisposition) + aiDelta))
+  ApplyAttackRule(akActor, aiDelta < 0, akDisposition, akAggression, akHostile)
+EndFunction
+
+; TES4 SetAV Aggression: the tier the conversion chose, and the TES4 value the attack rule reads.
+Function SetAggression(Actor akActor, Float afTier, Int aiRaw, Faction akDisposition, Faction akAggression, Faction akHostile) Global
+  If akActor == None
+    Return
+  EndIf
+  akActor.SetActorValue("Aggression", afTier)
+  If akAggression == None || !akActor.IsInFaction(akAggression)
+    Return
+  EndIf
+  Int before = akActor.GetFactionRank(akAggression)
+  akActor.SetFactionRank(akAggression, ClampRank(aiRaw))
+  If aiRaw != before
+    ApplyAttackRule(akActor, aiRaw > before, akDisposition, akAggression, akHostile)
+  EndIf
+EndFunction
+
 ; TES4 SetAV/ForceAV Confidence (ModAV passes GetConfidence + delta): the margin
 ; moves by the change.  Without the faction, afValue is already a tier and is
 ; written as one; an actor without a margin (not converted from TES4) is

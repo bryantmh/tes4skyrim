@@ -2,11 +2,15 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <map>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include "addresses.h"
 #include "ids.h"
@@ -61,6 +65,10 @@ static_assert(offsetof(EngineMenu, context) == kOffContext, "context offset");
 static_assert(offsetof(EngineMenu, owner) == kOffOwner, "owner offset");
 
 namespace {
+
+// Queues `menu` to open once the player's move lands; false with none in
+// flight. Defined beside the hold's state, below.
+bool HoldOpen(CustomMenu* menu);
 
 // The two scalars every menu sets beside its flags, as MessageBoxMenu does:
 // depth 10, which draws over the engine's own menus, and the MenuMode input
@@ -543,11 +551,7 @@ void CustomMenu::SetText(const char* variable, const char* text) {
 }
 
 void CustomMenu::SetNumber(const char* path, double number) {
-    void* view = LiveView();
-    if (!view) return;
-    NumberValue value(number);
-    VCall<SetVariableFn>(view, ids::kMovieViewSetVariableSlot)(view, path,
-                                                              value.raw, 0);
+    MovieSetNumber(LiveView(), path, number);
 }
 
 bool CustomMenu::GetNumber(const char* path, double* out) {
@@ -563,16 +567,7 @@ bool CustomMenu::GetNumber(const char* path, double* out) {
 
 bool CustomMenu::InvokeNumber(const char* path, const double* args,
                               std::size_t count, double* result) {
-    void* view = LiveView();
-    if (!view || count > 4) return false;
-    NumberValue argv[4];
-    for (std::size_t i = 0; i < count; ++i) argv[i] = NumberValue(args[i]);
-    NumberValue out;
-    const bool ok = VCall<InvokeFn>(view, ids::kMovieViewInvokeSlot)(
-        view, path, out.raw, argv, static_cast<std::uint32_t>(count));
-    if (!ok || !out.IsNumber()) return false;
-    *result = out.Number();
-    return true;
+    return MovieInvoke(LiveView(), path, args, count, result);
 }
 
 void CustomMenu::Open() {
@@ -584,6 +579,11 @@ void CustomMenu::Open() {
     // retrying would only pause the game again, over and over for a level-up
     // that is still pending.
     if (mFailed) return;
+    if (HoldOpen(this)) {
+        Log("menu: '%s' waits for the player's move to land", mName);
+        return;
+    }
+    if (!mOverlay && this != &DialogueMenu()) NoteMenuOpening(mName);
     PostMenuMessage(mName, ids::kMessageOpen);
     Log("menu: posted open for '%s'", mName);
 }
@@ -695,10 +695,149 @@ void MovieSetText(void* view, const char* path, const char* text) {
     VCall<SetVariableFn>(view, ids::kMovieViewSetVariableSlot)(view, path, value, 0);
 }
 
+void MovieSetNumber(void* view, const char* path, double number) {
+    if (!view) return;
+    NumberValue value(number);
+    VCall<SetVariableFn>(view, ids::kMovieViewSetVariableSlot)(view, path, value.raw, 0);
+}
+
+bool MovieInvoke(void* view, const char* path, const double* args, std::size_t count,
+                 double* result) {
+    if (!view || count > 4) return false;
+    NumberValue argv[4];
+    for (std::size_t i = 0; i < count; ++i) argv[i] = NumberValue(args[i]);
+    NumberValue out;
+    const bool ok = VCall<InvokeFn>(view, ids::kMovieViewInvokeSlot)(
+        view, path, out.raw, argv, static_cast<std::uint32_t>(count));
+    if (!result) return ok;
+    if (!ok || !out.IsNumber()) return false;
+    *result = out.Number();
+    return true;
+}
+
+namespace {
+
+// What Windows calls DirectInput scan code `scan`, as the player's keyboard labels it.
+std::string KeyboardKeyName(std::uint32_t scan) {
+    char name[64] = {0};
+    const LONG key = static_cast<LONG>((scan & 0x7F) << 16 | (scan & 0x80 ? 1u << 24 : 0u));
+    return GetKeyNameTextA(key, name, sizeof(name)) > 0 ? name : "None";
+}
+
+std::string MouseButtonName(std::uint32_t button) {
+    static const char* kNames[] = {"Left Mouse Button", "Right Mouse Button", "Middle Mouse Button"};
+    return button < 3 ? kNames[button] : "Mouse Button " + std::to_string(button + 1);
+}
+
+}  // namespace
+
+std::string BoundKeyName(const char* userEvent) {
+    void* map = g_controlMap ? *g_controlMap : nullptr;
+    char* context = map ? At<char*>(map, ids::kOffControlMapGameplay) : nullptr;
+    for (std::size_t device = 0; context && device < 2; ++device) {
+        char* array = context + device * ids::kControlArraySize;
+        char* entries = At<char*>(array, 0);
+        const auto count = At<std::uint32_t>(array, ids::kOffControlArrayCount);
+        for (std::uint32_t i = 0; entries && i < count; ++i) {
+            char* entry = entries + std::size_t{i} * ids::kControlMappingSize;
+            const char* name = At<const char*>(entry, 0);
+            const auto key = At<std::uint32_t>(entry, ids::kOffControlMappingKey);
+            if (!name || _stricmp(name, userEvent) != 0 || key == ids::kControlUnbound) continue;
+            return device == 0 ? KeyboardKeyName(key) : MouseButtonName(key);
+        }
+    }
+    return "None";
+}
+
 std::uint32_t PausingMenuCount() {
     if (!g_menuManager || !*g_menuManager) return 0;
     return *reinterpret_cast<const std::uint32_t*>(
         static_cast<char*>(*g_menuManager) + ids::kOffMenuNumPauseGame);
+}
+
+namespace {
+
+// How long a requested menu may take to open before it is given up on, so
+// one the engine refuses cannot hold the scripts forever.
+constexpr ULONGLONG kOpeningPatienceMs = 5000;
+
+std::mutex g_openingMutex;
+// Each menu asked to open and not yet open, with the tick count it was asked at.
+std::map<std::string, ULONGLONG> g_opening;
+
+// How long a held menu waits for the move's loading screen to show, and how
+// long it may wait in all.
+constexpr ULONGLONG kLoadShowMs = 1000;
+constexpr ULONGLONG kHoldLimitMs = 20000;
+constexpr const char* kLoadingMenu = "Loading Menu";
+
+std::mutex g_holdMutex;
+// When the player's move was asked for (0: none in flight), whether its
+// loading screen has shown, and the menus waiting for it to land.
+ULONGLONG g_holdSince = 0;
+bool g_loadShown = false;
+std::vector<CustomMenu*> g_held;
+
+bool HoldOpen(CustomMenu* menu) {
+    const std::lock_guard<std::mutex> lock(g_holdMutex);
+    if (!g_holdSince) return false;
+    if (std::find(g_held.begin(), g_held.end(), menu) == g_held.end()) g_held.push_back(menu);
+    return true;
+}
+
+}  // namespace
+
+void HoldMenusForPlayerMove() {
+    if (!EngineMenusQueryable()) return;
+    const std::lock_guard<std::mutex> lock(g_holdMutex);
+    g_holdSince = GetTickCount64();
+    g_loadShown = false;
+}
+
+void ReleaseHeldMenus() {
+    std::vector<CustomMenu*> ready;
+    bool shown = false;
+    {
+        const std::lock_guard<std::mutex> lock(g_holdMutex);
+        if (!g_holdSince) return;
+        const bool loading = EngineMenuOpen(kLoadingMenu);
+        g_loadShown = g_loadShown || loading;
+        const ULONGLONG waited = GetTickCount64() - g_holdSince;
+        if ((loading || (!g_loadShown && waited < kLoadShowMs)) && waited < kHoldLimitMs) return;
+        shown = g_loadShown;
+        g_holdSince = 0;
+        ready.swap(g_held);
+    }
+    if (ready.empty()) return;
+    Log("menu: the player's move landed (loading screen %s) -- opening %zu held menu(s)",
+        shown ? "shown" : "never shown", ready.size());
+    for (CustomMenu* menu : ready) menu->Open();
+}
+
+void NoteMenuOpening(const char* name) {
+    if (!EngineMenusQueryable()) return;
+    const std::lock_guard<std::mutex> lock(g_openingMutex);
+    g_opening[name] = GetTickCount64();
+}
+
+void ForgetOpenedMenus() {
+    const std::lock_guard<std::mutex> lock(g_openingMutex);
+    const ULONGLONG now = GetTickCount64();
+    for (auto it = g_opening.begin(); it != g_opening.end();) {
+        const bool done = EngineMenuOpen(it->first.c_str()) ||
+                          now - it->second > kOpeningPatienceMs;
+        it = done ? g_opening.erase(it) : std::next(it);
+    }
+}
+
+bool MenuOpening() {
+    ForgetOpenedMenus();
+    {
+        const std::lock_guard<std::mutex> lock(g_holdMutex);
+        if (!g_held.empty()) return true;
+    }
+    const std::lock_guard<std::mutex> lock(g_openingMutex);
+    return !g_opening.empty();
 }
 
 }  // namespace tesruntime::mw

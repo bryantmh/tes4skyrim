@@ -4,7 +4,9 @@
 
 #include "game_calls_internal.h"
 
+#include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -12,6 +14,7 @@
 #include "ids.h"
 #include "log.h"
 #include "main_thread.h"
+#include "menu.h"
 #include "object_script.h"
 #include "object_tick.h"
 
@@ -29,8 +32,7 @@ using MoveToFn = void (*)(void* vm, std::uint32_t stack, void* self,
 using MoveToCellFn = void (*)(void* self, const std::uint32_t* targetHandle,
                               void* cell, void* world, const float* position,
                               const float* rotation);
-// ObjectReference.GetScale() / .SetScale(float).
-using ScaleGetFn = float (*)(void* vm, std::uint32_t stack, void* ref);
+// ObjectReference.SetScale(float).
 using ScaleSetFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                             float scale);
 
@@ -38,8 +40,13 @@ using ScaleSetFn = void (*)(void* vm, std::uint32_t stack, void* ref,
 constexpr int kAxisCount = kPoseAxes;
 MoveToFn     g_moveTo = nullptr;
 MoveToCellFn g_moveToCell = nullptr;
-ScaleGetFn   g_getScale = nullptr;
 ScaleSetFn   g_setScale = nullptr;
+
+// The scale a script last set on each reference, which reads answer until the
+// field shows it: SetScale is queued, so `ModScale` right after it read the old
+// one (1.3 for `SetScale 1` then `ModScale 0.1` from 1.2).
+std::mutex g_scaleLock;
+std::unordered_map<void*, float> g_scaleSet;
 
 // Where a Move/Rotate chain has asked a reference to be, and the tick it last
 // asked. Game thread only.
@@ -105,14 +112,21 @@ void MoveRefToCell(const std::string& id, const std::string& cell, float x,
     if (ref) SendToCell({ref}, cell, x, y, z, zRot);
 }
 
-// `Position x y z zRot`: the same without the cell change.
+// `Position x y z zRot`: the same without the cell change -- except for the
+// PLAYER indoors, whom OpenMW moves to the exterior at those coordinates. The
+// sidecar keys every exterior's worldspace by `sDefaultCellname`.
 void MoveRefInCell(const std::string& id, float x, float y, float z,
                    float zRot) {
     void* ref = OwnerRef(id);
     if (!ref) return;
-    RunOnGameThread([ref, x, y, z, zRot]() {
-        PlaceAt(ref, x, y, z, zRot);
-    });
+    if (ref == PlayerRef() && PlayerInInterior()) {
+        const std::string exterior = GmstText("sDefaultCellname", "Wilderness");
+        Log("move: player -> the exterior '%s' (%g, %g, %g) rot %g",
+            exterior.c_str(), x, y, z, zRot);
+        SendToCell({ref}, exterior, x, y, z, zRot);
+        return;
+    }
+    PlaceAt(ref, x, y, z, zRot);
 }
 
 // The chain `ref` is gliding in when it asked last tick or this one, else null.
@@ -215,12 +229,23 @@ void SetAngle(const std::string& id, int axis, float value) {
 
 float RefScale(const std::string& id) {
     void* ref = OwnerRef(id);
-    return ref && g_getScale ? g_getScale(PapyrusVm(), 0, ref) : 1.0f;
+    if (!ref) return 1.0f;
+    const float field = At<std::uint16_t>(ref, ActorField(ids::kOffRefScale)) / 100.0f;
+    const std::lock_guard<std::mutex> hold(g_scaleLock);
+    const auto set = g_scaleSet.find(ref);
+    if (set == g_scaleSet.end()) return field;
+    if (std::fabs(field - set->second) >= 0.005f) return set->second;
+    g_scaleSet.erase(set);
+    return field;
 }
 
 void SetRefScale(const std::string& id, float value) {
     void* ref = OwnerRef(id);
     if (!ref || !g_setScale) return;
+    {
+        const std::lock_guard<std::mutex> hold(g_scaleLock);
+        g_scaleSet[ref] = value;
+    }
     RunOnGameThread([ref, value]() {
         g_setScale(PapyrusVm(), 0, ref, value);
     });
@@ -269,12 +294,18 @@ void AiFacePoint(const std::string& actor, float x, float y) {
 
 }  // namespace
 
-// Sets all three position axes at once, which every absolute move needs --
-// SetPosition takes the whole vector and SetAxis only ever changes one.
+// Puts `ref` at a spot where it already is, position and Z angle in ONE engine
+// move. Papyrus SetPosition then SetAngle did not move it at all: both are
+// queued, and SetAngle re-placed it at the position it read before the first
+// had landed (`Position 32 48 0 0` left x and y unchanged).
 void PlaceAt(void* ref, float x, float y, float z, float zRot) {
-    g_goals.erase(ref);
-    SetRefPosition(PapyrusVm(), ref, x, y, z);
-    SetRefAngle(PapyrusVm(), ref, RefAngle(ref, 0), RefAngle(ref, 1), zRot);
+    if (ref == PlayerRef()) HoldMenusForPlayerMove();
+    RunOnGameThread([ref, x, y, z, zRot]() {
+        g_goals.erase(ref);
+        if (!MoveInto(ref, PlaceOf(ref), x, y, z, zRot)) {
+            Log("game: nowhere to place %08X -- no cell or worldspace", FormIdOf(ref));
+        }
+    });
 }
 
 // 🛑 An interior is named by its CELL and an exterior by its WORLDSPACE, where
@@ -292,6 +323,7 @@ bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot) {
         RefAngle(ref, 1) / kDegreesPerRadian, zRot / kDegreesPerRadian};
     g_moveToCell(ref, &noTarget, interior ? place : nullptr,
                  interior ? nullptr : place, position, rotation);
+    AiAfterScriptMove(ref, place, x, y, z);
     return true;
 }
 
@@ -304,6 +336,9 @@ void SendToCell(const std::vector<void*>& refs, const std::string& cell,
     }
     const FormRef target = *place;
     const std::string named = cell;
+    if (std::find(refs.begin(), refs.end(), PlayerRef()) != refs.end()) {
+        HoldMenusForPlayerMove();
+    }
     PostToMainThread([refs, target, named, x, y, z, zRot]() {
         void* into = Form(&target);
         for (void* ref : refs) {
@@ -361,8 +396,6 @@ void InstallMoveCalls(GameHooks& hooks) {
     g_moveTo = Native<MoveToFn>("ObjectReference.MoveTo", ids::kRefMoveTo);
     g_moveToCell = Native<MoveToCellFn>("TESObjectREFR::MoveTo_Impl",
                                         ids::kRefMoveToCell);
-    g_getScale = Native<ScaleGetFn>("ObjectReference.GetScale",
-                                    ids::kRefGetScale);
     g_setScale = Native<ScaleSetFn>("ObjectReference.SetScale",
                                     ids::kRefSetScale);
     hooks.placeNear = PlaceNear;

@@ -1,0 +1,14 @@
+# A1_V, the report: with all three Vivec informants heard, Caius promotes the
+# player.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a1_v_report
+# See docs/commentary/headless_testing.md#quest-runs
+
+case a1_v_report
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Orders
+expect GetJournalIndex A1_V_VivecInformants == 50
+bye
+end

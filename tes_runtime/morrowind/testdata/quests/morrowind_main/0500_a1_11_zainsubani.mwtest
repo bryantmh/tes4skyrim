@@ -1,0 +1,76 @@
+# A1_11 "Zainsubani Informant": a day after the Vivec report, Caius sends the
+# player to Hassour Zainsubani in Ald'ruhn, who talks for a thoughtful gift.
+# PositionCell stands in for the walks; the console's timescale stands in for
+# the day of waiting, and the ref FormIDs carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a1_11_orders
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Caius counts the days himself; once one has passed he has new orders.
+case a1_11_orders
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+console set timescale to 2000
+until 3600 "caius cosades".localdaysPassed >= 1
+console set timescale to 20
+talk caius cosades
+ask Orders
+expect GetJournalIndex A1_11_ZainsubaniInformant == 1
+bye
+end
+
+# Asked about his customs (business, choice 1), Hassour hints at the gift he
+# would like.
+case a1_11_meet
+run
+player->PositionCell 700 -1505 -220 90 "Ald-ruhn, Ald Skar Inn"
+until 600 GetPCCell "Ald-ruhn, Ald Skar Inn" == 1
+talk hassour zainsubani
+ask business
+choose 1
+ask thoughtful gift
+expect GetJournalIndex A1_11_ZainsubaniInformant == 20
+bye
+end
+
+# The bookseller's copy of "Ashland Hymns" (ref 0583D023), off his shelf.
+case a1_11_book
+run
+player->PositionCell -250 -20 -100 270 "Ald-ruhn, Codus Callonus: Bookseller"
+until 600 GetPCCell "Ald-ruhn, Codus Callonus: Bookseller" == 1
+wait 30
+console 0583D023.activate player
+take 0583D023
+close Book Menu
+until 300 player->GetItemCount bk_ashland_hymns == 1
+end
+
+# The gift warms him, and he tells of the Ashlanders and their prophecies.
+case a1_11_notes
+run
+player->PositionCell 700 -1505 -220 90 "Ald-ruhn, Ald Skar Inn"
+until 600 GetPCCell "Ald-ruhn, Ald Skar Inn" == 1
+talk hassour zainsubani
+ask thoughtful gift
+expect GetJournalIndex A1_11_ZainsubaniInformant == 31
+ask Ashlanders
+expect GetJournalIndex A1_11_ZainsubaniInformant == 50
+expect player->GetItemCount bk_a1_11_zainsubaninotes == 1
+bye
+end
+
+# Caius reads the notes, decodes the Emperor's package and sends the player to
+# the Urshilaku camp: three "Continue"s.
+case a1_11_report
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Orders
+choose 1
+choose 2
+choose 3
+expect GetJournalIndex A2_1_MeetSulMatuul == 1
+expect player->GetItemCount bk_a1_1_packagedecoded == 1
+bye
+end

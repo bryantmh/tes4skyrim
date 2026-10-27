@@ -102,17 +102,11 @@ void ResolvePlaces() {
         "resolved", g_markers.size(), g_anchors.size(), g_parents.size());
 }
 
-void* PlayerWorld() {
-    void* player = PlayerRef();
-    return player && g_worldSpace ? g_worldSpace(PapyrusVm(), 0, player)
-                                  : nullptr;
-}
-
 // Outdoors, where the player stands; indoors, where the interior opens onto
 // the world. False from an interior no door walk leads out of.
 bool PlayerSpot(Spot* out) {
     if (!PlayerInInterior()) {
-        out->world = FormIdOf(PlayerWorld());
+        out->world = FormIdOf(WorldSpaceOf(PlayerRef()));
         out->x = Hooks().position(kPlayerId, 0);
         out->y = Hooks().position(kPlayerId, 1);
         return out->world != 0;
@@ -178,7 +172,7 @@ void SendPlayer(void* place, float x, float y, float z, float zRot,
 }
 
 void Mark() {
-    void* place = PlayerInInterior() ? PlayerCell() : PlayerWorld();
+    void* place = PlaceOf(PlayerRef());
     if (!place) return;
     DialogueState::MarkedPlace& mark = State().mark;
     mark = {FormIdOf(place), Hooks().position(kPlayerId, 0),
@@ -259,6 +253,10 @@ int ApplyHook(void* sink, const void* event, void* source) {
 }
 
 }  // namespace
+
+void* WorldSpaceOf(void* ref) {
+    return ref && g_worldSpace ? g_worldSpace(PapyrusVm(), 0, ref) : nullptr;
+}
 
 RuntimeEffect RuntimeEffectOf(std::uint32_t effectId) {
     const auto found = g_effectIds.find(effectId);

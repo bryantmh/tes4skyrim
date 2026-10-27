@@ -207,15 +207,15 @@ bool ExecOne(const std::string& cmd, std::string* err, void* target = nullptr) {
         return false;
     }
 
-    // arg1 is the console's execution context. We do NOT have it: the only way
-    // to obtain it would be to hook ConsoleExecute, and that function cannot be
-    // detoured -- its prologue does `mov rax,rsp`, which is meaningless once
-    // relocated, and attempting it crashed the game (see console_capture.cpp).
-    //
-    // With a null context the engine COMPILES the script and returns success
-    // without running it. That is a false positive, so the result is reported
-    // honestly rather than dressed up as a success.
-    const std::uintptr_t ctx = g_execContext.load();
+    // The "execution context" is the ScriptCompiler, and on 1.6.1170 nothing
+    // on the compile path reads it: ConsoleExecute only forwards it to
+    // CompileAndRun, which only passes it as `this` to helpers that never
+    // dereference it. So a zeroed stand-in serves until the game's own pointer
+    // is captured, and a headless run needs no typed console command.
+    // See: docs/commentary/headless_testing.md#console-without-a-keystroke
+    alignas(16) static std::uint8_t statelessCompiler[64] = {};
+    const std::uintptr_t captured = g_execContext.load();
+    const std::uintptr_t ctx = captured ? captured : reinterpret_cast<std::uintptr_t>(statelessCompiler);
 
     // Handlers only PRINT while the thread-local console-mode byte is set (see
     // console_capture.cpp) -- without this, every command runs fine and reports

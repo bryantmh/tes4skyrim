@@ -1,0 +1,308 @@
+# Chapter V, the lost son: King Olim of Northron asks the player to find his
+# son Mauragin. His diary pages lead over the Norifjon mountains and down
+# through Gotros and the worm tunnels to the Demon King's crystal hall; the
+# two escape in an old airship and come home from the far north.
+# Position stands in for the walks, damage for the fights, and moving
+# Mauragin for him following; ref FormIDs carry Arktwend's slot 05.
+# 🛑 Mauragin's landing line writes journal 47 before the markers write 41-46.
+# Journal only raises the index (OpenMW Quest::addEntry), so from there on the
+# cases follow Zwergenvar, which is what the authored scripts read.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from sohn_olim
+# See docs/commentary/headless_testing.md#quest-runs
+
+# King Olim asks the player to search for his son.
+case sohn_olim
+run
+player->PositionCell -4095 -170 458 0 "Great Hall of Northron"
+talk ZwergenKonigOlim01
+ask search for him?
+choose 1
+choose 4
+bye
+expect GetJournalIndex A_V_VerlorenerSohn == 2
+end
+
+# The guard at the northern edge saw Mauragin pass, and a group after him. He
+# stands on a steep slope where a dropped player can slide out of his range
+# and into the child's, whose greeting skips ahead, so the player stands on a
+# measured footing 100 units above him.
+case sohn_guard
+run
+player->Position 136538 -35112 722 180
+until 600 MenuMode == 1
+wait 60
+ask into the mountains
+choose 1
+choose 2
+choose 3
+choose 4
+bye
+expect GetJournalIndex A_V_VerlorenerSohn == 4
+end
+
+# A child wants to be an adventurer too, and runs off after a wolf.
+case sohn_child
+run
+player->Position 135607 -37130 74 0
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_VerlorenerSohn == 5
+run
+player->Position 121700 -37350 5523 0
+until 300 GetJournalIndex A_V_VerlorenerSohn == 6
+end
+
+# On through the mountains to the astronomer's tower.
+case sohn_tower
+run
+player->Position 113720 -44300 5027 0
+until 300 GetJournalIndex A_V_VerlorenerSohn == 7
+run
+player->Position 112252 -27330 14110 0
+activate 052EF990
+until 300 GetJournalIndex A_V_VerlorenerSohn == 8
+end
+
+# Mauragin's diary, page 10, in the Ice Hall.
+case sohn_page10
+run
+player->PositionCell 342 680 -949 0 "Ice Hall"
+activate 05305622
+take 05305622
+close Book Menu
+until 300 GetJournalIndex A_V_VerlorenerSohn == 9
+end
+
+# The summit of Norifjon, and page 11.
+case sohn_summit
+run
+player->Position 119195 -28900 26981 0
+until 300 GetJournalIndex A_V_VerlorenerSohn == 10
+activate 05D61D77
+take 05D61D77
+close Book Menu
+until 300 GetJournalIndex A_V_VerlorenerSohn == 11
+end
+
+# Down to the buried road to Gotros, and page 12 in its air shaft.
+case sohn_airshaft
+run
+player->Position 101747 -30900 374 0
+until 300 GetJournalIndex A_V_VerlorenerSohn == 12
+run
+player->PositionCell -9425 4660 -369 0 "Gotros, Air Shaft"
+activate 0532ABCA
+take 0532ABCA
+close Book Menu
+until 300 GetJournalIndex A_V_VerlorenerSohn == 13
+end
+
+# The air shaft gives way into the Spider Cavern; a hermit's bones lie there.
+case sohn_spider_cavern
+run
+player->PositionCell -6473 3800 -383 0 "Gotros, Air Shaft"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 14
+until 300 GetPCCell "Spider Cavern" == 1
+run
+player->PositionCell 1080 6800 -637 0 "Spider Cavern"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 15
+run
+player->PositionCell 692 7000 -597 0 "Spider Cavern"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 16
+end
+
+# Irfl in the Upper Mines has seen the group of dwarves.
+case sohn_irfl
+run
+player->PositionCell 1618 -3150 -1015 0 "Upper Mines"
+until 600 MenuMode == 1
+wait 60
+ask group of dwarves
+choose 1
+choose 2
+bye
+expect GetJournalIndex A_V_VerlorenerSohn == 18
+end
+
+# The guard of Gotros, and page 14 in the city.
+case sohn_gotros
+run
+player->PositionCell -5098 -1150 66 0 "Gotros"
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_VerlorenerSohn == 19
+run
+player->PositionCell 1786 9800 269 0 "Gotros"
+activate 055F1671
+take 055F1671
+close Book Menu
+until 300 GetJournalIndex A_V_VerlorenerSohn == 20
+end
+
+# Through the spore cave, the depleted mine and the worm tunnels.
+case sohn_tunnels
+run
+player->PositionCell -2547 2530 -1028 0 "Fungal Spore Cave"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 21
+run
+player->PositionCell -967 1994 -321 0 "Depleted Ore Mine"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 22
+run
+player->PositionCell 826 2039 -238 0 "Worm Tunnel"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 23
+run
+player->PositionCell 1625 2339 -641 0 "Worm Tunnel"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 24
+end
+
+# The worm crypt, and page 16 back in the tunnels.
+case sohn_crypt
+run
+player->PositionCell 3182 7817 8971 0 "Worm Crypt"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 25
+run
+player->PositionCell 7298 7307 9168 0 "Worm Crypt"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 26
+run
+player->PositionCell 4796 -540 -1282 0 "Worm Tunnel"
+activate 05B62B62
+take 05B62B62
+close Book Menu
+until 300 GetJournalIndex A_V_VerlorenerSohn == 27
+end
+
+# The prospector's chamber, the deep shaft and the gorges of Grul.
+case sohn_grul
+run
+player->PositionCell 24 315 -45 0 "Prospector Chamber"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 28
+run
+player->PositionCell 3285 -17601 124029 0 "Deep Shaft"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 29
+run
+player->PositionCell 6 5011 -1137 0 "Subterranean Gorges of Grul"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 30
+expect Zwergenvar == 1
+run
+player->PositionCell 50 -55 -2180 0 "Subterranean Gorges of Grul"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 31
+end
+
+# The Demon King in the crystal hall; he carries the star key.
+case sohn_demon_king
+run
+player->PositionCell 32 -1700 361 0 "Crystal Hall"
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_VerlorenerSohn == 32
+console 0533F6FE.damageav health 100000
+until 600 GetJournalIndex A_V_VerlorenerSohn == 33
+expect Zwergenvar == 2
+console 0533F6FE.removeallitems player
+until 300 player->GetItemCount Key_Sternen == 1
+end
+
+# Mauragin is alive, and gives up the black stones.
+case sohn_mauragin
+run
+player->PositionCell -588 -1250 410 0 "Crystal Hall"
+until 600 MenuMode == 1
+wait 60
+ask defeated the Demon King
+choose 1
+choose 3
+choose 4
+choose 5
+bye
+expect GetJournalIndex A_V_VerlorenerSohn == 35
+expect player->GetItemCount a_SchwarzerStein01 == 10
+end
+
+# The star key opens the lift up to Naremar.
+case sohn_lift
+run
+player->PositionCell 448 1600 -2174 0 "Subterranean Gorges of Grul"
+"Mauragin01"->PositionCell 448 1550 -2174 0 "Subterranean Gorges of Grul"
+activate 052D74DF
+until 300 GetJournalIndex A_V_VerlorenerSohn == 36
+until 300 GetPCCell "Naremar" == 1
+run
+player->PositionCell 4425 -1269 12792 0 "Naremar"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 37
+run
+"Mauragin01"->PositionCell 4425 -1200 12792 0 "Naremar"
+until 600 MenuMode == 1
+wait 60
+bye
+end
+
+# The old airship: Mauragin wonders whether it runs, then three cranks and
+# the launch lever.
+case sohn_airship
+run
+player->PositionCell -384 -1029 1150 0 "Old Airship"
+"Mauragin01"->PositionCell -384 -1100 1150 0 "Old Airship"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 38
+until 600 MenuMode == 1
+wait 60
+bye
+run
+player->PositionCell -270 -2980 1212 0 "Old Airship"
+activate 05E29AEF
+until 300 Zwergenvar == 3
+activate 05A4C1FC
+until 300 Zwergenvar == 4
+activate 05465FD3
+until 300 Zwergenvar == 5
+activate 05ACE2F2
+until 300 GetJournalIndex A_V_VerlorenerSohn == 39
+until 600 MenuMode == 1
+wait 60
+bye
+expect Zwergenvar == 6
+end
+
+# Below deck the ship cannot be steered; Mauragin cannot stop the crash.
+case sohn_crash
+run
+player->PositionCell -368 950 1154 0 "Old Airship"
+"Mauragin01"->PositionCell -368 1100 1154 0 "Old Airship"
+until 300 GetJournalIndex A_V_VerlorenerSohn == 40
+talk Mauragin01
+bye
+expect GetJournalIndex A_V_VerlorenerSohn == 47
+run
+"Mauragin01"->PositionCell -387 673 1154 0 "Old Airship"
+until 300 Zwergenvar == 7
+until 600 MenuMode == 1
+wait 60
+bye
+end
+
+# Landed in the far north; Grignir knows the way home.
+case sohn_worldend
+run
+player->Position 204154 87700 1342 0
+"Mauragin01"->Position 204100 87650 1342 0
+until 300 Zwergenvar == 8
+run
+player->Position 167317 81800 1222 0
+until 600 MenuMode == 1
+wait 60
+ask remote area
+choose 2
+bye
+end
+
+# Home to Northron: the king has his son back.
+case sohn_home
+run
+player->PositionCell -4095 -170 458 0 "Great Hall of Northron"
+"Mauragin01"->PositionCell -4000 -170 458 0 "Great Hall of Northron"
+talk ZwergenKonigOlim01
+bye
+expect Zwergenvar == 9
+end

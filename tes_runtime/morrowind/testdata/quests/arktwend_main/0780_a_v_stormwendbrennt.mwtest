@@ -1,0 +1,33 @@
+# Chapter V, Stormwend burns: the guards warn the player off the slums and the
+# market on the way out of the city through the south gate.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from brennt_germil
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Germil at the nobility district warns of the fire.
+case brennt_germil
+run
+player->Position -1242 54220 220 0
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_StormwendBrennt == 1
+end
+
+# Marri turns the player back from the market.
+case brennt_marri
+run
+player->Position -32 53260 223 0
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_StormwendBrennt == 2
+end
+
+# Out of the burning city by the south gate.
+case brennt_gate
+run
+player->Position 1797 35600 223 0
+until 300 GetJournalIndex A_V_StormwendBrennt == 8
+expect Stormwendvar == 22
+end

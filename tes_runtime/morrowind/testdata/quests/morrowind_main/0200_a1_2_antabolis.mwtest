@@ -1,0 +1,76 @@
+# A1_2 "Antabolis Informant": Caius sends the player to Hasphat Antabolis, who
+# wants a Dwemer puzzle box from Arkngthand before he will talk.
+# PositionCell stands in for the walks.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a1_2_orders
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Caius's orders end on "Continue" (choice 1), which opens the quest.
+case a1_2_orders
+talk caius cosades
+ask Orders
+choose 1
+expect GetJournalIndex A1_2_AntabolisInformant == 1
+bye
+end
+
+# Hasphat names his favor: the cube in Arkngthand.
+case a1_2_favor
+run
+player->PositionCell 500 512 -360 90 "Balmora, Guild of Fighters"
+until 600 GetPCCell "Balmora, Guild of Fighters" == 1
+talk hasphat antabolis
+ask Favor
+expect GetJournalIndex A1_2_AntabolisInformant == 5
+bye
+end
+
+# The cube's own script notes the find and picks it up. The wait stands in for
+# the walk over: the script claims the activation on its first run.
+case a1_2_cube
+run
+player->PositionCell 3480 2778 14740 90 "Arkngthand, Cells of Hollow Hand"
+until 600 GetPCCell "Arkngthand, Cells of Hollow Hand" == 1
+wait 30
+activate misc_dwrv_ark_cube00
+until 300 player->GetItemCount misc_dwrv_ark_cube00 == 1
+expect GetJournalIndex A1_2_AntabolisInformant == 7
+end
+
+# Hasphat takes the cube and tells what he knows of the Sixth House.
+case a1_2_notes
+run
+player->PositionCell 500 512 -360 90 "Balmora, Guild of Fighters"
+until 600 GetPCCell "Balmora, Guild of Fighters" == 1
+talk hasphat antabolis
+ask Favor
+expect GetJournalIndex A1_2_AntabolisInformant == 10
+expect player->GetItemCount misc_dwrv_ark_cube00 == 0
+ask Sixth House
+expect GetJournalIndex A1_2_AntabolisInformant == 15
+expect player->GetItemCount bk_a1_2_antabolistocosades == 1
+bye
+end
+
+# Caius takes the notes.
+case a1_2_report
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Orders
+expect GetJournalIndex A1_2_AntabolisInformant == 20
+expect player->GetItemCount bk_a1_2_antabolistocosades == 0
+bye
+end
+
+# Hasphat makes the key the box's inscriptions describe.
+case a1_2_key
+run
+player->PositionCell 500 512 -360 90 "Balmora, Guild of Fighters"
+until 600 GetPCCell "Balmora, Guild of Fighters" == 1
+talk hasphat antabolis
+ask Dwemer puzzle box
+expect GetJournalIndex A1_2_AntabolisInformant == 25
+expect player->GetItemCount misc_dwrv_ark_key00 == 1
+bye
+end

@@ -1,7 +1,9 @@
 // Thin wrappers over the engine functions the bridge drives.
 //
 // Everything here MUST be called on the main thread (see main_thread.h). The
-// only exception is IsGameLoaded()/RuntimeVersion(), which read a flag.
+// only exceptions are RuntimeVersion(), which reads a flag, and IsGameLoaded(),
+// which marshals its own probe onto the main thread -- so it must NOT be called
+// from a main-thread task (it would wait on itself until its timeout).
 //
 // No RVA is hardcoded. Each entry point is resolved once via versionlib stable
 // ID with a signature fallback, and a failed resolve degrades to a reported

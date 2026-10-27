@@ -30,9 +30,12 @@ int GameActor::Stub(int value) const {
 
 RefId GameActor::Id() const { return mId; }
 
-bool GameActor::IsNpc() const { return true; }
+bool GameActor::IsNpc() const {
+    const ActorDef* def = FindActor(mId);
+    return !def || !def->creature;
+}
 
-// Who the speaker IS comes from their NPC_ record, staged as NPC_.txt. An
+// Who the speaker IS comes from their NPC_ or CREA record, staged as NPC_.txt. An
 // actor the table does not know answers as an unaffiliated stranger.
 RefId GameActor::Race() const {
     const ActorDef* def = FindActor(mId);
@@ -76,11 +79,20 @@ int GameActor::FactionReaction(const RefId& a, const RefId& b) const {
 
 int GameActor::Disposition() const { return State().Disposition(mId); }
 
-RefId GameActor::PlayerRace() const { return RefId(); }
+// The TES3 race the player's Skyrim race stands for, through the race table the
+// starting attributes read; empty for a race no sidecar describes.
+// See: docs/commentary/morrowind_runtime.md#player-race-class-sex
+RefId GameActor::PlayerRace() const {
+    const RaceDef* def = Hooks().race ? FindRaceStart(Hooks().race(kPlayerId)) : nullptr;
+    return def ? def->id : RefId();
+}
 
-RefId GameActor::PlayerClass() const { return RefId(); }
+// The class chosen at chargen, as it was named.
+RefId GameActor::PlayerClass() const { return State().className; }
 
-bool GameActor::PlayerIsFemale() const { return false; }
+bool GameActor::PlayerIsFemale() const {
+    return Hooks().female && Hooks().female(kPlayerId);
+}
 
 int GameActor::PlayerLevel() const {
     return Hooks().playerLevel ? Hooks().playerLevel() : Stub(kFirstLevel);

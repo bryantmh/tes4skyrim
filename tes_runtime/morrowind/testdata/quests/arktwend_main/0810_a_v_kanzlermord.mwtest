@@ -1,0 +1,67 @@
+# Chapter V, the Kanzler's end: Calisto tells the player who they are and
+# sends them to kill the Kanzler; soldiers ambush the mountain path, a hooded
+# figure hands over the river-gate key, the player crosses the shut city and
+# kills Brutus in Stormwend Tower. Nothing in the data writes stage 7.
+# Position stands in for the walks, and damage for the duel; ref FormIDs
+# carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from mord_calisto
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Calisto's mountain hideout, where the dragon set the player down.
+case mord_calisto
+run
+player->Position -24902 22420 3837 180
+until 600 MenuMode == 1
+wait 60
+ask tell me everything
+choose 1
+choose 2
+choose 3
+choose 4
+bye
+expect GetJournalIndex A_V_KanzlerMord == 1
+end
+
+# The Kanzler's soldiers wait on the mountain path.
+case mord_ambush
+run
+player->Position -25218 19600 3955 0
+until 300 GetJournalIndex A_V_KanzlerMord == 2
+end
+
+# Outside the shut city, a hooded figure knows the way in by the river.
+case mord_hooded
+run
+player->Position -1463 31300 624 0
+until 300 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_KanzlerMord == 3
+expect player->GetItemCount Key_StormwendFluss == 1
+end
+
+# Through the city, past the guards, the market and the tower gate.
+case mord_city
+run
+player->Position 4572 38435 -11 0
+until 300 GetJournalIndex A_V_KanzlerMord == 4
+run
+player->Position 287 52258 223 0
+until 300 GetJournalIndex A_V_KanzlerMord == 5
+run
+player->Position -8675 54404 234 0
+until 300 GetJournalIndex A_V_KanzlerMord == 6
+end
+
+# The throne room: Brutus calls the player out, and falls.
+case mord_kanzler
+run
+player->PositionCell 3217 3700 12130 0 "Stormwend Tower"
+until 600 Stormwendvar == 24
+until 300 MenuMode == 1
+wait 60
+bye
+console 056E8150.damageav health 100000
+until 900 GetJournalIndex A_V_KanzlerMord == 8
+expect Stormwendvar == 25
+end

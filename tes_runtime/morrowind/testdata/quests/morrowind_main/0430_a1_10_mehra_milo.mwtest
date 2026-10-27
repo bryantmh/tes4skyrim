@@ -1,0 +1,43 @@
+# A1_10 "Mehra Milo": the priestess will not talk where she can be overheard;
+# she walks off to a quiet corner of the library and talks there.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a1_10_meet
+# See docs/commentary/headless_testing.md#quest-runs
+
+# She greets the player, then leads the way (AiTravel) and ends the talk.
+case a1_10_meet
+run
+player->PositionCell -60 489 -90 90 "Vivec, Library of Vivec"
+until 600 GetPCCell "Vivec, Library of Vivec" == 1
+talk mehra milo
+expect GetJournalIndex A1_10_MehraMilo == 10
+bye
+until 1800 "mehra milo".travelDone == 1
+end
+
+# Following her there (Position stands in for the walk), she talks freely.
+# Stage 40's topic, "watched by Ordinators", is named only by the journal,
+# never by a response, so a player cannot learn it; Caius does not need it.
+case a1_10_talk
+run
+player->Position -6 1680 -110 0
+talk mehra milo
+expect GetJournalIndex A1_10_MehraMilo == 20
+ask Progress of Truth
+expect GetJournalIndex A1_10_MehraMilo == 30
+ask Nerevarine cult
+expect GetJournalIndex A1_10_MehraMilo == 50
+bye
+end
+
+# Caius wants the outlawed book she named. No merchant stocks it; the copy on
+# Jobasha's shelf (ref 055E46D4) is taken, as UESP's "steal or buy" allows.
+case a1_10_book
+run
+player->PositionCell 880 90 -120 90 "Vivec, Jobasha's Rare Books"
+until 600 GetPCCell "Vivec, Jobasha's Rare Books" == 1
+wait 30
+console 055E46D4.activate player
+take 055E46D4
+close Book Menu
+until 300 player->GetItemCount bk_progressoftruth == 1
+end

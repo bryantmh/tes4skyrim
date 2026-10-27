@@ -186,6 +186,17 @@ constexpr std::size_t kCharEventCodeOffset = 0x4;
 // closing calls it with false.
 constexpr std::uint64_t kControlMapSingleton = 400863;
 constexpr std::uint64_t kControlMapAllowTextInput = 68552;
+// The ControlMap's gameplay context (SKSE GameInput.h, whose +0x128 text-input
+// byte matches the one above): an InputContext* at +0x60, holding the keyboard
+// then the mouse mappings as BSTArrays of 0x18 bytes (data at +0, count at
+// +0x10). A mapping is the user event's name (const char*) and its key, a
+// DirectInput scan code or mouse button, at +8; 0xFF is unbound.
+constexpr std::size_t kOffControlMapGameplay = 0x60;
+constexpr std::size_t kControlArraySize = 0x18;
+constexpr std::size_t kOffControlArrayCount = 0x10;
+constexpr std::size_t kControlMappingSize = 0x18;
+constexpr std::size_t kOffControlMappingKey = 0x8;
+constexpr std::uint32_t kControlUnbound = 0xFF;
 // TESRace's TESFullName (at +0x20) holds its name's BSFixedString at +8.
 constexpr std::size_t kOffRaceFullName = 0x28;
 // TESQuest's current stage, a u16: Quest.GetCurrentStageID tail-calls a
@@ -221,7 +232,8 @@ constexpr std::uint64_t kNpcActivate = 24715;
 // actors. Read at vtable byte 0x1b8 out of the 1.6.659 image: nine DISTINCT
 // functions, of which 0x233b60 is the inherited TESBoundObject::Activate that
 // the plain item types share. An object script sits on a BOOK, a WEAP or an
-// ACTI as often as on an actor, so each is swapped separately.
+// ACTI as often as on an actor, so each is swapped separately -- and so is each
+// plain item type, since each has its OWN vtable (a ring is an ARMO here).
 // See: docs/plans/morrowind_object_scripts.md#activate-is-per-type
 struct ActivateTarget {
     const char* name;
@@ -235,7 +247,10 @@ constexpr ActivateTarget kActivateTargets[] = {
     {"TESObjectWEAP", 189786, 18101},   {"TESObjectACTI", 189485, 17702},
     {"TESObjectCONT", 189633, 17887},   {"TESObjectDOOR", 189666, 17922},
     {"TESObjectLIGH", 189414, 17615},   {"TESFlora", 189287, 17369},
-    {"TESObjectMISC", 189689, 17670},
+    {"TESObjectMISC", 189689, 17670},   {"TESObjectARMO", 189542, 17670},
+    {"AlchemyItem", 186204, 17670},     {"TESAmmo", 189195, 17670},
+    {"IngredientItem", 186407, 17670},  {"TESKey", 189342, 17670},
+    {"TESSoulGem", 189850, 17670},      {"ScrollItem", 186591, 17670},
 };
 
 // ContainerMenu's open(ref, mode) (0x8fbff0 on 1.6.1170), which TESNPC::Activate
@@ -320,6 +335,11 @@ constexpr std::uint64_t kQuestIsRunning = 56727;
 // result scripts: 720 of the 1,150 call sites name `player` as the argument.
 constexpr std::uint64_t kActorStartCombat = 54768;
 constexpr std::uint64_t kActorStopCombat = 54770;
+// Actor.GetRelationshipRank(Actor other) (0x9e8f60 on 1.6.1170) and
+// .SetRelationshipRank(Actor other, int rank) (0x9ea730), found at their
+// registrations like StartCombat. Both take the actor in r8, the other in r9.
+constexpr std::uint64_t kActorGetRelationshipRank = 54710;
+constexpr std::uint64_t kActorSetRelationshipRank = 54759;
 
 // ObjectReference.Enable(bool fadeIn) (0x9cdfa0), .Disable(bool fadeOut)
 // (0x9cddc0) and .IsDisabled() (0x9e5b90). Enable/Disable register with the
@@ -411,6 +431,10 @@ constexpr std::size_t kNotifyGraphSlot = 1;
 constexpr std::uint64_t kActorIsInCombat = 54945;
 constexpr std::uint64_t kActorGetValue = 54675;
 constexpr std::uint64_t kActorSetValue = 54743;
+// Actor.ModActorValue (0x9e90f0 on 1.6.1170), found at its registration beside
+// "ModActorValue". It moves the permanent modifier, which takes where a base
+// write does not: `setav damageresist 0` left 65, `modav damageresist 10` gave 75.
+constexpr std::uint64_t kActorModValue = 54721;
 constexpr std::uint64_t kActorRestoreValue = 54737;
 constexpr std::uint64_t kActorDamageValue = 54660;
 constexpr std::uint64_t kActorEquipItem = 54661;
@@ -443,6 +467,13 @@ constexpr std::uint64_t kUnequipObject = 52937;
 // See: docs/commentary/morrowind_runtime.md#messagebox-buttons
 constexpr std::uint64_t kShowMessageBox = 52269;
 
+// BookMenu::OpenBookMenu(const BSString* text, ExtraDataList*, TESObjectREFR*,
+// TESObjectBOOK*, const NiPoint3*, const NiMatrix3*, float, bool) (0x8f1400 on
+// 1.6.1170, 0x896fd0 on 1.6.659; CommonLibSSE's AE id): it reads only the
+// text's data pointer and copies it into the menu's static string (0x31ac978).
+// See: docs/commentary/morrowind_runtime.md#book-text-defines
+constexpr std::uint64_t kOpenBookMenu = 51053;
+
 // ObjectReference.PlaceAtMe(Form base, int count, bool persist, bool disabled)
 // (0x9cf630), found at its registration like the rest: `lea r8,
 // ['ObjectReference'] / lea rdx,['PlaceAtMe']`, callback into [r12+0x50].
@@ -458,7 +489,6 @@ constexpr std::uint64_t kRefPlaceAtMe = 56203;
 // 1.6.659 exe and inverted through the Address Library; all seven exist in
 // every one of the 12 shipped versionlibs.
 //   void  ObjectReference.MoveTo(ref target, float x, y, z, bool match) 0x9cec80
-//   float ObjectReference.GetScale()                                    0x9e5b30
 //   void  ObjectReference.SetScale(float)                               0x9d23a0
 //
 // 🛑 `MoveTo` aims at a REFERENCE, and a non-persistent one does not exist
@@ -484,7 +514,6 @@ constexpr std::uint64_t kRefMoveToCell = 56626;
 constexpr std::size_t kOffFormType = 0x1A;
 constexpr std::uint8_t kFormTypeCell = 0x3C;
 constexpr std::uint8_t kFormTypeWorld = 0x47;
-constexpr std::uint64_t kRefGetScale = 56633;
 constexpr std::uint64_t kRefSetScale = 56240;
 
 // WorldSpace ObjectReference.GetWorldSpace() (0xa44ba0 on 1.6.1170): the code
@@ -514,6 +543,17 @@ constexpr std::uint64_t kVmSleepStartProcess = 53994;
 constexpr std::uint64_t kVmSleepStopSink = 217131;
 constexpr std::uint64_t kVmSleepStopProcess = 53995;
 
+// SkyrimVM's BSTEventSink<TESHitEvent> vtable (0x1912768 on 1.6.1170, 0x17bc070
+// on 1.6.659), whose slot-1 ProcessEvent (0x9c54b0) loads 'OnHit': every hit
+// on anything passes through it. TESHitEvent (skse64 GameEvents.h) holds the
+// target and attacker as raw pointers and the weapon or spell's runtime FormID.
+// See: docs/commentary/morrowind_runtime.md#hits
+constexpr std::uint64_t kVmHitSink = 217089;
+constexpr std::uint64_t kVmHitProcess = 53974;
+constexpr std::size_t kOffHitTarget = 0x0;
+constexpr std::size_t kOffHitAttacker = 0x8;
+constexpr std::size_t kOffHitSource = 0x10;
+
 // TESMagicEffectApplyEvent: the target and caster (NiPointers' raw pointers)
 // and the MGEF's runtime FormID. The VM's argument functor (vtable 0x1912ba8,
 // slot 1) reads the caster at +0x8 and looks the +0x10 id up expecting form
@@ -541,6 +581,9 @@ constexpr std::uint64_t kAliasForceRefTo = 55288;
 constexpr std::uint64_t kAliasClear = 55286;
 constexpr std::uint64_t kAliasGetReference = 55287;
 constexpr std::uint64_t kActorCurrentPackage = 54681;
+// Actor.EvaluatePackage() (0x9e81b0 on 1.6.1170, 0x989500 on 1.6.659), the
+// function its 'EvaluatePackage' registration stores.
+constexpr std::uint64_t kActorEvaluatePackage = 54672;
 
 // The one-call world queries, each found at its registration and verified
 // present in all 12 shipped versionlibs INCLUDING 1.6.1170:
@@ -637,10 +680,13 @@ constexpr std::size_t kOffGlobalValue = 0x34;
 //        Adds the actor to the faction when it is not already in it.
 //   void Faction.SetPlayerExpelled(bool)      0xa1dc80  [0x9befc0]
 //        stored-after form; sets or clears bit 4 of the faction's +0x58 flags.
+//   void Actor.RemoveFromFaction(Faction)     0x9f55f0  [0x996940]
+//        `lea r9` form; tail-calls the engine's remove with (actor, faction).
 // See: docs/commentary/morrowind_runtime.md#player-factions
 constexpr std::uint64_t kActorGetFactionRank = 54686;
 constexpr std::uint64_t kActorSetFactionRank = 54750;
 constexpr std::uint64_t kFactionSetPlayerExpelled = 55843;
+constexpr std::uint64_t kActorRemoveFromFaction = 54958;
 
 // Actor.IsDead() (0x989ff0), the r9 of its registration beside 'IsDead'.
 //
@@ -649,6 +695,18 @@ constexpr std::uint64_t kFactionSetPlayerExpelled = 55843;
 // tick already visits every bound instance -- a death hook would be a second
 // mechanism for no gain.
 constexpr std::uint64_t kActorIsDead = 54705;
+
+// The engine's frame timer (0x31cc270 on 1.6.1170): +0x18 the frame's game
+// delta (id 410199), +0x1C its real delta (410200), +0x20 a millisecond clock
+// that advances by each frame's CLAMPED delta, so under iFPSClamp it runs with
+// the game: measured 8,280 ms over ~2.07 s real at iFPSClamp=15 (4.2x).
+// See: docs/commentary/headless_testing.md#speed
+constexpr std::uint64_t kFrameTimer = 410196;
+constexpr std::size_t kOffFrameClockMs = 0x20;
+
+// Actor.Kill(Actor akKiller) (0x9e90c0 on 1.6.1170), the r9 of its one
+// registration beside 'Kill', between 54719 and ModActorValue 54721.
+constexpr std::uint64_t kActorKill = 54720;
 
 // Game.GetForm(int formId) (0x9b3990), global: a form by its RUNTIME FormID,
 // which is the only id a spawned reference has -- `PlaceAtPC` creates one with
@@ -776,6 +834,12 @@ constexpr std::uint64_t kBSFixedStringCtor = 69161;
 
 // Skyrim's own dialogue menu, the one a Morrowind speaker diverts away from.
 constexpr const char* kVanillaDialogueMenu = "Dialogue Menu";
+constexpr const char* kMessageBoxMenu = "MessageBoxMenu";
+// The Sleep/Wait menu, and the paths in sleepwaitmenu.swf its Sleep button
+// works through: the hours slider, and the handler the button calls.
+constexpr const char* kSleepWaitMenu = "Sleep/Wait Menu";
+constexpr const char* kSleepHoursPath = "_root.SleepWaitMenu_mc.HoursSlider.value";
+constexpr const char* kSleepOkPath = "_root.SleepWaitMenu_mc.onOKPress";
 
 // MenuTopicManager::GetSpeaker(this, TESObjectREFR** out) (0x5945b0). It
 // reads the ObjectRefHandle at this+0x68, resolves it, and keeps the result
@@ -859,6 +923,13 @@ constexpr std::size_t kOffPlayerJailFaction = 0x720;
 
 // TESObjectREFR's base form, which TESObjectREFR::ActivateRef dispatches on.
 constexpr std::size_t kOffRefBase = 0x40;
+
+// TESObjectREFR's own scale in percent (uint16, 100 by default): what TES3's
+// GetScale reads. Papyrus GetScale multiplies in the race height and lags a
+// SetScale made in the same frame (measured: 1.03 after `SetScale 1`). 0x98
+// on 1.6.1170, found by `player.setscale` 1.5 then 0.75 reading 150 then 75;
+// SKSE's pre-AE layout has it at 0x90, so it is read through ActorField.
+constexpr std::size_t kOffRefScale = 0x98;
 
 // SwiftSwim, Levitate and SlowFall steer the character controller. Each id
 // was read off 1.6.1170 and checked to do the same on 1.7.104 (1.6.659 in

@@ -185,7 +185,8 @@ Skyrim separates these two cases with AIDT's Aggro Radius fields (EncWolf is
 Aggression 0 but carries `aggroRadiusBehavior=1`, attack radius 1500) — fields
 TES4's AIDT does not have at all (xEdit wbDefinitionsTES4: AIDT is
 Aggression/Confidence/Energy/Responsibility/Services/Teaches/MaxTraining only).
-The discriminator therefore has to be reconstructed; see `_predator_attack_radius`.
+The discriminator therefore has to be reconstructed from the TES4 margin below;
+no converted actor sets the aggro radius.
 
 ### The calibrated rule
 
@@ -204,6 +205,78 @@ Two terms decide it:
   fires. Measured across Oblivion's creatures, known predators have a median
   margin of 48 and tame animals -47, while Benno scores just 8 — hostile in
   principle, not a threat on sight.
+
+### <a id="tes3-fight-targets-the-player"></a>TES3: Fight targets the player and nobody else
+
+Morrowind's Fight is not a per-target rule. OpenMW's `Actors::engageCombat`
+applies `isAggressive` only when the target is the player or a player
+follower (actors.cpp:721-731). The one other on-sight fight is a guard
+against a hostile creature already in combat. A goblin never attacks an NPC,
+and a bystander never joins someone else's fight.
+
+Tier 2 attacks every neutral, and to Skyrim every NPC is a neutral. Before
+this rule, a leveled goblin in Arktwend's Upper Mines killed Irfl before his
+quest greeting. So a TES3 source never gets past tier 1, and the actor that
+OpenMW calls aggressive joins `TES4DispositionHostileFaction`, an Enemy of
+PlayerFaction alone. Vanilla does the same: DragonFaction (31 of its members
+at tier 1), MQ202EnemyofPlayerFaction and TG09NightingaleEnemyFaction are
+tier 1 plus a faction that is the player's enemy. TES3 faction reactions are
+-3 to 3, and only -50 or below becomes an XNAM Enemy, so no TES3 faction
+makes another TES3 actor an enemy.
+
+"Aggressive" is `Fight + iFightDistanceBase + (50 - disposition) *
+fFightDispMult >= 100`, OpenMW's `getFightTerm` at distance 0. Morrowind.esm
+and Arktwend both author 20 and 0.2. Disposition is the NPDT's
+(`ACBS.Disposition` in the export); a creature counts as 50, as in OpenMW.
+This is the same 0-100 faction system the TES4 sources use: a TES3 run makes
+all three factions, ranking each actor in `TES4DispositionFaction` at its
+disposition and in `TES4AggressionFaction` at its Fight, so a `GetDisposition`
+condition reads the faction rank on both games. Only the line differs: OpenMW's
+rule here, Oblivion's `disposition < aggression - 5` there. At run time
+MorrowindRuntime owns the numbers. Every `SetFight` and every disposition
+change (`SetDisposition` re-applies Fight) writes both ranks and joins or leaves
+the hostile faction by the same rule, using the runtime's live disposition.
+The factions reach it as the `disposition`, `aggression` and `hostile` rows of
+`effects_formid.txt`.
+
+Not matched: OpenMW's distance term, `iFightDistanceBase - 0.005 * distance`,
+so a Fight-87 wolf engages only within about 1,400 units. Skyrim has no
+falloff, and its aggro radius cannot stand in. The CK wiki says a radius makes
+the actor attack "a Neutral/Enemy" inside it, and to Skyrim every NPC is
+Neutral: vanilla's radius wolves (EncWolfRed, Aggression 0, attack 1500) attack
+travelers. So a TES3 hunter engages at Skyrim's detection range.
+
+### <a id="tes3-guards-attack-hostile-creatures"></a>TES3: guards attack hostile creatures
+
+OpenMW's one on-sight fight that does not target the player (actors.cpp:733-780):
+an NPC whose class is `Guard` attacks a creature that is in combat within
+`fAlarmRadius`, when that creature's Fight term toward the player is >= 100 and
+no follow package sides it with someone. The guard's own Fight does not enter
+into it. Without this, Arktwend's Nordrand snow wolves (`LandSchneewolf01`)
+fought the player beside two dwarf guards who never moved. Tier 2 used to hide
+this, because the guards attacked every neutral.
+
+A TES3 run makes two more hidden factions. `TES3GuardFaction` marks every
+Guard-class NPC. `TES3HostileCreatureFaction` replaces the hostile faction for
+a creature, and like it is an Enemy of PlayerFaction alone. Hostile NPCs stay
+in the general hostile faction, because OpenMW's guards leave them alone.
+MorrowindRuntime applies the rule itself (`GuardsEngage`, `game_calls_combat.cpp`).
+Three times a second it walks the engine's high-process actors. Each guard
+that is not already fighting is set (`StartCombat`) on the first member of the
+creature faction that is in combat within `fAlarmRadius` (default 2000). At
+run time `SetFight` picks the creature faction from the `creature` flag in the
+actor table. The factions reach the runtime as the `hostile_creature` and
+`guard` rows.
+
+Two static versions failed, measured at Nordrand with the player 4,880 units
+away. With the guard and creature factions Enemies both ways, the snow wolves
+attacked the guards the moment the cell loaded. With only the guards naming
+the creatures, the guards went after the idle wolves themselves. Either way a
+guard died before his quest greeting. A faction relation cannot say "only once
+the creature is fighting", which is the whole rule.
+
+Not matched: werewolf NPCs, which OpenMW's guards also attack, and its
+exception for a creature that a follow package sides with someone.
 
 FO3/FNV does not go through any of this: it already stores both axes in the
 TES5 enums. See
@@ -841,10 +914,22 @@ OpenMW's `MWClass::Npc::ensureCustomData`
 | 12-byte (autocalc) | `autoCalculateAttributes` | `floor(0.5*(Str+End)) + multiplier*(Level-1)` |
 
 An authored TES3 NPC's health is the whole final pool and carries no level term
-at all — the level term exists only in the autocalc branch, which computes the
-pool the exporter then writes as `DATA.Health`. Either way the exported number
-is already final, so subtracting a second, Skyrim-shaped level bonus from it
-double-counts.
+at all. Subtracting a second, Skyrim-shaped level bonus from it double-counts.
+
+An autocalc NPC's record holds no pools at all. The exporter is a pure dump,
+so it writes no `DATA.Health`, `ACBS.SpellPoints` or `ACBS.Fatigue` for one,
+and the import used to fall back to 50 health, 0 magicka and 100 fatigue
+whatever the level. Arktwend's level-30 Nordrand guard (`NordrandWache01`) had
+50 health and was dead, 180 units down the slope from his post, before his
+quest greeting could fire.
+`npc_morrowind.tes3_pools` now derives the pools at import from the run's TES3
+tables, the way OpenMW does. Health is `autoCalculateAttributes`' formula
+above. The multiplier is 3, plus 2 for a Combat class or 1 for a Stealth class,
+plus 1 when Endurance is a class attribute. Fatigue is
+`Str + Wil + Agi + End`, and magicka is `fNPCbaseMagickaMult * Int`
+(`CreatureStats::setAttribute` / `recalculateMagicka`). The pools then go
+through the same offset rule as an authored one. Not matched: a race or
+birthsign Fortify Maximum Magicka ability, which OpenMW adds on top.
 
 The damage is proportional to level. High Bishop Derminus (Arktwend intro,
 health 397, level 100) solved to `397 - 50 - 99*5 = -148`, i.e. −98 effective

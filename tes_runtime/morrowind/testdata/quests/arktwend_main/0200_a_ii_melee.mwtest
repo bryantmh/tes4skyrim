@@ -1,0 +1,118 @@
+# Chapter II, Melee: the player sleeps off the night in the stranger's room
+# above the port and wakes to his warning letter. Sagrim half remembers the
+# stranger, Werd says Gredarg wants the player, and Gredarg lies murdered in
+# the alley while men in black search the port. Paul hides the player in his
+# house and goes down to meet the soldiers; the player slips out the back,
+# finds Paul dead, and is arrested and taken to the galleon.
+# Position stands in for the walks through the port.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from melee_rest
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The stranger sends the player to bed; the night brings a dream.
+case melee_rest
+talk ANFBoteHaus
+bye
+activate ANFBett01
+sleep 8
+until 600 Storyvar == 4
+end
+
+# The stranger is gone; his letter and a key lie on the table.
+case melee_letter
+activate MeleeBriefBote01
+close Book Menu
+expect GetJournalIndex A_II_Melee == 1
+take Key_MeleePlayerHaus
+until 120 player->GetItemCount Key_MeleePlayerHaus == 1
+end
+
+# Sagrim, below in the port, asks about the stranger at their table.
+case melee_sagrim
+run
+player->Position -95803 401379 575 180
+wait 120
+ask stranger at our table
+choose 2
+choose 3
+choose 4
+choose 6
+bye
+expect GetJournalIndex A_II_Melee == 2
+end
+
+# Werd: Gredarg is looking for the player.
+case melee_werd
+run
+player->Position -99999 399504 629 180
+wait 120
+bye
+expect GetJournalIndex A_II_hafenfischer == 1
+end
+
+# Gredarg lies murdered in the alley.
+case melee_gredarg
+run
+player->Position -99971 400872 702 180
+until 600 GetJournalIndex A_II_hafenfischer == 2
+expect Storyvar == 5
+end
+
+# Men in black search the port for the player.
+case melee_soldiers
+run
+player->Position -101870 400375 815 180
+until 600 GetJournalIndex A_II_hafenfischer == 3
+end
+
+# Paul hears what happened and takes the player home.
+case melee_paul
+run
+player->Position -96550 404707 1252 0
+wait 120
+ask what's going on?
+choose 1
+choose 2
+choose 3
+choose 4
+bye
+until 120 Storyvar == 6
+expect GetJournalIndex A_II_Paul == 1
+end
+
+# Over tea, Paul sees the men in black coming, gives the player his spare key
+# and goes down to them.
+case melee_tea
+talk ANFPaul02
+ask some tea
+choose 1
+choose 3
+choose 4
+choose 5
+bye
+until 120 Storyvar == 7
+expect player->GetItemCount Key_MeleePaul == 1
+end
+
+# Out by Paul's back door.
+case melee_backdoor
+activate ANFMeleeTurPaul01
+until 300 Storyvar == 8
+expect GetJournalIndex A_II_Paul == 16
+end
+
+# Paul lies dead in the street.
+case melee_paul_dead
+run
+player->Position -96880 404731 1274 180
+until 600 GetJournalIndex A_II_Paul == 21
+end
+
+# The soldiers arrest the player and carry them off to the galleon. The
+# greeting's prison-ship script moves the player, which closes the menu.
+case melee_arrest
+run
+player->Position -97820 404819 1317 180
+until 600 GetJournalIndex A_II_Galeone == 1
+expect GetJournalIndex A_II_Galeone == 1
+until 600 GetPCCell "Galleon, Cells" == 1
+end

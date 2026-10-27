@@ -11,12 +11,9 @@ Ally because membership alone does not.
 See: docs/commentary/morrowind_runtime.md#npc-attributes
 """
 
-import struct
-
-from ..base.owned_records import (FACTION_HIDDEN, TES4_ATTRIBUTE_NAMES, adopt_or_write,
+from ..base.owned_records import (TES4_ATTRIBUTE_NAMES, adopt_or_write, hidden_faction,
                                   owner_row)
 from ..base.text_reader import get_int
-from ..base.writer import pack_record, pack_string_subrecord, pack_subrecord
 
 #: The kept skills by TES4 actor value, as NPC_ DATA names them.
 KEPT_SKILLS = {13: 'Athletics', 17: 'HandToHand', 26: 'Acrobatics'}
@@ -32,13 +29,6 @@ RANK_MAX = 127
 _factions: dict = {}
 
 
-def _faction(fid: int, edid: str) -> bytes:
-    """A hidden, rankless FACT."""
-    subs = pack_string_subrecord('EDID', edid)
-    subs += pack_subrecord('DATA', struct.pack('<I', FACTION_HIDDEN))
-    return pack_record('FACT', fid, 0, subs)
-
-
 def create_stat_factions(writer, master_index, wanted: bool) -> dict:
     """{EditorID: FormID} of every stat faction, a master's adopted; {} when not `wanted`."""
     _factions.clear()
@@ -46,7 +36,7 @@ def create_stat_factions(writer, master_index, wanted: bool) -> dict:
         return {}
     for av, edid in STAT_FACTIONS.items():
         _factions[av], _written = adopt_or_write(
-            writer, master_index, 'FACT', edid, lambda new, e=edid: _faction(new, e))
+            writer, master_index, 'FACT', edid, lambda new, e=edid: hidden_faction(new, e))
     return {STAT_FACTIONS[av]: fid for av, fid in _factions.items()}
 
 

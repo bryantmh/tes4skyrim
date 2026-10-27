@@ -1,0 +1,93 @@
+# Chapter IV, the Forsaken Land: Herbert the peddler offers to travel with the
+# player to Gron. On the way he fetches his goods from a house in Gor, the
+# dead rise, and the two escape through the old house's fireplace and the
+# caves beneath before reaching Gron.
+# Position stands in for the walks. Herbert follows the player (AIFollow), so
+# where a walk is skipped his Position stands in for his following; ref
+# FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from herbert_meet
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Herbert hails the player in the wasteland and offers to travel together.
+case herbert_meet
+run
+player->Position -85092 4567 323 180
+until 900 "Herbert".State == 2
+wait 30
+ask travel with me
+choose 2
+choose 3
+choose 4
+choose 5
+choose 6
+choose 7
+choose 8
+choose 9
+choose 10
+bye
+expect GetJournalIndex A_IV_Herbert == 1
+end
+
+# In sight of Gor, Herbert tells of the goods he stored there.
+case herbert_gor
+run
+player->Position -68693 7482 163 180
+"Herbert"->Position -68693 7582 163 180
+until 600 "Herbert".State == 3
+wait 30
+bye
+expect GetJournalIndex A_IV_Herbert == 2
+end
+
+# At the house on the hillside he goes in alone.
+case herbert_house
+run
+player->Position -66699 621 685 180
+"Herbert"->Position -66699 521 685 180
+until 600 "Herbert".State == 5
+wait 30
+bye
+expect GetJournalIndex A_IV_Herbert == 3
+end
+
+# The dead crawl out of the houses; Herbert comes back with the key.
+case herbert_dead_rise
+run
+player->Position -67270 1253 248 180
+until 600 "Herbert".State == 6
+wait 30
+bye
+expect GetJournalIndex A_IV_Herbert == 4
+expect player->GetItemCount Key_Herbert == 1
+end
+
+# Into the old house, down through the fireplace, and out of the caves. The
+# dead's own script sets Herbertvar back to 3 whenever one is near the player,
+# so the cells, not Herbertvar, say how far the escape got.
+case herbert_escape
+activate 05EF6AC6
+until 600 GetPCCell "Gor, Old House" == 1
+activate 05DB3087
+until 600 GetPCCell "Gor, Passage" == 1
+activate 05B9E22B
+until 600 GetPCCell "Gor, Passage" == 0
+end
+
+# Gron at last; Herbert takes his leave by the inn. The wolves on the road
+# hunt the player, and Herbert's companion script returns while his weapon is
+# drawn, so the fight is fought first; damage stands in for it.
+case herbert_gron
+run
+player->PositionCell -47046 9735 128 180 "Hamlet of Gron"
+"Herbert"->PositionCell -47046 9835 128 180 "Hamlet of Gron"
+wait 120
+console 05984D48.damageav health 10000
+console 0534E741.damageav health 10000
+console 05BE56A9.damageav health 10000
+console 0578FB32.damageav health 10000
+console 053B0778.damageav health 10000
+until 600 "Herbert".State == 7
+wait 30
+bye
+expect GetJournalIndex A_IV_Herbert == 5
+end

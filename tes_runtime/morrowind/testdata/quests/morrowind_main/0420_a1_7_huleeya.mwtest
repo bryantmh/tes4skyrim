@@ -1,0 +1,52 @@
+# A1_7 "Huleeya Informant": Huleeya will only talk at her friend's bookstore,
+# so the player escorts her there past three racist thugs. She follows on her
+# own AiFollowCell through both doors; the walk between them is hers to make.
+# The console steps name references by their FormID in the test instance,
+# where Morrowind.esm loads at slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a1_7_escort
+# See docs/commentary/headless_testing.md#quest-runs
+
+# She agrees to come along (choice 1); the thugs attack, and fall. Damage
+# stands in for the fight: the console's kill leaves health untouched, which
+# no blow does.
+case a1_7_escort
+run
+player->PositionCell 630 -347 -40 90 "Vivec, Black Shalk Cornerclub"
+until 600 GetPCCell "Vivec, Black Shalk Cornerclub" == 1
+talk huleeya
+ask friend's bookstore
+expect GetJournalIndex A1_7HuleeyaInformant == 1
+ask troublesome fools
+expect GetJournalIndex A1_7HuleeyaInformant == 2
+ask travel together
+choose 1
+expect GetJournalIndex A1_7HuleeyaInformant == 18
+bye
+console 05B758D0.damageav health 1000
+console 054BCDFC.damageav health 1000
+console 05CCA07B.damageav health 1000
+until 300 "favel gobor"->GetHealth <= 0
+until 300 "urven davor"->GetHealth <= 0
+until 300 "ethys savil"->GetHealth <= 0
+expect "huleeya"->GetCurrentAiPackage == 3
+end
+
+# Out the cornerclub door, along the waistworks (Position stands in for the
+# walk) and in at Jobasha's, with Huleeya behind; her script marks the arrival
+# and she greets the player, offering what she knows of the Nerevarine cult.
+case a1_7_walk
+console 05AC32C1.activate player
+until 600 GetPCCell "Vivec, Foreign Quarter Lower Waistworks" == 1
+until 900 "huleeya"->GetDistance player < 500
+run
+player->Position 2316 3800 13540 0
+until 1800 "huleeya"->GetDistance player < 500
+console 053F6059.activate player
+until 600 GetPCCell "Vivec, Jobasha's Rare Books" == 1
+until 1800 GetJournalIndex A1_7HuleeyaInformant == 20
+until 300 MenuMode == 1
+ask Nerevarine cult
+expect GetJournalIndex A1_7HuleeyaInformant == 50
+expect player->GetItemCount bk_a1_7_huleeyainformant == 1
+bye
+end

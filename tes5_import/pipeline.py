@@ -49,6 +49,7 @@ from .record_types.crime import plan_crime
 from .record_types.npc_markers_morrowind import place_npc_markers, write_idle_table
 from .record_types.spell_tomes import create_spell_tomes
 from .record_types.spell_tomes_morrowind import chain_tables
+from .record_types.npc_morrowind import load_tes3_tables
 from .record_types.world_falloutnv import is_fallout_export
 from .actors.combat_approach import create_combat_approach
 from .actors.combat_style import create_combat_styles
@@ -56,6 +57,7 @@ from .actors.confidence import create_confidence_records
 from .actors.misc_stats import create_misc_stat_globals
 from .actors import npc_face_morrowind
 from .actors.stat_factions import create_stat_factions
+from .actors.disposition import create_disposition_factions
 from script_convert.constants import FORCE_FLEE_QUEST, FORCE_GREET_QUEST
 from .packages.force_flee import write_force_flee_quest
 from .packages.actor_wiring import set_stand_still_list
@@ -308,6 +310,9 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
         getattr(ctx, 'master_index', None), wanted=tes4_source))
     WELL_KNOWN_PROPERTIES.update(create_stat_factions(
         writer, getattr(ctx, 'master_index', None), wanted=tes4_source))
+    WELL_KNOWN_PROPERTIES.update(create_disposition_factions(
+        writer, getattr(ctx, 'master_index', None),
+        wanted=tes4_source or is_tes3_export(export_dir), tes3=is_tes3_export(export_dir)))
     if tes4_source:
         WELL_KNOWN_PROPERTIES.update(create_misc_stat_globals(
             writer, getattr(ctx, 'master_index', None), by_type))
@@ -748,6 +753,7 @@ def _prescan_vendor_trainer(by_type: dict, ctx, writer, export_dir: str,
     from .record_types.actor_common import create_service_records
     has_actors = by_type.get('NPC_') or by_type.get('CREA')
     tes3_tables = chain_tables(export_dir, plugin) if has_actors else None
+    load_tes3_tables(tes3_tables)
     create_service_records(by_type, writer, ctx, export_dir, tes3_tables)
     create_spell_tomes(by_type, writer, ctx, export_dir, tes3_tables)
     _step_done('vendor/trainer records')

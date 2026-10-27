@@ -113,6 +113,21 @@ private:
     int mKind;
 };
 
+// `EnableLevelUpMenu`: OpenMW's level-up dialog levels the player whatever
+// their progress. Skyrim decides when the player levels here, so the hook
+// fills its level bar and the level-up -- then the attribute step -- follows.
+// See: docs/commentary/morrowind_runtime.md#leveling
+class OpEnableLevelUpMenu : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime&) override {
+        if (Hooks().fillLevelProgress) Hooks().fillLevelProgress();
+    }
+};
+
+// `Xbox`: whether the game runs on the console; 0, as OpenMW's OpXBox answers.
+class OpXBox : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override { runtime.push(0); }
+};
+
 }  // namespace
 
 void InstallControlOps(OpcodeInstaller& into) {
@@ -128,11 +143,13 @@ void InstallControlOps(OpcodeInstaller& into) {
     into.Real<OpShowRaceMenu>(Compiler::Gui::opcodeEnableRaceMenu);
     into.Real<OpShowChargenMenu>(Compiler::Gui::opcodeEnableClassMenu, 1);
     into.Real<OpShowChargenMenu>(Compiler::Gui::opcodeEnableBirthMenu, 2);
+    into.Real<OpEnableLevelUpMenu>(Compiler::Gui::opcodeEnableLevelupMenu);
     into.Real<OpSetTeleporting>(Compiler::Misc::opcodeEnableTeleporting, true);
     into.Real<OpSetTeleporting>(Compiler::Misc::opcodeDisableTeleporting,
                                 false);
     into.Real<OpSetLevitation>(Compiler::Misc::opcodeEnableLevitation, true);
     into.Real<OpSetLevitation>(Compiler::Misc::opcodeDisableLevitation, false);
+    into.Real<OpXBox>(Compiler::Misc::opcodeXBox);
 }
 
 }  // namespace tesruntime::mw

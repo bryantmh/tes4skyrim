@@ -276,13 +276,13 @@ def _door_quads(door, verts, tris, zgrid, edges, wall_hit, nodes, pg_edges,
 
 
 def door_footprints(verts, tris, doors, wall_hit=None, nodes=None,
-                    pg_edges=None):
+                    pg_edges=None, unreached=None):
     """Per door, the base line + connecting footprint to feed the union.
 
     One dict per door with a reachable corridor edge: `base` is the long side
     lying on the door line, `poly` the footprint to union in as ground, `z` its
-    height.  A door whose nearest corridor edge is beyond DOOR_BRIDGE_RADIUS is
-    walled off from the pathgrid and yields nothing.
+    height.  A door with no clear corridor edge on its storey within
+    DOOR_BRIDGE_RADIUS yields nothing and is appended to `unreached`.
     See: docs/commentary/tes5_import_navmesh.md#door-footprints
     """
     verts = [list(map(float, v)) for v in verts]
@@ -293,8 +293,11 @@ def door_footprints(verts, tris, doors, wall_hit=None, nodes=None,
     edges = _mesh_edges(tris)
     out = []
     for door in doors:
-        out += _door_quads(door, verts, tris, zgrid, edges, wall_hit,
-                           nodes, pg_edges, params.DOOR_QUAD_ZTOL)
+        quads = _door_quads(door, verts, tris, zgrid, edges, wall_hit,
+                            nodes, pg_edges, params.DOOR_QUAD_ZTOL)
+        if not quads and unreached is not None:
+            unreached.append(door)
+        out += quads
     return out
 
 

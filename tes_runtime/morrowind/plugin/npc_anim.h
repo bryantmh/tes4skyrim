@@ -43,6 +43,9 @@ bool PlayNpcGroup(const std::string& npc, const std::string& group,
 
 // A script gave `npc` AI or moved it: it is no longer held on its authored
 // spot, for good (the co-save keeps it). Nothing for an NPC with no binding.
+// 🛑 Queued on the main thread, so a script move queued BEFORE it lands first:
+// the release's glide ends where the actor then stands, and a release run
+// ahead of the move glided a moved actor straight back to its old spot.
 void ReleaseNpcHold(const std::string& npc);
 
 // Whether the actor is held on a spot now. Game thread.

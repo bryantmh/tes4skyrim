@@ -8,9 +8,11 @@ See: docs/commentary/morrowind_runtime.md#sidecar
 import functools
 import math
 import os
+import re
 
 from asset_convert.sources import source_registry
 from core.plugin_masters import export_root, masters_from_export_header
+from tes4_export.morrowind_ids import load_index
 
 #: Every TES3 type that can carry a script.
 SCRIPTED_EXPORTS = ('NPC_.txt', 'CREA.txt', 'ACTI.txt', 'ALCH.txt', 'AMMO.txt',
@@ -18,8 +20,26 @@ SCRIPTED_EXPORTS = ('NPC_.txt', 'CREA.txt', 'ACTI.txt', 'ALCH.txt', 'AMMO.txt',
                     'DOOR.txt', 'INGR.txt', 'KEYM.txt', 'LIGH.txt', 'MISC.txt',
                     'WEAP.txt')
 
+#: The record types of `SCRIPTED_EXPORTS`.
+SCRIPTED_TYPES = tuple(name[:-4] for name in SCRIPTED_EXPORTS)
+
+#: The bases `id->` can name: every scriptable one, plus statics a script disables or moves.
+PLACED_EXPORTS = SCRIPTED_EXPORTS + ('STAT.txt',)
+
+#: The record types of `PLACED_EXPORTS`.
+PLACED_TYPES = tuple(name[:-4] for name in PLACED_EXPORTS)
+
 #: The exports holding PLACED references, which name their base by FormID.
 PLACEMENT_EXPORTS = ('REFR.txt', 'ACHR.txt', 'ACRE.txt')
+
+#: The exports holding MWScript text, with the field each keeps it in.
+_SCRIPT_TEXT = (('SCPT.txt', 'SCTX'), ('MWIN.txt', 'ResultScript'))
+
+#: A quoted name, whole, or a bare word that may be an id.
+_NAME_TOKEN = re.compile(r'"([^"]*)"|([A-Za-z0-9_\'.-]+)')
+
+#: Everything on a script line before its `;` comment, quotes respected.
+_CODE_PART = re.compile(r'^((?:[^";]|"[^"]*")*)')
 
 #: TES4 marker base -> the kind the runtime keys on; the TES3 export writes the same ids.
 MARKER_KINDS = {0x00000005: 'divine', 0x00000006: 'temple'}
@@ -177,6 +197,56 @@ def folder_tables(folder: str) -> dict:
     return out
 
 
+def cell_place(rec: dict, masters: list, plugin: str) -> str:
+    """`Plugin|FormID` of a CELL row's place -- the CELL of an interior, the
+    WORLDSPACE of an exterior -- attributed to the loaded plugin its index byte
+    names among the export's `masters`; '' when the row names neither."""
+    place = rec.get('ParentWRLD') or rec.get('FormID', '')
+    if not place:
+        return ''
+    index = int(place[:2], 16)
+    return f'{masters[index] if index < len(masters) else plugin}|{place}'
+
+
 def forget_folder_tables() -> None:
     """Drop every folder's `folder_tables`; called after the sidecar is staged."""
     folder_tables.cache_clear()
+
+
+def first_placements(folder: str, own: int, ids: dict) -> dict:
+    """`{lower id: placement FormID}`: the FIRST placement `folder` owns of each
+    base `ids` names, which is the reference `id->` acts on, as OpenMW's
+    `searchPtr` finds it within a cell store.
+    See: docs/commentary/morrowind_runtime.md#placed-references
+    """
+    placed = folder_tables(folder)['first']
+    if not placed:
+        return {}
+    index = load_index(folder, PLACED_TYPES, {own: own})
+    out = {}
+    for key, edid in ids.items():
+        base = index.lookup(edid)
+        ref = placed.get(base) if base else None
+        if ref:
+            out[key] = ref
+    return out
+
+
+def _line_names(line: str) -> list:
+    """The quoted names and bare words on one script line, its comment dropped."""
+    code = _CODE_PART.match(line).group(1)
+    return [quoted or bare.rstrip('-') for quoted, bare in _NAME_TOKEN.findall(code)]
+
+
+def script_named_ids(folder: str) -> dict:
+    """`{lower name: name}` for every quoted name and bare word the export's
+    scripts and dialogue results hold outside a comment: a superset of the
+    ids they name, which only ever meets a real id's placement.
+    See: docs/commentary/tes5_import_world.md#tes3-script-named-refs-persist
+    """
+    out = {}
+    for name, field in _SCRIPT_TEXT:
+        for rec in export_records(os.path.join(folder, name), (field,)):
+            for line in rec.get(field, '').replace('\\r', '').split('\\n'):
+                out.update((word.lower(), word) for word in _line_names(line) if word)
+    return out

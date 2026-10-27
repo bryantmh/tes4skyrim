@@ -204,17 +204,32 @@ void Choose(int attribute) {
     }
 }
 
+// A click on an attribute's name; whether it could take a coin.
+bool ClickAttribute(int attribute) {
+    if (attribute < 0 || !Available(attribute) || g_coins <= 0) return false;
+    Choose(attribute);
+    PushAll();
+    return true;
+}
+
+// A click on OK; whether every coin was spent, which takes the step.
+bool ClickOk() {
+    if (!Ready()) return false;
+    CompleteLevelUp(g_spent);
+    Menu().Close();
+    return true;
+}
+
 void OnClick(double x, double y) {
-    const int attribute = AttributeAt(x, y);
-    if (attribute >= 0 && Available(attribute) && g_coins > 0) {
-        Choose(attribute);
-        PushAll();
-        return;
+    if (ClickAttribute(AttributeAt(x, y))) return;
+    if (kOk.Contains(x, y)) ClickOk();
+}
+
+int AttributeNamed(const std::string& name) {
+    for (int attribute = 0; attribute < kAttributeCount; ++attribute) {
+        if (_stricmp(AttributeName(attribute).c_str(), name.c_str()) == 0) return attribute;
     }
-    if (kOk.Contains(x, y) && Ready()) {
-        CompleteLevelUp(g_spent);
-        Menu().Close();
-    }
+    return -1;
 }
 
 void OnHover(double x, double y) {
@@ -265,5 +280,11 @@ void OpenLevelUp() {
 }
 
 bool LevelUpOpen() { return Menu().IsOpen(); }
+
+bool PickLevelUp(const std::string& name) {
+    if (!Menu().IsOpen()) return false;
+    if (_stricmp(name.c_str(), GmstText("sOK", "OK").c_str()) == 0) return ClickOk();
+    return ClickAttribute(AttributeNamed(name));
+}
 
 }  // namespace tesruntime::mw

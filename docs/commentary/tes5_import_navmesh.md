@@ -574,8 +574,8 @@ function of the door, computed in `corridor_doors` and passed through
   the real doorway.  Correct forms everywhere now: center offset
   `(lx·c + ly·s, −lx·s + ly·c)`; threshold `(sin rz, cos rz)`; facing
   `(cos rz, −sin rz)`.
-* **The door cache measures the ORIGINAL NIF at the CLOSED pose**
-  (`asset_convert.collision.collision_extract.door_closed_geometry`, built by
+* <a id="door-closed-pose-cache"></a>**The door cache measures the ORIGINAL NIF at the CLOSED pose**
+  (`asset_convert.collision.door_geometry.door_closed_geometry`, built by
   `collision_extract.scan_door_axes` from `export/<plugin>/meshes`; the
   converted-mesh scan no longer writes it).  The 'Close' controller
   sequence's FINAL key values override the animated nodes, and the union

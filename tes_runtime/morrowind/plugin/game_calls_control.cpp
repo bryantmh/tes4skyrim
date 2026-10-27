@@ -23,6 +23,7 @@
 
 #include "ids.h"
 #include "log.h"
+#include "menu.h"
 
 namespace tesruntime::mw {
 namespace gamecalls {
@@ -46,6 +47,7 @@ SetControlsFn  g_disableControls = nullptr;
 void ShowRaceMenu() {
     if (!g_showRaceMenu) return;
     Log("control: opening Skyrim's race menu");
+    NoteMenuOpening("RaceSex Menu");
     g_showRaceMenu(PapyrusVm(), 0, nullptr);
 }
 

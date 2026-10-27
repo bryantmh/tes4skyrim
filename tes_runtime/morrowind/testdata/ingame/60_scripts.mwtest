@@ -1,0 +1,54 @@
+# Global scripts, ranks, speech, topics and object-script events, in Arrille's
+# Tradehouse after 40_npc.mwtest. See docs/commentary/headless_testing.md#mwscript-cases
+
+case startscript
+run
+StartScript Dummy
+wait 3
+expect ScriptRunning Dummy == 1
+end
+
+case stopscript
+run
+StopScript Dummy
+wait 3
+expect ScriptRunning Dummy == 0
+end
+
+case npc_rank
+run
+elone->RaiseRank
+elone->LowerRank
+end
+
+case addtopic
+run
+AddTopic "little secret"
+end
+
+case say
+run
+elone->Say "Vo\Misc\bill_fg_nchurdamz01.wav" "Test line."
+wait 3
+expect elone->SayDone >= 0
+end
+
+case aiactivate
+run
+elone->AiActivate arrille
+wait 5
+end
+
+case aicell
+run
+elone->AiFollowCell player "Seyda Neen, Arrille's Tradehouse" 0 0 0 0
+elone->AiEscortCell player "Seyda Neen, Arrille's Tradehouse" 0 0 0 0
+wait 5
+elone->AiWander 0 0 0 0
+end
+
+case script_events
+expect OnActivate == 0
+expect OnDeath == 0
+expect CellChanged >= 0
+end

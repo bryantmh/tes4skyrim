@@ -63,13 +63,13 @@ def add_spawn_nodes(points: list, edges: list, spawns) -> frozenset:
     return frozenset(range(first, len(points)))
 
 
-def _floor_below(sample, x, y, z):
+def floor_below(sample, x, y, z):
     """The highest walkable height at or a step above z: where a placed actor falls to."""
     under = [h for h in sample.layers(x, y) if h <= z + params.MAX_CLIMB]
     return under[-1] if under else None
 
 
-def _body_clear(x, y, z, wall_hit) -> bool:
+def body_clear(x, y, z, wall_hit) -> bool:
     """No object in an actor-width body column from step height to actor height."""
     return not wall_hit(x, y, 1.0, 0.0, 0.0, 1.0,
                         z + params.RIBBON_GROW_SLAB_Z_BOTTOM,
@@ -105,8 +105,8 @@ def standing_spawns(lone, nodes, node_z, sample, wall_hit) -> frozenset:
         return frozenset()
     standing = set()
     for i in lone:
-        floor = _floor_below(sample, nodes[i][0], nodes[i][1], nodes[i][2])
-        if floor is not None and _body_clear(nodes[i][0], nodes[i][1], floor, wall_hit):
+        floor = floor_below(sample, nodes[i][0], nodes[i][1], nodes[i][2])
+        if floor is not None and body_clear(nodes[i][0], nodes[i][1], floor, wall_hit):
             node_z[i] = floor
             standing.add(i)
     return frozenset(standing)

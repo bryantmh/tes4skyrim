@@ -1276,21 +1276,35 @@ def persistent_cell_record(ctx: MorrowindContext) -> list:
               f'RecordFlags={_PERSISTENT}'])]
 
 
-def _partner_door(ctx: MorrowindContext, cell: str, pos: tuple,
+def _destination_cells(ctx: MorrowindContext, ref) -> list:
+    """The cell a door arrives in and, outdoors, the eight around it: the
+    pair's other door may stand across a cell border from the DODT point."""
+    cell = ctx.destination_cell(ref)
+    if not cell or ref.dest_cell:
+        return [cell] if cell else []
+    grid_x, grid_y = cell_grid(ref.dest_pos[0], ref.dest_pos[1])
+    grids = [(grid_x + dx, grid_y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)]
+    return [ctx.exterior_cell_id(grid) for grid in grids
+            if grid in ctx.known_grids or ctx.index.lookup_exterior(grid)]
+
+
+def _partner_door(ctx: MorrowindContext, cells: list, pos: tuple,
                   door_id: str) -> str:
-    """The door reference standing at `pos` in `cell`, or '' if none is near.
+    """The door reference standing at `pos` in any of `cells`, or '' if none
+    is near.
 
     Candidates are this plugin's placements AND its masters', since a
     dependent plugin's door usually arrives in a cell the master owns.
     See: docs/commentary/tes4_export_morrowind.md#teleport-doors
     """
     best, best_dist = '', _PARTNER_RADIUS
-    for form_id, other in ctx.doors_by_cell.get(cell, ()):
-        if form_id == door_id:
-            continue
-        dist = sum((a - b) ** 2 for a, b in zip(other, pos)) ** 0.5
-        if dist < best_dist:
-            best, best_dist = form_id, dist
+    for cell in cells:
+        for form_id, other in ctx.doors_by_cell.get(cell, ()):
+            if form_id == door_id:
+                continue
+            dist = sum((a - b) ** 2 for a, b in zip(other, pos)) ** 0.5
+            if dist < best_dist:
+                best, best_dist = form_id, dist
     return best
 
 
@@ -1304,9 +1318,7 @@ def teleport_records(ctx: MorrowindContext) -> list:
     See: docs/commentary/tes4_export_morrowind.md#teleport-doors
     """
     for door_id, lines, ref in ctx.pending_teleports:
-        cell = ctx.destination_cell(ref)
-        partner = (_partner_door(ctx, cell, ref.dest_pos, door_id)
-                   if cell else '')
+        partner = _partner_door(ctx, _destination_cells(ctx, ref), ref.dest_pos, door_id)
         if not partner:
             ctx.unlinked_doors += 1
             continue

@@ -109,16 +109,23 @@ void HoldStill(void* controller, bool isPlayer) {
     *speed = SpeedFor(controller, engine);
 }
 
-void TickStillActors(void* player) {
-    LearnEngineSpeed(player);
-    std::unordered_set<void*> skyrim;
-    std::unordered_set<void*> seen;
+void ForEachHighActor(const std::function<void(void*)>& fn) {
     void* lists = g_processLists ? *g_processLists : nullptr;
     const auto* handles = lists ? At<std::uint32_t*>(lists, ids::kOffHighActorHandles) : nullptr;
     const std::uint32_t count = handles ? At<std::uint32_t>(lists, ids::kOffHighActorCount) : 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         void* actor = RefFromHandle(handles[i]);
         if (!actor) continue;
+        fn(actor);
+        ReleaseRef(actor);
+    }
+}
+
+void TickStillActors(void* player) {
+    LearnEngineSpeed(player);
+    std::unordered_set<void*> skyrim;
+    std::unordered_set<void*> seen;
+    ForEachHighActor([&](void* actor) {
         void* controller = CharController(actor);
         if (!FromMorrowind(actor)) {
             skyrim.insert(controller);
@@ -126,8 +133,7 @@ void TickStillActors(void* player) {
             SetNoSim(actor, controller, IsNpcHeld(FormIdOf(actor)));
         }
         if (controller) seen.insert(controller);
-        ReleaseRef(actor);
-    }
+    });
     // A controller gone from the list may be freed: forget it rather than
     // touch it; a reloaded actor comes back with fresh flags.
     for (auto it = g_noSim.begin(); it != g_noSim.end();) {

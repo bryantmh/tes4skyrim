@@ -1,0 +1,53 @@
+# Chapter IV ends: with the Baron dead the Masterthief turns on her own guild.
+# Jarko tells of the massacre, she waits in the Ruins of Storm, and once she
+# is dead the Kanzler's men send the player to the Kanzler in the theater.
+# Position stands in for the walks, and damage for the sword fights; ref
+# FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from fall_jarko
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Jarko survived the attack on the guild.
+case fall_jarko
+run
+player->PositionCell -123 470 714 0 "Stormwend, Thieves Guild"
+talk DIEBJarkoderGaukler
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 >= 14
+expect Diebesgildevar == 20
+end
+
+# The Masterthief in the Ruins of Storm, and why she killed them.
+case fall_masterthief
+run
+player->PositionCell -204 5000 -67 0 "The Ruins of Storm"
+until 600 MenuMode == 1
+wait 60
+choose 2
+choose 3
+bye
+expect GetJournalIndex A_IV_SchwarzeSteine == 6
+console 053D0C58.damageav health 10000
+until 600 GetJournalIndex A_IV_Diebesgilde2 == 81
+end
+
+# The Kanzler's men have seen it all, and send the player to him.
+case fall_kanzler_men
+run
+player->PositionCell 1659 4980 -9 0 "The Ruins of Storm"
+talk KanzlerMordWache19
+bye
+expect GetJournalIndex A_IV_Diebesgilde2 == 86
+end
+
+# The Kanzler, at the theater, wants Calisto dead.
+case fall_theater
+run
+player->PositionCell 555 1350 126 0 "Stormwend, Theater"
+talk TheaterKanzlerBrutus01
+ask still remember Calisto
+choose 1
+choose 3
+bye
+expect GetJournalIndex A_V_TheaterTreffen == 2
+expect Stormwendvar == 20
+end

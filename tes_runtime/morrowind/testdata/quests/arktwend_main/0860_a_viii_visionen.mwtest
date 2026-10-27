@@ -1,0 +1,180 @@
+# Chapter VIII, the visions: from the Void the Hall of Fate shows the player
+# the past -- the Witch King's childhood in the Old Forest, the storm on the
+# city of Storm and Emperor Goth's camp, the dwarves' war under the Demon
+# King, and the burning galleon -- and sets them down in Melee.
+# Position stands in for the walks, damage for the fights and moving Daras
+# for him following; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from void_time
+# See docs/commentary/headless_testing.md#quest-runs
+
+# "It is time": the Void hands the player to the Hall of Fate.
+case void_time
+until 3000 GetPCCell "Hall of Fate" == 1
+end
+
+# The hall's far end opens on the Old Forest.
+case fate_forest
+run
+player->PositionCell 10668 14300 3276 0 "Hall of Fate"
+button 0
+expect GetJournalIndex A_VIII_DerHexenkonig == 1
+end
+
+# Through the forest to the Witch King's birthplace, his letter, and the
+# claw wolf that killed his parents.
+case witch_birthplace
+run
+player->Position 6081 458700 2182 0
+until 300 GetJournalIndex A_VIII_DerHexenkonig == 2
+run
+player->Position 6664 462700 1385 0
+until 300 GetJournalIndex A_VIII_DerHexenkonig == 3
+run
+player->Position 20859 462750 65 0
+until 300 GetJournalIndex A_VIII_DerHexenkonig == 4
+run
+player->Position 21496 463700 97 0
+until 300 GetJournalIndex A_VIII_DerHexenkonig == 5
+activate 054BCF60
+take 054BCF60
+close Book Menu
+until 300 GetJournalIndex A_VIII_DerHexenkonig == 6
+until 300 "asartans_claw_wolf"->GetDisabled == 0
+console 05B7695C.damageav health 100000
+button 0
+expect GetJournalIndex A_VIII_DerHexenkonig == 7
+until 300 GetPCCell "Sorcerer's Tower" == 1
+end
+
+# Young Asartan in the old magician's tower, then the storm on Storm.
+case witch_tower
+until 3000 Addonvar == 1
+button 0
+button 0
+expect GetJournalIndex A_VIII_Storm == 1
+end
+
+# Through the burning city.
+case storm_city
+run
+player->Position -36372 455300 2563 0
+until 300 GetJournalIndex A_VIII_Storm == 2
+run
+player->Position -39001 453400 2630 0
+until 300 Addonvar == 4
+end
+
+# Emperor Goth's camp: a guard asks after Storm, and the Kaiser gives orders.
+case goths_camp
+run
+player->Position -16529 462300 535 0
+until 600 MenuMode == 1
+wait 60
+ask escape the evil
+bye
+expect GetJournalIndex A_VIII_GothsLager == 1
+run
+player->Position -15256 460700 166 0
+until 600 MenuMode == 1
+wait 60
+ask situation in the city
+choose 1
+bye
+expect GetJournalIndex A_VIII_GothsLager == 2
+expect Addonvar == 10
+end
+
+# The attackers' mage falls, Wend's force arrives, and the battle turns.
+case goths_battle
+until 300 "VGothAngreiferMagier01"->GetDisabled == 0
+console 05ABE128.damageav health 100000
+until 600 Addonvar == 11
+expect GetJournalIndex A_VIII_GothsLager == 3
+run
+player->Position -12581 458000 1881 0
+button 0
+until 300 GetPCCell "Inner Dwarven Cave" == 1
+end
+
+# Deep down, Daras fetches the player for Mert.
+case dwarves_daras
+run
+player->PositionCell 5784 1400 984 0 "Inner Dwarven Cave"
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_VIII_ZwergenKrieg == 1
+end
+
+# Mert at the smelter sends everyone to work.
+case dwarves_mert
+run
+player->PositionCell 4086 100 11330 0 "Dwarven Smelter Cave"
+"VDaras"->PositionCell 4086 50 11330 0 "Dwarven Smelter Cave"
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_VIII_ZwergenKrieg == 2
+end
+
+# Eight picks from the storeroom.
+case dwarves_picks
+run
+player->PositionCell -1000 1750 -700 0 "Dwarven Storage Cave"
+"VDaras"->PositionCell -950 1750 -700 0 "Dwarven Storage Cave"
+take 058A1D3E
+take 05ED31CF
+take 05A11E48
+take 052957DF
+take 05782C58
+take 05263E09
+take 05A6A024
+take 054579B1
+until 300 GetJournalIndex A_VIII_ZwergenKrieg == 3
+end
+
+# The lift down the shaft.
+case dwarves_shaft
+run
+player->PositionCell 4448 4100 124029 0 "Dwarven Shaft"
+button 0
+until 600 player->GetPos z < 10000
+end
+
+# Mao in the canyon of Grul. Daras follows only once the player's move has
+# landed: his companion script warps him back to the player's last spot when
+# the player is far from it and from him, and a move in the same tick races it.
+# Mao's script has Daras greet first ("That's Mao there", ending in Goodbye);
+# only once the player leaves it does Daras's own script, which returns in
+# menu mode, write journal 4 and greet again.
+case dwarves_mao
+run
+player->PositionCell 5303 6700 12673 0 "Subterranean Canyon of Grul"
+until 300 GetPCCell "Subterranean Canyon of Grul" == 1
+wait 30
+run
+"VDaras"->PositionCell 5303 6650 12673 0 "Subterranean Canyon of Grul"
+until 600 MenuMode == 1
+wait 30
+bye
+until 300 GetJournalIndex A_VIII_ZwergenKrieg == 4
+until 600 MenuMode == 1
+wait 60
+bye
+end
+
+# The Demon King in the Arpk temple; the vision moves to the Emperor's galleon.
+case dwarves_demon_king
+run
+player->PositionCell -101 2400 -1314 0 "Arpk Temple"
+button 0
+until 300 GetPCCell "Emperor's Galleon, Crew's Quarters" == 1
+end
+
+# On deck, the messenger of the Order carries the child away.
+case galleon_end
+run
+player->PositionCell 146 1500 -907 0 "Emperor's Galleon, Deck"
+button 0
+until 300 GetPCCell "Melee Monastery" == 1
+end

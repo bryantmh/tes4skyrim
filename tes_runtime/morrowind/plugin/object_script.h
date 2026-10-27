@@ -12,6 +12,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -21,8 +22,13 @@
 
 namespace tesruntime::mw {
 
-// The events TES3 raises on an object for ONE tick, which the script reads
-// through `OnActivate`, `OnDeath` and their kin and the engine then clears.
+// The events TES3 raises on an object, which the script reads through
+// `OnActivate`, `OnDeath` and their kin.
+//
+// 🛑 `activated` and `died` LATCH until the body reads them, as OpenMW's
+// RefData::onActivate and CreatureStats::hasDied do. A body that returns early
+// on most ticks -- the companion template's `if ( counter < 20 ) ... return`
+// sits above its `if ( OnDeath )` -- would otherwise never see the death.
 // See: docs/plans/morrowind_object_scripts.md#events
 struct ObjectEvents {
     bool activated = false;
@@ -31,14 +37,15 @@ struct ObjectEvents {
     // The engine-written LOCALS, which are not opcodes: a script declares
     // `short OnPCEquip` itself and the engine writes the variable.
     //
-    // 🛑 `OnPCEquip` is NOT among them: it is a persistent STATE, kept by
-    // `PollEquipped`, not a one-tick event this struct would clear.
-    bool pcAdded = false;
+    // 🛑 `OnPCEquip` and `OnPCAdd` are NOT among them: they are persistent
+    // STATES, kept by `PollEquipped`, not one-tick events this struct would clear.
     bool pcDropped = false;
     bool pcHitMe = false;
 
     bool Any() const;
     void Clear();
+    // After a run: drops the one-tick flags and keeps the latched ones.
+    void EndTick();
 };
 
 // One placed reference's script. Its locals live in DialogueState under
@@ -84,8 +91,13 @@ public:
     // dead in the cell did not die during play.
     void PollDeath();
 
-    // Writes `OnPCEquip` from whether the player wears `baseId`. Returns
-    // whether they carry it at all.
+    // Writes `OnPCEquip` from whether the player wears `baseId`, and raises
+    // `OnPCAdd` when `baseId` arrives in their inventory. Returns whether they
+    // carry it at all.
+    //
+    // 🛑 `OnPCAdd` is set to 1 and left for the script to reset, as OpenMW's
+    // ContainerStore::add does. The first poll of a session only records what
+    // the player already carries: a loaded save is not a pickup.
     //
     // 🛑 A STATE, not an event: OpenMW sets the local to 1 on equip and 0 on
     // unequip and leaves it, which is what `if ( OnPCEquip == 0 )` unequip
@@ -142,6 +154,11 @@ private:
     // Which of the script's item records is currently worn, so a sibling
     // record polled afterwards cannot clear the flag this one set.
     std::string mWornId;
+    // Whether the player carried each of the script's item records at the
+    // last poll, which is how an arrival is told from an item already held.
+    std::map<std::string, bool> mCarried;
+
+    void NoteCarried(const std::string& baseId, bool carried);
 };
 
 // Holds the GameActor that ObjectContext hands its own base class.
@@ -251,8 +268,9 @@ ObjectScript* CarriedInstance(const std::string& baseId,
 
 // Runs every global script `StartScript` left running, once each. A script
 // that stops itself, or starts another, takes effect on the NEXT tick.
-// Returns how many ran.
-std::size_t RunGlobalScripts();
+// `cellChanged` is this tick's answer to `CellChanged`, which OpenMW gives
+// every script alike and holds for that one frame only. Returns how many ran.
+std::size_t RunGlobalScripts(bool cellChanged);
 
 // How many instances this session has created.
 std::size_t LiveInstanceCount();

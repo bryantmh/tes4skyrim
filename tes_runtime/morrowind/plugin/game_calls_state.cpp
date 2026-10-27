@@ -31,12 +31,15 @@ using SetFactionRankFn = void (*)(void* vm, std::uint32_t stack, void* actor,
                                   void* faction, std::int32_t rank);
 using SetExpelledFn = void (*)(void* vm, std::uint32_t stack, void* faction,
                                bool expelled);
+using RemoveFromFactionFn = void (*)(void* vm, std::uint32_t stack, void* actor,
+                                     void* faction);
 
 constexpr int kNoRank = -2;
 
 GetFactionRankFn g_getFactionRank = nullptr;
 SetFactionRankFn g_setFactionRank = nullptr;
 SetExpelledFn g_setExpelled = nullptr;
+RemoveFromFactionFn g_removeFromFaction = nullptr;
 
 // Only a CHANGE is written, so a GLOB whose value holds is never touched.
 void Publish(const FormRef& ref, float value) {
@@ -123,6 +126,12 @@ bool SetFactionRank(void* actor, void* faction, int rank) {
     return true;
 }
 
+void RemoveFromFaction(void* actor, void* faction) {
+    if (actor && faction && g_removeFromFaction) {
+        g_removeFromFaction(PapyrusVm(), 0, actor, faction);
+    }
+}
+
 // 🛑 Every sidecar's own mirror GLOB, each read through its own plugin's
 // view: a sibling plugin's global of the same name is a different value.
 void PublishState() {
@@ -147,6 +156,8 @@ void InstallStateCalls(GameHooks& hooks) {
                                                 ids::kActorSetFactionRank);
     g_setExpelled = Native<SetExpelledFn>("Faction.SetPlayerExpelled",
                                           ids::kFactionSetPlayerExpelled);
+    g_removeFromFaction = Native<RemoveFromFactionFn>("Actor.RemoveFromFaction",
+                                                      ids::kActorRemoveFromFaction);
     hooks.applyPlayerFaction = ApplyPlayerFaction;
     hooks.globalSlot = GlobalSlot;
     Log("game: %zu bark state GLOB(s) to publish", StateRows().size());

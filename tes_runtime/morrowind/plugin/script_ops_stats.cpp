@@ -116,14 +116,15 @@ float SheetOffAttribute(int index) {
 }
 
 // What a stat holds before active magic moves it: what a Set wrote, else the
-// authored column, or the Skyrim actor value that carries it.
+// authored column, or the Skyrim actor value that carries it -- its current
+// value, or with `trueBase` the base a write moves.
 float ReadBase(const std::string& actor, const Stat& stat, Family family,
-               int index) {
+               int index, bool trueBase = false) {
     if (stat.skyrim) {
-        if (!Hooks().actorValue) return 0.0f;
-        const float first = Hooks().actorValue(actor, stat.skyrim);
-        return stat.also ? std::max(first, Hooks().actorValue(actor, stat.also))
-                         : first;
+        const auto read = trueBase ? Hooks().baseActorValue : Hooks().actorValue;
+        if (!read) return 0.0f;
+        const float first = read(actor, stat.skyrim);
+        return stat.also ? std::max(first, read(actor, stat.also)) : first;
     }
     const std::string owner = StatOwner(actor);
     return State().HasVar(owner, stat.name) ? State().Var(owner, stat.name)
@@ -173,10 +174,19 @@ private:
             }
             return;
         }
-        // A write moves the base: a Fortify active now must not be baked in.
         const float operand = integer ? static_cast<float>(PopInt(runtime))
                                       : PopFloat(runtime);
-        const float base = ReadBase(actor, mStat, mFamily, mIndex);
+        // An effect is a magnitude on top of what the engine derives, so it
+        // moves the modifier, and Set makes the TOTAL the operand, as OpenMW's
+        // OpSetMagicEffect does.
+        if (integer && mStat.skyrim && Hooks().modActorValue) {
+            const float now = ReadStat(actor, mStat, mFamily, mIndex);
+            Hooks().modActorValue(actor, mStat.skyrim,
+                                  mVerb == Verb::Mod ? operand : operand - now);
+            return;
+        }
+        // Otherwise a write moves the base: a Fortify active now must not be baked in.
+        const float base = ReadBase(actor, mStat, mFamily, mIndex, true);
         WriteStat(actor, mStat, mVerb == Verb::Mod ? base + operand : operand);
     }
 

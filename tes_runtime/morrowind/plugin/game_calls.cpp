@@ -5,8 +5,11 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
@@ -15,6 +18,7 @@
 #include "addresses.h"
 #include "conversation.h"
 #include "dialogue_state.h"
+#include "glide.h"
 #include "ids.h"
 #include "log.h"
 #include "main_thread.h"
@@ -52,9 +56,6 @@ using RemoveItemFn = void (*)(void* vm, std::uint32_t stack, void* ref,
 using ItemCountFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* ref,
                                      void* item);
 using GetPlayerFn = void* (*)(void* vm, std::uint32_t stack, void* tag);
-using StartCombatFn = void (*)(void* vm, std::uint32_t stack, void* actor,
-                               void* target);
-using StopCombatFn = void (*)(void* vm, std::uint32_t stack, void* actor);
 using SetEnabledFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                               bool fade);
 using IsDisabledFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
@@ -113,9 +114,15 @@ using InstanceVolumeFn = void (*)(void* vm, std::uint32_t stack, void* tag,
 using RefSayFn = void (*)(void* vm, std::uint32_t stack, void* self,
                           void* topic, void* speakAs, bool inPlayersHead);
 
+// Actor.Kill(Actor akKiller = None), a MEMBER function: the victim is `self`.
+using KillFn = void (*)(void* vm, std::uint32_t stack, void* actor, void* killer);
+
 // Skyrim's actor values for OpenMW's dynamic stats, in OpenMW's order.
 constexpr const char* kDynamicNames[] = {"Health", "Magicka", "Stamina"};
 constexpr int kDynamicCount = 3;
+constexpr int kHealth = 0;
+// More than any actor's damage: RestoreActorValue stops at the maximum.
+constexpr float kAllDamage = 1.0e9f;
 
 // TES3's gold, and the record Skyrim keeps for the same thing.
 constexpr const char* kTes3Gold = "gold_001";
@@ -162,11 +169,13 @@ AddItemFn    g_addItem = nullptr;
 RemoveItemFn g_removeItem = nullptr;
 ItemCountFn  g_itemCount = nullptr;
 GetPlayerFn  g_getPlayer = nullptr;
-StartCombatFn g_startCombat = nullptr;
-StopCombatFn  g_stopCombat = nullptr;
 SetEnabledFn  g_enable = nullptr;
 SetEnabledFn  g_disable = nullptr;
 IsDisabledFn  g_isDisabled = nullptr;
+// The enabled state each script asked of a reference (by FormID) that the
+// engine's own flag has not caught up with yet.
+std::mutex g_askedEnabledMutex;
+std::map<std::uint32_t, bool> g_askedEnabled;
 ActivateFn     g_activate = nullptr;
 CanSleepHereFn g_canSleepHere = nullptr;
 ToggleSleepMenuFn g_toggleSleepMenu = nullptr;
@@ -181,6 +190,7 @@ RefQueryFn     g_isInterior = nullptr;
 RefQueryFn     g_cellAttached = nullptr;
 GetValueFn     g_getValue = nullptr;
 SetValueFn  g_setValue = nullptr;
+SetValueFn     g_modValue = nullptr;
 SetValueFn     g_restoreValue = nullptr;
 SetValueFn     g_damageValue = nullptr;
 EquipItemFn    g_equipItem = nullptr;
@@ -193,6 +203,7 @@ GetRaceFn      g_getRace = nullptr;
 AdvanceSkillFn g_advanceSkill = nullptr;
 PlaceAtMeFn    g_placeAtMe = nullptr;
 RefQueryFn     g_isDead = nullptr;
+KillFn         g_kill = nullptr;
 GetFormFn      g_getForm = nullptr;
 RefQueryFn     g_is3DLoaded = nullptr;
 SoundPlayFn      g_soundPlay = nullptr;
@@ -200,8 +211,8 @@ StopInstanceFn   g_stopInstance = nullptr;
 InstanceVolumeFn g_instanceVolume = nullptr;
 RefSayFn         g_refSay = nullptr;
 
-std::string g_speakerId;
-void*       g_speakerRef = nullptr;
+std::string   g_speakerId;
+std::uint32_t g_speakerFormId = 0;
 
 // The objective each quest is currently showing, so the previous one can be
 // hidden when the quest moves on.
@@ -257,7 +268,9 @@ void* OwnerRef(const std::string& owner) {
         Lower(owner) == Lower(running->BaseId())) {
         if (void* self = RefByRuntimeId(running->RuntimeFormId())) return self;
     }
-    if (g_speakerRef && Lower(owner) == Lower(g_speakerId)) return g_speakerRef;
+    if (Lower(owner) == Lower(g_speakerId)) {
+        if (void* speaker = SpeakerRef()) return speaker;
+    }
     if (void* placed = Form(FindRef(owner))) return placed;
     ReportOnce("reference", owner);
     return nullptr;
@@ -402,28 +415,21 @@ void RemoveItem(const std::string& owner, const std::string& item, int count) {
     });
 }
 
-// 🛑 Posted to the game thread rather than called here: the dialogue menu's
-// callbacks do not run on it, and combat reaches deep into the AI process.
-// An empty `target` means StopCombat, which takes no target at all.
-void SetCombat(const std::string& attacker, const std::string& target) {
-    void* actor = OwnerRef(attacker);
-    void* foe = target.empty() ? nullptr : OwnerRef(target);
-    if (!actor || (!target.empty() && !foe)) return;
-    PostToMainThread([actor, foe]() {
-        if (foe) {
-            if (g_startCombat) g_startCombat(PapyrusVm(), 0, actor, foe);
-        } else if (g_stopCombat) {
-            g_stopCombat(PapyrusVm(), 0, actor);
-        }
-    });
-}
-
 // 🛑 Posted, like combat: enabling a reference moves it in and out of the
 // world, which is not safe from the menu's own thread. TES3 fades nothing,
 // so both pass false.
+//
+// 🛑 TES3 flips the flag at once -- OpenMW's RefData::enable -- so a script's
+// `Enable` then `ForceGreeting` greets, and `GetDisabled` after `Disable`
+// answers 1, in the same frame. The engine's flag lands later, so the state
+// asked for answers until it does.
 void SetEnabled(const std::string& id, bool enabled) {
     void* ref = OwnerRef(id);
     if (!ref) return;
+    {
+        const std::lock_guard<std::mutex> lock(g_askedEnabledMutex);
+        g_askedEnabled[FormIdOf(ref)] = enabled;
+    }
     RunOnGameThread([ref, enabled]() {
         SetEnabledFn call = enabled ? g_enable : g_disable;
         if (call) call(PapyrusVm(), 0, ref, false);
@@ -434,7 +440,16 @@ void SetEnabled(const std::string& id, bool enabled) {
 // reading the flag does not touch the world.
 bool IsDisabled(const std::string& id) {
     void* ref = OwnerRef(id);
-    return ref && g_isDisabled && g_isDisabled(PapyrusVm(), 0, ref);
+    if (!ref || !g_isDisabled) return false;
+    const bool disabled = g_isDisabled(PapyrusVm(), 0, ref);
+    const std::lock_guard<std::mutex> lock(g_askedEnabledMutex);
+    const auto asked = g_askedEnabled.find(FormIdOf(ref));
+    if (asked == g_askedEnabled.end()) return disabled;
+    if (disabled != asked->second) {
+        g_askedEnabled.erase(asked);
+        return disabled;
+    }
+    return !asked->second;
 }
 
 int ItemCount(const std::string& owner, const std::string& item) {
@@ -450,14 +465,46 @@ void* PlayerRef() {
 
 // World mutations are POSTED, as Enable and combat are: the menu's callbacks
 // do not run on the game thread. Reads answer at once.
-void Activate(const std::string& id) {
-    void* ref = OwnerRef(id);
+// The player activating `ref`: a script's `Activate` when `byScript`, which
+// runs past an OnActivate claim; a click otherwise, which a claim holds.
+void ActivateBy(void* ref, bool byScript) {
     void* player = PlayerRef();
     if (!ref || !player || !g_activate) return;
-    PostToMainThread([ref, player]() {
-        const ScriptActivationScope byScript(ref);
+    PostToMainThread([ref, player, byScript]() {
+        const ScriptActivationScope scope(byScript ? ref : nullptr);
         g_activate(PapyrusVm(), 0, ref, player, false);
     });
+}
+
+void Activate(const std::string& id) { ActivateBy(OwnerRef(id), true); }
+
+// The reference a player action names: its id, or its live FormID in hex for
+// one whose id other references share.
+void* PlayerTarget(const std::string& id) {
+    char* end = nullptr;
+    const unsigned long formId = std::strtoul(id.c_str(), &end, 16);
+    return id.size() == 8 && *end == '\0' ? RefByRuntimeId(formId) : OwnerRef(id);
+}
+
+// Waits, too, for the object's script to have run once since it loaded: only
+// a run that reads `OnActivate` claims the activation, and a click in the
+// load's own frame would otherwise reach Skyrim's default instead.
+bool PlayerActivate(const std::string& id) {
+    void* ref = PlayerTarget(id);
+    if (!Has3D(ref)) return false;
+    const ObjectScript* script = InstanceForRef(FormIdOf(ref));
+    if (script && !script->WasLoaded()) return false;
+    ActivateBy(ref, false);
+    return true;
+}
+
+// The player picking `id` up: the reference itself moves into the inventory,
+// as ObjectReference.AddItem does when handed a reference rather than a base.
+void PlayerTake(const std::string& id) {
+    void* ref = PlayerTarget(id);
+    void* player = PlayerRef();
+    if (!ref || !player || !g_addItem) return;
+    PostToMainThread([ref, player]() { g_addItem(PapyrusVm(), 0, player, ref, 1, false); });
 }
 
 // `ShowRestMenu` does what activating a Skyrim bed does: the player's
@@ -470,6 +517,15 @@ void ShowRestMenu(const std::string& bedId) {
     PostToMainThread([bed]() {
         void* player = PlayerRef();
         if (player && g_canSleepHere(player, bed)) g_toggleSleepMenu(true);
+    });
+}
+
+void SleepFor(int hours) {
+    PostToMainThread([hours]() {
+        void* view = nullptr;
+        if (!EngineMenuObject(ids::kSleepWaitMenu, &view) || !view) return;
+        MovieSetNumber(view, ids::kSleepHoursPath, hours);
+        MovieInvoke(view, ids::kSleepOkPath, nullptr, 0, nullptr);
     });
 }
 
@@ -513,9 +569,24 @@ void* PlayerCell() {
                                   : nullptr;
 }
 
+// 🛑 Skyrim keeps no name on an exterior CELL -- no vanilla one has FULL, and
+// the converted ones' read back empty -- so outdoors the name is the sidecar's
+// for the player's TES3 grid, else OpenMW's `sDefaultCellname`.
+constexpr float kTes3CellSize = 8192.0f;
+
+std::string ExteriorName(void* player) {
+    const int x = static_cast<int>(std::floor(
+        RefPositionAxis(PapyrusVm(), player, 0) / kTes3CellSize));
+    const int y = static_cast<int>(std::floor(
+        RefPositionAxis(PapyrusVm(), player, 1) / kTes3CellSize));
+    const std::string* name = FindExteriorName(x, y);
+    return name ? *name : GmstText("sDefaultCellname", "Wilderness");
+}
+
 std::string PlayerCellName() {
     void* cell = PlayerCell();
     if (!cell) return std::string();
+    if (!PlayerInInterior()) return ExteriorName(PlayerRef());
     const char* name = *reinterpret_cast<const char**>(
         static_cast<char*>(cell) + ids::kOffCellFullName);
     return name ? name : "";
@@ -532,6 +603,12 @@ bool PlayerInInterior() {
     return cell && g_isInterior && g_isInterior(PapyrusVm(), 0, cell);
 }
 
+void* PlaceOf(void* ref) {
+    void* cell = ref && g_parentCell ? g_parentCell(PapyrusVm(), 0, ref) : nullptr;
+    if (cell && g_isInterior && g_isInterior(PapyrusVm(), 0, cell)) return cell;
+    return WorldSpaceOf(ref);
+}
+
 float DynamicStat(const std::string& actor, int which) {
     void* ref = OwnerRef(actor);
     void* name = nullptr;
@@ -542,32 +619,53 @@ float DynamicStat(const std::string& actor, int which) {
     return g_getValue(PapyrusVm(), 0, ref, &name);
 }
 
+// OpenMW's Actors::update: an actor whose current health is at or below 0
+// dies. Skyrim kills only through damage, so a script's write that drains it
+// (`SetHealth 0`, girasScript's end of Dagoth Ur) does the killing itself.
+// See: docs/commentary/morrowind_runtime.md#stat-commands
+void KillIfDrained(void* ref, void* name) {
+    if (!g_kill || !g_isDead || !g_getValue || g_isDead(PapyrusVm(), 0, ref)) return;
+    if (g_getValue(PapyrusVm(), 0, ref, name) <= 0.0f) g_kill(PapyrusVm(), 0, ref, nullptr);
+}
+
+// OpenMW's OpSetDynamic: the base becomes `value` and the current value is
+// filled to the new maximum. Skyrim's SetActorValue moves only the base and
+// keeps the damage taken, so the damage is restored away after it -- a script
+// that writes `SetHealth 500` every frame keeps its actor alive, as authored.
+// See: docs/commentary/morrowind_runtime.md#stat-commands
 void SetDynamicStat(const std::string& actor, int which, float value) {
     void* ref = OwnerRef(actor);
-    if (!ref || !g_setValue || which < 0 || which >= kDynamicCount) return;
+    if (!ref || !g_setValue || !g_restoreValue || which < 0 || which >= kDynamicCount) return;
     RunOnGameThread([ref, which, value]() {
         void* name = nullptr;
-        if (FixedString(&name, kDynamicNames[which])) {
-            g_setValue(PapyrusVm(), 0, ref, &name, value);
-        }
+        if (!FixedString(&name, kDynamicNames[which])) return;
+        g_setValue(PapyrusVm(), 0, ref, &name, value);
+        g_restoreValue(PapyrusVm(), 0, ref, &name, kAllDamage);
+        if (which == kHealth) KillIfDrained(ref, &name);
     });
 }
 
-// Skyrim keeps restore and damage apart where TES3 has one signed `Mod`.
-void ModDynamicStat(const std::string& actor, int which, float delta) {
+// Skyrim keeps restore and damage apart where TES3 has one signed `Mod`. A
+// base move is OpenMW's OpModDynamic: the base shifts, and the current value
+// with it because Skyrim keeps the damage taken; only fatigue may go below 0.
+void ModDynamicStat(const std::string& actor, int which, float delta, bool base) {
     void* ref = OwnerRef(actor);
-    if (!ref || !g_restoreValue || !g_damageValue || which < 0 ||
-        which >= kDynamicCount) {
+    if (!ref || !g_restoreValue || !g_damageValue || !g_getBaseValue || !g_setValue ||
+        which < 0 || which >= kDynamicCount) {
         return;
     }
-    RunOnGameThread([ref, which, delta]() {
+    RunOnGameThread([ref, which, delta, base]() {
         void* name = nullptr;
         if (!FixedString(&name, kDynamicNames[which])) return;
-        if (delta >= 0.0f) {
+        if (base) {
+            const float moved = g_getBaseValue(PapyrusVm(), 0, ref, &name) + delta;
+            g_setValue(PapyrusVm(), 0, ref, &name, which == 2 ? moved : std::max(moved, 0.0f));
+        } else if (delta >= 0.0f) {
             g_restoreValue(PapyrusVm(), 0, ref, &name, delta);
         } else {
             g_damageValue(PapyrusVm(), 0, ref, &name, -delta);
         }
+        if (which == kHealth) KillIfDrained(ref, &name);
     });
 }
 
@@ -580,7 +678,9 @@ void EquipItem(const std::string& actor, const std::string& item) {
     });
 }
 
-bool MenuMode() { return ConversationOpen(); }
+// OpenMW's `MenuMode` is any GUI mode pushed, and a menu command pushes its
+// mode at once; ours open a frame or more after the asking call.
+bool MenuMode() { return ConversationOpen() || MenuOpening(); }
 
 // 🛑 Our OWN dialogue menu carries the pause flag and so counts itself here,
 // but TES3 runs scripts through a conversation -- `MenuMode` exists for them
@@ -588,6 +688,8 @@ bool MenuMode() { return ConversationOpen(); }
 // conversation still stops the tick.
 // See: docs/commentary/morrowind_runtime.md#the-tick-stops-while-the-game-is-paused
 bool GamePaused() {
+    ForgetOpenedMenus();
+    ReleaseHeldMenus();
     return PausingMenuCount() > (ConversationOpen() ? 1u : 0u);
 }
 
@@ -598,10 +700,16 @@ bool GamePaused() {
 void ForceGreeting(const std::string& actor) {
     void* ref = OwnerRef(actor);
     const ActorDef* def = FindActor(actor);
-    if (!ref || !def || IsDisabled(actor)) return;
-    if (g_isDead && g_isDead(PapyrusVm(), 0, ref)) return;
+    const char* refused = !ref ? "no reference" : !def ? "no actor row"
+                        : IsDisabled(actor) ? "disabled"
+                        : g_isDead && g_isDead(PapyrusVm(), 0, ref) ? "dead" : nullptr;
+    if (refused) {
+        Log("conversation: %s cannot greet: %s", actor.c_str(), refused);
+        return;
+    }
     const std::string shown = def->name.empty() ? actor : def->name;
     auto begin = [actor, ref, shown]() {
+        Log("conversation: %s greeting begins", actor.c_str());
         SetSpeakerRef(actor.c_str(), ref);
         BeginConversation(actor.c_str(), shown.c_str(), PlayerName());
     };
@@ -660,7 +768,7 @@ bool FemaleOf(const std::string& actor) {
            (At<std::uint8_t>(base, ids::kOffNpcSexFlags) & 1) != 0;
 }
 
-// Writes a Skyrim actor value by name, for the stat commands.
+// Writes a Skyrim actor value's base by name, for the stat commands.
 void SetActorValueOf(const std::string& actor, const char* valueName,
                      float value) {
     void* ref = OwnerRef(actor);
@@ -669,6 +777,18 @@ void SetActorValueOf(const std::string& actor, const char* valueName,
         void* name = nullptr;
         if (FixedString(&name, valueName)) {
             g_setValue(PapyrusVm(), 0, ref, &name, value);
+        }
+    });
+}
+
+// Moves a Skyrim actor value's permanent modifier by `delta`.
+void ModActorValueOf(const std::string& actor, const char* valueName, float delta) {
+    void* ref = OwnerRef(actor);
+    if (!ref || !g_modValue) return;
+    RunOnGameThread([ref, valueName, delta]() {
+        void* name = nullptr;
+        if (FixedString(&name, valueName)) {
+            g_modValue(PapyrusVm(), 0, ref, &name, delta);
         }
     });
 }
@@ -828,9 +948,14 @@ void* RefByRuntimeId(std::uint32_t runtimeFormId) {
                      static_cast<std::int32_t>(runtimeFormId));
 }
 
-bool IsDeadRef(std::uint32_t runtimeFormId) {
-    void* ref = RefByRuntimeId(runtimeFormId);
+void* SpeakerRef() { return RefByRuntimeId(g_speakerFormId); }
+
+bool IsDead(void* ref) {
     return ref && g_isDead && g_isDead(PapyrusVm(), 0, ref);
+}
+
+bool IsDeadRef(std::uint32_t runtimeFormId) {
+    return IsDead(RefByRuntimeId(runtimeFormId));
 }
 
 // TES3's whole rule for when a local script runs: while its object is loaded.
@@ -853,21 +978,22 @@ bool IsDeadRef(std::uint32_t runtimeFormId) {
 // after `Enable` the reference is neither disabled nor loaded, and a test on
 // the flag would drop the script on exactly the tick it woke up.
 //
-// 🛑 An INTERIOR must also be the cell the player is in. The engine keeps the
-// interior just left attached for a while, so on `IsAttached` alone the
-// scripts of the previous cell ran on behind the player's back: measured, a
-// chargen script went on enabling its light for 48 seconds after the player
-// had been moved to another cell.
+// 🛑 An INTERIOR must also be the cell the player is in, 3D or not. The engine
+// keeps the interior just left attached, 3D and all, for a while, so on
+// `IsAttached` or `Is3DLoaded` alone the scripts of the previous cell ran on
+// behind the player's back: measured, a chargen script went on enabling its
+// light for 48 seconds, and Arktwend's Void marker moved the player back into
+// the Hall of Fate 652 times over 40 seconds.
 bool Has3D(void* ref) {
     return ref && g_is3DLoaded && g_is3DLoaded(PapyrusVm(), 0, ref);
 }
 
 bool InWorld(void* ref) {
+    void* cell = ref && g_parentCell ? g_parentCell(PapyrusVm(), 0, ref) : nullptr;
+    const bool interior = cell && g_isInterior && g_isInterior(PapyrusVm(), 0, cell);
+    if (interior && cell != PlayerCell()) return false;
     if (Has3D(ref)) return true;
-    if (!g_parentCell || !g_cellAttached || !g_isInterior) return false;
-    void* cell = g_parentCell(PapyrusVm(), 0, ref);
-    if (!cell || !g_cellAttached(PapyrusVm(), 0, cell)) return false;
-    return !g_isInterior(PapyrusVm(), 0, cell) || cell == PlayerCell();
+    return cell && g_cellAttached && g_cellAttached(PapyrusVm(), 0, cell);
 }
 
 LoadState Load3DStateRef(std::uint32_t runtimeFormId) {
@@ -998,10 +1124,6 @@ void InstallGameCalls() {
     g_itemCount = Native<ItemCountFn>("ObjectReference.GetItemCount",
                                       ids::kRefGetItemCount);
     g_getPlayer = Native<GetPlayerFn>("Game.GetPlayer", ids::kGameGetPlayer);
-    g_startCombat = Native<StartCombatFn>("Actor.StartCombat",
-                                          ids::kActorStartCombat);
-    g_stopCombat = Native<StopCombatFn>("Actor.StopCombat",
-                                        ids::kActorStopCombat);
     g_enable = Native<SetEnabledFn>("ObjectReference.Enable", ids::kRefEnable);
     g_disable = Native<SetEnabledFn>("ObjectReference.Disable",
                                      ids::kRefDisable);
@@ -1028,6 +1150,7 @@ void InstallGameCalls() {
                                         ids::kCellIsAttached);
     g_getValue = Native<GetValueFn>("Actor.GetActorValue", ids::kActorGetValue);
     g_setValue = Native<SetValueFn>("Actor.SetActorValue", ids::kActorSetValue);
+    g_modValue = Native<SetValueFn>("Actor.ModActorValue", ids::kActorModValue);
     g_restoreValue = Native<SetValueFn>("Actor.RestoreActorValue",
                                         ids::kActorRestoreValue);
     g_damageValue = Native<SetValueFn>("Actor.DamageActorValue",
@@ -1050,6 +1173,7 @@ void InstallGameCalls() {
     g_instanceVolume = Native<InstanceVolumeFn>("Sound.SetInstanceVolume",
                                                 ids::kSoundSetInstanceVolume);
     g_isDead = Native<RefQueryFn>("Actor.IsDead", ids::kActorIsDead);
+    g_kill = Native<KillFn>("Actor.Kill", ids::kActorKill);
     g_getForm = Native<GetFormFn>("Game.GetForm", ids::kGameGetForm);
     g_is3DLoaded = Native<RefQueryFn>("ObjectReference.Is3DLoaded",
                                       ids::kRefIs3DLoaded);
@@ -1059,6 +1183,7 @@ void InstallGameCalls() {
     hooks.playerLevel = PlayerLevel;
     hooks.actorValue = ActorValue;
     hooks.setActorValue = SetActorValueOf;
+    hooks.modActorValue = ModActorValueOf;
     hooks.level = LevelOf;
     hooks.statPercent = StatPercent;
     hooks.baseActorValue = BaseActorValue;
@@ -1081,7 +1206,10 @@ void InstallGameCalls() {
     hooks.goldCount = GoldCount;
     hooks.moveGold = MoveGold;
     hooks.activate = Activate;
+    hooks.playerActivate = PlayerActivate;
+    hooks.playerTake = PlayerTake;
     hooks.showRestMenu = ShowRestMenu;
+    hooks.sleepFor = SleepFor;
     hooks.setLocked = SetLocked;
     hooks.isLocked = IsLocked;
     hooks.deleteRef = DeleteRef;
@@ -1100,7 +1228,6 @@ void InstallGameCalls() {
     hooks.addItem = AddItem;
     hooks.removeItem = RemoveItem;
     hooks.itemCount = ItemCount;
-    hooks.setCombat = SetCombat;
     hooks.setEnabled = SetEnabled;
     hooks.isDisabled = IsDisabled;
     InstallMoveCalls(hooks);
@@ -1110,6 +1237,7 @@ void InstallGameCalls() {
     InstallControlCalls(hooks);
     InstallStateCalls(hooks);
     InstallCrimeCalls(hooks);
+    InstallCombatCalls(hooks);
     InstallMessageCalls(hooks);
     InstallTeleportCalls();
     InstallFlightCalls(hooks);
@@ -1125,8 +1253,8 @@ void InstallGameCalls() {
 
 void SetSpeakerRef(const char* actorId, void* ref) {
     g_speakerId = actorId ? actorId : "";
-    g_speakerRef = ref;
-    SetSpeakerInstance(g_speakerId, ref ? FormIdOf(ref) : 0);
+    g_speakerFormId = ref ? FormIdOf(ref) : 0;
+    SetSpeakerInstance(g_speakerId, g_speakerFormId);
 }
 
 }  // namespace tesruntime::mw

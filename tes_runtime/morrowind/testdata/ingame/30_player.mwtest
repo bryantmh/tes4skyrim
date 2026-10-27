@@ -1,0 +1,302 @@
+# Player-side commands: health pools, reputation, factions, crime, controls,
+# spells, items, transforms, queries. See docs/commentary/headless_testing.md#mwscript-cases
+
+case armorbonus_zero
+run
+player->SetArmorBonus 0
+wait 5
+expect player->GetArmorBonus == 0
+end
+
+case magicka
+run
+player->SetMagicka 150
+player->ModMagicka 10
+expect player->GetMagicka == 160
+end
+
+case fatigue
+run
+player->SetFatigue 300
+player->ModFatigue -20
+expect player->GetFatigue == 280
+end
+
+case modhealth
+run
+player->SetHealth 200
+player->ModHealth 10
+expect player->GetHealth == 210
+end
+
+case currenthealth
+run
+player->SetHealth 200
+player->ModCurrentHealth -50
+expect player->GetHealth >= 150
+expect player->GetHealth < 155
+end
+
+case currentmagicka
+run
+player->SetMagicka 150
+player->ModCurrentMagicka -40
+expect player->GetMagicka == 110
+end
+
+case currentfatigue
+run
+player->SetFatigue 300
+player->ModCurrentFatigue -100
+expect player->GetFatigue == 200
+end
+
+case reputation
+run
+player->SetReputation 10
+player->ModReputation 2
+expect player->GetReputation == 12
+end
+
+case pcfacrep
+run
+PCJoinFaction "Mages Guild"
+SetPCFacRep 20 "Mages Guild"
+ModPCFacRep 5 "Mages Guild"
+expect GetPCFacRep "Mages Guild" == 25
+end
+
+case pclowerrank
+run
+PCJoinFaction "Mages Guild"
+PCRaiseRank "Mages Guild"
+PCRaiseRank "Mages Guild"
+PCLowerRank "Mages Guild"
+expect GetPCRank "Mages Guild" == 1
+end
+
+case expell
+run
+PCJoinFaction "Mages Guild"
+PCExpell "Mages Guild"
+expect PCExpelled "Mages Guild" == 1
+end
+
+case clearexpelled
+run
+PCJoinFaction "Mages Guild"
+PCExpell "Mages Guild"
+PCClearExpelled "Mages Guild"
+expect PCExpelled "Mages Guild" == 0
+end
+
+case factionreaction
+run
+SetFactionReaction "Fighters Guild" "Thieves Guild" 5
+ModFactionReaction "Fighters Guild" "Thieves Guild" 2
+expect GetFactionReaction "Fighters Guild" "Thieves Guild" == 7
+end
+
+case crimelevel
+run
+SetPCCrimeLevel 100
+ModPCCrimeLevel 50
+expect GetPCCrimeLevel == 150
+end
+
+case payfine
+run
+SetPCCrimeLevel 100
+PayFine
+expect GetPCCrimeLevel == 0
+end
+
+case payfinethief
+run
+SetPCCrimeLevel 100
+PayFineThief
+expect GetPCCrimeLevel == 0
+end
+
+case setjournalindex
+run
+Journal A1_1_FindSpymaster 20
+SetJournalIndex A1_1_FindSpymaster 5
+expect GetJournalIndex A1_1_FindSpymaster == 5
+end
+
+case squareroot
+expect GetSquareRoot 16 == 4
+end
+
+case random
+expect Random 10 < 10
+expect Random 10 >= 0
+end
+
+case currenttime
+run
+set GameHour to 10
+expect GetCurrentTime >= 10
+expect GetCurrentTime < 10.5
+end
+
+case secondspassed
+expect GetSecondsPassed >= 0
+end
+
+case menumode
+expect MenuMode == 0
+end
+
+case pcsleep
+expect GetPCSleep == 0
+end
+
+case controls
+run
+DisablePlayerControls
+expect GetPlayerControlsDisabled == 1
+end
+
+case controls_back
+run
+EnablePlayerControls
+expect GetPlayerControlsDisabled == 0
+end
+
+case fighting
+run
+DisablePlayerFighting
+expect GetPlayerFightingDisabled == 1
+end
+
+case fighting_back
+run
+EnablePlayerFighting
+expect GetPlayerFightingDisabled == 0
+end
+
+case looking
+run
+DisablePlayerLooking
+expect GetPlayerLookingDisabled == 1
+end
+
+case looking_back
+run
+EnablePlayerLooking
+expect GetPlayerLookingDisabled == 0
+end
+
+case viewswitch
+run
+DisablePlayerViewSwitch
+expect GetPlayerViewSwitchDisabled == 1
+end
+
+case viewswitch_back
+run
+EnablePlayerViewSwitch
+expect GetPlayerViewSwitchDisabled == 0
+end
+
+case teleporting
+run
+DisableTeleporting
+EnableTeleporting
+end
+
+case levitation
+run
+DisableLevitation
+EnableLevitation
+end
+
+case addspell
+run
+player->AddSpell "fire bite"
+expect player->GetSpell "fire bite" == 1
+end
+
+case removespell
+run
+player->AddSpell "fire bite"
+player->RemoveSpell "fire bite"
+expect player->GetSpell "fire bite" == 0
+end
+
+case drop
+run
+player->RemoveItem "iron dagger" 100
+player->AddItem "iron dagger" 2
+player->Drop "iron dagger" 1
+wait 5
+expect player->GetItemCount "iron dagger" == 1
+end
+
+case equip
+run
+player->AddItem "common_shirt_01_a" 1
+player->Equip "common_shirt_01_a"
+wait 5
+expect player->HasItemEquipped "common_shirt_01_a" == 1
+end
+
+case scale_one
+run
+player->SetScale 1
+wait 3
+expect player->GetScale == 1
+end
+
+case scale
+run
+player->SetScale 1.2
+wait 3
+expect player->GetScale > 1.15
+expect player->GetScale < 1.25
+end
+
+case scale_mod
+run
+player->SetScale 1
+player->ModScale 0.1
+wait 3
+expect player->GetScale > 1.05
+expect player->GetScale < 1.15
+end
+
+case scale_back
+run
+player->SetScale 1
+end
+
+case angle
+run
+player->SetAngle z 90
+wait 3
+expect player->GetAngle z > 89
+expect player->GetAngle z < 91
+end
+
+case weather
+expect GetCurrentWeather >= 0
+end
+
+case pcrunning
+expect GetPCRunning == 0
+expect GetPCSneaking == 0
+end
+
+case weapondrawn
+expect player->GetWeaponDrawn == 0
+end
+
+case spellreadied
+expect player->GetSpellReadied == 0
+end
+
+case level
+expect player->GetLevel >= 1
+end

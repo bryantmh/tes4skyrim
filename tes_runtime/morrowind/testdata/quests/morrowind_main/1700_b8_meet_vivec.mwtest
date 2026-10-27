@@ -1,0 +1,52 @@
+# B8 "Meet Vivec": named Hortator by the three Houses and Nerevarine by the
+# four tribes, the player answers Archcanon Saryoni's sealed note. Danso
+# Indules at the High Fane confirms both trials and sends the player in;
+# Saryoni hands over the keys to Vivec's palace; Vivec gives Wraithguard and
+# takes the player's oath. PositionCell stands in for the walks; ref FormIDs
+# carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b8_danso
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Danso confirms the Hortator and Nerevarine trials, then sends the player
+# to the archcanon.
+case b8_danso
+run
+player->Position 32874 -99585 1091 0
+until 300 "danso indules"->GetDistance player < 400
+talk danso indules
+ask meet the archcanon
+expect GetJournalIndex B8_All_Hortator == 50
+expect GetJournalIndex B8_All_Nerevarine == 50
+expect GetJournalIndex B8_MeetVivec == 5
+bye
+end
+
+# Saryoni proposes a private meeting with Vivec and gives the keys.
+case b8_saryoni
+run
+player->PositionCell -1097 503 -621 0 "Vivec, High Fane"
+until 600 GetPCCell "Vivec, High Fane" == 1
+talk tholer saryoni
+ask Temple's doctrine
+choose 3
+choose 4
+expect GetJournalIndex B8_MeetVivec == 30
+expect player->GetItemCount key_Archcanon_private == 1
+bye
+end
+
+# Vivec gives Wraithguard and takes the oath.
+case b8_vivec
+run
+player->PositionCell 0 -286 -391 0 "Vivec, Palace of Vivec"
+until 600 GetPCCell "Vivec, Palace of Vivec" == 1
+talk vivec_god
+ask business
+choose 1
+choose 2
+choose 5
+choose 8
+expect GetJournalIndex B8_MeetVivec == 50
+expect player->GetItemCount Wraithguard == 1
+bye
+end

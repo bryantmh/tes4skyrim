@@ -1,0 +1,88 @@
+# B2 "Ahemmusa Nerevarine": the wise woman Sinnammu Mirpal wants the ruins of
+# Ald Daedroth made a safe refuge for her tribe, and to be brought there before
+# the great statue of the inner shrine.
+# PositionCell and Position stand in for the walks, Sinnammu's Position for her
+# keeping up on the long one, and the console's advskill for training
+# Speechcraft; ref FormIDs carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b2_meet
+# See docs/commentary/headless_testing.md#quest-runs
+
+# She speaks only to one who has first given courtesy to a gulakhan, Kausi.
+# Then she tells of the shrine, what must be done, and that she will cross the
+# water with the player once it is safe.
+case b2_meet
+run
+player->PositionCell 22 477 -253 0 "Ahemmusa Camp, Kausi's Yurt"
+until 600 GetPCCell "Ahemmusa Camp, Kausi's Yurt" == 1
+talk kausi
+ask Nerevarine
+expect GetJournalIndex B2a_Kausi == 1
+bye
+run
+player->PositionCell -130 630 -349 0 "Ahemmusa Camp, Wise Woman's Yurt"
+until 600 GetPCCell "Ahemmusa Camp, Wise Woman's Yurt" == 1
+talk sinnammu mirpal
+ask Nerevarine
+choose 2
+ask safe place
+expect GetJournalIndex B2_AhemmusaSafe == 1
+ask make it safe
+expect GetJournalIndex B2_AhemmusaSafe == 5
+ask accompany you
+expect GetJournalIndex B2_AhemmusaSafe == 10
+ask cross the water
+expect GetJournalIndex B2_AhemmusaSafe == 15
+bye
+end
+
+# Bribed until she is well disposed (90), the priestess Hlireni Indavel lets
+# the Ahemmusa share her shrine and calls off her cultists. A level-3 player's
+# Speechcraft is held under the skill cap, so the bribe is the honest route.
+case b2_witches
+run
+player->AddItem gold_001 2000
+player->PositionCell -204 -1990 994 180 "Ald Daedroth, Antechamber"
+until 600 GetPCCell "Ald Daedroth, Antechamber" == 1
+talk hlireni indavel
+persuade bribe1000
+persuade bribe100
+persuade bribe100
+persuade bribe100
+expect "hlireni indavel"->GetDisposition >= 90
+ask Player of the Game
+choose 1
+expect GetJournalIndex B2_AhemmusaSafe == 20
+bye
+end
+
+# Asked to come, she follows the player out of her yurt, over the water and
+# through the shrine's doors to the statue, and names the player Nerevarine.
+case b2_escort
+run
+player->PositionCell -130 630 -349 0 "Ahemmusa Camp, Wise Woman's Yurt"
+until 600 GetPCCell "Ahemmusa Camp, Wise Woman's Yurt" == 1
+talk sinnammu mirpal
+ask accompany you
+choose 1
+expect GetJournalIndex B2_AhemmusaWalk == 10
+bye
+expect "sinnammu mirpal"->GetCurrentAiPackage == 3
+console 05CD72DF.activate player
+until 600 GetPCCell "Ahemmusa Camp, Wise Woman's Yurt" == 0
+until 900 "sinnammu mirpal"->GetDistance player < 500
+run
+player->Position 94552 167550 1164 0
+"sinnammu mirpal"->Position 94552 167450 1164 0
+until 300 "sinnammu mirpal"->GetDistance player < 500
+console 059CC9D1.activate player
+until 600 GetPCCell "Ald Daedroth, Outer Shrine" == 1
+until 900 "sinnammu mirpal"->GetDistance player < 1000
+console 05428857.activate player
+until 600 GetPCCell "Ald Daedroth, Inner Shrine" == 1
+until 1800 GetJournalIndex B2_AhemmusaSafe == 40
+until 600 MenuMode == 1
+ask name you Nerevarine
+expect GetJournalIndex B2_AhemmusaSafe == 50
+expect player->GetItemCount Madstone == 1
+bye
+end

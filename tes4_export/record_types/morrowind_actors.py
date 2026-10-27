@@ -199,20 +199,21 @@ def _emit_npc_full_stats(lines: list, data: bytes) -> int:
     """The 52-byte NPDT: authored stats. Returns the faction rank."""
     fields = unpack_bytes(data, '<h8B27BxHHHBBBxi')
     level, attributes, skills = fields[0], fields[1:9], fields[9:36]
-    health, mana, fatigue, _disposition, _reputation, rank, gold = fields[36:]
+    health, mana, fatigue, disposition, _reputation, rank, gold = fields[36:]
     lines.extend([f'ACBS.Level={level}', f'ACBS.SpellPoints={mana}',
                   f'ACBS.Fatigue={fatigue}', f'ACBS.BarterGold={gold}',
-                  f'DATA.Health={health}'])
+                  f'ACBS.Disposition={disposition}', f'DATA.Health={health}'])
     _emit_skills(lines, skills)
     _emit_attributes(lines, attributes)
     return rank
 
 
 def _emit_npc_autocalc_stats(lines: list, data: bytes) -> int:
-    """The 12-byte NPDT: level and gold only. Returns the faction rank."""
-    level, _disposition, _reputation, rank, gold = unpack_bytes(
+    """The 12-byte NPDT: level, disposition and gold. Returns the faction rank."""
+    level, disposition, _reputation, rank, gold = unpack_bytes(
         data, '<hBBB3xi')
-    lines.extend([f'ACBS.Level={level}', f'ACBS.BarterGold={gold}'])
+    lines.extend([f'ACBS.Level={level}', f'ACBS.BarterGold={gold}',
+                  f'ACBS.Disposition={disposition}'])
     return rank
 
 

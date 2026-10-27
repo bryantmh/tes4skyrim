@@ -59,14 +59,30 @@ _OWNED_GLOBALS = (
 FACTION_HIDDEN = 0x1
 
 
+def clamp_rank(value: float) -> int:
+    """`value` rounded into a faction rank's signed byte."""
+    return max(-128, min(127, round(value)))
+
+
+def hidden_faction(fid: int, edid: str, relations: bytes = b'') -> bytes:
+    """A hidden, rankless FACT with these XNAM `relations`."""
+    subs = pack_string_subrecord('EDID', edid) + relations
+    subs += pack_subrecord('DATA', struct.pack('<I', FACTION_HIDDEN))
+    return pack_record('FACT', fid, 0, subs)
+
+
+def adopted_or_derived(writer, master_index, sig: str, edid: str) -> tuple:
+    """(FormID, own): a master's record of `edid`, else this plugin's derived id."""
+    fid = master_index.find_by_edid(sig.encode(), edid) if master_index else 0
+    return (fid, False) if fid else (writer.derive_formid(sig, edid), True)
+
+
 def adopt_or_write(writer, master_index, sig: str, edid: str, build) -> tuple:
     """(FormID, written): a master's record of `edid`, else ``build(fid)`` written as this plugin's."""
-    fid = master_index.find_by_edid(sig.encode(), edid) if master_index else 0
-    if fid:
-        return fid, False
-    fid = writer.derive_formid(sig, edid)
-    writer.add_record(sig, build(fid))
-    return fid, True
+    fid, own = adopted_or_derived(writer, master_index, sig, edid)
+    if own:
+        writer.add_record(sig, build(fid))
+    return fid, own
 
 
 def owner_row(name: str, fid: int, plugin: str, masters: list) -> str:

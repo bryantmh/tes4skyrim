@@ -1,0 +1,56 @@
+# Chapter V, Tyrat: the airship from Sky Harbor carries the player to Tyrat,
+# whose council sees the Goth sword and sends the player east to Enderal,
+# past the Witch King's realm and the nomads' camp.
+# Position stands in for the flight and the walks; ref FormIDs carry
+# Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from tyrat_council
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Arinar of the Supreme Council tells of Arkt's defeat and Enderal's silence.
+case tyrat_council
+run
+player->PositionCell 382 -1200 564 180 "Tyrat, Temple Council Chamber"
+until 600 MenuMode == 1
+wait 60
+ask preserve Arktwend
+choose 1
+choose 2
+choose 3
+choose 4
+choose 5
+bye
+expect GetJournalIndex A_V_TyratRat == 2
+end
+
+# The gate guards of the Witch King's realm bar the way.
+case witchking_gate
+run
+player->Position 86848 -37400 2217 0
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_HexenkonigAsartan == 1
+end
+
+# Asartan himself, in his tower. After the council his greeting writes no
+# journal; entry 2 belongs to a visit before Tyrat, and nothing reads it.
+case witchking_asartan
+run
+player->Position 94211 -61680 6483 0
+talk HexenkonigAsartan
+bye
+expect GetJournalIndex A_V_HexenkonigAsartan == 1
+end
+
+# The nomads' camp at the forest's edge knows the way to Enderal.
+case nomads_way
+run
+player->Position 80652 -169500 3552 180
+until 600 MenuMode == 1
+wait 60
+ask way to Enderal
+choose 1
+choose 2
+bye
+expect GetJournalIndex A_VI_Normaden == 1
+end

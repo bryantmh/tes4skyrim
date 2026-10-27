@@ -15,7 +15,9 @@
 
 namespace bridge {
 
-constexpr const char* kPipeName = R"(\\.\pipe\tes_game_bridge)";
+// `\\.\pipe\tes_game_bridge`, or the TES_BRIDGE_PIPE environment variable when
+// set, so a headless test instance never answers on the player's own pipe.
+const char* PipeName();
 
 // Handles one request line, returns one response line (without the newline).
 using RequestHandler = std::function<std::string(const std::string&)>;

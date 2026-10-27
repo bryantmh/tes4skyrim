@@ -1,0 +1,68 @@
+# MWScript opcode cases, run in game by test_runner.cpp:
+#   python -m tools.live.test_instance mwtest
+# Each case runs its `run` body as the actor, waits `wait` object ticks, then
+# checks every `expect` condition. See docs/commentary/headless_testing.md
+
+case additem
+run
+player->RemoveItem Gold_001 1000000
+player->AddItem Gold_001 25
+expect player->GetItemCount Gold_001 == 25
+end
+
+case removeitem
+run
+player->AddItem Gold_001 10
+player->RemoveItem Gold_001 15
+expect player->GetItemCount Gold_001 == 20
+end
+
+case journal
+run
+Journal A1_1_FindSpymaster 10
+expect GetJournalIndex A1_1_FindSpymaster == 10
+end
+
+case global
+run
+set GameHour to 13
+expect GameHour >= 13
+expect GameHour < 14
+end
+
+case setstrength
+run
+player->SetStrength 77
+expect player->GetStrength == 77
+end
+
+case modstrength
+run
+player->SetStrength 50
+player->ModStrength 5
+expect player->GetStrength == 55
+end
+
+case sethealth
+run
+player->SetHealth 200
+expect player->GetHealth == 200
+end
+
+case skill
+run
+player->SetBluntWeapon 42
+expect player->GetBluntWeapon == 42
+end
+
+case pcraiserank
+run
+PCJoinFaction "Fighters Guild"
+PCRaiseRank "Fighters Guild"
+expect GetPCRank "Fighters Guild" >= 1
+end
+
+# The PC is never the console: 0, as OpenMW answers.
+case xbox
+expect Xbox == 0
+end

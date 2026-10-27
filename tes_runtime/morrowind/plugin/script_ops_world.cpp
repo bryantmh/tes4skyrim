@@ -166,14 +166,14 @@ class OpSetDynamic : public Interpreter::Opcode0 {
     }
 };
 
-// ModHealth and ModCurrentHealth both move the current value here: Skyrim
-// restores or damages a value, it has no separate base to mod.
-template <class R, int Which>
+// ModHealth moves the maximum and the current value together; ModCurrentHealth
+// only the current one, as OpenMW's OpModDynamic and OpModCurrentDynamic do.
+template <class R, int Which, bool Base>
 class OpModDynamic : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
         const std::string actor = R::Target(runtime);
         const float delta = PopFloat(runtime);
-        if (Hooks().modDynamicStat) Hooks().modDynamicStat(actor, Which, delta);
+        if (Hooks().modDynamicStat) Hooks().modDynamicStat(actor, Which, delta, Base);
     }
 };
 
@@ -205,8 +205,8 @@ class OpSetPos : public Interpreter::Opcode0 {
         const std::string ref = R::Target(runtime);
         const int axis = AxisOf(PopString(runtime));
         const float value = PopFloat(runtime);
-        ReleaseNpcHold(ref);
         if (Hooks().setPosition) Hooks().setPosition(ref, axis, value);
+        ReleaseNpcHold(ref);
     }
 };
 
@@ -379,10 +379,10 @@ void InstallDynamic(OpcodeInstaller& into) {
     into.Real<OpGetDynamic<Explicit, Which>>(S::opcodeGetDynamicExplicit + Which);
     into.Real<OpSetDynamic<Implicit, Which>>(S::opcodeSetDynamic + Which);
     into.Real<OpSetDynamic<Explicit, Which>>(S::opcodeSetDynamicExplicit + Which);
-    into.Real<OpModDynamic<Implicit, Which>>(S::opcodeModDynamic + Which);
-    into.Real<OpModDynamic<Explicit, Which>>(S::opcodeModDynamicExplicit + Which);
-    into.Real<OpModDynamic<Implicit, Which>>(S::opcodeModCurrentDynamic + Which);
-    into.Real<OpModDynamic<Explicit, Which>>(
+    into.Real<OpModDynamic<Implicit, Which, true>>(S::opcodeModDynamic + Which);
+    into.Real<OpModDynamic<Explicit, Which, true>>(S::opcodeModDynamicExplicit + Which);
+    into.Real<OpModDynamic<Implicit, Which, false>>(S::opcodeModCurrentDynamic + Which);
+    into.Real<OpModDynamic<Explicit, Which, false>>(
         S::opcodeModCurrentDynamicExplicit + Which);
 }
 

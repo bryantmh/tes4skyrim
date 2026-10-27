@@ -29,8 +29,10 @@ using ProcessEventFn = int (*)(void* sink, const void* event, void* source);
 
 extern SetValueFn  g_setValue;
 extern PlaceAtMeFn g_placeAtMe;
-// The live reference the player is talking to (SetSpeakerRef), or null.
-extern void*       g_speakerRef;
+// The reference the player last talked to (SetSpeakerRef), or null once it
+// is gone. 🛑 Kept by FormID, never by pointer: the speaker's cell unloads
+// after the talk, and a soldier reused the freed Judas, so `talk` reached him.
+void* SpeakerRef();
 
 std::string Lower(std::string text);
 // Logs an id that does not resolve, once per id.
@@ -42,6 +44,8 @@ void* ItemForm(const std::string& item);
 void* OwnerRef(const std::string& owner);
 void* PlayerRef();
 void* RefByRuntimeId(std::uint32_t runtimeFormId);
+// `Actor.IsDead`; false for a null or non-actor reference.
+bool IsDead(void* ref);
 // Whether `ref` has its 3D now: false for a disabled reference in a loaded cell.
 bool Has3D(void* ref);
 // World units between two references, or -1 when either cannot be measured.
@@ -57,6 +61,10 @@ bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot);
 // The cell the player stands in, or null before a game is loaded.
 void* PlayerCell();
 bool PlayerInInterior();
+// `ref`'s worldspace, null in an interior. game_calls_teleport.cpp.
+void* WorldSpaceOf(void* ref);
+// Where `ref` is as MoveInto takes it: its cell indoors, its worldspace outdoors.
+void* PlaceOf(void* ref);
 
 template <typename Fn>
 Fn Native(const char* name, std::uint64_t id) {
@@ -72,6 +80,10 @@ void SendToCell(const std::vector<void*>& refs, const std::string& cell,
 void SendToMarker(const std::vector<void*>& refs, const FormRef& marker);
 // The actors in a follow slot aimed at the player. game_calls_ai.cpp.
 std::vector<void*> PlayerFollowers();
+// After a script moved `actor` there: an `AiWander 0` package's marker follows
+// it, and a Travel or Escort goal left in another cell or out of OpenMW's range
+// stops walking it, as TES3 AI never leaves the actor's cell. Game thread only.
+void AiAfterScriptMove(void* actor, void* place, float x, float y, float z);
 
 // Each file resolves its own natives and supplies its own hooks.
 void InstallMoveCalls(GameHooks& hooks);
@@ -90,9 +102,22 @@ float* GlobalSlot(const std::string& plugin, std::uint32_t formId);
 // missing; and setting one, which joins the faction. False when it could not.
 int FactionRank(void* actor, void* faction);
 bool SetFactionRank(void* actor, void* faction, int rank);
+void RemoveFromFaction(void* actor, void* faction);
+// The import's disposition factions by effects_formid.txt row, or null:
+// `disposition` and `aggression` hold ranks; `hostile` and `hostile_creature`
+// are the player's enemies; `guard` marks TES3 guards. game_calls_ai.cpp.
+void* DispositionForm(const char* row);
+// Whether an actor is in combat. game_calls_anim.cpp.
+bool ActorInCombat(void* actor);
+// `fn` on each actor in the engine's high process list. Game thread.
+// game_calls_still.cpp.
+void ForEachHighActor(const std::function<void(void*)>& fn);
 // PC Crime Level on the engine's crime gold, and the fine and jail opcodes.
 // See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
 void InstallCrimeCalls(GameHooks& hooks);
+// StartCombat and StopCombat, with the feud that keeps allies fighting.
+// See: docs/commentary/morrowind_runtime.md#startcombat-between-allies
+void InstallCombatCalls(GameHooks& hooks);
 void PublishState();
 // Mark, Recall and the two Interventions, on the VM's OnMagicEffectApply sink.
 // See: docs/commentary/morrowind_runtime.md#teleport-effects

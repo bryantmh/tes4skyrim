@@ -1,0 +1,38 @@
+# Chapter V, the King's Sword: leaving the tower crowns the player King of
+# Stormwend, Calisto tells of the Goth sword in the ruined temple below the
+# sewers, and the player takes it.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from sword_crowned
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The tower door, unlocked now the Kanzler is dead, leads out to the cheering.
+case sword_crowned
+run
+player->PositionCell 3136 3120 12275 180 "Stormwend Tower"
+activate 054D0253
+button 0
+until 600 GetJournalIndex A_V_DeskonigsSchwert == 1
+expect Stormwendvar == 26
+end
+
+# Calisto waits on the tower terrace.
+case sword_calisto
+run
+player->Position -12880 54513 4519 270
+until 600 MenuMode == 1
+wait 60
+ask Sword of Kings
+choose 1
+bye
+expect GetJournalIndex A_V_DeskonigsSchwert == 3
+end
+
+# The ruined Temple of Storm, and the sword on its altar.
+case sword_ruins
+run
+player->PositionCell 2214 5100 29 0 "The Ruins of Storm"
+until 300 GetJournalIndex A_V_DeskonigsSchwert == 4
+activate 05E4A8F0
+until 300 GetJournalIndex A_V_DeskonigsSchwert == 5
+expect player->GetItemCount a_GothsSchwert01 == 1
+end

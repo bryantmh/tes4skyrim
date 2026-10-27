@@ -1,0 +1,81 @@
+# Chapter V, the Kanzler's dinner: the Kanzler toasts the player for Calisto's
+# "death" and asks for the black stones from the dwarves' mines, and then
+# Stormwend starts to burn.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from essen_milbert
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Milbert at the city gate force-greets with the Kanzler's invitation.
+case essen_milbert
+run
+player->Position 1873 35690 217 0
+until 300 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_KanzlerEssen == 1
+end
+
+# The guard at the villa lets the player in.
+case essen_gate
+run
+player->Position -4237 50830 1062 0
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_KanzlerEssen == 2
+end
+
+# A servant sends the player up to the dining room.
+case essen_servant
+run
+player->PositionCell -966 -910 -126 0 "Stormwend, Kanzler Brutus' Villa"
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_KanzlerEssen == 3
+end
+
+# The Kanzler offers the seat at his left.
+case essen_greeting
+run
+player->PositionCell -542 -420 135 0 "Stormwend, Kanzler Brutus' Villa"
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_KanzlerEssen == 4
+end
+
+# Seated, the player hears the toast and the Kanzler's request.
+case essen_toast
+run
+player->PositionCell -421 -590 130 0 "Stormwend, Kanzler Brutus' Villa"
+until 300 GetJournalIndex A_V_KanzlerEssen == 5
+until 600 MenuMode == 1
+wait 60
+ask Will you listen
+choose 1
+choose 2
+choose 3
+choose 4
+bye
+expect GetJournalIndex A_V_KanzlerEssen == 6
+end
+
+# Cries from the streets.
+case essen_cries
+until 600 GetJournalIndex A_V_KanzlerEssen == 7
+until 600 MenuMode == 1
+wait 60
+bye
+end
+
+# Out through the dining-room door to the balcony: the city burns.
+case essen_balcony
+expect Stormwendvar == 21
+activate 053713A1
+until 300 GetPCCell "Stormwend, Kanzler Brutus' Villa" == 0
+until 600 MenuMode == 1
+wait 60
+bye
+expect GetJournalIndex A_V_KanzlerEssen == 8
+end

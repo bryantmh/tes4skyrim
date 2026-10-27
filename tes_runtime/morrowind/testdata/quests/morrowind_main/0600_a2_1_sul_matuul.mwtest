@@ -1,0 +1,78 @@
+# A2_1 "Meet Sul-Matuul": at the Urshilaku camp, the champion Zabamund must be
+# satisfied before the Ashkhan will hear the player, who then proves themself
+# by fetching Bonebiter from the Urshilaku burial caverns, and so meets the
+# wise woman, Nibani Maesa.
+# PositionCell stands in for the walks; ref FormIDs carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a2_1_zabamund
+# See docs/commentary/headless_testing.md#quest-runs
+
+# A gift of 200 gold (choice 4) earns his leave to speak with the Ashkhan.
+case a2_1_zabamund
+run
+player->PositionCell 43 540 -225 0 "Urshilaku Camp, Zabamund's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Zabamund's Yurt" == 1
+talk zabamund
+ask Nerevarine prophecies
+choose 4
+expect GetJournalIndex A2_1_MeetSulMatuul == 35
+bye
+end
+
+# The Ashkhan names the rite: Bonebiter, from the burial caverns.
+case a2_1_ashkhan
+run
+player->PositionCell 47 380 -185 0 "Urshilaku Camp, Ashkhan's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Ashkhan's Yurt" == 1
+talk sul-matuul
+ask Nerevarine prophecies
+ask initiation rite
+expect GetJournalIndex A2_1_MeetSulMatuul == 40
+ask Urshilaku burial caverns
+expect GetJournalIndex A2_1_MeetSulMatuul == 42
+bye
+end
+
+# The wraith of Sul-Senipul carries the bow (ref 052A12D1). Damage stands in
+# for the fight and moving the bow for looting the remains.
+case a2_1_bow
+run
+player->PositionCell 4250 7189 12500 90 "Urshilaku, Juno Burial"
+until 600 GetPCCell "Urshilaku, Juno Burial" == 1
+wait 30
+console 052A12D1.damageav health 10000
+until 300 "wraith_sul_senipul"->GetHealth <= 0
+run
+"wraith_sul_senipul"->RemoveItem bonebiter_bow_unique 1
+player->AddItem bonebiter_bow_unique 1
+until 60 player->GetItemCount bonebiter_bow_unique == 1
+end
+
+# With the bow, the rite is passed and the player joins the Ashlanders.
+case a2_1_rite
+run
+player->PositionCell 47 380 -185 0 "Urshilaku Camp, Ashkhan's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Ashkhan's Yurt" == 1
+talk sul-matuul
+ask initiation rite
+expect GetJournalIndex A2_1_MeetSulMatuul == 45
+expect GetPCRank Ashlanders >= 0
+bye
+end
+
+# The wise woman tests the player against the prophecies. Her "Nerevarine
+# prophecies" and its Continue name the topics she tests.
+case a2_1_nibani
+run
+player->PositionCell 92 180 -150 0 "Urshilaku Camp, Wise Woman's Yurt"
+until 600 GetPCCell "Urshilaku Camp, Wise Woman's Yurt" == 1
+talk nibani maesa
+ask Nerevarine prophecies
+choose 1
+ask the moon-and-star
+expect GetJournalIndex A2_1_MeetSulMatuul == 52
+ask lost prophecies
+expect GetJournalIndex A2_1_MeetSulMatuul == 56
+ask pass the test
+expect GetJournalIndex A2_1_MeetSulMatuul == 60
+bye
+end

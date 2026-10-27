@@ -14,6 +14,7 @@ import math
 import struct
 
 from ..base.conditions import build_ctda
+from ..base.owned_records import clamp_rank, hidden_faction
 from ..base.text_reader import get_int
 from ..base.writer import (PluginWriter, pack_formid_subrecord, pack_obnd,
                            pack_record, pack_string_subrecord, pack_subrecord)
@@ -44,7 +45,7 @@ _EXE_SETTINGS = {'fAIFleeConfBase': 40.0, 'fAIFleeConfMult': -0.5, 'fAIFleeHealt
                  'fAICombatFleeScoreThreshold': 10.0}
 
 #: A faction rank is a signed byte.
-_RANK_MIN, _RANK_MAX = -128, 127
+_RANK_MAX = 127
 
 #: CTDA functions and the Health actor value (vanilla GetActorValuePercent(00000018)).
 _FUNC_GET_FACTION_RANK, _FUNC_GET_AV_PERCENT, _AV_HEALTH = 73, 640, 24
@@ -60,9 +61,6 @@ _ARCHETYPE_SCRIPT, _CONSTANT, _SELF, _ABILITY = 1, 0, 0, 4
 
 #: ETYP EitherHand, which vanilla abilities carry.
 _EITHER_HAND = 0x00013F44
-
-#: FACT DATA flag 0x1: Hidden From PC.
-_HIDDEN_FROM_PC = 0x1
 
 #: GLOB record flag Constant, which 132 of Skyrim.esm's 664 globals carry.
 _GLOB_CONSTANT = 0x40
@@ -101,7 +99,7 @@ def flee_margin(rec: dict) -> int:
     else:
         best = max(s['fAICombatFleeScoreThreshold'], attack_score(rec))
         term = min(scale, (best - s['fAIFleeConfBase']) / _slope())
-    return max(_RANK_MIN, min(_RANK_MAX, round(_confidence(rec) + term)))
+    return clamp_rank(_confidence(rec) + term)
 
 
 def confidence_tier(rec: dict) -> int:
@@ -133,13 +131,6 @@ def flee_spells(rec: dict) -> list:
 # ---------------------------------------------------------------------------
 # Records
 # ---------------------------------------------------------------------------
-
-def _faction(fid: int, edid: str) -> bytes:
-    """A hidden, relation-free rank holder."""
-    subs = pack_string_subrecord('EDID', edid)
-    subs += pack_subrecord('DATA', struct.pack('<I', _HIDDEN_FROM_PC))
-    return pack_record('FACT', fid, 0, subs)
-
 
 def _scale_global(fid: int) -> bytes:
     """The Constant float global holding Q."""
@@ -223,7 +214,7 @@ def create_confidence_records(writer: PluginWriter, by_type: dict, master_export
         _FIDS.update(found)
         effect = writer.derive_formid('MGEF', FLEE_EFFECT_EDID)
         for edid in (FACTION_EDID, MARGIN_FACTION_EDID):
-            writer.add_record('FACT', _faction(found[edid], edid))
+            writer.add_record('FACT', hidden_faction(found[edid], edid))
         writer.add_record('GLOB', _scale_global(found[SCALE_EDID]))
         writer.add_record('MGEF', _effect(effect))
         writer.add_record('SPEL', _ability(found[FLEE_SPELL_EDID], effect))

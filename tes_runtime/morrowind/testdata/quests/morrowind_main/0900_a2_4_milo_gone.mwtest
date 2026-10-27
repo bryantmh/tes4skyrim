@@ -1,0 +1,59 @@
+# A2_4 "Mehra Milo and the Lost Prophecies": the Ordinators have jailed Mehra
+# Milo. Her note in her quarters tells the player to bring Divine Intervention
+# scrolls; with one she escapes to the Holamayan monastery, where Gilvas
+# Barelo hands over the lost prophecies.
+# PositionCell stands in for the walks, AddItem for buying the scrolls, and ref
+# FormIDs carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a2_4_orders
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Caius's orders jail Mehra and leave her note.
+case a2_4_orders
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Orders
+expect GetJournalIndex A2_4_MiloGone == 1
+bye
+end
+
+# Read in her quarters, the note's own script marks it.
+case a2_4_note
+run
+player->PositionCell -14 110 -29 0 "Vivec, Milo's Quarters"
+until 600 GetPCCell "Vivec, Milo's Quarters" == 1
+wait 30
+activate bk_notetoamaya
+close Book Menu
+until 300 GetJournalIndex A2_4_MiloGone == 10
+end
+
+# In the holding cells she takes a scroll and plans her escape.
+case a2_4_cell
+run
+player->AddItem sc_divineintervention 2
+player->PositionCell -530 -363 88 270 "Ministry of Truth, Holding Cells"
+until 600 GetPCCell "Ministry of Truth, Holding Cells" == 1
+talk mehra milo
+ask Divine Intervention scrolls
+choose 1
+expect GetJournalIndex A2_4_MiloGone == 20
+expect player->GetItemCount sc_divineintervention == 1
+bye
+end
+
+# Once the player is out, her script moves her to Holamayan, where Gilvas
+# Barelo gives the books. His result adds 50 then 49; the journal only rises.
+case a2_4_prophecies
+run
+player->PositionCell 1099 246 -610 0 "Holamayan Monastery"
+until 600 GetPCCell "Holamayan Monastery" == 1
+until 300 "mehra milo"->GetDistance player < 2000
+talk gilvas barelo
+ask lost prophecies
+choose 1
+expect GetJournalIndex A2_4_MiloGone == 50
+expect player->GetItemCount bk_TheLostProphecy == 1
+bye
+end

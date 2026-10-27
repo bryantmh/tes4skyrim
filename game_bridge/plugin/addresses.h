@@ -89,6 +89,7 @@ struct GameAddresses {
     std::uintptr_t scriptSetText     = 0;   // id 21883
     std::uintptr_t scriptDtor        = 0;
     std::uintptr_t memAlloc          = 0;   // id 68115
+    std::uintptr_t memoryManager     = 0;   // id 400188, MemAlloc's `this`
 
     // Form lookup.
     std::uintptr_t lookupFormByID    = 0;

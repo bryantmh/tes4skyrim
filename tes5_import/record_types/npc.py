@@ -25,7 +25,7 @@ from ..packages.actor_wiring import (CSTY_DEFAULT, DPLT_NPC_LIST, authored_packa
 from ..base.equivalents import map_hair_color
 from ..base.race_factions import race_faction
 from .actor_common import (GOLD001_FID, NAM5_UNKNOWN, SOUND_LEVEL_NORMAL,
-                           attacks_player_on_sight, in_evil_faction,
+                           attacks_player_on_sight, disposition_ranks, in_evil_faction,
                            build_aidt, build_outfit, origin_memberships,
                            get_trainer_class_fid, get_trainer_faction_fid,
                            get_vendor_faction_fids_for_actor, read_items,
@@ -45,7 +45,7 @@ from .common import (
 )
 from .crime import IS_GUARD_FACTION, crime_faction, is_guard_class
 from .spell_tomes import tome_items
-from .npc_morrowind import TES5_RACE_BASE_HEALTH, is_morrowind_npc
+from .npc_morrowind import TES5_RACE_BASE_HEALTH, is_morrowind_npc, tes3_pools
 
 #: TES4 NPC_ ACBS bits that mean the same thing in TES5, Female included.
 _NPC_COMPATIBLE_FLAGS = 0x4C9B
@@ -77,6 +77,17 @@ _TES4_SKILL_TO_TES5 = {
 }
 
 
+def _pools(rec: dict) -> tuple:
+    """(health, magicka, fatigue): authored, else a TES3 autocalc NPC's derived ones.
+
+    See: docs/commentary/tes5_import_actors.md#morrowind-health-is-absolute
+    """
+    derived = tes3_pools(get_str(rec, 'EditorID'))
+    return (get_int(rec, 'DATA.Health', derived.get('health', 50)),
+            get_int(rec, 'ACBS.SpellPoints', derived.get('magicka', 0)),
+            get_int(rec, 'ACBS.Fatigue', derived.get('fatigue', 100)))
+
+
 def npc_skills_dnam(rec: dict) -> bytes:
     """Build TES5 NPC_ DNAM subrecord (52 bytes, skills + stats)."""
     dnam = bytearray(52)
@@ -87,12 +98,7 @@ def npc_skills_dnam(rec: dict) -> bytes:
             skill_vals[tes5_name] = max(skill_vals.get(tes5_name, 0), val)
     for i, skill_name in enumerate(TES5_SKILL_ORDER):
         dnam[i] = min(skill_vals.get(skill_name, 15), 255)
-    health = get_int(rec, 'DATA.Health', 50)
-    struct.pack_into('<H', dnam, 36, max(0, min(health, 65535)))
-    magicka = get_int(rec, 'ACBS.SpellPoints', 0)
-    struct.pack_into('<H', dnam, 38, max(0, min(magicka, 65535)))
-    stamina = get_int(rec, 'ACBS.Fatigue', 100)
-    struct.pack_into('<H', dnam, 40, max(0, min(stamina, 65535)))
+    struct.pack_into('<3H', dnam, 36, *(max(0, min(pool, 65535)) for pool in _pools(rec)))
     return bytes(dnam)
 
 
@@ -138,13 +144,11 @@ def npc_acbs(rec: dict) -> bytes:
     calc_min = get_int(rec, 'ACBS.CalcMin', 1)
     calc_max = get_int(rec, 'ACBS.CalcMax', 100)
     tes5_acbs_flags = tes4_flags & _NPC_COMPATIBLE_FLAGS
+    health, magicka, fatigue = _pools(rec)
     health_offset, tes5_level = _health_and_level(
-        get_int(rec, 'DATA.Health', 50), get_int(rec, 'ACBS.Level', 1),
-        tes5_acbs_flags)
-    magicka_offset = max(-32768, min(
-        get_int(rec, 'ACBS.SpellPoints', 0) - TES5_RACE_BASE_HEALTH, 32767))
-    stamina_offset = max(-32768, min(
-        get_int(rec, 'ACBS.Fatigue', 100) - TES5_RACE_BASE_HEALTH, 32767))
+        health, get_int(rec, 'ACBS.Level', 1), tes5_acbs_flags)
+    magicka_offset = max(-32768, min(magicka - TES5_RACE_BASE_HEALTH, 32767))
+    stamina_offset = max(-32768, min(fatigue - TES5_RACE_BASE_HEALTH, 32767))
     return struct.pack('<IhhHHHHhHhH',
                        tes5_acbs_flags, magicka_offset, stamina_offset, tes5_level,
                        min(calc_min, 65535), min(calc_max, 65535),
@@ -181,7 +185,7 @@ def _npc_snams(rec: dict, vendor_fids: list, trainer_clas_fid: int) -> bytes:
     race_fact = race_faction(get_formid(rec, 'RNAM.Race'))
     if race_fact:
         subs += _pack_snam(race_fact)
-    for stat_fid, rank in stat_memberships(rec):
+    for stat_fid, rank in stat_memberships(rec) + disposition_ranks(rec):
         subs += _pack_snam(stat_fid, rank)
     return subs + _crime_snams(rec)
 

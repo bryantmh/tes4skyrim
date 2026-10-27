@@ -1,0 +1,54 @@
+# Chapter X, the final battle: Arkt waits in the church at Melee and leads the
+# player into his tower, through the ovens, the wall tower and its Void to the
+# top. His shade falls first; then Arkt himself, in Calisto's form, grows and
+# fights, and his defeat sends the player home to Stormwend.
+# Position stands in for the walks and damage for the fights; ref FormIDs
+# carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from final_melee
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Arkt in the monastery church, and the portal behind him.
+case final_melee
+run
+player->PositionCell 7979 14000 804 0 "Melee Monastery Church"
+until 600 MenuMode == 1
+wait 60
+bye
+run
+player->PositionCell 7993 14844 801 0 "Melee Monastery Church"
+until 300 GetPCCell "Arkt's Tower, Ovens" == 1
+end
+
+# Out of the tower onto its top, where Arkt's shade lies in wait.
+case final_shade
+run
+player->PositionCell -321 -400 1263 0 "Arkt's Tower, Upper Area"
+activate 05D92593
+until 300 player->GetPos y > 400000
+run
+player->Position -163406 429500 10273 0
+until 600 MenuMode == 1
+wait 60
+bye
+console 0546FBF4.damageav health 100000
+until 600 Storyvar == 79
+end
+
+# Arkt in Calisto's form tells his true intentions, and fights.
+case final_arkt
+until 300 "ArktCalisto"->GetDisabled == 0
+run
+player->Position -163466 429400 10272 0
+until 600 MenuMode == 1
+wait 60
+ask true intentions
+choose 1
+choose 2
+bye
+until 600 "ArktCalisto"->GetScale > 1.5
+console 055B5654.damageav health 100000
+button 0
+expect GetJournalIndex A_X_Final_Battle == 10
+until 300 GetPCCell "Tournament Plaza" == 1
+expect Storyvar == 80
+end

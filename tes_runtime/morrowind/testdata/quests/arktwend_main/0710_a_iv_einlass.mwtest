@@ -1,0 +1,120 @@
+# Chapter IV, Stormwend: the port is closed to anyone without a city pass, and
+# Troben wants 1000 gold for one. The player earns it as the game means them
+# to: as Bernward the florist's assistant and in the City Guard.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from pass_troben
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Troben names his price, and points the player at Bernward.
+case pass_troben
+run
+player->Position -181 52750 226 0
+talk Troben
+ask interested in admission
+choose 1
+bye
+expect GetJournalIndex A_IV_Einlass == 3
+end
+
+# Bernward hires an assistant.
+case pass_bernward_hire
+run
+player->Position 738 51730 215 0
+talk Bernward
+ask assistance job
+choose 1
+bye
+expect GetJournalIndex A_IV_Bernward == 1
+until 900 GetPCCell "Stormwend" == 1
+end
+
+# At the Gardener's Shop he hands over three sacks of potting soil.
+case pass_bernward_soil
+run
+player->PositionCell 75 182 -64 0 "Stormwend, Gardener's Shop"
+until 900 "Bernward"->GetDistance player < 300
+talk Bernward
+bye
+expect GetJournalIndex A_IV_Bernward == 2
+end
+
+# Old Wilram at Castle Grel takes the soil.
+case pass_wilram
+run
+player->Position 22557 35131 543 0
+talk "Der alte Wilram"
+bye
+expect GetJournalIndex A_IV_Bernward == 3
+end
+
+# Back at the shop: a sack of seeds for Lisbeth on Whity's Coast.
+case pass_bernward_seeds
+run
+player->PositionCell 75 182 -64 0 "Stormwend, Gardener's Shop"
+until 900 "Bernward"->GetDistance player < 300
+talk Bernward
+choose 1
+bye
+expect GetJournalIndex A_IV_Bernward == 4
+end
+
+# Lisbeth Vergentorix in Bregen.
+case pass_lisbeth
+run
+player->Position 58117 41084 2970 0
+talk LisbethVergetorix
+bye
+expect GetJournalIndex A_IV_Bernward == 5
+end
+
+# Back in Gron, Judas Blutacker asks after his father's lost heirloom.
+case pass_judas_heirloom
+run
+player->PositionCell 406 1445 -1756 0 "Hamlet of Gron, Patriarch Inn"
+talk JudasBlutacker01
+ask old heirloom
+bye
+expect GetJournalIndex lk_nq_gron_3 == 10
+end
+
+# In Norat it lies by a corpse: an amulet "In eternal love thy Arthus B.".
+case pass_norat_amulet
+run
+player->Position -95900 -25737 176 0
+activate 0550265A
+button 0
+until 300 GetJournalIndex lk_nq_gron_3 == 20
+expect player->GetItemCount lk_nq_gron_erbstueck == 1
+end
+
+# Judas pays a thousand gold for it.
+case pass_judas_paid
+run
+player->PositionCell 406 1445 -1756 0 "Hamlet of Gron, Patriarch Inn"
+talk JudasBlutacker01
+ask old heirloom
+bye
+expect GetJournalIndex lk_nq_gron_3 == 100
+end
+
+# Troben's pass, at last.
+case pass_bought
+run
+player->Position -181 52750 226 0
+talk Troben
+ask interested in admission
+choose 1
+bye
+expect GetJournalIndex A_IV_Einlass == 4
+expect player->GetItemCount PassierscheinStormwend == 1
+end
+
+# Bernward pays, and lets the assistant go.
+case pass_bernward_paid
+run
+player->PositionCell 75 182 -64 0 "Stormwend, Gardener's Shop"
+until 900 "Bernward"->GetDistance player < 300
+talk Bernward
+bye
+expect GetJournalIndex A_IV_Bernward == 6
+end

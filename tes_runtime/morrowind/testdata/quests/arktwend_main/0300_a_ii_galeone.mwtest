@@ -1,0 +1,84 @@
+# Chapter II-III, the galleon: a guard taunts the prisoner and drops a note,
+# the stranger from the tavern sits in the next cell, and a nightmare of a
+# burning city ends in a bang on deck. The ship is sinking; Admiral Smilias
+# bars the way to the deck, and a rowboat carries the player to Arktrand.
+# PositionCell and Position stand in for the walks, the console's damageav for
+# the fight with Smilias; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from galeone_guard
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The guard walks past the cell, taunts the player and lets a paper fall.
+case galeone_guard
+until 900 Storyvar == 9
+wait 60
+ask Where you're going
+choose 1
+choose 4
+bye
+expect GetJournalIndex A_II_Galeone == 2
+end
+
+# The paper in the walkway.
+case galeone_note
+activate GaleoneZettel01
+close Book Menu
+expect GetJournalIndex A_II_Galeone == 7
+end
+
+# The stranger from the tavern, in the next cell.
+case galeone_messenger
+talk GaleoneBote01
+ask found and captured
+choose 1
+choose 3
+choose 5
+bye
+expect GetJournalIndex A_III_Bote == 2
+end
+
+# Sleep on the straw brings the nightmare of the burning city, and a bang on
+# deck wakes the player.
+case galeone_dream
+activate 053180C5
+button 0
+until 300 Storyvar == 10
+button 0
+until 900 Storyvar == 12
+until 600 GetPCCell "Galleon, Cells" == 1
+end
+
+# Below decks, the hold is filling with water.
+case galeone_sinking
+run
+player->PositionCell -425 -29 -23 180 "Galleon, Lower Level"
+until 600 "MarkerGaleone02".State == 1
+end
+
+# Admiral Smilias would rather sink with his ship.
+case galeone_smilias
+run
+player->PositionCell -1348 260 6 180 "Galleon, Upper deck"
+wait 120
+ask rather sink
+choose 2
+choose 3
+bye
+expect GetJournalIndex A_III_Smilias == 1
+console 05EE4DF7.damageav health 10000
+until 300 "AdmiralSmilias"->GetHealth <= 0
+end
+
+# The rowboat on deck carries the player to land -- the boat's own script
+# moves it, and the player with it -- and the player steps off onto the shore.
+case galeone_rowboat
+run
+player->PositionCell 2662 6104 269 0 "Galleon, Deck"
+until 600 GetPCCell "Galleon, Deck" == 1
+activate GaleoneRuderboot01
+until 600 Storyvar == 13
+until 1800 "a_Galeone_Ruderboot_02".State == 3
+run
+player->Position -79052 24500 30 180
+until 600 GetJournalIndex A_III_Arktrand == 1
+expect Storyvar == 15
+end

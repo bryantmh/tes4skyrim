@@ -1,5 +1,8 @@
 #include "script_context.h"
 
+#include <string_view>
+#include <utility>
+
 #include "dialogue_state.h"
 #include "log.h"
 #include "script_tables.h"
@@ -20,6 +23,21 @@ std::string RankName(const std::string& faction, int rank) {
     const std::size_t at = static_cast<std::size_t>(rank);
     return at < def->rankNames.size() ? def->rankNames[at] : std::string();
 }
+
+// OpenMW's action bindings (interpreter/defines.cpp) and the Skyrim gameplay
+// user event that does the same; switching weapons and spells is Favorites.
+const std::pair<std::string_view, const char*> kSkyrimEvents[] = {
+    {"#{sForward}", "Forward"},           {"#{sBack}", "Back"},
+    {"#{sLeft}", "Strafe Left"},          {"#{sRight}", "Strafe Right"},
+    {"#{sActivate}", "Activate"},         {"#{sJournal}", "Journal"},
+    {"#{sReady_Weapon}", "Ready Weapon"}, {"#{sReady_Magic}", "Ready Weapon"},
+    {"#{sJump}", "Jump"},                 {"#{sCrouch_Sneak}", "Sneak"},
+    {"#{sRun}", "Run"},                   {"#{sAuto_Run}", "Toggle Always Run"},
+    {"#{sUse}", "Right Attack/Block"},    {"#{sInventory}", "Tween Menu"},
+    {"#{sRestKey}", "Wait"},              {"#{sPrevWeapon}", "Favorites"},
+    {"#{sNextWeapon}", "Favorites"},      {"#{sPrevSpell}", "Favorites"},
+    {"#{sNextSpell}", "Favorites"},
+};
 
 }  // namespace
 
@@ -140,8 +158,14 @@ char DialogueContext::getGlobalType(std::string_view name) const {
     return State().HasGlobal(std::string(name)) ? 'f' : ' ';
 }
 
+// The key the player bound to the action, "None" when unbound, as OpenMW's
+// InterpreterContext::getActionBinding answers.
+// See: docs/commentary/morrowind_runtime.md#action-keys-in-text
 std::string DialogueContext::getActionBinding(std::string_view action) const {
-    return std::string(action);
+    for (const auto& [binding, event] : kSkyrimEvents) {
+        if (binding == action) return Hooks().boundKeyName ? Hooks().boundKeyName(event) : "None";
+    }
+    return "None";
 }
 
 std::string_view DialogueContext::getActorName() const { return mActorName; }
@@ -168,8 +192,11 @@ std::string_view DialogueContext::getNPCRank() const {
 
 std::string_view DialogueContext::getPCName() const { return mPlayerName; }
 
+// The player's race by its NAME, as OpenMW's getPCRace answers; the TES3 id
+// where the game cannot name it.
 std::string_view DialogueContext::getPCRace() const {
-    mRace = mActor.PlayerRace();
+    mRace = Hooks().raceName ? Hooks().raceName("player") : std::string();
+    if (mRace.empty()) mRace = mActor.PlayerRace();
     return mRace;
 }
 

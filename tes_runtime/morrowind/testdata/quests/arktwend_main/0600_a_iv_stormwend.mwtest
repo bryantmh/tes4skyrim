@@ -1,0 +1,138 @@
+# Chapter IV, Stormwend: turned away at the city gate, the player is recruited
+# by Markus to fight in the Kanzler's tournament as the last hero of Bregen.
+# Position stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from storm_gate
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The guards at the gate turn outsiders away. The road there passes the spot
+# where Markus will wait, and his script must see the player go by first.
+case storm_gate
+run
+player->Position -1494 30900 700 0
+until 900 "TUNIMarkus".State == 1
+run
+player->Position -1771 34300 207 0
+until 900 GetJournalIndex A_IV_Stormwend == 1
+wait 30
+bye
+end
+
+# Markus begs the player to take the place of Bregen's fallen champion.
+case storm_markus
+run
+player->Position -1494 31400 635 0
+until 900 "TUNIMarkus".State == 8
+wait 30
+ask Problem
+choose 1
+choose 2
+choose 3
+choose 4
+choose 5
+choose 6
+choose 7
+choose 8
+choose 9
+bye
+expect GetJournalIndex A_IV_Stormwend == 5
+end
+
+# He takes the player to the Tournament Plaza and shows them the grounds.
+case storm_plaza
+until 600 Tuniervar == 1
+wait 30
+bye
+expect GetPCCell "Tournament Plaza" == 1
+end
+
+# A night in the contestants' quarters under the grandstand.
+case storm_rostrum_bed
+run
+player->PositionCell 3150 2788 13611 0 "Rostrum"
+activate 05C4C420
+sleep 8
+button 0
+until 300 Tuniervar == 2
+end
+
+# Markus waits in the quarters: the player levels up, and he wishes them luck.
+case storm_luck
+run
+player->PositionCell 2556 2994 13592 180 "Rostrum"
+until 600 "TUNIMarkus".State == 6
+wait 30
+bye
+end
+
+# Out on the plaza the crowd cheers, and the judge calls the first bout.
+case storm_judge
+run
+player->PositionCell -6138 37372 181 0 "Tournament Plaza"
+until 600 Tuniervar == 3
+run
+player->Position -4993 36865 217 0
+until 600 "TUNIRichter".State == 1
+wait 30
+bye
+expect Tuniervar == 4
+end
+
+# Dargun the Black.
+case storm_dargun
+until 600 "TUNIDargunDerSchwarze"->GetDisabled == 0
+console 058D151A.damageav health 10000
+until 600 Tuniervar == 5
+end
+
+# Herbin the Golden.
+case storm_herbin
+until 600 "TUNIRichter".State == 2
+wait 30
+bye
+until 600 Tuniervar == 6
+until 600 "TUNIHerbinDerGoldene"->GetDisabled == 0
+console 052E4957.damageav health 10000
+until 600 Tuniervar == 7
+end
+
+# Robert of the Charvondet; then the judge names the winner, and the Kanzler
+# asks to see their face.
+case storm_robert
+until 600 "TUNIRichter".State == 3
+wait 30
+bye
+until 600 Tuniervar == 8
+until 600 "TUNIRobertdesCharvondet"->GetDisabled == 0
+console 05ED7013.damageav health 10000
+until 600 "TUNIRichter".State == 4
+wait 30
+bye
+expect GetJournalIndex A_IV_Stormwend >= 85
+expect Tuniervar >= 10
+end
+
+# Calisto's hooded men stop the player unmasking; the Kanzler's guards fall on them.
+case storm_calisto
+until 600 GetJournalIndex A_IV_Stormwend == 90
+wait 30
+bye
+until 600 Tuniervar == 11
+until 1800 Tuniervar == 12
+wait 30
+bye
+until 1800 Tuniervar == 13
+wait 30
+bye
+button 0
+expect GetJournalIndex A_IV_Stormwend == 95
+end
+
+# Back in the quarters, Markus pays what reward he can, then leaves for Bregen.
+case storm_markus_reward
+run
+player->PositionCell 2556 2994 13592 180 "Rostrum"
+until 600 GetJournalIndex A_IV_Stormwend == 100
+wait 60
+bye
+expect player->GetItemCount Heiltrank01 >= 3
+end

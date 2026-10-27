@@ -52,10 +52,10 @@ class OpPositionCell : public Interpreter::Opcode0 {
         const std::string cell = PopString(runtime);
         Log("move: %s -> '%s' (%g, %g, %g) rot %g", ref.c_str(), cell.c_str(),
             x, y, z, zRot);
-        ReleaseNpcHold(ref);
         if (Hooks().moveToCell) {
             Hooks().moveToCell(ref, cell, x, y, z, zRot);
         }
+        ReleaseNpcHold(ref);
     }
 };
 
@@ -68,8 +68,8 @@ class OpPosition : public Interpreter::Opcode0 {
         const float y = PopFloat(runtime);
         const float z = PopFloat(runtime);
         const float zRot = PopFloat(runtime);
-        ReleaseNpcHold(ref);
         if (Hooks().moveInCell) Hooks().moveInCell(ref, x, y, z, zRot);
+        ReleaseNpcHold(ref);
     }
 };
 

@@ -1,0 +1,45 @@
+# Chapter IV, Gron: at the Patriarch Inn the landlord, Judas Blutacker, knows
+# the player's ring, urges them on to Stormwend and gives them a room. The
+# Kanzler's soldiers arrive while the player sleeps, and the player escapes
+# through the hatch above the bed.
+# PositionCell stands in for the walks; ref FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from inn_arrive
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Through the inn's door.
+case inn_arrive
+activate 0522D0C0
+until 600 GetPCCell "Hamlet of Gron, Patriarch Inn" == 1
+expect GetJournalIndex A_II_gasthoff_patriarch == 1
+end
+
+# Judas recognizes the ring, and gives the player a room for the night.
+case inn_judas
+run
+player->PositionCell 406 1445 -1756 0 "Hamlet of Gron, Patriarch Inn"
+talk JudasBlutacker01
+expect GetJournalIndex A_II_gasthoff_patriarch == 2
+ask something else
+choose 1
+bye
+expect GetJournalIndex A_II_gasthoff_patriarch == 3
+end
+
+# Voices from the bar wake the player: the Kanzler's soldiers have come.
+case inn_sleep
+run
+player->PositionCell 856 1222 -1483 0 "Hamlet of Gron, Patriarch Inn"
+activate 0522C178
+sleep 8
+button 0
+until 300 GetJournalIndex A_II_gasthoff_patriarch == 4
+expect Patriarchenhofvar == 3
+end
+
+# Out through the hatch above the bed.
+case inn_escape
+activate 05D60EEF
+until 600 GetPCCell "Hamlet of Gron, Patriarch Inn" == 0
+expect GetJournalIndex A_II_gasthoff_patriarch == 5
+expect Patriarchenhofvar == 4
+end

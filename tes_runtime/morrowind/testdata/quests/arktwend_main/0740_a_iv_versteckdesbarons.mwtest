@@ -1,0 +1,69 @@
+# Chapter IV, the Baron's hideout: Jarko leads the player to the abandoned
+# Grivenhard house, its hidden cellar holds the Baron's henchmen and a note
+# naming his camp in the Old Forest, where the Baron dies.
+# Position stands in for the walks, and damage for the sword fights; ref
+# FormIDs carry Arktwend's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from baron_house
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The abandoned house by the harbor; its door is no longer sealed.
+case baron_house
+run
+player->Position 6480 59100 160 0
+until 300 GetJournalIndex A_IV_VersteckdesBarons == 1
+activate 05EB5A42
+until 300 GetPCCell "Stormwend, Abandoned House" == 1
+end
+
+# Inside, the player looks around.
+case baron_inside
+run
+player->PositionCell -236 -420 137 0 "Stormwend, Abandoned House"
+until 300 GetJournalIndex A_IV_VersteckdesBarons == 2
+end
+
+# A letter on the upper floor; picking it up moves something below.
+case baron_letter
+run
+player->PositionCell -341 -440 705 0 "Stormwend, Abandoned House"
+activate 053B54E0
+take 053B54E0
+close Book Menu
+until 300 GetJournalIndex A_IV_VersteckdesBarons == 3
+expect "VerlassenesHausSchrank"->GetDisabled == 1
+end
+
+# A henchman of the Baron waits in the cellar, and attacks.
+case baron_henchman
+run
+player->PositionCell -1984 -1060 -509 0 "Stormwend, Abandoned House"
+talk BaronScherge01
+bye
+expect GetJournalIndex A_IV_VersteckdesBarons == 4
+console 05C2F7CF.damageav health 10000
+console 05CD6FE4.damageav health 10000
+console 053705D9.damageav health 10000
+until 300 "BaronScherge01"->GetHealth <= 0
+end
+
+# The Baron's message names his hideout.
+case baron_message
+run
+player->PositionCell -3527 1040 -680 0 "Stormwend, Abandoned House"
+activate 059DEEF5
+take 059DEEF5
+close Book Menu
+until 300 GetJournalIndex A_IV_VersteckdesBarons == 5
+end
+
+# The Old Forest hideout: the Baron and the Masterthief.
+case baron_hideout
+run
+player->Position 76700 -28500 2531 0
+until 300 "DerBaron01"->GetDisabled == 0
+until 600 "DerBaron01".State == 1
+console 054831D6.damageav health 10000
+until 600 GetJournalIndex A_IV_VersteckdesBarons == 6
+expect Diebesgildevar == 20
+expect Stormwendvar == 19
+end

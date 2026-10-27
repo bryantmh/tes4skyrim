@@ -1,0 +1,94 @@
+# C3 "Destroy Dagoth Ur": inside Red Mountain the player takes Sunder from
+# Dagoth Vemyn at Vemynal and Keening from the tower at Odrosal, speaks with
+# Dagoth Ur and defeats him, then strikes the Heart of Lorkhan with Sunder and
+# Keening, wearing Wraithguard, until its enchantment breaks.
+# PositionCell stands in for the walks, the console's damageav for the
+# fights, AddItem for looting Sunder from Vemyn's body, and the behavior
+# graph's own attack events (the console's `sae`) for the player's swings;
+# ref FormIDs carry Morrowind.esm's slot 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from c3_sunder
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Dagoth Vemyn guards Sunder in the Hall of Torque.
+case c3_sunder
+run
+player->PositionCell -234 -1223 -297 180 "Vemynal, Hall of Torque"
+until 600 GetPCCell "Vemynal, Hall of Torque" == 1
+console 05782B3C.damageav health 100000
+until 300 "dagoth vemyn"->GetHealth <= 0
+run
+player->AddItem sunder 1
+end
+
+# Keening lies in Odrosal's tower.
+case c3_keening
+run
+player->PositionCell -165 -269 192 0 "Odrosal, Tower"
+until 600 GetPCCell "Odrosal, Tower" == 1
+take keening
+expect player->GetItemCount keening == 1
+end
+
+# With all three tools, Dagoth Ur answers the player's questions and then
+# accepts the challenge; he falls, and escapes in spirit to the Heart.
+case c3_dagoth_ur
+run
+player->PositionCell 3865 3751 14167 0 "Dagoth Ur, Facility Cavern"
+until 600 GetPCCell "Dagoth Ur, Facility Cavern" == 1
+talk dagoth_ur_1
+ask parting words
+choose 1
+choose 2
+ask final questions
+choose 4
+choose 2
+choose 8
+choose 3
+choose 12
+choose 17
+expect GetJournalIndex C3_DestroyDagoth == 5
+bye
+console 0587AE04.damageav health 100000
+until 300 GetDeadCount dagoth_ur_1 >= 1
+end
+
+# The Heart of Lorkhan: one blow of Sunder opens it, and five of Keening
+# sever its enchantment.
+case c3_heart
+run
+player->Equip wraithguard
+player->Equip sunder
+player->PositionCell -11 3760 -269 0 "Akulakhan's Chamber"
+until 600 GetPCCell "Akulakhan's Chamber" == 1
+wait 60
+console player.sae WeapEquip
+wait 60
+console player.sae attackStart
+wait 60
+run
+player->Equip keening
+console player.sae attackStart
+wait 60
+console player.sae attackStart
+wait 60
+console player.sae attackStart
+wait 60
+console player.sae attackStart
+wait 60
+console player.sae attackStart
+wait 60
+console player.sae attackStart
+until 300 HeartDestroyed == 1
+end
+
+# Fleeing the chamber past the door detector ends the Blight; Azura then
+# appears in the facility cavern and releases the player from the prophecy.
+case c3_azura
+run
+player->PositionCell -224 400 -10 180 "Akulakhan's Chamber"
+until 600 GetJournalIndex C3_DestroyDagoth == 20
+run
+player->PositionCell 4037 5150 14208 0 "Dagoth Ur, Facility Cavern"
+until 600 GetPCCell "Dagoth Ur, Facility Cavern" == 1
+until 900 GetJournalIndex C3_DestroyDagoth == 50
+end

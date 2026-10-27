@@ -1,0 +1,68 @@
+# A1_4 "Muzgob Informant": Sharn gra-Muzgob trades what she knows of the
+# Nerevarine cult for the skull of Llevule Andrano.
+# PositionCell stands in for the walks.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a1_4_orders
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Caius has read Hasphat's notes and sends the player to Sharn.
+case a1_4_orders
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Orders
+expect GetJournalIndex A1_4_MuzgobInformant == 1
+bye
+end
+
+# Her errand, and where the tomb is.
+case a1_4_errand
+run
+player->PositionCell 430 -1676 -720 90 "Balmora, Guild of Mages"
+until 600 GetPCCell "Balmora, Guild of Mages" == 1
+talk sharn gra-muzgob
+ask Errand
+expect GetJournalIndex A1_4_MuzgobInformant == 10
+ask Andrano Ancestral Tomb
+expect GetJournalIndex A1_4_MuzgobInformant == 12
+expect player->GetItemCount fireblade == 1
+bye
+end
+
+# The skull, picked up off the tomb floor.
+case a1_4_skull
+run
+player->PositionCell 2510 4401 13270 90 "Andrano Ancestral Tomb"
+until 600 GetPCCell "Andrano Ancestral Tomb" == 1
+wait 30
+activate misc_skull_llevule
+until 300 player->GetItemCount misc_skull_llevule == 1
+end
+
+# Sharn takes the skull and answers for the Nerevarine cult with her notes.
+case a1_4_notes
+run
+player->PositionCell 430 -1676 -720 90 "Balmora, Guild of Mages"
+until 600 GetPCCell "Balmora, Guild of Mages" == 1
+talk sharn gra-muzgob
+ask Errand
+expect GetJournalIndex A1_4_MuzgobInformant == 15
+expect player->GetItemCount misc_skull_llevule == 0
+ask Nerevarine cult
+expect GetJournalIndex A1_4_MuzgobInformant == 20
+expect player->GetItemCount bk_a1_4_sharnsnotes == 1
+bye
+end
+
+# Caius takes the notes and promotes the player; below level 3 he wants more
+# conditioning first (25), at 3 or above he has orders waiting (30).
+case a1_4_report
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Orders
+expect GetJournalIndex A1_4_MuzgobInformant >= 25
+expect player->GetItemCount bk_a1_4_sharnsnotes == 0
+bye
+end

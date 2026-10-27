@@ -8,16 +8,28 @@ both directions here.
 TES3 simulates no physics, so every placed item holds the pose its author gave
 it; each ref ships with Skyrim's Don't Havok Settle flag.
 
+A script reaches a named reference in any cell, so each one a script names
+ships persistent.
+
 See: docs/commentary/tes5_import_world.md#tes3-exit-only-door-locks
 See: docs/commentary/tes5_import_world.md#tes3-dont-havok-settle
+See: docs/commentary/tes5_import_world.md#tes3-script-named-refs-persist
 """
 
+from core.plugin_masters import masters_from_export_header
 from ..base.master_export import values_of
+from ..dialogue.morrowind_placements import first_placements, script_named_ids
 from ..dialogue.morrowind_sidecar import is_tes3_export
 from .common import get_formid, get_int
 
 #: REFR record flag: the ref is not settled by Havok when its cell loads.
 REFR_DONT_HAVOK_SETTLE = 0x20000000
+
+#: Placement record flag: the ref stays in memory while its cell is unloaded.
+REFR_PERSISTENT = 0x400
+
+#: The record types a placement exports as.
+_PLACEMENT_TYPES = ('REFR', 'ACHR', 'ACRE')
 
 #: Placed refs whose authored TES3 lock is exit-only; see register_tes3_locks.
 _EXIT_ONLY_LOCKS: set = set()
@@ -80,6 +92,29 @@ def register_tes3_locks(by_type: dict, export_dir: str,
         if other is not None and not other[2]:
             _EXIT_ONLY_LOCKS.add(fid)
     return len(_EXIT_ONLY_LOCKS)
+
+
+def persist_script_named_refs(by_type: dict, export_dir: str) -> int:
+    """Flag Persistent the placement each id this plugin's scripts name resolves
+    to (the refs table's, `first_placements`); returns how many changed.
+
+    OpenMW reaches a named reference in any cell; Skyrim keeps only a
+    persistent one in memory while its cell is unloaded.
+    See: docs/commentary/tes5_import_world.md#tes3-script-named-refs-persist
+    """
+    if not is_tes3_export(export_dir):
+        return 0
+    own = len(masters_from_export_header(export_dir))
+    named = first_placements(export_dir, own, script_named_ids(export_dir))
+    targets = {ref.upper() for ref in named.values()}
+    changed = 0
+    for sig in _PLACEMENT_TYPES:
+        for rec in by_type.get(sig, []):
+            flags = get_int(rec, 'RecordFlags')
+            if rec.get('FormID', '').upper() in targets and not flags & REFR_PERSISTENT:
+                rec['RecordFlags'] = str(flags | REFR_PERSISTENT)
+                changed += 1
+    return changed
 
 
 def tes3_lock_state() -> tuple:

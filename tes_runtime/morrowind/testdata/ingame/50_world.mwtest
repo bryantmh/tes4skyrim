@@ -1,0 +1,198 @@
+# World, AI, sound, magic and animation commands, run in Arrille's Tradehouse
+# after 40_npc.mwtest. Cases with no `expect` only prove the command compiles
+# and runs without fault. See docs/commentary/headless_testing.md#mwscript-cases
+
+case aiwander
+run
+arrille->AiWander 0 0 0 0
+wait 10
+expect arrille->GetCurrentAIPackage == 0
+end
+
+case aitravel
+run
+arrille->AiTravel 0 0 0
+wait 10
+expect arrille->GetCurrentAIPackage == 1
+end
+
+case aifollow
+run
+arrille->AiFollow player 0 0 0 0
+wait 10
+expect arrille->GetCurrentAIPackage == 3
+end
+
+case aiescort
+run
+arrille->AiEscort player 0 0 0 0
+wait 10
+expect arrille->GetCurrentAIPackage == 2
+end
+
+case aipackagedone
+expect arrille->GetAIPackageDone >= 0
+end
+
+case aitravel_far
+run
+arrille->AiTravel 3000 3000 0
+wait 15
+expect arrille->GetAIPackageDone == 0
+end
+
+case aiwander_back
+run
+arrille->AiWander 0 0 0 0
+end
+
+case forcesneak
+run
+player->ForceSneak
+wait 5
+expect player->GetForceSneak == 1
+end
+
+case clearforcesneak
+run
+player->ClearForceSneak
+wait 5
+expect player->GetForceSneak == 0
+end
+
+case setpos
+run
+player->SetPos x 64
+wait 5
+expect player->GetPos x > 60
+expect player->GetPos x < 68
+end
+
+case position
+run
+player->Position 32 32 0 0
+wait 10
+expect player->GetPos y > 28
+expect player->GetPos y < 36
+end
+
+case startingpos
+expect arrille->GetStartingPos x > -1000000
+expect arrille->GetStartingAngle z > -1000
+end
+
+case setatstart
+run
+arrille->SetAtStart
+end
+
+case lineofsight
+expect arrille->GetLineOfSight player >= 0
+expect arrille->GetLOS player >= 0
+expect arrille->GetDetected player >= 0
+end
+
+case playsound
+run
+PlaySound "Item Gold Up"
+wait 2
+expect GetSoundPlaying "Item Gold Up" >= 0
+end
+
+case playsoundvp
+run
+PlaySoundVP "book page" 0.5 1.0
+end
+
+case playsound3d
+run
+arrille->PlaySound3D "book page"
+arrille->PlaySound3DVP "book page" 0.5 1.0
+end
+
+case loopsound
+run
+arrille->PlayLoopSound3D "mysticism hit"
+arrille->PlayLoopSound3DVP "mysticism hit" 0.5 1.0
+arrille->StopSound "mysticism hit"
+end
+
+case placeatpc
+run
+PlaceAtPC "iron dagger" 1 64 0
+end
+
+case placeatme
+run
+arrille->PlaceAtMe "iron dagger" 1 64 0
+end
+
+case placeitem
+run
+PlaceItem "iron dagger" 0 0 0 0
+PlaceItemCell "iron dagger" "Seyda Neen, Arrille's Tradehouse" 0 0 0 0
+end
+
+case spelleffects
+expect arrille->GetSpellEffects "hearth heal" == 0
+expect player->GetEffect sEffectWaterBreathing == 0
+end
+
+case cast
+run
+arrille->Cast "hearth heal" arrille
+wait 10
+end
+
+case explodespell
+run
+arrille->ExplodeSpell "hearth heal"
+wait 10
+end
+
+case removeeffects
+run
+arrille->RemoveSpellEffects "hearth heal"
+arrille->RemoveEffects 75
+end
+
+case animation
+run
+arrille->PlayGroup idle2 1
+arrille->LoopGroup idle3 2 1
+arrille->SkipAnim
+end
+
+case face
+run
+arrille->Face 0 0
+end
+
+case rotate
+run
+arrille->Rotate z 10
+arrille->RotateWorld z 10
+end
+
+case move
+run
+arrille->Move x 1
+arrille->MoveWorld x 1
+end
+
+case fall
+run
+player->Fall
+end
+
+case ra
+run
+RA
+ResetActors
+end
+
+case wakeup
+run
+WakeUpPC
+expect GetPCSleep == 0
+end

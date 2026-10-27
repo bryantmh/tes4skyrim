@@ -3,12 +3,15 @@
 
 #include "game_calls_internal.h"
 
+#include <cstring>
 #include <map>
 #include <string>
 
+#include "addresses.h"
 #include "ids.h"
 #include "log.h"
 #include "main_thread.h"
+#include "object_script.h"
 #include "object_tick.h"
 
 namespace tesruntime::mw {
@@ -56,6 +59,11 @@ FormQueryFn      g_isEquipped = nullptr;
 HandQueryFn      g_equippedSpell = nullptr;
 ProcessEventFn   g_sleepStart = nullptr;
 ProcessEventFn   g_sleepStop = nullptr;
+ProcessEventFn   g_hit = nullptr;
+
+// The weapon or spell each actor was last hit with, both by runtime FormID:
+// OpenMW's `CreatureStats::mLastHitObject`, which `HitOnMe` tests and clears.
+std::map<std::uint32_t, std::uint32_t> g_lastHit;
 
 // `GetDeadCount id`: the ENGINE's own count for that base actor, which covers
 // every death, scripted or not, and is saved with the game.
@@ -136,6 +144,18 @@ void SyncClock() {
     SyncMirroredGlobals();
     // After the mirror, so a value Papyrus just wrote reaches the state first.
     PublishState();
+}
+
+// A plain store, not posted: the next SyncClock must read the new value back.
+void SetClockGlobal(const std::string& name, float value) {
+    for (const auto& clock : kClock) {
+        if (_stricmp(name.c_str(), clock.tes3) != 0) continue;
+        auto* form = static_cast<std::uint8_t*>(
+            FormFromFile(ids::kSkyrimMaster, clock.skyrim));
+        if (form) *reinterpret_cast<float*>(form + ids::kOffGlobalValue) = value;
+        Log("clock: %s set to %g", clock.tes3, value);
+        return;
+    }
 }
 
 // `advanceHours`: moves GameHour on, which is how Skyrim's own wait does
@@ -219,6 +239,43 @@ int SleepStopHook(void* sink, const void* event, void* source) {
     return g_sleepStop(sink, event, source);
 }
 
+// A hit lands: the target remembers what struck it, and a hit by the PLAYER
+// raises the target's `OnPCHitMe`, as OpenMW's `Npc::onHit` and
+// `Creature::onHit` do. Main thread.
+void NoteHit(std::uint32_t target, std::uint32_t source, bool byPlayer) {
+    LogVerbose("hit: %08X struck by %08X%s", target, source, byPlayer ? " (player)" : "");
+    if (source) g_lastHit[target] = source;
+    if (!byPlayer) return;
+    if (ObjectScript* instance = InstanceForRef(target)) {
+        instance->Events().pcHitMe = true;
+    }
+}
+
+int HitHook(void* sink, const void* event, void* source) {
+    const char* e = static_cast<const char*>(event);
+    void* target = e ? *reinterpret_cast<void* const*>(e + ids::kOffHitTarget) : nullptr;
+    if (target) {
+        void* attacker = *reinterpret_cast<void* const*>(e + ids::kOffHitAttacker);
+        const std::uint32_t id = FormIdOf(target);
+        const std::uint32_t by = *reinterpret_cast<const std::uint32_t*>(e + ids::kOffHitSource);
+        const bool byPlayer = attacker && attacker == PlayerRef();
+        PostToMainThread([id, by, byPlayer]() { NoteHit(id, by, byPlayer); });
+    }
+    return g_hit(sink, event, source);
+}
+
+// `HitOnMe "id"`: was the actor's last hit dealt with that object. A yes is
+// consumed, so the next test needs a new hit, as OpenMW's opcode clears it.
+bool TakeHitBy(const std::string& actor, const std::string& item) {
+    void* ref = OwnerRef(actor);
+    void* form = ItemForm(item);
+    if (!ref || !form) return false;
+    const auto hit = g_lastHit.find(FormIdOf(ref));
+    if (hit == g_lastHit.end() || hit->second != FormIdOf(form)) return false;
+    g_lastHit.erase(hit);
+    return true;
+}
+
 ProcessEventFn HookVmSink(const char* what, std::uint64_t sink,
                           std::uint64_t process, ProcessEventFn hook) {
     return reinterpret_cast<ProcessEventFn>(SwapVtableSlot(
@@ -237,6 +294,9 @@ void InstallSleepSinks() {
     Log("sleep: OnSleepStart sink %s, OnSleepStop sink %s",
         g_sleepStart ? "hooked" : "NOT hooked",
         g_sleepStop ? "hooked" : "NOT hooked");
+    g_hit = HookVmSink("SkyrimVM OnHit sink", ids::kVmHitSink,
+                       ids::kVmHitProcess, &HitHook);
+    Log("hit: OnHit sink %s", g_hit ? "hooked" : "NOT hooked");
 }
 
 // `GetSpellReadied`: TES3's third draw state. Skyrim has no drawstate
@@ -297,6 +357,12 @@ void DropFromActor(const std::string& actor, const std::string& item,
     });
 }
 
+std::uintptr_t g_frameTimer = 0;
+
+std::uint32_t FrameClockMs() {
+    return *reinterpret_cast<const std::uint32_t*>(g_frameTimer + ids::kOffFrameClockMs);
+}
+
 // `GetCurrentWeather`: the global native hands back a Weather form, whose
 // classification is then read off it. The TES3 mapping is the opcode's.
 int WeatherClassification() {
@@ -340,6 +406,7 @@ void InstallQueryCalls(GameHooks& hooks) {
     hooks.sneaking = ActorSneaking;
     hooks.running = ActorRunning;
     hooks.itemEquipped = ItemIsEquipped;
+    hooks.hitOnMe = TakeHitBy;
     hooks.spellReadied = SpellIsReadied;
     hooks.applyMovementFlag = ApplyMovementFlag;
     hooks.resurrect = ResurrectActor;
@@ -347,7 +414,10 @@ void InstallQueryCalls(GameHooks& hooks) {
     hooks.weather = WeatherClassification;
     hooks.deadCount = DeadCountOf;
     hooks.syncClock = SyncClock;
+    hooks.setClockGlobal = SetClockGlobal;
     hooks.advanceHours = AdvanceHours;
+    g_frameTimer = Resolve("frame timer", ids::kFrameTimer, nullptr);
+    if (g_frameTimer) hooks.frameClockMs = FrameClockMs;
 }
 
 }  // namespace gamecalls

@@ -137,6 +137,10 @@ constexpr std::uint64_t kHkClassRagdollInstance = 387372;
 constexpr std::uint64_t kScriptCtor   = 21874;   // 0x2fc5d0 -> (absent on 1170)
 constexpr std::uint64_t kScriptVtable = 191694;  // 0x166e680 -> 0x17c1618
 constexpr std::uint64_t kMemAlloc     = 68115;   // 0xc390a0  -> 0xcc40c0
+// MemoryManager, MemAlloc's `this`: it reads [this+0x28] first, so a null
+// heap faults. The engine passes this global in all 7,034 calls (1.6.1170
+// rva 0x35f11e0 -> id 400188 + 0x0).
+constexpr std::uint64_t kMemoryManager = 400188;  // 0x1f50f80 -> 0x35f11e0
 constexpr std::size_t   kScriptSize   = 0x80;    // from the console's own alloc
 
 // Script::SetText(const char*) -- allocates a copy and stores it at script+0x38.

@@ -187,8 +187,8 @@ generic guard/bandit line), which is itself a useful answer.
 into the target cell. So an autonomous test needs no prepared save, and cannot
 corrupt one.
 
-Two engine facts the bootstrap depends on, both verified live and both of which
-fail *silently* if ignored:
+Two engine facts the console path depends on, both verified live and both of
+which fail *silently* if ignored:
 
 1. **`ConsoleExecute` only COMPILES.** Its tail is
    `call <finalizer>; mov al,1; ret` — it returns success having produced only
@@ -198,10 +198,14 @@ fail *silently* if ignored:
    console sets it while dispatching a typed command; a direct call does not, so
    handlers execute and print nothing — indistinguishable from a dead hook.
 
-Consequence for the operator: **one real keystroke-driven console command must
-run once per game session** to capture the execution context.
-`tools/live/game_input.py bootstrap` does this by sending real scan codes (Skyrim
-reads DirectInput, so `PostMessage`/`KEYEVENTF_UNICODE` do nothing).
+**No keystroke bootstrap is needed any more.** The "execution context" a typed
+command used to supply is a ScriptCompiler that nothing on the compile path
+reads, so the bridge passes a stand-in; the real blockers were a null
+MemoryManager and an off-thread probe
+([headless_testing.md](headless_testing.md#console-without-a-keystroke)).
+`tools/live/game_input.py bootstrap` still works but is no longer required.
+For runs that need no player at all, use the isolated instance in
+[headless_testing.md](headless_testing.md).
 
 `quest_labtest.py doctor` checks all of this and tells you which step is
 missing, rather than failing later inside a test with a confusing symptom.

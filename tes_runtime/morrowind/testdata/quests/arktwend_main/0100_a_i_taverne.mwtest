@@ -1,0 +1,42 @@
+# Chapter I, the Fur Seal Tavern: wearing the ring, the player leaves the
+# monastery by its gate, which skips ahead to the evening at the tavern.
+# Sagrim drinks the player under the table, a stranger arrives looking for
+# the player and takes them away to his room by the port.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from taverne_gate
+# See docs/commentary/headless_testing.md#quest-runs
+
+# The gate by Brother Tromi; the evening's message, then the tavern.
+case taverne_gate
+activate 05D7F428
+button 0
+until 600 GetPCCell "Melee, Fur Seal Tavern" == 1
+expect Storyvar == 1
+end
+
+# Sagrim counts the beers until the player feels funny.
+case taverne_sagrim
+talk ANFTaverneSagrim
+expect GetJournalIndex A_I_Taverne == 1
+ask much wes drink?
+choose 1
+choose 2
+choose 4
+choose 6
+bye
+until 120 Storyvar == 2
+end
+
+# Someone comes through the door: the stranger walks up, asks who the player
+# is, and takes them away.
+case taverne_stranger
+until 900 "ANFTaverneBote"->GetDistance player <= 300
+wait 60
+ask looking for you
+expect GetJournalIndex A_I_Taverne == 2
+choose 1
+choose 2
+choose 3
+bye
+until 600 GetJournalIndex A_I_Taverne == 3
+until 600 Storyvar == 3
+end

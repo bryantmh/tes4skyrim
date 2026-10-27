@@ -14,6 +14,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -34,6 +35,7 @@
 #include "script_runner.h"
 #include "script_tables.h"
 #include "store.h"
+#include "test_runner.h"
 #include "travel.h"
 
 using namespace tesruntime;
@@ -331,6 +333,7 @@ int LiveLevel(const std::string&) { return 12; }
 void StatCases(DialogueContext& context) {
     std::printf("stat commands\n");
     Hooks().actorValue = LiveStat;
+    Hooks().baseActorValue = LiveStat;
     Hooks().setActorValue = SetLiveStat;
     Hooks().level = LiveLevel;
     RunResultScript("ModSneak 5\nset TestGlobal to GetSneak", context);
@@ -348,6 +351,7 @@ void StatCases(DialogueContext& context) {
     RunResultScript("set TestGlobal to GetLevel", context);
     Check(State().Global("TestGlobal") == 12.0f, "GetLevel asks the engine");
     Hooks().actorValue = nullptr;
+    Hooks().baseActorValue = nullptr;
     Hooks().setActorValue = nullptr;
     Hooks().level = nullptr;
     State().Reset();
@@ -560,6 +564,11 @@ void ObjectScriptRunCases() {
     if (!door) return;
     Check(InstanceFor("scripts.esm", 0x0300C000, "nothing") == nullptr,
           "a placement with no script gets none");
+    // nolore, codusScript: locals for dialogue to read, and no code at all.
+    Check(EnsureObjectScript("decl_only", "begin decl_only\nshort NoLore\nend decl_only\n"),
+          "a body of declarations only compiles, to nothing");
+    Check(!EnsureObjectScript("broken_body", "begin broken_body\nif ( \nend\n"),
+          "a body that does not parse still fails");
 
     // Reading OnActivate is what claims the activation, as OpenMW's
     // RefData::onActivate -- how every chargen guard is made mute.
@@ -859,7 +868,7 @@ void TickCases() {
     // A stall must not run hundreds of ticks at once.
     const std::size_t stalled = TicksRun();
     TickObjectScripts(60.0f);
-    Check(TicksRun() - stalled < 20, "a long stall is clamped, not caught up");
+    Check(TicksRun() - stalled <= 30, "a long stall is clamped to 1 s, not caught up");
 
     // 🛑 An unloaded object stops ticking and is FORGOTTEN, or the bound set
     // only ever grows. See #unload-with-the-cell.
@@ -1771,8 +1780,14 @@ void NpcAnimCases() {
     ClearNpcAnims();
 }
 
+float g_clockWritten = -1.0f;
+
+void RecordClockWrite(const std::string&, float value) { g_clockWritten = value; }
+
 // `GetCurrentTime` is the `gamehour` global, which the game refreshes every
 // tick -- not a number of its own that could drift from the clock conditions.
+// A script's `set GameHour` must reach the game's clock, or that refresh
+// copies the old hour straight back.
 void CurrentTimeCases(DialogueContext& context) {
     std::printf("GetCurrentTime reads the game hour\n");
     State().SyncGlobal("gamehour", 14.0f);
@@ -1782,6 +1797,10 @@ void CurrentTimeCases(DialogueContext& context) {
               State().Disposition("test_actor") == 53,
           "the hour the clock holds is the hour it answers");
     State().SetDisposition("test_actor", 50);
+    Hooks().setClockGlobal = RecordClockWrite;
+    Check(RunResultScript("set GameHour to 9\n", context) && g_clockWritten == 9.0f,
+          "a script's set GameHour moves the game's clock");
+    Hooks().setClockGlobal = nullptr;
 }
 
 // The authored placement the sidecar carries, which SetAtStart restores and
@@ -1846,11 +1865,81 @@ void ButtonPressedCases(DialogueContext& context) {
           "a second poll sees no button");
 }
 
+// The kinds of a case's steps, in order, as their directive names.
+std::string StepKinds(const TestCase& test) {
+    static const char* kNames[] = {"run",    "wait", "expect", "talk",     "ask",
+                                   "choose", "bye",  "button", "activate", "until",
+                                   "pick",   "close", "take", "console", "persuade"};
+    std::string kinds;
+    for (const TestStep& step : test.steps) {
+        kinds += (kinds.empty() ? "" : " ") + std::string(kNames[static_cast<int>(step.kind)]);
+    }
+    return kinds;
+}
+
+// The in-game runner's case files: a body keeps its lines whatever their first
+// word, every directive ends it, and an action with no `wait` after it settles.
+void TestCaseFileCases() {
+    std::istringstream in(
+        "# comment\ncase gold\nactor fargoth\nrun\n  player->AddItem gold_001 25\n"
+        "  actor lines stay script\nwait 3\nexpect player->GetItemCount gold_001 == 25\n"
+        "expect 1 == 1\nend\ncase bare\nexpect 2 == 2\n"
+        "case chat\ntalk fargoth\nask Little Secret\nchoose 2\npersuade bribe100\nbye\nbutton 1\n"
+        "wait 5\n"
+        "case walk\nactivate \"chargen_door\"\nuntil 40 player->GetPos x > 5\n"
+        "pick Warrior\nclose RaceSex Menu\ntake \"chargen statssheet\"\nconsole player.advlevel\n"
+        "case stray\nuntil 5 1 == 1\nplayer->Position 1 2 3 0\nexpect 1 == 1\n");
+    std::vector<TestCase> cases = ParseTestCases(in);
+    Check(cases.size() == 5 && StepKinds(cases[4]) == "until run wait expect" &&
+              cases[4].steps[1].text == "player->Position 1 2 3 0\n",
+          "a script line after a step opens its own run body");
+    cases.pop_back();
+    Check(cases.size() == 4, "four cases parsed");
+    Check(cases.size() == 4 && cases[0].actor == "fargoth" &&
+              StepKinds(cases[0]) == "run wait expect expect" && cases[0].steps[1].number == 3 &&
+              cases[0].steps[0].text == "player->AddItem gold_001 25\nactor lines stay script\n",
+          "a case keeps its actor, wait, body and expects");
+    Check(cases.size() == 4 && cases[1].actor == "player" && StepKinds(cases[1]) == "expect",
+          "a case with no run defaults to the player");
+    Check(cases.size() == 4 &&
+              StepKinds(cases[2]) ==
+                  "talk wait ask wait choose wait persuade wait bye wait button wait" &&
+              cases[2].steps[1].number == 2 && cases[2].steps[2].text == "Little Secret" &&
+              cases[2].steps[4].number == 2 && cases[2].steps[6].text == "bribe100" &&
+              cases[2].steps[11].number == 5,
+          "conversation steps parse, and each settles unless a wait follows");
+    Check(cases.size() == 4 &&
+              StepKinds(cases[3]) ==
+                  "activate wait until pick wait close wait take wait console wait" &&
+              cases[3].steps[7].text == "chargen statssheet" &&
+              cases[3].steps[9].text == "player.advlevel" &&
+              cases[3].steps[3].text == "Warrior" && cases[3].steps[5].text == "RaceSex Menu" &&
+              cases[3].steps[0].text == "chargen_door" && cases[3].steps[2].number == 40 &&
+              cases[3].steps[2].text == "player->GetPos x > 5",
+          "until keeps its ticks and condition, and is not an action; an id loses its quotes");
+    const std::vector<std::string> uncovered =
+        UncoveredCommands(cases, {"additem", "getitemcount", "journal"});
+    Check(uncovered == std::vector<std::string>{"journal"},
+          "coverage counts commands named in a body or an expect");
+    std::vector<TestCase> ingame;
+    for (const auto& entry : std::filesystem::directory_iterator("testdata/ingame")) {
+        std::ifstream file(entry.path());
+        for (TestCase& test : ParseTestCases(file)) ingame.push_back(std::move(test));
+    }
+    const std::vector<std::string> real = RealCommands();
+    const std::vector<std::string> left = UncoveredCommands(ingame, real);
+    std::printf("  in-game cases leave %zu of %zu real commands uncovered:", left.size(),
+                real.size());
+    for (const std::string& name : left) std::printf(" %s", name.c_str());
+    std::printf("\n");
+}
+
 void Cases() {
     ClearScriptTables();
     LoadScriptTables(FixtureDir());
     GameActor actor("test_actor");
     DialogueContext context(actor, "Test Actor", "Player");
+    TestCaseFileCases();
     ObjectScriptTableCases();
     ObjectScriptRunCases();
     TickCases();
@@ -1921,6 +2010,29 @@ void Cases() {
     State().messages.clear();
     RunResultScript("MessageBox \"You feel watched.\"", context);
     Check(State().messages.size() == 1, "one notice");
+
+    std::printf("an action binding in text names the player's key\n");
+    State().messages.clear();
+    Hooks().boundKeyName = [](const char* event) {
+        return std::string(std::strcmp(event, "Forward") == 0 ? "W" : "?");
+    };
+    RunResultScript("MessageBox \"^ActionForward moves, ^ActionPrevWeapon switches\"", context);
+    Hooks().boundKeyName = nullptr;
+    Check(!State().messages.empty() && State().messages.back() == "W moves, ? switches",
+          "^ActionForward is the key bound to Forward; switching asks Favorites");
+
+    std::printf("the player's race, class and sex are the game's\n");
+    State().className = "Warrior";
+    Hooks().raceName = [](const std::string&) { return std::string("Dark Elf"); };
+    Hooks().female = [](const std::string&) { return true; };
+    RunResultScript("MessageBox \"^PCRace ^PCClass\"", context);
+    Check(!State().messages.empty() && State().messages.back() == "Dark Elf Warrior",
+          "^PCRace names the race, ^PCClass the chosen class");
+    Check(GameActor("x").PlayerClass() == "Warrior" && GameActor("x").PlayerIsFemale(),
+          "the filter reads the chosen class and the player's sex");
+    Hooks().raceName = nullptr;
+    Hooks().female = nullptr;
+    State().className.clear();
 
     SpellStackDiscipline(context);
 }

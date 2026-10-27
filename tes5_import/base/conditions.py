@@ -31,6 +31,7 @@ from .owned_records import (MGEF_FAMILY_KEYWORDS, PLAYER_ATTRIBUTE_GLOBALS,
                             WELL_KNOWN_PROPERTIES)
 from .race_factions import race_faction
 from ..actors.stat_factions import stat_faction
+from ..actors.disposition import disposition_faction
 from .split_skill_conditions import split_skill_ctdas
 from .text_reader import (_ENGINE_FIXED_FORMIDS, get_formid_index_offset,
                           remap_formid)
@@ -367,49 +368,23 @@ def papyrus_var_name(var: str) -> str:
     return f'::{safe_property_name(var)}_var'
 
 
-# --- Disposition -> Relationship Rank ---------------------------------------
-# Skyrim DOES have a disposition system; it is just not called that and is not
-# a 0-100 scale. An NPC's friendliness is a RELATIONSHIP RANK from -4 to +4
-# (Archnemesis, Enemy, Foe, Rival, Acquaintance, Friend, Confidant, Ally,
-# Lover), default 0, read by condition function 419 GetRelationshipRank and
-# settable from Papyrus via Actor.SetRelationshipRank. Oblivion's
-# GetDisposition (76) therefore maps onto it rather than being dropped -- and it
-# must be mapped, because CTDA index 76 is `FastTravel` in Skyrim, so passing
-# the condition through unchanged would invoke an unrelated function.
-#
-# Oblivion uses GetDisposition on 1,751 conditions across 1,451 INFOs, tiering
-# dialogue overwhelmingly at 30 and 70. The two scales line up like this, with
-# Oblivion's neutral 40-60 band mapping to Acquaintance (0), the rank a Skyrim
-# NPC starts at:
-#
-#     Oblivion disposition   Skyrim rank
-#     0-19                   -2  Foe
-#     20-39                  -1  Rival
-#     40-60                   0  Acquaintance   <- both games' default
-#     61-79                   1  Friend
-#     80-100                  2  Confidant
-#
-# Ally (3) and Lover (4) are deliberately unused: Oblivion has no equivalent
-# relationship, and reserving them keeps quest-granted ranks meaningful.
+# ---------------------------------------------------------------------------
+# Disposition
+# ---------------------------------------------------------------------------
+#: TES4 GetDisposition; CTDA 76 is FastTravel in Skyrim, so it is always rewritten.
 GET_DISPOSITION = 76
-# CTDA index 403, NOT the engine function table's row number (419). A CTDA
-# names its function by `opcode - 0x1000`, and GetRelationshipRank sits at
-# opcode 0x1193 = 403 while occupying row 419 of the table. Confirmed three
-# ways: the engine table's own opcode field, xEdit's wbConditionFunctions, and
-# vanilla Skyrim.esm, which uses 403 in 298 INFO conditions and 419 in none.
-# 419 is GetObjectiveCompleted(Quest, Integer) -- emitting that instead turns
-# every converted disposition gate into an unrelated quest check.
+#: GetRelationshipRank's CTDA index (opcode 0x1193 - 0x1000), not its table row 419.
 GET_RELATIONSHIP_RANK = 403
 #: PlayerRef, the ACTOR-typed parameter; never the player base NPC 0x07.
 _PLAYER_REF_FORMID = 0x00000014
 
-# Oblivion's default starting disposition, used when a comparison has to be
-# resolved rather than translated.
-DEFAULT_DISPOSITION = 50.0
-
 
 def disposition_to_rank(disposition: float) -> int:
-    """Oblivion's 0-100 disposition as a Skyrim relationship rank (-4..4)."""
+    """Oblivion's 0-100 disposition as a Skyrim relationship rank, for a source
+    whose actors carry no TES4DispositionFaction rank.
+
+    See: docs/commentary/tes5_import_conditions.md#disposition-param
+    """
     if disposition < 20:
         return -2
     if disposition < 40:
@@ -479,7 +454,8 @@ def is_speak_as_record(rec: dict) -> bool:
 
 
 def _disposition_fields(type_byte: int, data: bytes) -> 'tuple | None':
-    """(comp_raw, func_idx, param1, param2) for a GetDisposition condition.
+    """(comp_raw, func_idx, param1, param2) for a GetDisposition condition of a
+    source without TES4DispositionFaction: the relationship rank.
 
     None drops a Use Global comparison, whose GLOB cannot be rescaled.
     See: docs/commentary/tes5_import_conditions.md#disposition-param
@@ -546,6 +522,13 @@ def _stat_faction_rank(raw: bytes, type_byte: int, func_idx: int, param1: int) -
             or type_byte & CTDA_RUN_ON_TARGET):
         return 0
     return stat_faction(param1)
+
+
+def _faction_rank_read(raw: bytes, type_byte: int, func_idx: int, param1: int) -> int:
+    """The faction this read becomes a GetFactionRank on, or 0."""
+    if func_idx == GET_DISPOSITION:
+        return disposition_faction()
+    return _stat_faction_rank(raw, type_byte, func_idx, param1)
 
 
 def _vampirism(func_idx: int) -> 'tuple | None':
@@ -628,7 +611,7 @@ def _ctda_head(raw: bytes, offset: int, in_speak_as_topic: bool):
         func_idx = fallout_function(func_idx)
         if func_idx is None:
             return None
-    if func_idx == GET_DISPOSITION:
+    if func_idx == GET_DISPOSITION and not disposition_faction():
         fields = _disposition_fields(type_byte, data)
         if fields is None:
             return None
@@ -689,12 +672,14 @@ def convert_ctda(raw: bytes, offset: 'int | None' = None,
     if type_byte & CTDA_USE_GLOBAL:
         comp_raw = _remap_global(comp_raw, offset)
     fame = _player_global(raw, type_byte, func_idx, param1)
-    stat = 0 if fame else _stat_faction_rank(raw, type_byte, func_idx, param1)
+    stat = 0 if fame else _faction_rank_read(raw, type_byte, func_idx, param1)
     if fame:
         type_byte, func_idx, gfid = fame
         params, fields = (gfid, 0), (type_byte, 0, 0)
     elif stat:
-        func_idx, params, fields = FUNC_GET_FACTION_RANK, (stat, 0), (type_byte, run_on, reference)
+        func_idx, params = FUNC_GET_FACTION_RANK, (stat, 0)
+        fields = _run_on_fields(type_byte, func_idx, run_on, reference,
+                                run_on_target_ref, drop_run_on_target)
     else:
         av_table = FALLOUT_AV_TO_TES5 if len(raw) >= FALLOUT_CTDA_SIZE else _TES4_AV_TO_TES5
         params = _convert_params(func_idx, param1, param2, offset, av_table)

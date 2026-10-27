@@ -100,7 +100,8 @@ public:
 
     char getGlobalType(const std::string& name) const override {
         const GlobalDef* def = FindGlobal(name);
-        return def ? def->type : ' ';
+        if (def) return def->type;
+        return State().HasGlobal(name) ? 'f' : ' ';
     }
 
     // `id` is a script, or a reference whose script declares `name`.
@@ -439,7 +440,6 @@ class OpStartCombat : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
         const std::string attacker = R::Target(runtime);
         const std::string target = PopString(runtime);
-        Log("combat: %s attacks %s", attacker.c_str(), target.c_str());
         if (Hooks().setCombat) Hooks().setCombat(attacker, target);
     }
 };
@@ -653,12 +653,18 @@ struct Machine : OpcodeInstaller {
     struct ObjectProgram {
         Interpreter::Program program;
         ScriptLocals locals;
+        bool compiled = false;   // a body of declarations only compiles to no code
     };
     std::map<std::string, ObjectProgram> objectPrograms;
 
     void InstallFactions();
     void InstallItemsAndScripts();
     void InstallAiSettings();
+
+    // The codes InstallReal answers, and the commands that reach one of them.
+    std::set<int> real5;
+    std::set<int> real3;
+    std::set<std::string> realKeywords;
 
     // Installs a stub for one instruction word unless something real, or an
     // alias's stub, already answers to it.
@@ -667,12 +673,14 @@ struct Machine : OpcodeInstaller {
         if (tag == kSegment5Tag) {
             const int code = static_cast<int>(word & 0x3ffffff);
             emitted5.insert(code);
+            if (real5.count(code)) realKeywords.insert(shape.name);
             if (segment5.insert(code).second) {
                 interpreter.installSegment5<Stub5>(code, shape);
             }
         } else if (tag == kSegment3Tag) {
             const int code = static_cast<int>((word >> 8) & 0x3ffff);
             emitted3.insert(code);
+            if (real3.count(code)) realKeywords.insert(shape.name);
             if (segment3.insert(code).second) {
                 interpreter.installSegment3<Stub3>(code, shape);
             }
@@ -888,6 +896,8 @@ void Machine::CheckRealOpcodesReachable() {
 }
 
 void Machine::InstallStubs() {
+    real5 = segment5;
+    real3 = segment3;
     std::vector<std::string> keywords;
     extensions.listKeywords(keywords);
     for (const std::string& keyword : keywords) StubKeyword(keyword);
@@ -972,7 +982,8 @@ Machine::ObjectProgram& ObjectProgramFor(const std::string& name,
     auto it = machine.objectPrograms.find(script);
     if (it != machine.objectPrograms.end()) return it->second;
     Machine::ObjectProgram built;
-    if (!CompileObject(machine, source, &built)) {
+    built.compiled = CompileObject(machine, source, &built);
+    if (!built.compiled) {
         Log("script: object '%s' did NOT compile -- it will not run",
             name.c_str());
         built = Machine::ObjectProgram();
@@ -988,7 +999,7 @@ void ClearObjectPrograms() { TheMachine().objectPrograms.clear(); }
 // 🛑 A body that does NOT compile is cached as an empty program, so a broken
 // script costs one compile per session rather than one per tick.
 bool EnsureObjectScript(const std::string& script, const std::string& source) {
-    return !ObjectProgramFor(script, source).program.mInstructions.empty();
+    return ObjectProgramFor(script, source).compiled;
 }
 
 const ScriptLocals* ObjectScriptLocals(const std::string& script) {
@@ -1000,7 +1011,8 @@ const ScriptLocals* ObjectScriptLocals(const std::string& script) {
 bool RunObjectScript(const std::string& script, const std::string& source,
                      Interpreter::Context& context) {
     Machine::ObjectProgram& built = ObjectProgramFor(script, source);
-    if (built.program.mInstructions.empty()) return false;
+    if (!built.compiled) return false;
+    if (built.program.mInstructions.empty()) return true;
     // First run only: an object script ticks every frame, and one line per
     // tick per script would bury everything else in the log.
     if (g_objectsRun.insert(script).second) {
@@ -1014,6 +1026,11 @@ bool RunObjectScript(const std::string& script, const std::string& source,
         Log("script: object '%s' stopped: %s", script.c_str(), error.what());
         return false;
     }
+}
+
+std::vector<std::string> RealCommands() {
+    const std::set<std::string>& names = TheMachine().realKeywords;
+    return {names.begin(), names.end()};
 }
 
 // Most-reached first, each as "name xN".

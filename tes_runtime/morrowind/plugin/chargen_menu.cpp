@@ -14,6 +14,7 @@
 #include "dialogue_state.h"
 #include "ids.h"
 #include "leveling.h"
+#include "levelup_menu.h"
 #include "log.h"
 #include "menu.h"
 #include "menu_widgets.h"
@@ -621,6 +622,7 @@ void RequestFromScript(int kind) {
         return;
     }
     g_asked = {kind, nullptr, false};
+    NoteMenuOpening(kind == kClassKind ? ClassMenu().Name() : SignMenu().Name());
 }
 
 // A menu posted open that never came up (its movie failed to load): the
@@ -645,6 +647,32 @@ void Opened(int kind) {
     }
     PickColors(kind == kClassKind ? ClassMenu() : SignMenu());
     kind == kClassKind ? PushClass() : PushSign();
+}
+
+// The index of the row named `name` (any case) in `rows`, or -1.
+template <typename Row>
+int RowNamed(const std::vector<Row>& rows, const std::string& name) {
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (_stricmp(rows[i].name.c_str(), name.c_str()) == 0) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+// A headless run's pick: the row named `name` in the open menu, then OK.
+bool PickNamed(const std::string& name) {
+    if (PickLevelUp(name)) return true;
+    if (ClassMenu().IsOpen() && RowNamed(Classes(), name) >= 0) {
+        g_classes.chosen = RowNamed(Classes(), name);
+        g_picks.clear();
+        FinishClass();
+        return true;
+    }
+    if (SignMenu().IsOpen() && RowNamed(Signs(), name) >= 0) {
+        g_signs.chosen = RowNamed(Signs(), name);
+        FinishSign();
+        return true;
+    }
+    return false;
 }
 
 }  // namespace
@@ -692,6 +720,10 @@ bool InstallChargenMenus() {
     SignMenu().SetInput(signInput);
     const bool installed = ClassMenu().Install() && SignMenu().Install();
     if (installed) Hooks().showChargenMenu = RequestFromScript;
+    if (installed) Hooks().menuPick = PickNamed;
+    Hooks().menuOpen = [](const std::string& name) { return EngineMenuOpen(name.c_str()); };
+    Hooks().boundKeyName = BoundKeyName;
+    Hooks().closeMenu = [](const std::string& name) { CloseMenuNamed(name.c_str()); };
     Log("chargen: class and birthsign menus %s; %zu class(es), %zu sign(s), %zu plugin(s) asking",
         installed ? "ok" : "FAILED", MenuClasses().size(), MenuSigns().size(),
         ChargenTables().size());

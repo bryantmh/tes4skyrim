@@ -7107,6 +7107,76 @@ class TestAggressionTierTargeting:
         assert self._aggr(106, 50) == 3
 
 
+def _xnam_targets(fact: bytes) -> list:
+    """The faction each XNAM relation of a packed FACT record names."""
+    out, pos = [], 24
+    while pos < len(fact):
+        sig, size = fact[pos:pos + 4], struct.unpack_from('<H', fact, pos + 4)[0]
+        if sig == b'XNAM':
+            out.append(struct.unpack_from('<I', fact, pos + 6)[0])
+        pos += 6 + size
+    return out
+
+
+class TestTes3GuardsAndHostileCreatures:
+    """OpenMW's guards attack hostile creatures, never hostile NPCs.
+
+    See: docs/commentary/tes5_import_actors.md#tes3-guards-attack-hostile-creatures
+    """
+
+    class _Writer:
+        """Hands out FormIDs by EditorID and keeps the records written."""
+
+        def __init__(self):
+            self.records = {}
+
+        def derive_formid(self, _site, key):
+            """A stable id per key."""
+            return 0x01000000 + len(key)
+
+        def add_record(self, sig, data):
+            """Keeps each record's bytes under its type."""
+            self.records.setdefault(sig, []).append(data)
+
+    def setup_method(self):
+        from tes5_import.actors.disposition import create_disposition_factions
+        self.writer = self._Writer()
+        self.fids = create_disposition_factions(self.writer, None, wanted=True, tes3=True)
+
+    def teardown_method(self):
+        from tes5_import.actors.disposition import create_disposition_factions
+        create_disposition_factions(self._Writer(), None, wanted=False)
+
+    def _ranks(self, rec):
+        """The factions `disposition_ranks` gives a TES3 actor."""
+        from tes5_import.record_types.actor_common import disposition_ranks
+        return {fid for fid, _rank in disposition_ranks(rec)}
+
+    def test_hostile_creature_joins_the_creature_faction(self):
+        """A Fight-90 snow wolf: the creature faction, not the NPC one."""
+        ranks = self._ranks({'Signature': 'CREA', 'AIDT.Aggression': '90'})
+        assert self.fids['TES3HostileCreatureFaction'] in ranks
+        assert self.fids['TES4DispositionHostileFaction'] not in ranks
+
+    def test_hostile_npc_stays_in_the_npc_faction(self):
+        """A bandit hunts the player, but guards leave it alone."""
+        ranks = self._ranks({'Signature': 'NPC_', 'AIDT.Aggression': '90', 'ACBS.Disposition': '30'})
+        assert self.fids['TES4DispositionHostileFaction'] in ranks
+        assert self.fids['TES3HostileCreatureFaction'] not in ranks
+
+    def test_guard_class_is_marked_and_keeps_its_fight(self):
+        """A Fight-0 Guard joins the marker faction; the runtime, not its tier, sets it on creatures."""
+        from tes5_import.record_types.actor_common import build_aidt
+        guard = {'Signature': 'NPC_', 'AIDT.Aggression': '0', 'MorrowindClass': 'Guard'}
+        assert self.fids['TES3GuardFaction'] in self._ranks(guard)
+        assert build_aidt(guard)[0] == 0
+
+    def test_no_faction_makes_creatures_enemies_of_guards(self):
+        """Only the player is anyone's Enemy: a wolf must not start on a guard."""
+        enemies = [xnam for fact in self.writer.records['FACT'] for xnam in _xnam_targets(fact)]
+        assert enemies == [0x00000DB1, 0x00000DB1]
+
+
 class TestEvilFactions:
     """A TES4 Evil faction's members are no crime victims (DATA.Flags bit 1).
 

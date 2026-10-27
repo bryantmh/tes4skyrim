@@ -294,6 +294,7 @@ bool GameAddresses::Init(std::uint32_t runtimeVersion) {
     compileAndRun  = Resolve("CompileAndRun",  ids::kCompileAndRun,  ids::kSigCompileAndRun);
     scriptSetText  = Resolve("Script::SetText", ids::kScriptSetText, nullptr);
     memAlloc       = Resolve("MemAlloc",       ids::kMemAlloc,       nullptr);
+    memoryManager  = Resolve("MemoryManager",  ids::kMemoryManager,  nullptr);
 
     // Without this, a ref-targeted command silently runs against NO target --
     // it reports success and does nothing (see ids.h). That is the difference
@@ -320,7 +321,7 @@ bool GameAddresses::Init(std::uint32_t runtimeVersion) {
     // degrade to a reported E_UNSUPPORTED, but without these four the plugin
     // has nothing useful to offer, so say so loudly rather than half-loading.
     const bool core =
-        consoleExecute && scriptSetText && memAlloc && scriptVtable && scriptCtor;
+        consoleExecute && scriptSetText && memAlloc && memoryManager && scriptVtable && scriptCtor;
     Log("addresses: core console capability %s", core ? "OK" : "UNAVAILABLE");
     return core;
 }

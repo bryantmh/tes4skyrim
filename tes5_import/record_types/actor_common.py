@@ -14,6 +14,7 @@ import struct
 
 from ..base.master_export import records_of, values_of
 from ..actors.confidence import confidence_tier
+from ..actors.disposition import disposition_memberships, hostile_memberships, tes3_rule
 from ..base.constants import (DEFAULT_RACE, RACE_MAP, TES4_SKILL_TO_TES5,
                          TES5_SKILL_ORDER)
 from ..base.equivalents import ATTRIBUTE_SKILL_MAP, VOICE_TYPE_MAP
@@ -153,7 +154,8 @@ def in_evil_faction(rec: dict) -> bool:
 
 
 def load_faction_player_reactions(by_type: dict, master_export: dict = None) -> None:
-    """Index each FACT's disposition modifier toward the player faction.
+    """Index each FACT's disposition modifier toward the player faction, the
+    masters' first so this plugin's overrides win.
 
     Also indexes the prey and Evil factions and, via `_load_crime_factions`,
     the factions this plugin's scripts treat as crime factions.
@@ -164,8 +166,11 @@ def load_faction_player_reactions(by_type: dict, master_export: dict = None) -> 
     _PREY_FACTIONS.clear()
     _load_crime_factions(by_type)
     _load_evil_factions(by_type, master_export)
-    for rec in by_type.get('FACT', []):
-        fid = get_formid(rec, 'FormID') & 0xFFFFFF
+    rows = [(int(key, 16), rec) for key, rec in records_of(master_export, 'FACT')]
+    rows += [(get_formid(rec, 'FormID'), rec) for rec in by_type.get('FACT', [])]
+    for fid, rec in rows:
+        fid &= 0xFFFFFF
+        _FACTION_PLAYER_DISP.pop(fid, None)
         edid = (get_str(rec, 'EditorID') or '').lower()
         if 'prey' in edid:
             _PREY_FACTIONS.add(fid)
@@ -196,6 +201,22 @@ _MOOD_NEUTRAL = 0
 #: Attack margin (aggression-5)-disposition an actor needs to earn tier 2.
 _ONSIGHT_MARGIN = 10
 
+#: TES3 iFightDistanceBase and fFightDispMult, as Morrowind.esm and Arktwend author them.
+_TES3_FIGHT_BASE, _TES3_FIGHT_DISP_MULT = 20, 0.2
+
+#: OpenMW's disposition for a creature, and for an NPC_ whose export carries none.
+_TES3_NEUTRAL_DISPOSITION = 50
+
+
+def _tes3_fights_player(rec: dict) -> bool:
+    """OpenMW's isAggressive toward a player beside it: Fight + biases >= 100.
+
+    See: docs/commentary/tes5_import_actors.md#tes3-fight-targets-the-player
+    """
+    bias = (_TES3_FIGHT_BASE
+            + (_TES3_NEUTRAL_DISPOSITION - player_disposition(rec)) * _TES3_FIGHT_DISP_MULT)
+    return get_int(rec, 'AIDT.Aggression') + bias >= 100
+
 
 def _is_prey(rec: dict) -> bool:
     """True when this actor belongs to a prey faction.
@@ -211,14 +232,17 @@ def _is_prey(rec: dict) -> bool:
     return False
 
 
-def _player_disposition(rec: dict, pers: int) -> int:
-    """Estimate this actor's TES4 starting disposition toward the player.
+def player_disposition(rec: dict) -> int:
+    """This actor's starting disposition toward the player: TES3's authored NPDT one.
 
-    Personality is the base; every faction the actor belongs to contributes its
-    own reaction toward PlayerFaction.  TES4 sums the faction modifiers, so a
-    creature in two hostile factions is more hostile than one in a single
-    faction — matching the in-game behaviour the formula describes.
+    For TES4, Personality is the base; every faction the actor belongs to
+    contributes its own reaction toward PlayerFaction.  TES4 sums the faction
+    modifiers, so a creature in two hostile factions is more hostile than one in
+    a single faction — matching the in-game behaviour the formula describes.
     """
+    if tes3_rule():
+        return get_int(rec, 'ACBS.Disposition', _TES3_NEUTRAL_DISPOSITION)
+    pers = get_int(rec, 'DATA.Personality', 50)
     disp = pers
     for i in range(get_int(rec, 'FactionCount')):
         fid = get_formid(rec, f'Faction[{i}].FormID') & 0xFFFFFF
@@ -227,7 +251,22 @@ def _player_disposition(rec: dict, pers: int) -> int:
     return disp
 
 
-def _aggression_tier(rec: dict, aggr: int, pers: int) -> int:
+def _tes3_guard(rec: dict) -> bool:
+    """Whether this is a TES3 Guard-class NPC, which OpenMW sets on fighting creatures."""
+    return tes3_rule() and get_str(rec, 'MorrowindClass').lower() == 'guard'
+
+
+def disposition_ranks(rec: dict) -> list:
+    """[(faction, rank)]: disposition, Aggression, TES3 enmity and guard duty.
+
+    See: docs/commentary/tes5_import_actors.md#tes3-guards-attack-hostile-creatures
+    """
+    hostile = tes3_rule() and _tes3_fights_player(rec)
+    return (disposition_memberships(player_disposition(rec), get_int(rec, 'AIDT.Aggression'))
+            + hostile_memberships(hostile, rec.get('Signature') == 'CREA', _tes3_guard(rec)))
+
+
+def _aggression_tier(rec: dict, aggr: int) -> int:
     """TES4's 0-100 aggression scalar as a TES5 tier (wbAggressionEnum 0-3).
 
     Models TES4's per-target rule -- attack when disposition < aggression-5 --
@@ -238,19 +277,22 @@ def _aggression_tier(rec: dict, aggr: int, pers: int) -> int:
     """
     if aggr <= 5:
         return 0
+    if tes3_rule():
+        return 1
     if aggr >= 106:
         return 3
-    disp = _player_disposition(rec, pers)
+    disp = player_disposition(rec)
     if not _is_prey(rec) and (aggr - 5) - disp >= _ONSIGHT_MARGIN:
         return 2
     return 1
 
 
 def attacks_player_on_sight(rec: dict) -> bool:
-    """Whether this TES4 actor attacks the player on sight: no victim of a crime."""
-    return (not is_fallout_source() and _aggression_tier(
-        rec, get_int(rec, 'AIDT.Aggression'),
-        get_int(rec, 'DATA.Personality', 50)) >= 2)
+    """Whether this TES3/TES4 actor attacks the player on sight: no victim of a crime."""
+    if tes3_rule():
+        return _tes3_fights_player(rec)
+    return (not is_fallout_source()
+            and _aggression_tier(rec, get_int(rec, 'AIDT.Aggression')) >= 2)
 
 
 def build_aidt(rec: dict) -> bytes:
@@ -270,8 +312,7 @@ def build_aidt(rec: dict) -> bytes:
     if is_fallout_source():
         tes5_aggr, tes5_conf = aidt_tiers(rec)
     else:
-        pers = get_int(rec, 'DATA.Personality', 50)
-        tes5_aggr = _aggression_tier(rec, get_int(rec, 'AIDT.Aggression'), pers)
+        tes5_aggr = _aggression_tier(rec, get_int(rec, 'AIDT.Aggression'))
         tes5_conf = confidence_tier(rec)
     tes5_moral = 3 if resp >= 80 else (2 if resp >= 50 else (1 if resp >= 30 else 0))
     tes5_assist = 1 if resp >= 30 else 0

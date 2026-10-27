@@ -1,0 +1,110 @@
+# Morrowind chargen as a player plays it, from New Game: the harness clicks
+# New and answers TESGameSelect's prompt with Vvardenfell (button 2 of its
+# full list), which sets CharGenState to 1; the game's own Main and CharGen
+# scripts take it from there.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --new-game 2 --fast --checkpoints --stop-on-fail
+# See docs/commentary/headless_testing.md#quest-runs
+
+case chargen_ship
+until 900 CharGenState == 10
+until 300 GetPCCell "Imperial Prison Ship" == 1
+end
+
+# The guard walks up, tells the player to come along, and shows how to move.
+case chargen_walk_tip
+button 0
+expect "chargen boat guard 2".state >= 40
+end
+
+# The player walks to the stairs under the hatch (Position stands in for the
+# walk), reads the hatch tip and climbs out on deck.
+case chargen_hatch
+run
+player->Position 120 -40 180 0
+button 0
+activate chargen_shipdoor
+until 600 GetPCCell "Imperial Prison Ship" == 0
+end
+
+# Down the plank to the dock guard (Position stands in for the walk). He asks
+# where the player is from: Skyrim's race menu, kept as it opens.
+case chargen_race
+run
+player->Position -8950 -73093 150 90
+close RaceSex Menu
+until 300 "chargen dock guard".state == -1
+end
+
+# Into the census office, where the officer records the class and the sign.
+case chargen_class
+activate "chargen customs door"
+until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 1
+run
+player->Position 160 -111 220 90
+pick Warrior
+pick The Warrior
+button 0
+button 0
+button 0
+until 300 "chargen class".state == -1
+end
+
+# The papers on the table: read them, take them.
+case chargen_papers
+run
+player->Position 160 -170 220 90
+activate "chargen statssheet"
+take "chargen statssheet"
+close Book Menu
+until 300 player->GetItemCount "chargen statssheet" == 1
+end
+
+# The door guard sees the papers and unlocks the hall; out the far door.
+case chargen_hall
+run
+player->Position 100 140 220 0
+until 300 "chargen door hall"->GetLocked == 0
+activate "chargen door hall"
+run
+player->Position 760 900 260 90
+activate "chargen door exit"
+until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 0
+end
+
+# The courtyard: the map tip, and the ring from the barrel (taking it stands
+# in for the container menu).
+case chargen_courtyard
+run
+player->Position -10700 -71900 200 0
+button 0
+run
+"chargen barrel fatigue"->RemoveItem "ring_keley" 1
+player->AddItem "ring_keley" 1
+until 60 player->GetItemCount "ring_keley" == 1
+end
+
+# The captain's door wants the ring; inside, the dialogue tip, then the captain
+# takes the papers. His greeting names Morrowind, and Morrowind names the
+# player's duties.
+case chargen_captain
+activate "chargen door captain"
+until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 1
+run
+player->Position 1200 -380 220 90
+button 0
+talk chargen captain
+ask Morrowind
+ask duties
+bye
+expect player->GetItemCount "chargen statssheet" == 0
+expect GetJournalIndex A1_1_FindSpymaster == 1
+expect player->GetItemCount bk_a1_1_caiuspackage == 1
+end
+
+# Out into Seyda Neen: chargen is over, and the journal tip shows.
+case chargen_done
+activate "CharGen Exit Door"
+button 0
+until 600 CharGenState == -1
+until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 0
+end

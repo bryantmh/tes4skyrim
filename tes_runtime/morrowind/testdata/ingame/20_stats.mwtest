@@ -1,0 +1,416 @@
+# Generated: Set, Mod and Get of every attribute, skill and effect stat on the
+# player. See docs/commentary/headless_testing.md#mwscript-cases
+
+case attribute_strength
+run
+player->SetStrength 40
+player->ModStrength 5
+expect player->GetStrength == 45
+end
+
+case attribute_intelligence
+run
+player->SetIntelligence 40
+player->ModIntelligence 5
+expect player->GetIntelligence == 45
+end
+
+case attribute_willpower
+run
+player->SetWillpower 40
+player->ModWillpower 5
+expect player->GetWillpower == 45
+end
+
+case attribute_agility
+run
+player->SetAgility 40
+player->ModAgility 5
+expect player->GetAgility == 45
+end
+
+case attribute_speed
+run
+player->SetSpeed 40
+player->ModSpeed 5
+expect player->GetSpeed == 45
+end
+
+case attribute_endurance
+run
+player->SetEndurance 40
+player->ModEndurance 5
+expect player->GetEndurance == 45
+end
+
+case attribute_personality
+run
+player->SetPersonality 40
+player->ModPersonality 5
+expect player->GetPersonality == 45
+end
+
+case attribute_luck
+run
+player->SetLuck 40
+player->ModLuck 5
+expect player->GetLuck == 45
+end
+
+case skill_block
+run
+player->SetBlock 30
+player->ModBlock 4
+expect player->GetBlock == 34
+end
+
+case skill_armorer
+run
+player->SetArmorer 30
+player->ModArmorer 4
+expect player->GetArmorer == 34
+end
+
+case skill_mediumarmor
+run
+player->SetMediumArmor 30
+player->ModMediumArmor 4
+expect player->GetMediumArmor == 34
+end
+
+case skill_heavyarmor
+run
+player->SetHeavyArmor 30
+player->ModHeavyArmor 4
+expect player->GetHeavyArmor == 34
+end
+
+case skill_bluntweapon
+run
+player->SetBluntWeapon 30
+player->ModBluntWeapon 4
+expect player->GetBluntWeapon == 34
+end
+
+case skill_longblade
+run
+player->SetLongBlade 30
+player->ModLongBlade 4
+expect player->GetLongBlade == 34
+end
+
+case skill_axe
+run
+player->SetAxe 30
+player->ModAxe 4
+expect player->GetAxe == 34
+end
+
+case skill_spear
+run
+player->SetSpear 30
+player->ModSpear 4
+expect player->GetSpear == 34
+end
+
+case skill_athletics
+run
+player->SetAthletics 30
+player->ModAthletics 4
+expect player->GetAthletics == 34
+end
+
+case skill_enchant
+run
+player->SetEnchant 30
+player->ModEnchant 4
+expect player->GetEnchant == 34
+end
+
+case skill_destruction
+run
+player->SetDestruction 30
+player->ModDestruction 4
+expect player->GetDestruction == 34
+end
+
+case skill_alteration
+run
+player->SetAlteration 30
+player->ModAlteration 4
+expect player->GetAlteration == 34
+end
+
+case skill_illusion
+run
+player->SetIllusion 30
+player->ModIllusion 4
+expect player->GetIllusion == 34
+end
+
+case skill_conjuration
+run
+player->SetConjuration 30
+player->ModConjuration 4
+expect player->GetConjuration == 34
+end
+
+case skill_mysticism
+run
+player->SetMysticism 30
+player->ModMysticism 4
+expect player->GetMysticism == 34
+end
+
+case skill_restoration
+run
+player->SetRestoration 30
+player->ModRestoration 4
+expect player->GetRestoration == 34
+end
+
+case skill_alchemy
+run
+player->SetAlchemy 30
+player->ModAlchemy 4
+expect player->GetAlchemy == 34
+end
+
+case skill_unarmored
+run
+player->SetUnarmored 30
+player->ModUnarmored 4
+expect player->GetUnarmored == 34
+end
+
+case skill_security
+run
+player->SetSecurity 30
+player->ModSecurity 4
+expect player->GetSecurity == 34
+end
+
+case skill_sneak
+run
+player->SetSneak 30
+player->ModSneak 4
+expect player->GetSneak == 34
+end
+
+case skill_acrobatics
+run
+player->SetAcrobatics 30
+player->ModAcrobatics 4
+expect player->GetAcrobatics == 34
+end
+
+case skill_lightarmor
+run
+player->SetLightArmor 30
+player->ModLightArmor 4
+expect player->GetLightArmor == 34
+end
+
+case skill_shortblade
+run
+player->SetShortBlade 30
+player->ModShortBlade 4
+expect player->GetShortBlade == 34
+end
+
+case skill_marksman
+run
+player->SetMarksman 30
+player->ModMarksman 4
+expect player->GetMarksman == 34
+end
+
+case skill_mercantile
+run
+player->SetMercantile 30
+player->ModMercantile 4
+expect player->GetMercantile == 34
+end
+
+case skill_speechcraft
+run
+player->SetSpeechcraft 30
+player->ModSpeechcraft 4
+expect player->GetSpeechcraft == 34
+end
+
+case skill_handtohand
+run
+player->SetHandToHand 30
+player->ModHandToHand 4
+expect player->GetHandToHand == 34
+end
+
+case effect_resistblight
+run
+player->SetResistBlight 20
+player->ModResistBlight 3
+expect player->GetResistBlight == 23
+end
+
+case effect_resistcorprus
+run
+player->SetResistCorprus 20
+player->ModResistCorprus 3
+expect player->GetResistCorprus == 23
+end
+
+case effect_resistdisease
+run
+player->SetResistDisease 20
+player->ModResistDisease 3
+expect player->GetResistDisease == 23
+end
+
+case effect_resistfire
+run
+player->SetResistFire 20
+player->ModResistFire 3
+expect player->GetResistFire == 23
+end
+
+case effect_resistfrost
+run
+player->SetResistFrost 20
+player->ModResistFrost 3
+expect player->GetResistFrost == 23
+end
+
+case effect_resistmagicka
+run
+player->SetResistMagicka 20
+player->ModResistMagicka 3
+expect player->GetResistMagicka == 23
+end
+
+case effect_resistnormalweapons
+run
+player->SetResistNormalWeapons 20
+player->ModResistNormalWeapons 3
+expect player->GetResistNormalWeapons == 23
+end
+
+case effect_resistparalysis
+run
+player->SetResistParalysis 20
+player->ModResistParalysis 3
+expect player->GetResistParalysis == 23
+end
+
+case effect_resistpoison
+run
+player->SetResistPoison 20
+player->ModResistPoison 3
+expect player->GetResistPoison == 23
+end
+
+case effect_resistshock
+run
+player->SetResistShock 20
+player->ModResistShock 3
+expect player->GetResistShock == 23
+end
+
+case effect_blindness
+run
+player->SetBlindness 20
+player->ModBlindness 3
+expect player->GetBlindness == 23
+end
+
+case effect_chameleon
+run
+player->SetChameleon 20
+player->ModChameleon 3
+expect player->GetChameleon == 23
+end
+
+case effect_invisible
+run
+player->SetInvisible 20
+player->ModInvisible 3
+expect player->GetInvisible == 23
+end
+
+case effect_paralysis
+run
+player->SetParalysis 20
+player->ModParalysis 3
+expect player->GetParalysis == 23
+end
+
+case effect_silence
+run
+player->SetSilence 20
+player->ModSilence 3
+expect player->GetSilence == 23
+end
+
+case effect_superjump
+run
+player->SetSuperJump 20
+player->ModSuperJump 3
+expect player->GetSuperJump == 23
+end
+
+case effect_swimspeed
+run
+player->SetSwimSpeed 20
+player->ModSwimSpeed 3
+expect player->GetSwimSpeed == 23
+end
+
+case effect_waterbreathing
+run
+player->SetWaterBreathing 20
+player->ModWaterBreathing 3
+expect player->GetWaterBreathing == 23
+end
+
+case effect_waterwalking
+run
+player->SetWaterWalking 20
+player->ModWaterWalking 3
+expect player->GetWaterWalking == 23
+end
+
+case effect_flying
+run
+player->SetFlying 20
+player->ModFlying 3
+expect player->GetFlying == 23
+end
+
+case effect_armorbonus
+run
+player->SetArmorBonus 20
+player->ModArmorBonus 3
+expect player->GetArmorBonus == 23
+end
+
+case effect_attackbonus
+run
+player->SetAttackBonus 20
+player->ModAttackBonus 3
+expect player->GetAttackBonus == 23
+end
+
+case effect_defendbonus
+run
+player->SetDefendBonus 20
+player->ModDefendBonus 3
+expect player->GetDefendBonus == 23
+end
+
+case effect_castpenalty
+run
+player->SetCastPenalty 20
+player->ModCastPenalty 3
+expect player->GetCastPenalty == 23
+end
+

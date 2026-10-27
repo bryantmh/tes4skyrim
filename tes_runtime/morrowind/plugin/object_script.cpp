@@ -68,14 +68,28 @@ void WriteEventLocal(const ObjectScript& instance, const char* name,
     State().SetVar(instance.Key(), name, raised ? 1.0f : 0.0f);
 }
 
+// The compiler's layout of `script`, compiling it first. A carried item is
+// polled BEFORE its first run, and the layout does not exist until the body
+// parses -- without this, the tick an item arrives could not name `OnPCAdd`.
+const ScriptLocals* CompiledLocals(const std::string& script) {
+    const std::string& source = ScriptSource(script);
+    if (source.empty() || !EnsureObjectScript(script, source)) return nullptr;
+    return ObjectScriptLocals(script);
+}
+
 }  // namespace
 
 bool ObjectEvents::Any() const {
-    return activated || died || cellChanged || pcAdded ||
-           pcDropped || pcHitMe;
+    return activated || died || cellChanged || pcDropped || pcHitMe;
 }
 
 void ObjectEvents::Clear() { *this = ObjectEvents(); }
+
+void ObjectEvents::EndTick() {
+    cellChanged = false;
+    pcDropped = false;
+    pcHitMe = false;
+}
 
 ObjectScript::ObjectScript(std::string plugin, std::uint32_t localFormId,
                            std::string baseId, std::string script)
@@ -86,9 +100,8 @@ ObjectScript::ObjectScript(std::string plugin, std::uint32_t localFormId,
 ObjectScript::ObjectScript(std::string script, std::string target)
     : mBaseId(std::move(target)), mScript(std::move(script)), mKey(mScript) {}
 
-// 🛑 The events are cleared whether the body ran or not. TES3 gives them a
-// one-tick life, so a script that fails to compile must not leave `OnActivate`
-// latched for the next tick to see.
+// 🛑 A script that fails to compile clears EVERY event: it can never read
+// one, so a latched `OnActivate` would wait forever.
 bool ObjectScript::RunOnce() {
     const LayerScope scope(mLayer);
     const std::string& source = ScriptSource(mScript);
@@ -104,10 +117,10 @@ bool ObjectScript::RunOnce() {
         }
         return false;
     }
-    // 🛑 `OnPCEquip` is NOT written here. It is a STATE `PollEquipped` keeps,
-    // and an event write would clear it every tick -- the unequip branch
-    // `if ( OnPCEquip == 0 )` would then fire while the item is still worn.
-    WriteEventLocal(*this, kOnPcAdd, mEvents.pcAdded);
+    // 🛑 `OnPCEquip` and `OnPCAdd` are NOT written here. They are STATES
+    // `PollEquipped` keeps, and an event write would clear them every tick --
+    // the unequip branch `if ( OnPCEquip == 0 )` would then fire while the item
+    // is still worn, and `OnPCAdd` would never reach the body at all.
     WriteEventLocal(*this, kOnPcDrop, mEvents.pcDropped);
     WriteEventLocal(*this, kOnPcHitMe, mEvents.pcHitMe);
     ObjectContext context(*this);
@@ -115,7 +128,7 @@ bool ObjectScript::RunOnce() {
     g_running = this;
     const bool ok = RunObjectScript(mScript, source, context);
     g_running = previous;
-    mEvents.Clear();
+    mEvents.EndTick();
     // Once per instance, on the transition: a body that starts throwing stops
     // advancing its state while still bound and ticking, which otherwise looks
     // exactly like an unbind from the log.
@@ -145,12 +158,25 @@ void ObjectScript::PollDeath() {
     Log("object: %s died (%s)", mScript.c_str(), mBaseId.c_str());
 }
 
+void ObjectScript::NoteCarried(const std::string& baseId, bool carried) {
+    const auto [it, first] = mCarried.emplace(baseId, carried);
+    const bool arrived = !first && carried && !it->second;
+    it->second = carried;
+    if (!arrived) return;
+    const ScriptLocals* locals = CompiledLocals(mScript);
+    if (!locals || locals->TypeOf(kOnPcAdd) == ' ') return;
+    State().SetVar(mKey, kOnPcAdd, 1.0f);
+    Log("object: %s OnPCAdd = 1 (%s)", mScript.c_str(), baseId.c_str());
+}
+
 bool ObjectScript::PollEquipped(const std::string& baseId) {
     if (baseId.empty() || !Hooks().itemCount) return false;
-    if (Hooks().itemCount(kPlayerId, baseId) <= 0) return false;
+    const bool carried = Hooks().itemCount(kPlayerId, baseId) > 0;
+    NoteCarried(baseId, carried);
+    if (!carried) return false;
     // The id that answered is the one a bare command in the body acts on.
     mBaseId = baseId;
-    const ScriptLocals* locals = ObjectScriptLocals(mScript);
+    const ScriptLocals* locals = CompiledLocals(mScript);
     if (!locals || locals->TypeOf(kOnPcEquip) == ' ') return true;
     const bool worn = Hooks().itemEquipped &&
                       Hooks().itemEquipped(kPlayerId, baseId);
@@ -360,7 +386,7 @@ std::size_t LiveInstanceCount() { return g_instances.size(); }
 
 // 🛑 A retargeted `StartScript` replaces the instance: its target is part of
 // what the script acts on, while its locals are keyed by name and carry over.
-std::size_t RunGlobalScripts() {
+std::size_t RunGlobalScripts(bool cellChanged) {
     std::size_t ran = 0;
     for (const RunningGlobal& running : State().RunningScripts()) {
         auto it = g_globalScripts.find(running.key);
@@ -374,6 +400,7 @@ std::size_t RunGlobalScripts() {
                      .first;
             it->second.SetLayer(running.layer);
         }
+        it->second.Events().cellChanged = cellChanged;
         if (it->second.RunOnce()) ++ran;
     }
     return ran;

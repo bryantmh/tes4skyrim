@@ -3248,7 +3248,7 @@ class TestEnumActorValues:
     def test_aggression_100_becomes_tier(self, converter):
         out = conv_line(converter,
             'SetActorValue Aggression, 100', 'ObjectReference')
-        assert 'SetActorValue("Aggression", 2)' in out
+        assert 'SetAggression((Self as Actor), 2, (100) as Int,' in out
 
     def test_low_aggression_fights_enemies_not_bystanders(self, converter):
         """`setav aggression 10` must NOT become "attack neutrals on sight".
@@ -3269,32 +3269,32 @@ class TestEnumActorValues:
         """
         out = conv_line(converter,
             'SetActorValue Aggression, 10', 'ObjectReference')
-        assert 'SetActorValue("Aggression", 1)' in out
+        assert 'SetAggression((Self as Actor), 1,' in out
 
     def test_high_aggression_still_attacks_on_sight(self, converter):
         """The real "now attack anyone" beats (90/100) must keep tier 2."""
         for value in (70, 90, 100):
             out = conv_line(converter,
                 f'SetActorValue Aggression, {value}', 'ObjectReference')
-            assert 'SetActorValue("Aggression", 2)' in out, value
+            assert 'SetAggression((Self as Actor), 2,' in out, value
 
     def test_aggression_five_never_initiates(self, converter):
         """<=5 is Oblivion's "never attack" floor."""
         out = conv_line(converter,
             'SetActorValue Aggression, 5', 'ObjectReference')
-        assert 'SetActorValue("Aggression", 0)' in out
+        assert 'SetAggression((Self as Actor), 0,' in out
 
     def test_frenzy_range_attacks_everyone(self, converter):
         """>=106 is Frenzy: attacks anyone, including allies."""
         out = conv_line(converter,
             'SetActorValue Aggression, 110', 'ObjectReference')
-        assert 'SetActorValue("Aggression", 3)' in out
+        assert 'SetAggression((Self as Actor), 3,' in out
 
     def test_in_range_value_passes_through(self, converter):
         """An already-legal tier is a deliberate value, not re-bucketed."""
         out = conv_line(converter,
             'SetActorValue Aggression, 0', 'ObjectReference')
-        assert 'SetActorValue("Aggression", 0)' in out
+        assert 'SetAggression((Self as Actor), 0,' in out
 
     def test_confidence_write_goes_through_the_polyfill(self, converter):
         """The 0-100 value reaches TES4Polyfill.SetConfidence unscaled.
@@ -3746,12 +3746,15 @@ class TestStartCombatIsForced:
         assert 'TES4Polyfill.ForceCombatApproach(Self, Game.GetPlayer()' in out
 
     def test_moddisposition_hostile_idiom_is_forced_too(self, converter):
-        """`ModDisposition <target> -100` is the same "attack now" idiom and
-        has the same aggression-0 failure mode."""
+        """`ModDisposition <npc> -100` is the same "attack now" idiom; toward the
+        player the polyfill applies Oblivion's attack rule to the moved rank."""
         src = ('scn T\n\nbegin gamemode\n'
-               '\tUngolimRef.ModDisposition player -100\nend\n')
+               '\tUngolimRef.ModDisposition player -100\n'
+               '\tUngolimRef.ModDisposition GlarthirRef -100\nend\n')
         out = converter.convert_standalone('T', src, 'Quest', 'T')
-        assert 'TES4Polyfill.ForceCombatApproach(' in out
+        assert ('TES4Polyfill.ModDisposition(UngolimRef, (-100) as Int, TES4DispositionFaction, '
+                'TES4AggressionFaction, TES4DispositionHostileFaction)') in out
+        assert 'TES4Polyfill.ForceCombatApproach(UngolimRef, GlarthirRef' in out
 
     def test_forcecombat_retargets_an_actor_already_fighting(self):
         """TES4 StartCombat steers an actor already in combat onto the new

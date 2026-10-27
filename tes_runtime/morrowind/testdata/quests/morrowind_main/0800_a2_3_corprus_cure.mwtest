@@ -1,0 +1,64 @@
+# A2_3 "Corprus Cure": Caius sends the player, now carrying corprus, to the
+# wizard Divayth Fyr at Tel Fyr. Fyr wants a pair of boots from Yagrum Bagarn,
+# a creature in his Corprusarium, before he gives the player his potion.
+# PositionCell stands in for the walks.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from a2_3_orders
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Two Continues: the promotion, then a Dwemer artifact and gold for Fyr.
+case a2_3_orders
+run
+player->PositionCell -35 -110 80 180 "Balmora, Caius Cosades' House"
+until 600 GetPCCell "Balmora, Caius Cosades' House" == 1
+talk caius cosades
+ask Orders
+choose 1
+choose 2
+expect GetJournalIndex A2_3_CorprusCure == 1
+expect player->GetItemCount misc_dwrv_artifact50 == 1
+bye
+end
+
+# Fyr notices the artifact; given as a gift, it opens him up about corprus.
+case a2_3_fyr
+run
+player->PositionCell 4134 4695 14843 0 "Tower of Tel Fyr, Hall of Fyr"
+until 600 GetPCCell "Tower of Tel Fyr, Hall of Fyr" == 1
+talk divayth fyr
+choose 1
+expect GetJournalIndex A2_3_CorprusCure == 15
+ask corprus disease
+expect GetJournalIndex A2_3_CorprusCure == 20
+choose 1
+choose 3
+expect GetJournalIndex A2_3_CorprusCure == 25
+bye
+end
+
+# Yagrum Bagarn, deep in the Corprusarium, hands over the boots.
+case a2_3_boots
+run
+player->PositionCell 1076 5333 11991 90 "Corprusarium Bowels"
+until 600 GetPCCell "Corprusarium Bowels" == 1
+talk yagrum bagarn
+ask Dwemer boots
+expect GetJournalIndex A2_3_CorprusCure == 40
+expect player->GetItemCount "Dwemer_Boots of Flying" == 1
+bye
+end
+
+# The potion, drunk before his eyes: corprus cured, its immunity kept.
+case a2_3_cure
+run
+player->PositionCell 4134 4695 14843 0 "Tower of Tel Fyr, Hall of Fyr"
+until 600 GetPCCell "Tower of Tel Fyr, Hall of Fyr" == 1
+talk divayth fyr
+ask potion
+choose 1
+choose 4
+choose 5
+expect GetJournalIndex A2_3_CorprusCure == 50
+expect player->GetSpell "corprus immunity" == 1
+expect player->GetSpell Corprus == 0
+bye
+end

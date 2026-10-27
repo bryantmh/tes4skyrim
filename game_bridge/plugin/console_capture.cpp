@@ -187,9 +187,9 @@ std::uintptr_t ConsoleCaptureTarget() { return g_target; }
 
 // ---------------------------------------------- execution-context capture --
 //
-// ConsoleExecute's arg1 is a live object the console builds in its own frame.
-// It cannot be synthesized, and passing null makes commands compile but never
-// run. So we watch the game's OWN calls and remember the pointer it uses.
+// ConsoleExecute's arg1 is the ScriptCompiler the console builds in its own
+// frame. We remember the game's own pointer when it runs one; until then
+// ExecOne passes a stateless stand-in (see console_exec.cpp).
 
 std::atomic<std::uintptr_t> g_execContext{0};
 

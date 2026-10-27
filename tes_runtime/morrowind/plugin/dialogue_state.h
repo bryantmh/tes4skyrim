@@ -88,8 +88,14 @@ struct GameHooks {
                       const std::string& target) = nullptr;
     void (*setEnabled)(const std::string& ref, bool enabled) = nullptr;
     bool (*isDisabled)(const std::string& ref) = nullptr;
-    // The player activates `ref`.
+    // The player activates `ref`: as a script's `Activate`, past an OnActivate
+    // claim, or as a click, which a claim holds (a headless run's `talk`).
     void (*activate)(const std::string& ref) = nullptr;
+    // False, doing nothing, while `ref` has no 3D or its script has not run
+    // since it loaded: nobody clicks what is not there yet.
+    bool (*playerActivate)(const std::string& ref) = nullptr;
+    // The player picks `ref` up into the inventory (a headless run's `take`).
+    void (*playerTake)(const std::string& ref) = nullptr;
     // `ShowRestMenu`: sleep in `bed` as in a Skyrim bed; empty rests in place.
     void (*showRestMenu)(const std::string& bed) = nullptr;
     // Locks at `level`; a negative level unlocks.
@@ -101,8 +107,10 @@ struct GameHooks {
     float (*dynamicStat)(const std::string& actor, int which) = nullptr;
     void (*setDynamicStat)(const std::string& actor, int which,
                            float value) = nullptr;
-    void (*modDynamicStat)(const std::string& actor, int which,
-                           float delta) = nullptr;
+    // With `base` the maximum moves too (`ModHealth`); without, only the
+    // current value (`ModCurrentHealth`).
+    void (*modDynamicStat)(const std::string& actor, int which, float delta,
+                           bool base) = nullptr;
     void (*equipItem)(const std::string& actor, const std::string& item) = nullptr;
     // The player's current cell as the game NAMES it, or "". An unnamed
     // exterior gives "" while a game is perfectly well loaded, so this answers
@@ -187,6 +195,8 @@ struct GameHooks {
     // The player's experience toward Skyrim's next level and what it takes;
     // false when it cannot be read.
     bool (*levelProgress)(float* points, float* most) = nullptr;
+    // `EnableLevelUpMenu`: fills that experience to what the next level takes.
+    void (*fillLevelProgress)() = nullptr;
     // Settles every TES4 plugin's player attribute globals with the sheet's
     // store: what a script wrote moves the base, then the attribute is
     // written back. Game thread.
@@ -224,6 +234,22 @@ struct GameHooks {
     // `PlayBink file allowSkipping`: the engine's own full-screen Bink player
     // on a file under Data\Video, skippable with Escape when `allowSkipping`.
     void  (*playBink)(const std::string& file, bool allowSkipping) = nullptr;
+    // A headless run's click on button `button` of the open MessageBox.
+    void  (*pressButton)(int button) = nullptr;
+    // A headless run's view of the engine's menus: whether the menu registered
+    // as `name` is open, and the close a player's Done or Escape sends it.
+    bool  (*menuOpen)(const std::string& name) = nullptr;
+    void  (*closeMenu)(const std::string& name) = nullptr;
+    // A headless run's pick in the runtime's open menu: a class or birthsign
+    // row named `name`, then OK; or a level-up attribute, or its OK. False
+    // when none is open or nothing there has the name.
+    bool  (*menuPick)(const std::string& name) = nullptr;
+    // A headless run's sleep in the open Sleep/Wait menu: the hours slider
+    // set to `hours`, then its Sleep button.
+    void  (*sleepFor)(int hours) = nullptr;
+    // The key the player bound to Skyrim's user event `userEvent`, by name
+    // (menu.h BoundKeyName), for `^ActionForward` and the rest in text.
+    std::string (*boundKeyName)(const char* userEvent) = nullptr;
     // `PositionCell`: moves `ref` into the cell of that name and puts it at
     // (x, y, z) with a Z rotation of `zRot` DEGREES.
     void (*moveToCell)(const std::string& ref, const std::string& cell,
@@ -286,6 +312,9 @@ struct GameHooks {
     // `HasItemEquipped`: is that item in any of the actor's equip slots.
     bool (*itemEquipped)(const std::string& actor,
                          const std::string& item) = nullptr;
+    // `HitOnMe "id"`: whether the actor's last hit came from that weapon or
+    // spell, consuming it when it did.
+    bool (*hitOnMe)(const std::string& actor, const std::string& item) = nullptr;
     // `ForceSneak`/`ClearForceSneak`: puts the actor into the movement state
     // the latch now holds. `which` is a `MovementFlag`.
     void (*applyMovementFlag)(const std::string& actor, int which,
@@ -305,6 +334,9 @@ struct GameHooks {
     // Writes one Skyrim actor value by name, and any actor's level.
     void (*setActorValue)(const std::string& actor, const char* name,
                           float value) = nullptr;
+    // Moves one actor value's permanent modifier: a magic-effect stat's write.
+    void (*modActorValue)(const std::string& actor, const char* name,
+                          float delta) = nullptr;
     int  (*level)(const std::string& actor) = nullptr;
     // How far active magic moves one of an actor's attributes, by TES3 id
     // and index: every Fortify and Absorb it cast, less every Drain, Absorb
@@ -325,6 +357,9 @@ struct GameHooks {
     // Copies the game's clock into GameHour, Day, Month, Year, DaysPassed and
     // TimeScale, which TES3 scripts and dialogue read as plain globals.
     void (*syncClock)() = nullptr;
+    // A script's write to one of those clock globals, passed on to the game's
+    // own clock; otherwise the next syncClock copies the old time back over it.
+    void (*setClockGlobal)(const std::string& name, float value) = nullptr;
     // The four AI settings, pushed onto the actor: `which` is kAiFight..kAiFlee
     // and `value` is TES3's 0..100.
     void (*applyAiSetting)(const std::string& actor, int which,
@@ -349,6 +384,12 @@ struct GameHooks {
     // closes it and opens the Morrowind conversation; once the engine has
     // jailed the player for GoToJail, serves the sentence.
     void (*crimeTick)() = nullptr;
+    // Polled by the tick, on the main thread: ends the feuds StartCombat set
+    // up once either side is dead.
+    void (*combatTick)() = nullptr;
+    // The engine frame timer's millisecond clock, which advances with GAME
+    // time (each frame's clamped delta); 0 when unresolved.
+    std::uint32_t (*frameClockMs)() = nullptr;
     // Once a tick of unpaused play: re-reads the runtime-carried duration
     // effects -- Levitate, SlowFall for the physics hook, Sanctuary's ranks.
     void (*effectTick)() = nullptr;

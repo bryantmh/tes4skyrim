@@ -76,6 +76,9 @@ struct ActorDef {
     // order of OpenMW's Get/Set/Mod opcode families.
     int  attributes[8] = {};
     int  skills[27] = {};
+    // A CREA: no race, class, faction or sex, and it answers only the
+    // responses that name it.
+    bool creature = false;
 };
 
 // One GMST of the chain: GMST.txt, `name=type,value`.
@@ -197,14 +200,15 @@ const ScriptLocals* FindScriptLocals(const std::string& script);
 // The script an actor runs, or "" -- by the actor's TES3 id.
 const std::string& ScriptOf(const std::string& actor);
 
-// One object whose script declares `OnPCEquip`, and the sidecar binding it.
+// One object whose script declares `OnPCEquip` or `OnPCAdd`, and the sidecar
+// binding it.
 struct EquipWatch {
     std::string item;
     std::string script;
     int layer = -1;
 };
 
-// Every object whose script declares `OnPCEquip`.
+// Every object whose script declares `OnPCEquip` or `OnPCAdd`.
 //
 // 🛑 Precomputed because the alternative is asking the engine about all 1,547
 // scripted objects every tick. Only these can answer the question at all.
@@ -279,6 +283,7 @@ const float* FindPlacement(const std::string& id);
 const ActorDef* FindActor(const std::string& actor);
 // Where `actor` offers to take the player, or null when it offers no travel.
 const std::vector<TravelDest>* FindTravel(const std::string& actor);
+// An item by TES3 id; a filled soul gem's staged id (SLGM.txt) counts as one.
 const FormRef* FindItem(const std::string& item);
 const FormRef* FindQuest(const std::string& quest);
 
@@ -361,6 +366,9 @@ std::size_t BaseCount();
 // when the chain staged no such cell.
 const FormRef* FindCell(const std::string& cell);
 std::size_t CellCount();
+// The TES3 name of the exterior at grid (x, y): the cell's own name, else its
+// region's. Null when the chain staged none there.
+const std::string* FindExteriorName(int x, int y);
 
 // Every staged Intervention marker and interior anchor, once per sidecar that
 // staged it: a dependent re-stages its masters' rows, which repeat harmlessly.

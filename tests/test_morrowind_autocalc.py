@@ -9,7 +9,7 @@ OpenMW's formula worked by hand for a Wood Elf Commoner at level 2:
   Illusion, a minor outside the specialization = 10 + 5 + 1.0 = 16.
 """
 
-from tes5_import.dialogue.morrowind_autocalc import (autocalc_attributes,
+from tes5_import.dialogue.morrowind_autocalc import (autocalc_attributes, autocalc_pools,
                                                      autocalc_skills)
 
 #: Personality and Luck, Speechcraft and Mercantile, Illusion: TES3 indices.
@@ -50,3 +50,20 @@ def test_stats_cap_at_100():
     """A derived skill never passes 100 however high the level."""
     values = autocalc_skills(RACE, CLASS, SKILLS, level=200)
     assert values[SPEECHCRAFT] == 100
+
+
+def test_combat_class_with_endurance_pools():
+    """Nordrand guard, level 30: 100 + 6 * 29 health, Combat and Endurance.
+
+    See: docs/commentary/tes5_import_actors.md#morrowind-health-is-absolute
+    """
+    guard = {'attributes': [0, 5], 'specialization': 0}
+    pools = autocalc_pools([100, 82, 73, 96, 91, 100, 76, 50], guard, 30, 2.0)
+    assert pools == {'health': 274, 'magicka': 164, 'fatigue': 369}
+
+
+def test_stealth_class_without_endurance_pools():
+    """The Commoner: Stealth and no Endurance, so 4 health a level."""
+    commoner = {**CLASS, 'attributes': [PERSONALITY]}
+    pools = autocalc_pools([30, 40, 30, 50, 50, 30, 40, 40], commoner, 3, 2.0)
+    assert pools['health'] == (30 + 30) // 2 + 4 * 2

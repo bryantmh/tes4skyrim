@@ -787,11 +787,16 @@ _TES4_CREA_SWIMS, _TES4_CREA_FLIES, _TES4_CREA_WALKS = 0x10, 0x20, 0x40
 _RACE_SWIMS, _RACE_FLIES, _RACE_WALKS = 0x40, 0x80, 0x100
 _RACE_NO_COMBAT_IN_WATER = 0x800
 _RACE_ALLOW_PC_DIALOGUE = 0x200000
+#: TES4 CREA ACBS Biped, which walks without the Walks bit (OpenMW `Creature::canWalk`).
+_TES4_CREA_BIPED = 0x01
+#: RACE DATA Immobile: the race of a creature that cannot move at all, as vanilla dunMiddenEmptyRace.
+_RACE_IMMOBILE = 0x200
 
 
 def _race_locomotion_flags(recs: list) -> int:
     """Swims/Flies/Walks union over the creatures sharing the race (one race
-    per mesh folder), plus NoCombatInWater for pure walkers."""
+    per mesh folder), plus NoCombatInWater for pure walkers. A biped walks; a
+    race none of whose creatures can swim, fly or walk is Immobile."""
     t4 = 0
     for r in recs:
         t4 |= get_int(r, 'ACBS.Flags')
@@ -800,8 +805,10 @@ def _race_locomotion_flags(recs: list) -> int:
         bits |= _RACE_SWIMS
     if t4 & _TES4_CREA_FLIES:
         bits |= _RACE_FLIES
-    if t4 & _TES4_CREA_WALKS or not bits:
+    if t4 & (_TES4_CREA_WALKS | _TES4_CREA_BIPED):
         bits |= _RACE_WALKS
+    if not bits:
+        return _RACE_IMMOBILE | _RACE_NO_COMBAT_IN_WATER
     if not (bits & _RACE_SWIMS):
         bits |= _RACE_NO_COMBAT_IN_WATER
     return bits
@@ -825,7 +832,7 @@ def _race_data(rec: dict, race_recs: list = None, reach: int = None,
     """
     data = bytearray(_RACE_DATA_TEMPLATE)
     flags = struct.unpack_from('<I', data, 32)[0]
-    flags &= ~(_RACE_SWIMS | _RACE_FLIES | _RACE_WALKS
+    flags &= ~(_RACE_SWIMS | _RACE_FLIES | _RACE_WALKS | _RACE_IMMOBILE
                | _RACE_NO_COMBAT_IN_WATER | _RACE_ALLOW_PC_DIALOGUE)
     flags |= _race_locomotion_flags(race_recs or [rec])
     if talks:

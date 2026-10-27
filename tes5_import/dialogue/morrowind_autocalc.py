@@ -43,6 +43,13 @@ _SPEC_GROWTH = 0.5
 #: A class skill grows 1.0 per level, any other 0.1.
 _CLASS_GROWTH, _OTHER_GROWTH = 1.0, 0.1
 
+#: TES3 attribute indices the health, magicka and fatigue pools read.
+_STRENGTH, _INTELLIGENCE, _WILLPOWER, _AGILITY, _ENDURANCE = 0, 1, 2, 3, 5
+
+#: Health gained per level: 3, +2 for a Combat class, +1 for Stealth, +1 when Endurance is favored.
+_HEALTH_PER_LEVEL = 3
+_SPEC_HEALTH = {0: 2, 2: 1}
+
 
 def parse_race(rec) -> dict:
     """`{'bonus': {skill: bonus}, 'male': [8], 'female': [8]}` from RADT."""
@@ -105,6 +112,20 @@ def autocalc_attributes(race: dict, clazz: dict, skills: dict, level: int,
         values[attribute] = min(round(values[attribute] + (level - 1) * growth),
                                 _STAT_CAP)
     return values
+
+
+def autocalc_pools(attributes: list, clazz: dict, level: int, magicka_mult: float) -> dict:
+    """`{health, magicka, fatigue}`: `autoCalculateAttributes`' health, and the
+    magicka and fatigue `CreatureStats::setAttribute` derives from `attributes`.
+
+    See: docs/commentary/tes5_import_actors.md#morrowind-health-is-absolute
+    """
+    per_level = (_HEALTH_PER_LEVEL + _SPEC_HEALTH.get(clazz['specialization'], 0)
+                 + (_ENDURANCE in clazz['attributes']))
+    health = (attributes[_STRENGTH] + attributes[_ENDURANCE]) // 2 + per_level * (level - 1)
+    fatigue = sum(attributes[i] for i in (_STRENGTH, _WILLPOWER, _AGILITY, _ENDURANCE))
+    return {'health': health, 'magicka': int(magicka_mult * attributes[_INTELLIGENCE]),
+            'fatigue': fatigue}
 
 
 def autocalc_skills(race: dict, clazz: dict, skills: dict, level: int) -> list:
