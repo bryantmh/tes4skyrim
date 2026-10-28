@@ -15,6 +15,7 @@ Everything is in namespace `tesruntime`; MorrowindRuntime's own code is in
 | `json.*` | a small JSON reader for the sidecars |
 | `engine.*`, `engine_ids.h` | fixed strings, `FormFromFile`, sidecar walking, main-thread tasks and the shared main-thread timer (`StartMainThreadTick`) |
 | `ui_message.*` | opening and closing a registered menu by name |
+| `test_runner.*` | headless test cases: the grammar, step loop and harness handshake; each runtime supplies a `TestBackend` |
 | `gamebryo_sequence.*` | playing a mesh's own `NiControllerSequence` by name, as `PlayGamebryoAnimation` does: FNV gun parts, Morrowind `PlayGroup` |
 | `crafting.h`, `crafting_client.cpp` | the crafting-bench API; TESRuntime owns the hook (`tes/crafting.cpp`) and the client calls its exports |
 | `msvc.bat` | puts MSVC x64 on the environment; every `build.bat` calls it |

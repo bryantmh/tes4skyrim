@@ -1,0 +1,79 @@
+# MQ01Tate "Belagerung der Hexer", part 2: with Karick done the player helps Tate. Stages (TES4 numbers): 10 Merre/Porim
+# send the player to Tate, 15 Tate asks for shovels (and gives MQ01TateKey01), 20 two MQ00StabileSchaufel01 found,
+# 30 Branick dead and the mages attack the gate, 35 Hauptmann Bartulus's soldiers arrive and the gate is unlocked,
+# 40 all five mages dead (also sets MQ01 1, MQ02 1 and MQ01Porim 10), 45 shovels handed in.
+
+# Merre's greeting once Karick is thanked (INFO 001F35DD, Porim < 10, NQ00Karick >= 40) tells the player to help Tate and
+# sets MQ01Tate 10.
+case siege_merre_sends_player
+talk MerreRef
+hear 300 MerreRef Morten
+bye
+expect GetStageDone MQ01Tate 10
+end
+
+# Tate's "Aufgaben" (INFO 0000C934) sets MQ01Tate 15 and gives the key for the upper mine (MQ01TateKey01).
+case siege_tate_task
+walk 0000E5CF
+activate 0000E5CF
+until 600 player.GetInCell SchattenrufMinePart07 == 0
+walk WachsoldatTateRef
+talk WachsoldatTateRef
+ask "Aufgaben"
+hear 300 WachsoldatTate Verst
+bye
+expect GetStageDone MQ01Tate 15
+expect player.GetItemCount MQ01TateKey01 >= 1
+end
+
+# The shovels lie in SchattenrufMinePart06 (door 00001BCB in the world). MQ01TateScript sets stage 20 once the player
+# carries two (the shovel refs have no EditorID: 001A24C9, 001A24CA).
+case siege_shovels
+walk 00001BCB
+activate 00001BCB
+until 600 player.GetInCell SchattenrufMinePart06
+walk 001A24C9
+take 001A24C9
+walk 001A24CA
+take 001A24CA
+until 300 GetStageDone MQ01Tate 20
+end
+
+# Back on the road, within 900 of Tate, a bolt kills Branick (MQ01TateScript, needs NQ00Karick 25 from karick_provoke_mage);
+# 0.7 s later the mages attack the gate (stage 30) and Tate shouts "Sie kommen durch!".
+case siege_mages_attack
+walk 0000F003
+activate 0000F003
+until 600 player.GetInCell SchattenrufMinePart06 == 0
+walk WachsoldatTateRef
+until 1800 GetStageDone MQ01Tate 30
+hear 300 WachsoldatTate Sie kommen durch
+end
+
+# Bartulus's soldiers (Malte, Kelrim, Laurus) follow him to MQ01TateStage30BartulusMarkerRef; within 2500 of it the
+# script sets stage 35, sounds the horn and unlocks the mine wall gate.
+case siege_gate_opens
+until 3600 GetStageDone MQ01Tate 35
+hear 600 WachsoldatTate Die Verst
+expect MQ01TateMinenWallTorRef.GetLockLevel == 0
+end
+
+# The soldiers and Tate fight the mages; Kampfmagier05 goes for the player, so the player kills him. When all five are
+# dead the script sets stage 40 (and MQ01 1, MQ02 1, MQ01Porim 10).
+case siege_mages_dead
+console MQ01Kampfmagier05Ref.kill
+until 5400 GetStageDone MQ01Tate 40
+expect GetStageDone MQ01 1
+expect GetStageDone MQ02 1
+expect GetStageDone MQ01Porim 10
+end
+
+# Tate's thanks: "Aufgaben" (INFO 001A4C4D) sets stage 45; MQ01TateScript then takes the two shovels.
+case siege_reward
+walk WachsoldatTateRef
+talk WachsoldatTateRef
+ask "Aufgaben"
+bye
+expect GetStageDone MQ01Tate 45
+until 300 player.GetItemCount MQ00StabileSchaufel01 == 0
+end

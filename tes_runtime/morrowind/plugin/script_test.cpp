@@ -1923,13 +1923,9 @@ void ButtonPressedCases(DialogueContext& context) {
 
 // The kinds of a case's steps, in order, as their directive names.
 std::string StepKinds(const TestCase& test) {
-    static const char* kNames[] = {"run",    "wait", "expect", "talk",     "ask",
-                                   "choose", "bye",  "button", "activate", "until",
-                                   "pick",   "close", "take", "console", "persuade",
-                                   "sleep",  "walk"};
     std::string kinds;
     for (const TestStep& step : test.steps) {
-        kinds += (kinds.empty() ? "" : " ") + std::string(kNames[static_cast<int>(step.kind)]);
+        kinds += (kinds.empty() ? "" : " ") + TestStepNames()[static_cast<int>(step.kind)];
     }
     return kinds;
 }

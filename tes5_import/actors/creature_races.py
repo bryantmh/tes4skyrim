@@ -791,6 +791,10 @@ _RACE_ALLOW_PC_DIALOGUE = 0x200000
 _TES4_CREA_BIPED = 0x01
 #: RACE DATA Immobile: the race of a creature that cannot move at all, as vanilla dunMiddenEmptyRace.
 _RACE_IMMOBILE = 0x200
+#: RACE DATA Can't Open Doors, which the DogRace template carries.
+_RACE_CANT_OPEN_DOORS = 0x00100000
+#: FO3/FNV CREA ACBS Can't Open Doors; TES3 and TES4 creatures have no such bit, so theirs all open doors.
+_CREA_CANT_OPEN_DOORS = 0x00400000
 
 
 def _race_locomotion_flags(recs: list) -> int:
@@ -833,8 +837,11 @@ def _race_data(rec: dict, race_recs: list = None, reach: int = None,
     data = bytearray(_RACE_DATA_TEMPLATE)
     flags = struct.unpack_from('<I', data, 32)[0]
     flags &= ~(_RACE_SWIMS | _RACE_FLIES | _RACE_WALKS | _RACE_IMMOBILE
-               | _RACE_NO_COMBAT_IN_WATER | _RACE_ALLOW_PC_DIALOGUE)
+               | _RACE_NO_COMBAT_IN_WATER | _RACE_ALLOW_PC_DIALOGUE
+               | _RACE_CANT_OPEN_DOORS)
     flags |= _race_locomotion_flags(race_recs or [rec])
+    if all(get_int(r, 'ACBS.Flags') & _CREA_CANT_OPEN_DOORS for r in race_recs or [rec]):
+        flags |= _RACE_CANT_OPEN_DOORS
     if talks:
         flags |= _RACE_ALLOW_PC_DIALOGUE
     struct.pack_into('<I', data, 32, flags)

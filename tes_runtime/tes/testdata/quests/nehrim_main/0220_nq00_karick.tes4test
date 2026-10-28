@@ -1,0 +1,88 @@
+# NQ00Karick "Karicks Helmproblem": the miner Karick has an old helmet stuck on his head. Soap from the stores on the mine
+# wall frees it, but the guards will not hand it over while the mages watch, so the player provokes a mage into
+# shelling the wall and picks the soap up off the ground. This quest gates the main quest: MQ01Tate's script
+# (TateScript) does nothing past the first greeting until NQ00Karick >= 19, and its Tate-gate lines (Branick, the mage
+# attack) need NQ00Karick 25.
+# Stages are TES4 numbers: 5 Karick stumbles in, 10 told, 15 Merre/Porim sent the player to the guards, 19 Tate's
+# answer, 20 mages hittable, 21 mage hit, 25 Tate warns, 30 two Seife, 35 soap given, 40 thanked.
+
+# Karick's greeting at stage 5 ("Ihr, Ihr! Koennt Ihr mir helfen?"); "Helmproblem" (NQ00KarickTopic01) sets stage 10 and
+# adds the topic "Seife" to Merre and Porim.
+case karick_helmet
+walk Karickref
+talk Karickref
+hear 300 Karickref Helmproblem
+ask "Helmproblem"
+bye
+expect GetStageDone NQ00Karick 10
+end
+
+# Merre's greeting (INFO 001AB968) adds "Seife"; in SchattenrufMinePart07 at stage 10 his "Seife" answer sets stage 15
+# and gives Tate the topic.
+case karick_merre_suggests_soap
+talk MerreRef
+hear 300 MerreRef Karick
+ask "Seife"
+hear 300 MerreRef Seife... mmh
+bye
+expect GetStageDone NQ00Karick 15
+end
+
+# Out of the mine (door 0000E5CF) to Tate on the wall. His "Seife" answer (INFO 0000A5D3) sets stage 19; MQ01TateScript
+# then has Branick call down from the wall ("Die Seife ist hier oben ...", NQ00Soldat01) and 9.5 s later sets stage 20,
+# which makes the mages hittable (NQ00MagierScript).
+case karick_tate_refuses
+walk 0000E5CF
+activate 0000E5CF
+until 600 player.GetInCell SchattenrufMinePart07 == 0
+walk WachsoldatTateRef
+talk WachsoldatTateRef
+ask "Seife"
+hear 300 WachsoldatTate Seife, was
+bye
+expect GetStageDone NQ00Karick 19
+hear 900 WachsoldatBranickRef Die Seife ist hier oben
+until 1200 GetStageDone NQ00Karick 20
+end
+
+# The player attacks one of the mages (MQ01Kampfmagier0N); NQ00MagierScript sees GetAttacked, the mages stop, two
+# fireballs hit the wall and stage 21 is set. A spell the player casts at the mage stands in for the player's attack
+# (Nehrim's own 1Feuerball, Rank I; the player's starting DefaultPlayerSpell only restores health). MQ01TateScript then
+# has Tate warn the player ("Mist! Volle Deckung!") and sets stage 25.
+case karick_provoke_mage
+walk MQ01Kampfmagier01Ref
+console player.cast 1Feuerball MQ01Kampfmagier01Ref
+until 600 GetStageDone NQ00Karick 21
+hear 600 WachsoldatTate Volle Deckung
+until 900 GetStageDone NQ00Karick 25
+end
+
+# The shelling shook soap loose onto the ground below the wall; two pieces (NQ00KarickScript counts Seife >= 2) set
+# stage 30. The soap are placed refs without EditorIDs (0000A476, 0000A475); where they ended up is physics.
+case karick_collect_soap
+walk 0000A476
+take 0000A476
+walk 0000A475
+take 0000A475
+until 300 GetStageDone NQ00Karick 30
+expect player.GetItemCount Seife >= 2
+end
+
+# Back to Karick: "Seife" (INFO 0000B47F) sets stage 35 and takes the soap; his next greeting (INFO 0000B481, "Es hat
+# geklappt!") sets stage 40.
+case karick_soap_given
+walk 00001BC2
+activate 00001BC2
+until 600 player.GetInCell SchattenrufMinePart07
+walk Karickref
+talk Karickref
+ask "Seife"
+hear 300 Karickref Ihr habt Seife
+bye
+expect GetStageDone NQ00Karick 35
+expect player.GetItemCount Seife == 0
+talk Karickref
+hear 300 Karickref Es hat geklappt
+bye
+expect GetStageDone NQ00Karick 40
+end

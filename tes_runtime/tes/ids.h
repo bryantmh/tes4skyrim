@@ -274,4 +274,92 @@ constexpr std::uint64_t kRefGetItemCount = 56173;
 // ActorValue 16 is Alchemy (Health is 24, engine.h kActorValueHealth).
 constexpr int kActorValueAlchemy = 16;
 
+// ---------------------------------------------------------------------------
+// Headless quest cases (test_game.cpp,
+// docs/commentary/headless_testing.md#tes4-quest-cases). Read off 1.6.1170 and
+// checked on 1.6.659.
+// ---------------------------------------------------------------------------
+
+// ObjectReference.Activate(akActivator, abDefaultProcessingOnly),
+// ObjectReference.AddItem(akItem, count, silent) and Is3DLoaded(), the
+// callbacks registered beside their names (the Morrowind runtime's ids.h).
+constexpr std::uint64_t kRefActivate = 56139;
+constexpr std::uint64_t kRefAddItem = 56145;
+constexpr std::uint64_t kRefIs3DLoaded = 56188;
+
+// MenuManager::IsMenuOpen(manager, BSFixedString*) (0xfa37b0).
+constexpr std::uint64_t kMenuManagerIsMenuOpen = 82074;
+
+// MenuManager: the count of open menus that pause the game at +0x160, and the
+// registered-menu table: capacity at +0x134, 0x20-byte entries at +0x150,
+// each the interned name at +0, the IMenu* at +8 and the chain link at +0x18
+// (the Morrowind runtime's EngineMenuObject). IMenu flags at +0x1c, bit 0
+// pauses the game.
+constexpr std::size_t kOffMenuNumPauseGame = 0x160;
+constexpr std::size_t kOffMenuTableCapacity = 0x134;
+constexpr std::size_t kOffMenuTableEntries = 0x150;
+constexpr std::size_t kMenuTableEntrySize = 0x20;
+constexpr std::size_t kOffMenuEntryMenu = 0x8;
+constexpr std::size_t kOffMenuEntryNext = 0x18;
+constexpr std::size_t kOffMenuFlags = 0x1c;
+constexpr std::uint32_t kMenuPausesGame = 0x1;
+
+// The MenuTopicManager singleton POINTER (0x3137778, 0x2f93598 on 1.6.659).
+// Its listed topics: a node list at +0x20 (item at +0, next at +8), whose
+// first node is skipped when the byte at +0xb7 is set -- the walk
+// SelectTopic (0x5dfa50) makes to turn a clicked index into a topic. Each
+// item starts with its text: a char* at +0 and a u16 length at +8 (0xffff
+// means NUL-terminated), what PopulateDialogueList (0x914de0) hands the movie.
+constexpr std::uint64_t kMenuTopicManager = 401099;
+constexpr std::size_t kOffTopicList = 0x20;
+constexpr std::size_t kOffTopicSkipFirst = 0xb7;
+
+// The Dialogue Menu's movie callbacks, registered beside 'TopicClicked' and
+// 'CloseMenu' (0x914690): TopicClicked (0x914880) takes one number, the
+// clicked index, and selects it; CloseMenu (0x914980) is the player leaving.
+// MessageBoxMenu's buttonPress (0x94bbe0) takes the button index. Each is
+// called with FxDelegateArgs: the handler (the menu) at +0x18, the GFxValue
+// array at +0x28 and its count at +0x30. A GFxValue is 0x18 bytes, its type
+// at +8 (3 is a number) and the double at +0x10.
+constexpr std::uint64_t kDialogueTopicClicked = 51509;
+constexpr std::uint64_t kDialogueCloseMenu = 51511;
+constexpr std::uint64_t kMessageBoxButtonPress = 52279;
+constexpr std::size_t kOffFxHandler = 0x18;
+constexpr std::size_t kOffFxArgs = 0x28;
+constexpr std::size_t kOffFxArgCount = 0x30;
+constexpr std::size_t kGfxValueSize = 0x18;
+constexpr std::size_t kOffGfxType = 0x8;
+constexpr std::size_t kOffGfxNumber = 0x10;
+constexpr std::uint32_t kGfxNumber = 3;
+
+constexpr const char* kDialogueMenuName = "Dialogue Menu";
+constexpr const char* kMessageBoxMenuName = "MessageBoxMenu";
+
+// SubtitleManager::AddSubtitle(manager, TESObjectREFR* speaker, const char*
+// text, bool force) (0x96cb00, 0x90d8c0 on 1.6.659): where every spoken line
+// starts showing -- conversation, bark, scene or Say. Six `call` sites, no
+// jump or stored pointer to it. It skips the player and every line while
+// bGeneralSubtitles and bDialogueSubtitles are both off.
+constexpr std::uint64_t kAddSubtitle = 52626;
+
+// The path request Actor.PathToReference makes (0x696dd0, 0x63cae0 on
+// 1.6.659): int (Actor*, TESObjectREFR* target, float speed 0-1), -1 when no
+// path starts. The native registers its Papyrus stack to resume when the path
+// ends; called directly, nothing waits on it.
+constexpr std::uint64_t kActorPathTo = 37893;
+
+// Game.SetPlayerAIDriven(bool) and Game.ForceThirdPerson(), so the player
+// follows a path; ObjectReference.PlaceAtMe and Delete for the point a walk
+// to `x y z` aims at, an XMarker (Skyrim.esm 0x3B). The Morrowind runtime's
+// ids.h.
+constexpr std::uint64_t kGameSetPlayerAIDriven = 55577;
+constexpr std::uint64_t kGameForceThirdPerson = 55565;
+constexpr std::uint64_t kRefPlaceAtMe = 56203;
+constexpr std::uint64_t kRefDelete = 56154;
+constexpr std::uint32_t kXMarker = 0x3B;
+
+// The runtime whose class and birthsign menus a converted chargen asks for
+// (TES4_Chargen.Ask), and which exports `TESTestPick` for the runner.
+constexpr const char* kMorrowindRuntimeDll = "MorrowindRuntime.dll";
+
 }  // namespace tesruntime::ids

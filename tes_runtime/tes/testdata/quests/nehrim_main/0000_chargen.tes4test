@@ -1,0 +1,31 @@
+# Nehrim from New Game: the game selector (TESGameSelect, Nehrim = game 3) hands off to Charactergen stage 5 (the
+# result script runs setinchargen and moves the player to PlayerMarkerStartCell, the start cave "StartCelle" /
+# Schattenrufmine) and sets MQ00 "Schatten und Licht" to stage 1, then pops the RaceSex Menu. The player confirms the
+# race menu; CharGenQuest (a MenuMode block while MQ00 is at 1) enables the start-cell light, StartCelleLichtRef's
+# script (MQ00LichtScript) disables it after 4 s and sets MQ00 stage 2 five seconds later, which stops Charactergen
+# and gives the player back control. The cases only WAIT for the NPC-free parts of this.
+# Stages used are TES4 numbers: Charactergen 5 (hand-off), MQ00 1 (hand-off) and 2 (light done).
+
+case chargen_start
+until 900 GetStage Charactergen >= 5
+until 300 GetStage MQ00 >= 1
+expect GetQuestRunning MQ00
+expect player.GetInCell StartCelle
+end
+
+# Menu expected: "RaceSex Menu" (TESGameSelect BeginChosenGame calls Game.ShowRaceMenu 0.5 s after the hand-off; the
+# TES4 engine showed the race menu on every new game and Nehrim's own scripts never open it).
+# God mode stands in for the player being strong enough for the troll and mage fights that follow (it is not a story
+# change).
+case chargen_race_menu
+wait 60
+close RaceSex Menu
+console tgm
+end
+
+# The light fade runs in the start cell (MQ00LichtScript: 4 s, then 5 s, then SetStage MQ00 2). Stage 2's result
+# script stops Charactergen and enables the player controls.
+case chargen_light_fades
+until 1800 GetStage MQ00 >= 2
+expect GetQuestRunning Charactergen == 0
+end

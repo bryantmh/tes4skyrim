@@ -125,6 +125,8 @@ bool ActorInCombat(void* actor);
 // `fn` on each actor in the engine's high process list. Game thread.
 // game_calls_still.cpp.
 void ForEachHighActor(const std::function<void(void*)>& fn);
+// `Actor.GetCombatTarget`, or null. game_calls_query.cpp.
+void* CombatTargetOf(void* actor);
 // PC Crime Level on the engine's crime gold, and the fine and jail opcodes.
 // See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
 void InstallCrimeCalls(GameHooks& hooks);
@@ -143,6 +145,16 @@ constexpr int kSwiftSwimEffect = 1;
 constexpr int kLevitateEffect = 10;
 constexpr int kSlowFallEffect = 11;
 constexpr int kSanctuaryEffect = 42;
+// The cures, which Skyrim's own CureEffect cannot sort by class.
+constexpr int kCureCommon = 69;
+constexpr int kCureBlight = 70;
+constexpr int kCureCorprus = 71;
+constexpr int kRemoveCurse = 100;
+constexpr int kCorprusEffect = 132;
+bool IsCure(int index);
+// Purges what the cure `index` takes off `ref`. game_calls_spell.cpp.
+// See: docs/commentary/morrowind_runtime.md#cures-purge-by-class
+void ApplyCure(void* ref, int index);
 // Levitate and SlowFall on the InAir and OnGround states' simulate, SwiftSwim
 // on the Swimming state's, and Sanctuary's faction rank, all read from the
 // active-effect list.

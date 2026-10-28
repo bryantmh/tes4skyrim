@@ -439,6 +439,13 @@ constexpr std::uint64_t kActorRestoreValue = 54737;
 constexpr std::uint64_t kActorDamageValue = 54660;
 constexpr std::uint64_t kActorEquipItem = 54661;
 
+// Actor::DrinkPotion(AlchemyItem*, ExtraDataList*) -> bool (0x6c2dd0 on
+// 1.6.1170): casts the potion on the actor through its instant caster, then
+// removes one. Actor.EquipItem leaves a potion in the player's pack, and TES3's
+// `Equip` of a potion drinks it (OpenMW ActionEquip applies it).
+constexpr std::uint64_t kActorDrinkPotion = 38746;
+constexpr std::uint8_t kFormTypePotion = 0x2E;
+
 // ActorEquipManager::EquipObject (0x97a5e0) and UnequipObject (0x97a9e0) on
 // 1.6.1170: the chokepoint EVERY equip passes, menu and script alike, which
 // `Actor.EquipItem` itself reaches.
@@ -553,6 +560,31 @@ constexpr std::uint64_t kVmHitProcess = 53974;
 constexpr std::size_t kOffHitTarget = 0x0;
 constexpr std::size_t kOffHitAttacker = 0x8;
 constexpr std::size_t kOffHitSource = 0x10;
+
+// SkyrimVM's BSTEventSink<TESContainerChangedEvent> vtable (0x19126a8 on
+// 1.6.1170, 0x17bbfb0 on 1.6.659), whose slot-1 ProcessEvent (0x9c4170) loads
+// 'OnItemAdded' and 'OnItemRemoved': every inventory change passes through it.
+// TESContainerChangedEvent (skse64 GameEvents.h) holds the old and the new
+// container's FormIDs at +0x0 and +0x4, and the item's at +0x8.
+constexpr std::uint64_t kVmContainerSink = 217073;
+constexpr std::uint64_t kVmContainerProcess = 53966;
+constexpr std::size_t kOffContainerFrom = 0x0;
+constexpr std::size_t kOffContainerTo = 0x4;
+constexpr std::size_t kOffContainerItem = 0x8;
+// The player's reference, Skyrim.esm 0x14, the same in every load order.
+constexpr std::uint32_t kPlayerRefFormId = 0x14;
+
+// SkyrimVM's BSTEventSink<TESDeathEvent> vtable (0x19126c0 on 1.6.1170), whose
+// slot-1 ProcessEvent (0x9c45f0) loads 'OnDying' when the state byte at +0x10
+// is 0 and 'OnDeath' otherwise: every actor's death passes through it. The
+// dying actor is the raw pointer at +0x0 (skse64 GameEvents.h TESDeathEvent).
+constexpr std::uint64_t kVmDeathSink = 217075;
+constexpr std::uint64_t kVmDeathProcess = 53967;
+constexpr std::size_t kOffDeathActor = 0x0;
+// The state byte: 0 as the actor BEGINS dying, the kill itself. A corpse that
+// loads dead raises the event too, which a fresh death must not be mistaken for.
+constexpr std::size_t kOffDeathState = 0x10;
+constexpr std::uint8_t kDeathStateDying = 0;
 
 // TESMagicEffectApplyEvent: the target and caster (NiPointers' raw pointers)
 // and the MGEF's runtime FormID. The VM's argument functor (vtable 0x1912ba8,
@@ -828,7 +860,10 @@ constexpr std::uint64_t kGameEnableControls = 55455;
 constexpr std::size_t kOffCellFullName = 0x28;
 
 constexpr std::uint64_t kRefAddItem = 56145;
-constexpr std::uint64_t kRefRemoveItem = 56218;
+// The base-form workers the AddItem and RemoveItem natives queue as a VM task
+// (0xa3d6a0 and 0xa44fe0 on 1.6.1170): called directly, the change is immediate.
+constexpr std::uint64_t kRefAddForm = 56489;
+constexpr std::uint64_t kRefRemoveForm = 56647;
 constexpr std::uint64_t kRefGetItemCount = 56173;
 constexpr std::uint64_t kGameGetPlayer = 55469;
 

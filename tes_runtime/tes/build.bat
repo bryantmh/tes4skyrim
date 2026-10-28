@@ -1,7 +1,8 @@
 @echo off
 REM Build TESRuntime.dll into ..\dist, and the headless gates:
-REM journal_log_test.exe (the journal record store) and alchemy_test.exe (the
-REM apparatus ratio and its sidecar reader).
+REM journal_log_test.exe (the journal record store), alchemy_test.exe (the
+REM apparatus ratio and its sidecar reader) and test_runner_test.exe (the
+REM quest-case grammar and harness handshake).
 REM
 REM Standalone: no SKSE source tree, no CMake. Everything the plugin needs from
 REM the game resolves at runtime through the Address Library, so the only
@@ -19,8 +20,9 @@ del /q obj\*.obj 2>nul
 echo [build] compiling TESRuntime...
 cl /nologo /c /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG /I..\common ^
    plugin.cpp crime.cpp journal_objectives.cpp journal_log.cpp ^
-   crafting.cpp alchemy.cpp alchemy_hooks.cpp spin.cpp ^
+   crafting.cpp alchemy.cpp alchemy_hooks.cpp spin.cpp test_game.cpp ^
    ..\common\addresses.cpp ..\common\engine.cpp ..\common\glide.cpp ^
+   ..\common\test_runner.cpp ^
    ..\common\hook.cpp ..\common\main_tick.cpp ^
    ..\common\json.cpp ..\common\log.cpp ..\common\paths.cpp ^
    ..\common\ui_message.cpp /Fo:obj\
@@ -53,5 +55,15 @@ if errorlevel 1 (
     exit /b 1
 )
 echo [build] OK -^> %~dp0alchemy_test.exe
+
+echo [build] compiling test_runner_test...
+cl /nologo /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG /I..\common ^
+   test_runner_test.cpp ..\common\test_runner.cpp ..\common\log.cpp ..\common\paths.cpp ^
+   /Fo:objt\ /Fe:test_runner_test.exe shell32.lib ole32.lib
+if errorlevel 1 (
+    echo [build] ERROR: test_runner_test failed
+    exit /b 1
+)
+echo [build] OK -^> %~dp0test_runner_test.exe
 
 endlocal

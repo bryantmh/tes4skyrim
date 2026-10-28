@@ -7,8 +7,8 @@
 
 case bm_totem
 run
-player->PositionCell 0 100 -216 180 "Skaal Village, Shaman's Hut"
-until 600 GetPCCell "Skaal Village, Shaman's Hut" == 1
+player->Position -159017 212412 2949 180
+until 600 "korst wind-eye"->GetDistance player < 400
 talk korst wind-eye
 ask Ristaag
 expect GetJournalIndex BM_Ceremony1 == 10
@@ -23,8 +23,8 @@ run
 player->AddItem misc_BM_ClawFang_UNIQUE 1
 until 300 GetJournalIndex BM_Ceremony1 == 30
 run
-player->PositionCell 0 100 -216 180 "Skaal Village, Shaman's Hut"
-until 600 GetPCCell "Skaal Village, Shaman's Hut" == 1
+player->Position -159017 212412 2949 180
+until 600 "korst wind-eye"->GetDistance player < 400
 talk korst wind-eye
 ask Totem of Claw and Fang
 expect GetJournalIndex BM_Ceremony1 == 100

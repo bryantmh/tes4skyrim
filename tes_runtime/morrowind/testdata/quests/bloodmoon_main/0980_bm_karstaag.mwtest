@@ -1,0 +1,78 @@
+# Bloodmoon "The Castle Karstaag": Korst Wind-Eye sends the player to the ice
+# castle over the dead horkers. In the Caverns of Karstaag the Riekling Krish
+# force-greets, asks for help against the grahls, and follows the player once
+# all eight are dead; the castle door opens only with him beside the player.
+# Dulk in the Throne Room clears the Rieklings, and Korst rewards the player.
+# Console kills stand in for the player's fights, PositionCell for the walks;
+# ref FormIDs carry Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_karstaag
+# See docs/commentary/headless_testing.md#quest-runs
+
+case bm_karstaag
+run
+player->Position -159017 212412 2949 180
+until 600 "korst wind-eye"->GetDistance player < 400
+talk korst wind-eye
+ask ominous signs
+expect GetJournalIndex BM_FrostGiant1 == 10
+ask death of the horkers
+ask Castle Karstaag
+expect GetJournalIndex BM_FrostGiant1 == 30
+bye
+run
+player->PositionCell -8605 7700 -2228 180 "Solstheim, Castle Karstaag, Caverns of Karstaag"
+until 600 GetPCCell "Solstheim, Castle Karstaag, Caverns of Karstaag" == 1
+until 300 GetJournalIndex BM_FrostGiant1 == 40
+run
+player->PositionCell -8583 4100 -1112 180 "Solstheim, Castle Karstaag, Caverns of Karstaag"
+until 600 MenuMode == 1
+ask death of the horkers
+expect GetJournalIndex BM_FrostGiant1 == 50
+ask my own problems
+expect GetJournalIndex BM_FrostGiant1 == 60
+ask take over
+expect GetJournalIndex BM_FrostGiant1 == 70
+ask get upstairs
+expect GetJournalIndex BM_FrostGiant1 == 75
+bye
+console 06D894BE.kill
+console 06C1B0EF.kill
+console 06347F5C.kill
+console 0671883B.kill
+console 06C82F7E.kill
+console 0655E259.kill
+console 06D44BF9.kill
+console 0669B23D.kill
+until 300 trollsdead == 8
+run
+set TestResult to ( "BM_riekling_Krish_UNIQU"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "BM_riekling_Krish_UNIQU"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( "BM_riekling_Krish_UNIQU"->GetPos z )
+player->SetPos z TestResult
+until 600 MenuMode == 1
+expect GetJournalIndex BM_FrostGiant1 == 80
+bye
+run
+player->PositionCell 560 -32 -43 90 "Solstheim, Castle Karstaag, Caverns of Karstaag"
+until 1200 "BM_riekling_Krish_UNIQU"->GetDistance player < 400
+activate 063B4EE9
+until 600 GetPCCell "Solstheim, Castle Karstaag, Banquet Hall" == 1
+run
+player->PositionCell 121 1300 -488 0 "Solstheim, Castle Karstaag, Throne Room"
+until 600 GetPCCell "Solstheim, Castle Karstaag, Throne Room" == 1
+until 300 "BM_riekling_Dulk_UNIQUE"->GetDistance player < 400
+talk BM_riekling_Dulk_UNIQUE
+ask death of the horkers
+expect GetJournalIndex BM_FrostGiant1 == 90
+bye
+run
+player->Position -159017 212412 2949 180
+until 600 "korst wind-eye"->GetDistance player < 400
+talk korst wind-eye
+ask death of the horkers
+expect GetJournalIndex BM_FrostGiant1 == 100
+expect player->GetItemCount "BM ice longsword_FG_Unique" == 1
+bye
+end

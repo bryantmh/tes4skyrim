@@ -1,0 +1,80 @@
+# Oblivion from New Game: the game selector hands off to Charactergen stage 5 (CharGenQuest then starts MQ01, the
+# tutorial, and moves the player into the Imperial Prison cell) and pops the RaceSex Menu. The player confirms the race
+# menu; the prisoners talk (Valen Dreth, then Renote/Glenroy/Baurus), Glenroy opens the cell door and the Emperor greets
+# the player. Everything between is NPC-driven: the cases only WAIT for it.
+# Stages used are Charactergen's (TES4 numbers): 5 start, 6 Valen Dreth, 9 Valen done, 10-13 Renote/Glenroy talk,
+# 14 player in the trigger zone, 15 door open, 16 Emperor at marker B, 17 Emperor force-greets, 18 Renote to the switch,
+# 19 secret wall open.
+
+case chargen_start
+until 900 GetStage Charactergen >= 5
+expect GetQuestRunning MQ01
+end
+
+# Menu expected: "RaceSex Menu" (TESGameSelect BeginChosenGame calls Game.ShowRaceMenu 0.5 s after the hand-off).
+# God mode stands in for the player being strong enough for the later fights (it is not a story change).
+case chargen_race_menu
+wait 60
+close RaceSex Menu
+console tgm
+end
+
+# MQ01 stage 5 enables controls and sets its own stage 10 two seconds later; stage 10 sets Charactergen 6.
+case chargen_tutorial_starts
+until 600 GetStageDone MQ01 10
+until 300 GetStage Charactergen >= 6
+end
+
+# Valen Dreth taunts from the next cell (CharGenTaunt2 conversation INFO sets stage 9), then the Emperor's group
+# conversation chain runs on the speaker/target handshake (INFO 00032B04 sets stage 10).
+case chargen_prisoners_talk
+until 3600 GetStage Charactergen >= 9
+until 3600 GetStage Charactergen >= 10
+end
+
+# Renote reaches marker A outside the cell (stage 12); Renote/Glenroy finish talking about the player (INFO 00032B0E sets 13).
+case chargen_renote_at_marker_a
+until 3600 GetStage Charactergen >= 12
+until 3600 GetStage Charactergen >= 13
+end
+
+# Stage 13 waits for the player to be inside the CGTriggerZoneCell trigger box, away from the cell door. The player
+# walks into the middle of the cell; moveto stands in for the walk. The ref has no EditorID in Oblivion.esm, so the
+# TES4 FormID of the placed trigger (00097A3B, Imperial Prison cell) is used.
+case chargen_step_into_cell
+run
+player.moveto 00097A3B
+until 600 GetStage Charactergen >= 14
+end
+
+# Glenroy opens the cell door (15) and the Emperor walks to marker B and speaks to the player (16); the quest script
+# then sets 17 and the Emperor force-greets with "Let me see your face...".
+case chargen_cell_door_opens
+until 1800 GetStage Charactergen >= 15
+until 1800 GetStage Charactergen >= 16
+until 1800 GetStage Charactergen >= 17
+hear 1800 UrielSeptimRef Let me see your face
+end
+
+# The Emperor's force-greet opens the dialogue menu on its own (no talk). The player asks the three questions that set
+# Charactergen.what / .who / .why, then "What should I do?" (only offered once all three are 1) which hands the
+# conversation to Renote.
+case chargen_emperor_in_cell
+wait 30
+ask "What's going on?"
+ask "Who are you?"
+ask "Why am I in jail?"
+expect Charactergen.what == 1
+expect Charactergen.who == 1
+expect Charactergen.why == 1
+ask "What should I do?"
+bye
+end
+
+# Renote crosses to the secret-wall switch (stage 18, set by INFO 0004D84C when the Renote/Emperor exchange ends);
+# she activates it (CGPrisonSecretWallSwitchSCRIPT sets secretDoor), and CharGenQuest sets 19 once the wall has opened.
+case chargen_secret_wall
+until 3600 GetStage Charactergen >= 18
+until 3600 GetStage Charactergen >= 19
+expect Charactergen.secretDoor == 1
+end

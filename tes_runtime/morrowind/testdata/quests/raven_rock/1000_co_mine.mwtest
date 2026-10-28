@@ -1,0 +1,47 @@
+# Bloodmoon "Establish the Mine": the player joins the East Empire Company
+# under Carnius Magius at Fort Frostmoth, escorts Gidar, Gamin and Sabinus to
+# the Raven Rock site, takes Falco's ebony and brings five pieces back. The
+# escort is a real walk so the three miners follow the player there; AddItem
+# stands in for mining the other four pieces. Ref FormIDs carry Bloodmoon.esm's
+# slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_bm_wildhunt
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_mine
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask East Empire Company
+ask join the East Empire Company
+choose 1
+expect player->GetPCRank "East Empire Company" == 0
+ask assignment
+expect GetJournalIndex CO_1 == 10
+bye
+run
+player->Position -174437 138600 400 0
+until 600 "Gidar Verothan"->GetDistance player < 400
+talk Gidar Verothan
+ask ready to go
+choose 1
+expect GetJournalIndex CO_1 == 20
+defend
+walk -197322 160100 870
+until 600 GetJournalIndex CO_1 == 30
+bye
+talk Falco Galenus
+ask assignment
+expect GetJournalIndex CO_1 == 40
+expect player->GetItemCount ingred_raw_ebony_01 == 1
+bye
+run
+player->AddItem ingred_raw_ebony_01 4
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask assignment
+expect GetJournalIndex CO_1 == 50
+expect player->GetItemCount ingred_raw_ebony_01 == 0
+bye
+end

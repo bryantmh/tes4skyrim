@@ -1,0 +1,40 @@
+# MQ01Porim "Reise zur Abtei": with the mine wall open (MQ01Tate 35) and the mages dead (MQ01Tate 40 sets MQ01Porim 10),
+# Porim offers to ferry the player across the lake to the abbey of Tirin. Stages (TES4 numbers): 10 wall open, 11 Porim at
+# PorimAufZurAbteiMarkerRef, 14 "Gehen wir.", 15 Porim at the boat, 16 player and Porim seated (boat ride starts),
+# 20 landed, 21 Porim says goodbye, 25 goodbye done, 30 abbey reached.
+
+# MQ01PorimScript at stage 10 gives Porim the FindPlayer package; he finds the player wherever they are and force-greets
+# (INFO 0000877A "Na, was hab ich gesagt? ..."). "Gehen wir." (MQ01PorimTopic03) sets stage 14 and Porim heads for the boat.
+case porim_finds_player
+hear 3600 MQ01PorimRef Na, was hab ich gesagt
+ask "Gehen wir."
+hear 300 MQ01PorimRef ein Boot
+bye
+expect GetStageDone MQ01Porim 14
+end
+
+# Porim walks to the boat (package MQ01PorimZumBoot; its OnPackageDone sets stage 15). The player follows on foot.
+case porim_to_the_boat
+walk MQ01BootPlayerStuhl
+until 3600 GetStageDone MQ01Porim 15
+end
+
+# The player sits in MQ01BootPlayerStuhl; when Porim is in his chair too, two seconds later stage 16 starts the 63 s
+# crossing (MQ01BootScript) and Porim tells of the mages (MQ01Boot01 .. 07). Stage 20 on landing gives the player
+# control again and sends Porim off to the abbey.
+case porim_boat_ride
+activate MQ01BootPlayerStuhl
+until 900 GetStageDone MQ01Porim 16
+hear 900 MQ01PorimRef Diese Hexer
+until 4500 GetStageDone MQ01Porim 20
+end
+
+# Porim walks to the abbey; his package's OnPackageDone, with the player within 200, sets stage 21 and he force-greets
+# ("So, da waeren wir: Die Abtei von Tirin", INFO 001A2507, which sets stage 25). MQ01PorimAbteiScript sets 30 on arrival.
+case porim_abbey_reached
+walk MQ01PorimRef
+hear 3600 MQ01PorimRef Abtei von Tirin
+expect GetStageDone MQ01Porim 21
+until 300 GetStageDone MQ01Porim 25
+until 1800 GetStageDone MQ01Porim 30
+end

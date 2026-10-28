@@ -144,22 +144,25 @@ void DispelOneSpell(const std::string& actor, const std::string& spell) {
 // is what TES3 does -- the staged effect lists say which spells qualify, and
 // each is dispelled AND removed so an ability stops re-applying itself.
 // See: docs/commentary/morrowind_runtime.md#removeeffects-is-per-spell
-void DispelByEffect(const std::string& actor, int index) {
-    void* ref = OwnerRef(actor);
-    if (!ref) return;
+void PurgeSpells(void* ref, const std::vector<std::string>& ids, bool remove,
+                 int spare = -1) {
     std::vector<void*> forms;
-    for (const std::string& id : SpellsWithEffect(index)) {
+    for (const std::string& id : ids) {
         const SpellDef* def = FindSpell(id);
-        void* form = def ? Form(&def->form) : nullptr;
+        void* form = def && !(spare >= 0 && def->Has(spare)) ? Form(&def->form) : nullptr;
         if (form) forms.push_back(form);
     }
-    if (forms.empty()) return;
-    PostToMainThread([ref, forms]() {
+    if (!ref || forms.empty()) return;
+    PostToMainThread([ref, forms, remove]() {
         for (void* form : forms) {
             if (g_dispelSpell) g_dispelSpell(PapyrusVm(), 0, ref, form);
-            if (g_removeSpell) g_removeSpell(PapyrusVm(), 0, ref, form);
+            if (remove && g_removeSpell) g_removeSpell(PapyrusVm(), 0, ref, form);
         }
     });
+}
+
+void DispelByEffect(const std::string& actor, int index) {
+    PurgeSpells(OwnerRef(actor), SpellsWithEffect(index), true);
 }
 
 void CastAt(const std::string& caster, const std::string& target,
@@ -223,6 +226,25 @@ void TakeSoulGem(const std::string& actor, const std::string& creature,
 }
 
 }  // namespace
+
+// A TES3 cure landing on `ref`, as OpenMW's spelleffects.cpp applies it:
+// the disease, blight or curse spells come off the actor (blight sparing a
+// corprus spell), and Cure Corprus only stops corprus's effects.
+// See: docs/commentary/morrowind_runtime.md#cures-purge-by-class
+void ApplyCure(void* ref, int index) {
+    switch (index) {
+        case kCureCommon: PurgeSpells(ref, SpellsOfType(kSpellDisease), true); break;
+        case kCureBlight: PurgeSpells(ref, SpellsOfType(kSpellBlight), true, kCorprusEffect); break;
+        case kCureCorprus: PurgeSpells(ref, SpellsWithEffect(kCorprusEffect), false); break;
+        case kRemoveCurse: PurgeSpells(ref, SpellsOfType(kSpellCurse), true); break;
+        default: break;
+    }
+}
+
+bool IsCure(int index) {
+    return index == kCureCommon || index == kCureBlight || index == kCureCorprus
+           || index == kRemoveCurse;
+}
 
 void CastForm(void* spell, void* source, void* target) {
     if (!g_cast) return;

@@ -190,5 +190,7 @@ bool MenuOpening();
 // opens them. A held menu counts toward MenuOpening, as it would be open in TES3.
 void HoldMenusForPlayerMove();
 void ReleaseHeldMenus();
+// Whether a player move is still landing, as the hold above measures it.
+bool PlayerMovePending();
 
 }  // namespace tesruntime::mw

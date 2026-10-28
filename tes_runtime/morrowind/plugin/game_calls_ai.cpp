@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -367,6 +368,31 @@ void* SpawnAiMarker(const char* kind, const std::string& actor, void* ref) {
 // from wherever it was sent (Markus, from Stormwend's tournament quarters).
 void AfterPostedMoves(std::function<void()> fn) { PostToMainThread(std::move(fn)); }
 
+// Actors whose script-given package is posted and not yet running. TES3 swaps
+// the package at once, so until ours starts, `GetAiPackageDone` must not read
+// the one it replaces as finished -- Rolf's hunt skipped every walk that way.
+std::mutex g_aiStartingLock;
+std::set<std::string> g_aiStarting;
+
+bool AiStarting(const std::string& actor) {
+    std::lock_guard<std::mutex> hold(g_aiStartingLock);
+    return g_aiStarting.count(actor) != 0;
+}
+
+void StartAiAfterMoves(const std::string& actor, std::function<void()> start) {
+    {
+        std::lock_guard<std::mutex> hold(g_aiStartingLock);
+        g_aiStarting.insert(actor);
+    }
+    AfterPostedMoves([actor, start]() {
+        {
+            std::lock_guard<std::mutex> hold(g_aiStartingLock);
+            g_aiStarting.erase(actor);
+        }
+        start();
+    });
+}
+
 // The markers of `AiWander 0` packages, in the co-saved state by FormID.
 constexpr const char* kStillWanderOwner = "ai|stillwander";
 
@@ -381,13 +407,18 @@ std::string MarkerKey(void* marker) {
 void AiTravelTo(const std::string& actor, float x, float y, float z) {
     ForgetAiDestination(actor);
     void* ref = OwnerRef(actor);
-    AfterPostedMoves([actor, ref, x, y, z]() {
+    StartAiAfterMoves(actor, [actor, ref, x, y, z]() {
         void* made = SpawnAiMarker("travel", actor, ref);
         if (!made) return;
         PlaceAt(made, x, y, z, 0.0f);
         Log("ai: %s travels to (%g, %g, %g)", actor.c_str(), x, y, z);
         RememberAiDestination(actor, made);
         RunAiPackageOn("travel", actor, ref, made);
+        PostToMainThread([actor, made]() {
+            Log("ai: %s's travel marker %08X is at (%g, %g, %g)", actor.c_str(),
+                FormIdOf(made), RefPositionAxis(PapyrusVm(), made, 0),
+                RefPositionAxis(PapyrusVm(), made, 1), RefPositionAxis(PapyrusVm(), made, 2));
+        });
     });
 }
 
@@ -398,7 +429,7 @@ void AiWanderAt(const std::string& actor, float range, float duration) {
     // earlier Travel would report this package done the moment it started.
     ForgetAiDestination(actor);
     void* ref = OwnerRef(actor);
-    AfterPostedMoves([actor, ref, range, duration]() {
+    StartAiAfterMoves(actor, [actor, ref, range, duration]() {
         void* made = SpawnAiMarker("wander", actor, ref);
         if (!made) return;
         Log("ai: %s sandboxes range %g for %g h", actor.c_str(), range, duration);
@@ -440,7 +471,7 @@ void AiEscortActor(const std::string& actor, const std::string& target,
     ForgetAiDestination(actor);
     void* ref = OwnerRef(actor);
     void* escorted = OwnerRef(target);
-    AfterPostedMoves([actor, ref, escorted, target, duration, x, y, z]() {
+    StartAiAfterMoves(actor, [actor, ref, escorted, target, duration, x, y, z]() {
         void* made = SpawnAiMarker("escort", actor, ref);
         if (made) {
             PlaceAt(made, x, y, z, 0.0f);
@@ -496,6 +527,7 @@ int CurrentAiPackageOf(const std::string& actor) {
 // actor, which is what makes the engine's answer agree from then on.
 // See: docs/commentary/morrowind_runtime.md#a-package-finishes-when-it-arrives
 bool AiPackageDoneFor(const std::string& actor) {
+    if (AiStarting(actor)) return false;
     const int running = CurrentAiPackageOf(actor);
     bool done = running < 0;
     if (!done && ReachedAiDestination(actor)) {

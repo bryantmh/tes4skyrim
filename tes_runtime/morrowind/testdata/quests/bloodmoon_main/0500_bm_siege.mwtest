@@ -1,0 +1,88 @@
+# Bloodmoon "The Siege of the Skaal Village": back from Aesliip's lair, Tharsten
+# Heart-Fang sends the player off and an honor guard raises the alarm; seven
+# Skaal turn werewolf in the village (BecomeWerewolf on NPCs), two more in the
+# Greathall, and the player catches werewolf blood. The player answers Korst
+# Wind-Eye infected, then drinks a cure. Console kills stand in for the
+# player's fights; ref FormIDs carry Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_siege
+# See docs/commentary/headless_testing.md#quest-runs
+
+case bm_siege
+run
+player->PositionCell -27 100 -244 180 "Skaal Village, The Greathall"
+until 600 GetPCCell "Skaal Village, The Greathall" == 1
+talk tharsten heart-fang
+expect SkaalAttack == 1
+bye
+until 600 MenuMode == 1
+expect GetJournalIndex BM_SkaalAttack == 10
+bye
+run
+player->PositionCell -159200 211500 3010 0 "Skaal Village"
+until 600 GetPCCell "Skaal Village" == 1
+wait 60
+expect SkaalAttack == 2
+console 0629250B.kill
+console 06C2CFE0.kill
+console 06711609.kill
+console 068CD69D.kill
+console 06D59DBB.kill
+console 0646D796.kill
+console 06E1D7FD.kill
+until 600 GetJournalIndex BM_SkaalAttack == 20
+expect SkaalAttack == 3
+run
+set TestResult to ( "engar ice-mane"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "engar ice-mane"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( "engar ice-mane"->GetPos z )
+player->SetPos z TestResult
+wait 30
+talk engar ice-mane
+expect GetJournalIndex BM_SkaalAttack == 25
+bye
+run
+player->PositionCell -27 100 -244 180 "Skaal Village, The Greathall"
+until 600 GetPCCell "Skaal Village, The Greathall" == 1
+wait 60
+console 06CFC3F1.kill
+console 06CB31FC.kill
+until 600 GetJournalIndex BM_SkaalAttack == 30
+expect player->GetSpell "werewolf blood" == 1
+expect SkaalAttack == 4
+run
+player->PositionCell -159200 211500 3010 0 "Skaal Village"
+until 600 GetPCCell "Skaal Village" == 1
+wait 30
+run
+set TestResult to ( "horski tallowhand"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "horski tallowhand"->GetPos y ) + 150 )
+player->SetPos y TestResult
+set TestResult to ( "horski tallowhand"->GetPos z )
+player->SetPos z TestResult
+wait 30
+talk horski tallowhand
+expect GetJournalIndex BM_SkaalAttack == 40
+bye
+run
+player->Position -159017 212412 2949 180
+until 600 "korst wind-eye"->GetDistance player < 400
+talk korst wind-eye
+ask protect these people
+ask been infected
+expect GetJournalIndex BM_SkaalAttack == 50
+bye
+run
+player->RemoveItem p_cure_common_s 100
+player->AddItem p_cure_common_s 1
+player->Equip p_cure_common_s
+wait 30
+expect player->GetItemCount p_cure_common_s == 0
+until 300 player->GetSpell "werewolf blood" == 0
+talk korst wind-eye
+ask been infected
+expect GetJournalIndex BM_SkaalAttack == 100
+bye
+end

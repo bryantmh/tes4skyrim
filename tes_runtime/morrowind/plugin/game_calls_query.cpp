@@ -61,6 +61,8 @@ HandQueryFn      g_equippedSpell = nullptr;
 ProcessEventFn   g_sleepStart = nullptr;
 ProcessEventFn   g_sleepStop = nullptr;
 ProcessEventFn   g_hit = nullptr;
+ProcessEventFn   g_death = nullptr;
+ProcessEventFn   g_container = nullptr;
 
 // The weapon or spell each actor was last hit with, both by runtime FormID:
 // OpenMW's `CreatureStats::mLastHitObject`, which `HitOnMe` tests and clears.
@@ -193,6 +195,14 @@ bool DetectsActor(const std::string& actor, const std::string& other) {
     return AskPair(g_isDetectedBy, other, actor);
 }
 
+}  // namespace
+
+void* CombatTargetOf(void* actor) {
+    return actor && g_combatTarget ? g_combatTarget(PapyrusVm(), 0, actor) : nullptr;
+}
+
+namespace {
+
 // `GetTarget "id"` is a COMPARISON, not a lookup: is the actor's combat
 // target that particular reference.
 bool FightingActor(const std::string& actor, const std::string& other) {
@@ -292,6 +302,31 @@ int HitHook(void* sink, const void* event, void* source) {
     return g_hit(sink, event, source);
 }
 
+int DeathHook(void* sink, const void* event, void* source) {
+    const char* e = static_cast<const char*>(event);
+    void* actor = e ? *reinterpret_cast<void* const*>(e + ids::kOffDeathActor) : nullptr;
+    const std::uint8_t state = e ? *reinterpret_cast<const std::uint8_t*>(e + ids::kOffDeathState) : 0;
+    if (actor) {
+        Log("death: %08X state %u", FormIdOf(actor), state);
+        if (state == ids::kDeathStateDying) NoteEngineDeath(FormIdOf(actor));
+    }
+    return g_death(sink, event, source);
+}
+
+// An item entering or leaving the player's inventory: the tick polls it, so
+// its script runs while carried, as TES3 runs every carried item's script.
+int ContainerHook(void* sink, const void* event, void* source) {
+    const char* e = static_cast<const char*>(event);
+    if (e) {
+        const auto from = *reinterpret_cast<const std::uint32_t*>(e + ids::kOffContainerFrom);
+        const auto to = *reinterpret_cast<const std::uint32_t*>(e + ids::kOffContainerTo);
+        if (from == ids::kPlayerRefFormId || to == ids::kPlayerRefFormId) {
+            NoteCarriedChange(*reinterpret_cast<const std::uint32_t*>(e + ids::kOffContainerItem));
+        }
+    }
+    return g_container(sink, event, source);
+}
+
 // `HitOnMe "id"`: was the actor's last hit dealt with that object. A yes is
 // consumed, so the next test needs a new hit, as OpenMW's opcode clears it.
 bool TakeHitBy(const std::string& actor, const std::string& item) {
@@ -325,6 +360,12 @@ void InstallSleepSinks() {
     g_hit = HookVmSink("SkyrimVM OnHit sink", ids::kVmHitSink,
                        ids::kVmHitProcess, &HitHook);
     Log("hit: OnHit sink %s", g_hit ? "hooked" : "NOT hooked");
+    g_death = HookVmSink("SkyrimVM OnDeath sink", ids::kVmDeathSink,
+                         ids::kVmDeathProcess, &DeathHook);
+    Log("death: OnDeath sink %s", g_death ? "hooked" : "NOT hooked");
+    g_container = HookVmSink("SkyrimVM OnItemAdded sink", ids::kVmContainerSink,
+                             ids::kVmContainerProcess, &ContainerHook);
+    Log("object: OnItemAdded sink %s", g_container ? "hooked" : "NOT hooked");
 }
 
 // `GetSpellReadied`: TES3's third draw state. Skyrim has no drawstate

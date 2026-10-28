@@ -84,8 +84,11 @@ bye
 run
 player->PositionCell 854 1325 -191 0 "Solstheim, Aesliip's Lair"
 until 600 MenuMode == 1
+ask keep me from my task
 ask my story
 expect GetJournalIndex BM_Draugr == 60
+ask was cast out
+ask destroy my people
 ask must act
 expect GetJournalIndex BM_Draugr == 62
 ask grew old
@@ -96,9 +99,12 @@ choose 1
 expect GetJournalIndex BM_Draugr == 70
 bye
 run
-player->PositionCell 1038 450 -589 0 "Solstheim, Aesliip's Lair, Caverns"
+player->PositionCell 2480 2100 29 45 "Solstheim, Aesliip's Lair"
+until 300 "0691BB21"->GetDistance player < 300
+until 1200 "draugr_aesliip"->GetDistance player < 400
+activate 0691BB21
 until 600 GetPCCell "Solstheim, Aesliip's Lair, Caverns" == 1
-wait 30
+until 300 "draugr_aesliip"->GetDistance player < 800
 console 068C0269.kill
 console 06B42B9C.kill
 console 062FB5F8.kill

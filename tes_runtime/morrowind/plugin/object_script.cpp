@@ -3,6 +3,8 @@
 #include <cctype>
 #include <cstdio>
 #include <map>
+#include <mutex>
+#include <set>
 #include <unordered_map>
 #include <utility>
 
@@ -49,6 +51,12 @@ std::map<std::string, ObjectScript> g_globalScripts;
 // Instance by the FormID it has in THIS game, which is the only id an engine
 // hook is handed. Filled once at load, when the load order can be resolved.
 std::unordered_map<std::uint32_t, ObjectScript*> g_byRuntimeId;
+
+// The actors the engine reported dying that no death poll has taken yet.
+// Written on the event sink's thread, so locked rather than posted: a posted
+// write could land after the poll that needs it.
+std::mutex g_deathsLock;
+std::set<std::uint32_t> g_engineDeaths;
 
 // The owner string an instance's locals live under: the placement, spelled the
 // way InstanceScript keys it so the two never disagree.
@@ -147,10 +155,14 @@ void ObjectScript::PollDeath() {
     // dies; a corpse placed dead in the cell never had that tick. The first
     // poll only records which side it started on, so binding a pre-placed body
     // -- or rebinding any corpse when its cell reloads -- raises nothing.
+    // 🛑 Unless the engine reported THIS death and no poll has consumed it: an
+    // actor killed before the discovery sweep bound it died after loading,
+    // and the first poll would otherwise file it as a corpse.
+    const bool reported = dead && TakeEngineDeath(mRuntimeFormId);
     if (!mLifeSampled) {
         mLifeSampled = true;
-        mDeathSeen = dead;
-        return;
+        mDeathSeen = dead && !reported;
+        if (!reported) return;
     }
     if (!dead) return;
     mDeathSeen = true;
@@ -410,6 +422,18 @@ void ClearInstances() {
     g_byRuntimeId.clear();
     g_instances.clear();
     g_globalScripts.clear();
+    const std::lock_guard<std::mutex> hold(g_deathsLock);
+    g_engineDeaths.clear();
+}
+
+void NoteEngineDeath(std::uint32_t runtimeFormId) {
+    const std::lock_guard<std::mutex> hold(g_deathsLock);
+    g_engineDeaths.insert(runtimeFormId);
+}
+
+bool TakeEngineDeath(std::uint32_t runtimeFormId) {
+    const std::lock_guard<std::mutex> hold(g_deathsLock);
+    return g_engineDeaths.erase(runtimeFormId) != 0;
 }
 
 }  // namespace tesruntime::mw

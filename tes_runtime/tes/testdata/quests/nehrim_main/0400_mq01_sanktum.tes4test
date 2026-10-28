@@ -1,0 +1,29 @@
+# MQ00 stage 65 and MQ01 "Auf zum Sanktum". In the abbey the player shows the forged letter to the high priest
+# Aratornias (topic "[Aratornias den Brief zeigen]", INFO 00005BE0 on MQ00 stage 60: sets MQ00 65, MQ01 5, starts NQ05
+# and takes the letter); then goes to the Magiersanktum and meets the archmage Vanmiria (greeting INFO 001A3DCF, MQ01 5:
+# sets MQ02 5 and MQ01 10). Stages are TES4 numbers.
+
+# Aratornias is in the abbey (cell AbteiTirinAbtei). The player walks in from the abbey yard; moveto to his placed ref
+# (00005536) stands in for that walk because the abbey door is not traced here.
+case handin_aratornias
+console player.moveto 00005536
+talk HohepriesterAratornias
+ask "[Aratornias den Brief zeigen]"
+hear 300 HohepriesterAratornias zur Armee
+bye
+expect GetStageDone MQ00 65
+expect GetStageDone MQ01 5
+expect GetStageDone NQ05 5
+expect player.GetItemCount MQ00Brief == 0
+end
+
+# The way to the Sanktum is a long road east (Giliad, then the eastern mountains): moveto Vanmiria's ref stands in for
+# the whole trip; nothing follows the player. Her say-once greeting tells the player of the pilgrimage.
+case sanktum_vanmiria
+console player.moveto AuVanmiriaRef
+talk AUVanmiria
+hear 300 AuVanmiriaRef Neuank
+bye
+expect GetStageDone MQ01 10
+expect GetStageDone MQ02 5
+end

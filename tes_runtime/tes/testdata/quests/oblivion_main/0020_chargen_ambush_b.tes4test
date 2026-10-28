@@ -1,0 +1,58 @@
+# Ambush B and the birthsign conversation (Imperial Subterrane). Baurus lets the group go ahead (29); Glenroy waits
+# outside Room B (30); when the player steps into the CGTrigZoneAmbushB box the group walks in (32); Glenroy reaches the
+# door (34) and two more assassins attack; when both are dead the quest sets 36. The player enters Room B (box
+# CGTrigZoneEmperorBirthsign sets inAmbushBRoom), Glenroy and Baurus notice the player (40), the cut scene ends (42) and
+# the Emperor force-greets with the Nine question; any answer sets 43, the birthsign menu opens, then he asks "What about
+# me?" (45) and the group moves on (50).
+
+# Stage 32 is set ONCE by the trigger box, so the case waits for Glenroy at marker D (30) before the player steps in.
+# The trigger ref has no EditorID in Oblivion.esm: its TES4 FormID (000C7603, ImperialDungeon02) is used.
+case ambush_b_trigger
+until 3600 GetStage Charactergen >= 30
+run
+player.moveto 000C7603
+until 900 GetStage Charactergen >= 32
+end
+
+# Glenroy reaches the Room B door (34). The two assassins CGAssassin05Ref / 06Ref attack the Blades; the player finishes
+# them (kill stands in for the fight). CharGenQuest sets 36 when ambushCount reaches 2.
+case ambush_b_assassins
+until 3600 GetStage Charactergen >= 34
+run
+CGAssassin05Ref.kill
+CGAssassin06Ref.kill
+until 900 GetStage Charactergen >= 36
+end
+
+# The player walks into Room B: CGAmbushBMarker1 lies inside the CGTrigZoneEmperorBirthsign box (inAmbushBRoom = 1).
+# Glenroy or Baurus detecting the player sets 40.
+case ambush_b_enter_room
+run
+player.moveto CGAmbushBMarker1
+until 900 GetStage Charactergen >= 40
+expect Charactergen.inAmbushBRoom == 1
+end
+
+# Glenroy's reaction scene ends (INFO 000164B9 sets 42). The Emperor force-greets: "They cannot understand why I trust
+# you." The player answers the Nine question; all three answers set 43, whose fragment opens the birthsign menu.
+case ambush_b_nine_question
+until 3600 GetStage Charactergen >= 42
+hear 900 UrielSeptimRef They cannot understand why I trust you
+wait 30
+ask "The Nine guide and protect us."
+until 300 GetStage Charactergen >= 43
+end
+
+# Menu expected: the birthsign menu. TES4_Chargen.Ask hands it to MorrowindRuntime's chargen menu, so `pick` names the
+# row (BSGN FULL); the MessageBox pages are only its fallback. The Emperor then re-greets (stage 44) with "The signs I read ..." and the
+# player asks "What about me?" (his answer for the picked sign sets 45); CharGenQuest sets 50 after his speech.
+case ambush_b_birthsign
+pick The Warrior
+until 900 GetStage Charactergen >= 44
+hear 900 UrielSeptimRef The signs I read
+wait 30
+ask "What about me?"
+bye
+until 3600 GetStage Charactergen >= 45
+until 3600 GetStage Charactergen >= 50
+end

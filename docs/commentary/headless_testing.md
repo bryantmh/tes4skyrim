@@ -281,6 +281,79 @@ player could not.
 
 Cases live in `tes_runtime/morrowind/testdata/quests/<quest>/`.
 
+## <a id="tes4-quest-cases"></a>TES4 quest cases (Oblivion, Nehrim)
+
+**Code:** `tes_runtime/common/test_runner.{h,cpp}`, `tes_runtime/tes/test_game.cpp`,
+`tools/live/tes4_cases.py`, `tools/live/test_instance.py` (`questtest`)
+
+```bash
+python -m tools.live.test_instance build --mod Oblivion.esm
+python -m tools.live.test_instance questtest --cases tes_runtime/tes/testdata/quests/oblivion_main --new-game <button> --fast --checkpoints --stop-on-fail --timeout 3600
+```
+
+A converted TES4 plugin has no interpreter of ours to hook: its quests,
+dialogue and scripts are Skyrim's own records and Papyrus. So the runner is
+split. `common/test_runner.cpp` holds the grammar and step loop above
+(the same steps, `.tes4test` files, `TES_TEST_*` variables), and each runtime
+hands it a `TestBackend`. TESRuntime's (`test_game.cpp`) drives Skyrim's own
+menus as a player does:
+
+| Step | Engine call (1.6.1170) |
+|---|---|
+| `talk`, `activate` | `ObjectReference.Activate(player)` once `Is3DLoaded` |
+| `ask`, `choose` | the Dialogue Menu's `TopicClicked` movie callback (id 51509), with the index of the topic whose text matches |
+| `bye` | its `CloseMenu` callback (id 51511), what leaving the conversation runs |
+| `button` | MessageBoxMenu's `buttonPress` (id 52279), so `Message.Show` gets its answer |
+| `take` | `AddItem(ref)` on the player |
+| `pick` | MorrowindRuntime's `TESTestPick` export, the same row pick its own cases use: a converted chargen's birthsign and class asks (`TES4_Chargen.Ask`) open that runtime's menus, and `Message.Show` is only the fallback |
+| `walk <ref \| x y z>` | the player is AI-driven (`Game.SetPlayerAIDriven`, third person) and given the path request `Actor.PathToReference` makes (id 37893), to the ref or a placed XMarker; asked again every 300 ticks, done within 128 units |
+| `hear <ticks> <speaker \| any> [text]` | `SubtitleManager::AddSubtitle` (id 52626, 6 call sites patched) queues each begun line with its speaker |
+
+Spoken lines go to the results the tick they begin
+(`{"speaker","text","tick","during"}`) and onto the case line's `said`.
+AddSubtitle records nothing while both subtitle settings are off, so
+`questtest` turns on `bGeneralSubtitles` and `bDialogueSubtitles`; it skips
+the player. A `hear` takes the first line not yet taken, run-wide, so a
+force-greet that the last stage of the previous case started is still heard.
+Engine text is cp1252: the harness writes the prepared cases and reads
+results in it.
+
+The topic list is MenuTopicManager's (id 401099): a node list at `+0x20`
+whose first node is skipped when byte `+0xb7` is set, each item's text a
+`char*` at `+0` with its length at `+8`. That is the walk `SelectTopic`
+(`0x5dfa50`) makes from a clicked index, and the text `PopulateDialogueList`
+(`0x914de0`) hands the movie. `TopicClicked` reads only the handler's
+presence and one number, then calls `SelectTopic` under the manager's lock.
+Read off 1.6.1170 and 1.6.659. **None of it has run in game yet.**
+
+`run` and `expect`/`until` have no game-side runner, so they go to the
+harness: the runner writes `{"run": ...}` or `{"judge": ...}`, the harness
+runs it through the bridge console and writes `<verdict> <left>` to
+`<results>.answer` before the ack. A judge's left side is a quest variable
+(`Quest.var`, read from `sqv`) or any console condition function, read from
+the `>> value` it prints.
+
+Cases name the **TES4** records. Skyrim keeps no EditorID for a placed
+reference or most base objects at runtime, so the harness reads each loaded
+converted plugin once (2.6 s for Oblivion.esm) and turns names into runtime
+FormIDs:
+
+- a reference's EditorID or a base placed exactly once (`talk Baurus`);
+- a TES4 FormID in hex, for a reference with no EditorID. Converted records
+  keep the low 24 bits: all 8,003 named ACHR/REFR in Oblivion.esm do;
+- quests and globals stay names, which the console resolves. A TES4 name
+  that Skyrim.esm already uses carries a `TES4` prefix (`MQ00` becomes
+  `TES4MQ00`), and the harness tries both.
+
+Measured against the export: every ACHR, NPC_, QUST and REFR EditorID in
+Oblivion.esm (10,875) and Nehrim.esm (6,645) resolves. Each case's line also
+lists the Papyrus error lines logged during it (`questtest` turns on
+`bEnableLogging`).
+
+Not yet supported: `persuade`. MorrowindRuntime still runs its own copy of the step loop
+(`morrowind/plugin/test_runner.cpp`); moving it onto the shared core is the
+next step.
+
 ## Known limits
 
 - One instance at a time (one pipe, `\\.\pipe\tes_test_bridge`, and one

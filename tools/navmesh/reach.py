@@ -188,27 +188,30 @@ def build_graph(meshes, ref_parent, ref_xtel):
     return adj, door_side
 
 
-def reachable(adj, a, b):
-    if a == b:
-        return True
-    seen = {a}
+def route(adj, a, b):
+    """The fewest-hop chain of (mesh, component) nodes from a to b, or None."""
+    came = {a: None}
     dq = deque([a])
-    while dq:
+    while dq and b not in came:
         n = dq.popleft()
         for nb in adj.get(n, ()):
-            if nb == b:
-                return True
-            if nb not in seen:
-                seen.add(nb)
+            if nb not in came:
+                came[nb] = n
                 dq.append(nb)
-    return False
+    if b not in came:
+        return None
+    chain = [b]
+    while came[chain[-1]] is not None:
+        chain.append(came[chain[-1]])
+    return chain[::-1]
 
 
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
-def main():
+def parse_args():
+    """The command line."""
     ap = argparse.ArgumentParser()
     ap.add_argument('esm')
     ap.add_argument('--from-ref')
@@ -218,32 +221,24 @@ def main():
     ap.add_argument('--to-point')
     ap.add_argument('--components', action='store_true',
                     help='dump per-mesh component structure for --cell')
-    args = ap.parse_args()
+    return ap.parse_args()
 
-    data = open(args.esm, 'rb').read()
-    hdr = struct.unpack_from('<I', data, 4)[0]
-    start = 24 + hdr
 
-    want_refs = set()
-    for a in (args.from_ref, args.to_ref):
-        if a:
-            want_refs.add(int(a, 16))
-
-    # Pass 1: all NAVMs + the requested refs' positions/parents + door XTELs.
-    meshes = {}
-    ref_pos = {}
-    ref_parent = {}
-    ref_xtel = {}
+def load_plugin(path, want_refs):
+    """Every NAVM, the wanted refs' positions and parents, and door XTELs."""
+    data = open(path, 'rb').read()
+    start = 24 + struct.unpack_from('<I', data, 4)[0]
+    meshes, ref_pos, ref_parent, ref_xtel = {}, {}, {}, {}
     for rec, stack in walk_plugin(data, b'NAVM', b'REFR', b'ACHR', b'ACRE',
                                   span=(start, len(data))):
         subs = rec.sub_map()
         if rec.sig == b'NAVM':
             nvnm = subs.get(b'NVNM')
-            if nvnm:
-                try:
+            try:
+                if nvnm:
                     meshes[rec.form_id] = Mesh(rec.form_id, nvnm)
-                except (struct.error, IndexError):
-                    pass
+            except (struct.error, IndexError):
+                pass
             continue
         xtel = subs.get(b'XTEL')
         if xtel and len(xtel) >= 4:
@@ -252,85 +247,95 @@ def main():
         if rec.form_id in want_refs and data_sub and len(data_sub) >= 12:
             ref_pos[rec.form_id] = struct.unpack_from('<fff', data_sub, 0)
             ref_parent[rec.form_id] = (stack.worldspace, stack.cell)
-    print(f"meshes={len(meshes)} teleport_doors={len(ref_xtel)}")
+    return meshes, ref_pos, ref_parent, ref_xtel
 
+
+def locate_point(meshes, by_cell, pos, wrld, cell):
+    """(mesh, tri, how) under `pos`: its interior cell's meshes, else its grid's."""
+    x, y, z = pos
+    cands = by_cell.get(cell, []) if cell else []
+    if not cands:
+        grid = (int(x // 4096), int(y // 4096))
+        cands = [m for m in meshes.values()
+                 if m.grid == grid and (wrld is None or m.wrld == wrld)]
+    best = None
+    for m in cands:
+        t, how = m.locate(x, y, z)
+        score = 0 if how == 'contains' else 1
+        if t is not None and (best is None or score < best[3]):
+            best = (m, t, how, score)
+    return best[:3] if best else None
+
+
+def dump_components(by_cell, cfid):
+    """Print each of one cell's meshes as islands with z range and doors."""
+    for m in by_cell.get(cfid, []):
+        print(f"\nNAVM {m.fid:#010x} cell={cfid:#010x}: "
+              f"{len(m.verts)} verts, {len(m.tris)} tris, "
+              f"{len(m.links)} edge links, {len(m.doors)} door tris")
+        for ci, comp in enumerate(m.components):
+            zs = [m.centroid_z(t) for t in comp]
+            doors = [hex(dr) for (t, _c, dr) in m.doors
+                     if m.tri_comp.get(t) == ci]
+            print(f"  component {ci}: {len(comp)} tris, "
+                  f"z {min(zs):.0f}..{max(zs):.0f}, doors={doors}")
+
+
+def report_route(meshes, adj, ends):
+    """Print where each end lands and the fewest-hop route between them."""
+    nodes = []
+    for label, (ep, pos, par) in zip(('FROM', 'TO'), ends):
+        if ep is None:
+            print(f"{label}: {pos} parent={par} -> NO MESH FOUND")
+            continue
+        m, t, how = ep
+        print(f"{label}: {pos} -> mesh {m.fid:#010x} tri {t} ({how}) "
+              f"component {m.tri_comp.get(t)} of {len(m.components)} "
+              f"(sizes {[len(c) for c in m.components[:6]]})")
+        nodes.append((m.fid, m.tri_comp.get(t)))
+    if len(nodes) < 2:
+        return
+    chain = route(adj, *nodes)
+    print(f"REACHABLE: {chain is not None}   ({nodes[0][0]:#010x}/c{nodes[0][1]} -> "
+          f"{nodes[1][0]:#010x}/c{nodes[1][1]})")
+    for fid, comp in chain or ():
+        place = meshes[fid].grid or f'cell {meshes[fid].cell:#010x}'
+        print(f"  via {fid:#010x}/c{comp} {place}")
+
+
+def main():
+    """Load the plugin, build the graph, answer what the arguments ask."""
+    args = parse_args()
+    refs = {int(a, 16) for a in (args.from_ref, args.to_ref) if a}
+    meshes, ref_pos, ref_parent, ref_xtel = load_plugin(args.esm, refs)
+    print(f"meshes={len(meshes)} teleport_doors={len(ref_xtel)}")
     for m in meshes.values():
         m.build_components()
-
     adj, door_side = build_graph(meshes, ref_parent, ref_xtel)
-    n_door_edges = sum(1 for a in adj for b in adj[a]
-                       if a[0] != b[0]) // 2
+    n_door_edges = sum(1 for a in adj for b in adj[a] if a[0] != b[0]) // 2
     print(f"graph nodes={len(adj)} (cross-mesh edges={n_door_edges}, "
           f"door-tri meshes={len(door_side)})")
-
     by_cell = defaultdict(list)
     for m in meshes.values():
         if m.cell:
             by_cell[m.cell].append(m)
-
-    def endpoint(ref_arg, point_arg):
-        if ref_arg:
-            fid = int(ref_arg, 16)
-            if fid not in ref_pos:
-                sys.exit(f"ref {fid:#010x} not found (or no DATA)")
-            x, y, z = ref_pos[fid]
-            wrld, cell = ref_parent[fid]
-        else:
-            x, y, z = (float(v) for v in point_arg.split(','))
-            wrld, cell = None, int(args.cell, 16) if args.cell else None
-        # candidate meshes: same interior cell, or same worldspace grid
-        cands = []
-        if cell and cell in by_cell:
-            cands = by_cell[cell]
-        if not cands:
-            gx, gy = int(x // 4096), int(y // 4096)
-            cands = [m for m in meshes.values()
-                     if m.grid == (gx, gy) and (wrld is None or m.wrld == wrld)]
-        best = None
-        for m in cands:
-            t, how = m.locate(x, y, z)
-            if t is None:
-                continue
-            score = 0 if how == 'contains' else 1
-            if best is None or score < best[3]:
-                best = (m, t, how, score)
-        if best is None:
-            return None, (x, y, z), (wrld, cell)
-        return best[:3], (x, y, z), (wrld, cell)
-
     if args.components and args.cell:
-        cfid = int(args.cell, 16)
-        for m in by_cell.get(cfid, []):
-            print(f"\nNAVM {m.fid:#010x} cell={cfid:#010x}: "
-                  f"{len(m.verts)} verts, {len(m.tris)} tris, "
-                  f"{len(m.links)} edge links, {len(m.doors)} door tris")
-            for ci, comp in enumerate(m.components):
-                zs = [m.centroid_z(t) for t in comp]
-                doors = [hex(dr) for (t, _c, dr) in m.doors
-                         if m.tri_comp.get(t) == ci]
-                print(f"  component {ci}: {len(comp)} tris, "
-                      f"z {min(zs):.0f}..{max(zs):.0f}, doors={doors}")
-
-    if (args.from_ref or args.from_point) and (args.to_ref or args.to_point):
-        a, apos, apar = endpoint(args.from_ref, args.from_point)
-        b, bpos, bpar = endpoint(args.to_ref, args.to_point)
-        for label, ep, pos, par in (('FROM', a, apos, apar),
-                                    ('TO', b, bpos, bpar)):
-            if ep is None:
-                print(f"{label}: {pos} parent={par} -> NO MESH FOUND")
-            else:
-                m, t, how = ep
-                print(f"{label}: {pos} -> mesh {m.fid:#010x} tri {t} ({how}) "
-                      f"component {m.tri_comp.get(t)} "
-                      f"of {len(m.components)} (sizes "
-                      f"{[len(c) for c in m.components[:6]]})")
-        if a and b:
-            na = (a[0].fid, a[0].tri_comp.get(a[1]))
-            nb = (b[0].fid, b[0].tri_comp.get(b[1]))
-            ok = reachable(adj, na, nb)
-            print(f"REACHABLE: {ok}   ({na[0]:#010x}/c{na[1]} -> "
-                  f"{nb[0]:#010x}/c{nb[1]})")
+        dump_components(by_cell, int(args.cell, 16))
+    ends = []
+    for ref_arg, point_arg in ((args.from_ref, args.from_point), (args.to_ref, args.to_point)):
+        if ref_arg and int(ref_arg, 16) not in ref_pos:
+            sys.exit(f"ref {int(ref_arg, 16):#010x} not found (or no DATA)")
+        if ref_arg:
+            pos, par = ref_pos[int(ref_arg, 16)], ref_parent[int(ref_arg, 16)]
+        elif point_arg:
+            pos = tuple(float(v) for v in point_arg.split(','))
+            par = (None, int(args.cell, 16) if args.cell else None)
+        else:
+            return
+        ends.append((locate_point(meshes, by_cell, pos, *par), pos, par))
+    report_route(meshes, adj, ends)
 
 
 if __name__ == '__main__':
     main()
+

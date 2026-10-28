@@ -1,0 +1,39 @@
+# Through the secret wall to the Ambush A room (Imperial Prison). Renote reaches marker C (stage 20); once the player
+# is near the Emperor's marker CharGenQuest sets 22 and the Mythic Dawn assassins attack (23); they kill Renote (24);
+# when the four assassins are dead the quest sets 26, the Emperor and Baurus talk (27), Glenroy/Baurus/Emperor talk
+# (28), Baurus warns the player not to follow (29).
+
+# The player follows the Emperor's group down the passage; moveto stands in for the walk. Stage 22 needs the player
+# within 480 of CGMarkerCEmperor or 900 of CGMarkerC2Renote, so the player is moved next to the ambush room markers.
+case ambush_a_arrive
+until 3600 GetStage Charactergen >= 20
+run
+player.moveto CGMarkerC2Renote
+until 900 GetStage Charactergen >= 22
+end
+
+# The assassins reach the floor marker and fight (23); they kill Renote (CGRenoteScript OnHit CGAssassinNN sets 24).
+case ambush_a_assassins_attack
+until 1800 GetStage Charactergen >= 23
+until 1800 GetStage Charactergen >= 24
+expect RenoteRef.GetDead
+end
+
+# The player finishes the assassins the Blades have not killed (kill stands in for the fight). The assassins' OnDeath
+# scripts count ambushCount; at four dead the quest sets 26.
+case ambush_a_kill_assassins
+run
+CGAssassin01Ref.kill
+CGAssassin02Ref.kill
+CGAssassin03Ref.kill
+CGAssassin04Ref.kill
+until 900 GetStage Charactergen >= 26
+end
+
+# Baurus and the Emperor talk (INFO 0005144A, stage 27), then Glenroy/Baurus/Emperor (INFO 00015135, stage 28). The
+# player stays in the room, within 800 of Baurus: he warns the player not to follow and the quest sets 29.
+case ambush_a_baurus_warns
+until 3600 GetStage Charactergen >= 27
+until 3600 GetStage Charactergen >= 28
+until 3600 GetStage Charactergen >= 29
+end

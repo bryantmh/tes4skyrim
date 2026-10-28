@@ -1,7 +1,9 @@
 #include "object_tick.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -156,32 +158,73 @@ bool GameHeldByMenu() {
     return Hooks().gamePaused && Hooks().gamePaused();
 }
 
-// Runs the script of every scripted object the PLAYER carries whose body reads
-// `OnPCEquip` or `OnPCAdd`. An inventory item has no placement, so the
-// world-discovery sweep above can never reach it.
+// Items the container-changed event reported since the last tick, by runtime
+// FormID; the event arrives on any thread.
+std::mutex g_changedLock;
+std::vector<std::uint32_t> g_changedItems;
+
+// The watch entries the player may hold, by EquipWatchList index, and whether
+// the whole list is swept once to find them, as after a load.
+std::set<std::size_t> g_maybeCarried;
+bool g_sweepCarried = true;
+
+// The watch entries naming one item's runtime FormID.
+const std::vector<std::size_t>* WatchesFor(std::uint32_t formId) {
+    static std::map<std::uint32_t, std::vector<std::size_t>> byForm;
+    static bool built = false;
+    if (!built && Hooks().itemFormId) {
+        built = true;
+        const std::vector<EquipWatch>& list = EquipWatchList();
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            const LayerScope scope(list[i].layer);
+            byForm[Hooks().itemFormId(list[i].item)].push_back(i);
+        }
+    }
+    const auto it = byForm.find(formId);
+    return it == byForm.end() ? nullptr : &it->second;
+}
+
+// Adds the entries the events named, or every entry when a sweep is due.
+void GatherMaybeCarried() {
+    std::vector<std::uint32_t> changed;
+    {
+        std::lock_guard<std::mutex> hold(g_changedLock);
+        changed.swap(g_changedItems);
+    }
+    if (g_sweepCarried) {
+        g_sweepCarried = false;
+        for (std::size_t i = 0; i < EquipWatchList().size(); ++i) g_maybeCarried.insert(i);
+    }
+    for (const std::uint32_t id : changed) {
+        const std::vector<std::size_t>* entries = WatchesFor(id);
+        if (entries) g_maybeCarried.insert(entries->begin(), entries->end());
+    }
+}
+
+// Runs the script of every scripted item the PLAYER carries, as TES3 does. An
+// inventory item has no placement, so the world-discovery sweep above can
+// never reach it.
 //
-// 🛑 The watch list is the objects whose script DECLARES the local, which is
-// the only set that can answer; asking the engine about all 1,547 scripted
-// objects every tick would not be affordable.
+// 🛑 Only items the player may hold are polled: one the event or the sweep
+// named, kept until a poll finds it gone. Asking the engine about every
+// scripted item each tick would not be affordable.
 // See: docs/commentary/morrowind_runtime.md#engine-written-locals
 std::size_t RunCarriedScripts(bool cellChanged) {
     std::size_t ran = 0;
-    static std::size_t announced = 0;
-    if (announced != EquipWatchList().size()) {
-        announced = EquipWatchList().size();
-        Log("object: %zu carried object(s) watch OnPCEquip/OnPCAdd", announced);
-    }
+    GatherMaybeCarried();
     // 🛑 Every record is polled, and the instance runs at most once per tick.
     // Several item records share one script, so stopping at the first carried
     // one would miss the sibling actually worn; running per record would run
     // the body once per record.
     std::set<ObjectScript*> carried;
-    for (const EquipWatch& entry : EquipWatchList()) {
+    const std::vector<EquipWatch>& list = EquipWatchList();
+    for (auto it = g_maybeCarried.begin(); it != g_maybeCarried.end();) {
+        const EquipWatch& entry = list[*it];
         const LayerScope scope(entry.layer);
         ObjectScript* instance = CarriedInstance(entry.item, entry.script);
-        if (instance && instance->PollEquipped(entry.item)) {
-            carried.insert(instance);
-        }
+        const bool held = instance && instance->PollEquipped(entry.item);
+        if (held) carried.insert(instance);
+        it = held ? std::next(it) : g_maybeCarried.erase(it);
     }
     for (ObjectScript* instance : carried) {
         if (cellChanged) instance->Events().cellChanged = true;
@@ -358,7 +401,14 @@ void StartObjectTick() {
     Log("object: tick started at %g Hz", kTickRate);
 }
 
+void NoteCarriedChange(std::uint32_t itemFormId) {
+    std::lock_guard<std::mutex> hold(g_changedLock);
+    g_changedItems.push_back(itemFormId);
+}
+
 void ResetTickState() {
+    g_maybeCarried.clear();
+    g_sweepCarried = true;
     g_discoverAt = 0;
     g_untilHeartbeat = 0;
     g_lastCell.clear();

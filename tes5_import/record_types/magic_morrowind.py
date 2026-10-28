@@ -184,8 +184,12 @@ MW_TELEPORTS = (60, 61, 62, 63)
 #: SwiftSwim, Levitate, SlowFall, Sanctuary: script-less Script effects whose magnitude MorrowindRuntime reads.
 MW_SWIFT_SWIM, MW_LEVITATE, MW_SLOW_FALL, MW_SANCTUARY = 1, 10, 11, 42
 
+#: Cure Common/Blight/Corprus Disease, Remove Curse: Skyrim's cure takes every disease; the runtime purges by class.
+MW_CURES = (69, 70, 71, 100)
+
 #: Every NATIVE_NONE effect MorrowindRuntime carries: add one via morrowind_runtime.md#adding-a-runtime-effect.
-MW_RUNTIME_EFFECTS = frozenset(MW_TELEPORTS + (MW_SWIFT_SWIM, MW_LEVITATE, MW_SLOW_FALL, MW_SANCTUARY))
+MW_RUNTIME_EFFECTS = frozenset(MW_TELEPORTS + MW_CURES
+                               + (MW_SWIFT_SWIM, MW_LEVITATE, MW_SLOW_FALL, MW_SANCTUARY))
 
 #: Drain, Damage, Restore, Fortify, Absorb Attribute: script effects MorrowindRuntime sums per attribute.
 MW_ATTRIBUTE_EFFECTS = frozenset((17, 22, 74, 79, 85))

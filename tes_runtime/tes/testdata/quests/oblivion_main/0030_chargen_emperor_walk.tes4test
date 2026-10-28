@@ -1,0 +1,50 @@
+# The walk with the Emperor to the Sanctum. At each stop the NPCs walk ahead by themselves (the case waits for the
+# stage their package sets) and CharGenQuest only moves on once the PLAYER is near the Emperor: 52 -> 54 within 500 of
+# him at marker F; 56 -> 58 within 500 of him at marker G, both Baurus and the Emperor in ImperialDungeon03; 68 -> 70
+# within 300 of him at marker J. moveto to the Emperor's marker stands in for the player's walk behind him.
+# After the talk at J the Emperor force-greets (73) and hands over the Amulet of Kings (74).
+
+case walk_marker_f
+until 3600 GetStage Charactergen >= 52
+run
+player.moveto CGMarkerFEmperor
+until 900 GetStage Charactergen >= 54
+end
+
+case walk_marker_g
+until 3600 GetStage Charactergen >= 56
+run
+player.moveto CGMarkerGEmperor
+until 900 GetStage Charactergen >= 58
+until 900 GetStage Charactergen >= 59
+end
+
+# Glenroy reaches H (60), the Emperor reaches H (62: CGEmperorScript OnPackageDone CGEmperorToMarkerH), Glenroy
+# reaches I and talks with Baurus about the locked gate (64, 65 by INFO 0000BF17, 66), Baurus reaches J (67).
+case walk_marker_h_i
+until 3600 GetStage Charactergen >= 60
+until 3600 GetStage Charactergen >= 62
+until 3600 GetStage Charactergen >= 64
+until 3600 GetStage Charactergen >= 65
+until 3600 GetStage Charactergen >= 66
+until 3600 GetStage Charactergen >= 67
+end
+
+case walk_marker_j
+until 3600 GetStage Charactergen >= 68
+run
+player.moveto CGMarkerJEmperor
+until 900 GetStage Charactergen >= 70
+end
+
+# Glenroy and Baurus find the gate locked (INFO 0001D113 sets 71), a pause (72), then the Emperor force-greets the
+# player (73). The force-greet line is the stage-73 GREETING (INFO 00054824), which sets 74: the Emperor gives the
+# player the Amulet of Kings and the final assassin comes out of the secret wall (the player is held by
+# disableplayercontrols until the Emperor dies).
+case walk_emperor_amulet
+until 3600 GetStage Charactergen >= 71
+until 3600 GetStage Charactergen >= 72
+until 3600 GetStage Charactergen >= 73
+until 900 GetStage Charactergen >= 74
+expect player.GetItemCount AmuletofKings >= 1
+end

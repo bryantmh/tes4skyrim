@@ -1,0 +1,103 @@
+# Bloodmoon "Hircine's Hunt": Korst Wind-Eye reads the three signs, the player
+# sleeps and Hircine's hounds carry them to the Mortrag Glacier. Carius joins
+# the player through the Outer Ring and stays at its gate; Heart-Fang joins in
+# the Inner Ring, turns on the player at the empty chest and carries the next
+# key; the giant Karstaag waits in the Huntsman's Hall, then Hircine asks the
+# hunter's greatest strength and sends that aspect. The third key opens the
+# way out. Console kills stand in for the player's fights, PositionCell for the
+# walks, and RemoveItem/AddItem for taking a key from a chest or a corpse; ref
+# FormIDs carry Bloodmoon.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_wildhunt
+# See docs/commentary/headless_testing.md#quest-runs
+
+case bm_wildhunt
+run
+player->Position -159017 212412 2949 180
+until 600 "korst wind-eye"->GetDistance player < 400
+talk korst wind-eye
+ask Bloodmoon Prophecy
+ask three signs
+expect GetJournalIndex BM_WildHunt == 10
+ask Hunter's Game
+ask Hunter's plan
+expect GetJournalIndex BM_WildHunt == 15
+bye
+run
+player->PositionCell -156 280 -195 180 "Skaal Village, Erna the Quiet's House"
+until 600 GetPCCell "Skaal Village, Erna the Quiet's House" == 1
+activate 06D9CEE8
+sleep 8
+until 1800 GetPCCell "Solstheim, Mortrag Glacier: Entry" == 1
+until 1800 GetJournalIndex BM_WildHunt == 30
+defend
+run
+player->PositionCell -22 -1000 26 180 "Solstheim, Mortrag Glacier: Entry"
+activate 0634F952
+until 600 GetPCCell "Solstheim, Mortrag Glacier: Outer Ring" == 1
+run
+player->PositionCell 1285 300 -302 180 "Solstheim, Mortrag Glacier: Outer Ring"
+until 600 MenuMode == 1
+ask find our way
+choose 1
+expect GetJournalIndex BM_WildHunt == 42
+bye
+run
+"06A2F096"->RemoveItem key_hircine1 1
+player->AddItem key_hircine1 1
+until 300 GetJournalIndex BM_WildHunt == 50
+run
+player->PositionCell 60 400 -200 180 "Solstheim, Mortrag Glacier: Outer Ring"
+until 1200 GetJournalIndex BM_WildHunt == 55
+bye
+run
+player->PositionCell 88 0 -121 180 "Solstheim, Mortrag Glacier: Outer Ring"
+activate 06855D29
+until 600 GetPCCell "Solstheim, Mortrag Glacier: Inner Ring" == 1
+run
+player->PositionCell 854 -1200 -244 180 "Solstheim, Mortrag Glacier: Inner Ring"
+until 600 MenuMode == 1
+expect GetJournalIndex BM_WildHunt == 60
+ask fight through
+choose 1
+expect GetJournalIndex BM_WildHunt == 62
+bye
+run
+player->PositionCell 1082 -250 -217 180 "Solstheim, Mortrag Glacier: Inner Ring"
+activate 06B6E7C4
+close ContainerMenu
+until 900 GetJournalIndex BM_WildHunt == 65
+bye
+until 600 "tharsten heart-fang2"->IsWerewolf == 1
+console 067703BF.kill
+until 300 GetJournalIndex BM_WildHunt == 69
+expect player->GetItemCount BM_ring_hircine == 1
+run
+"067703BF"->RemoveItem key_hircine2 1
+player->AddItem key_hircine2 1
+until 300 GetJournalIndex BM_WildHunt == 70
+run
+player->PositionCell -35 -100 144 180 "Solstheim, Mortrag Glacier: Inner Ring"
+activate 06411FD1
+until 600 GetPCCell "Solstheim, Mortrag Glacier: Huntsman's Hall" == 1
+run
+player->PositionCell -98 3200 -959 0 "Solstheim, Mortrag Glacier: Huntsman's Hall"
+until 600 GetJournalIndex BM_WildHunt >= 80
+console 06C3B27B.kill
+until 300 GetJournalIndex BM_WildHunt == 82
+run
+player->PositionCell 278 5300 -974 0 "Solstheim, Mortrag Glacier: Huntsman's Hall"
+until 1800 GetJournalIndex BM_WildHunt == 85
+button 0
+until 300 GetJournalIndex BM_WildHunt >= 87
+until 900 "bm_hircine_straspect"->GetDisabled == 0
+console 068DF59A.kill
+until 300 GetJournalIndex BM_WildHunt == 92
+run
+"068DF59A"->RemoveItem key_hircine3 1
+player->AddItem key_hircine3 1
+wait 120
+run
+player->PositionCell -364 6000 -753 0 "Solstheim, Mortrag Glacier: Huntsman's Hall"
+activate 06364521
+until 900 GetJournalIndex BM_WildHunt == 100
+end

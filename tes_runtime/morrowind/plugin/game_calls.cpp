@@ -50,9 +50,14 @@ using SetObjectiveStateFn = void (*)(void* objective, std::uint32_t state);
 using IsRunningFn = bool (*)(void* vm, std::uint32_t stack, void* quest);
 using AddItemFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                            void* item, std::int32_t count, bool silent);
-using RemoveItemFn = void (*)(void* vm, std::uint32_t stack, void* ref,
-                              void* item, std::int32_t count, bool silent,
-                              void* moveTo);
+// The workers those two natives queue for a base form, called at once: TES3
+// AddItem and RemoveItem change the inventory before the next statement.
+//   void AddForm(ref, form, count, silent, stack id, VM)
+//   void RemoveForm(ref, form, count, silent, moveTo, stack id, VM)
+using AddFormFn = void (*)(void* ref, void* item, std::int32_t count, bool silent,
+                           std::uint32_t stack, void* vm);
+using RemoveFormFn = void (*)(void* ref, void* item, std::int32_t count, bool silent,
+                              void* moveTo, std::uint32_t stack, void* vm);
 using ItemCountFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* ref,
                                      void* item);
 using GetPlayerFn = void* (*)(void* vm, std::uint32_t stack, void* tag);
@@ -78,6 +83,7 @@ using GetValueFn = float (*)(void* vm, std::uint32_t stack, void* actor,
                              void* name);
 using EquipItemFn = void (*)(void* vm, std::uint32_t stack, void* actor,
                              void* item, bool preventRemoval, bool silent);
+using DrinkPotionFn = bool (*)(void* actor, void* potion, void* extraData);
 // Barter and persuasion: a call on an actor, an int read off one, and the
 // GLOBAL Game.AdvanceSkill, whose self is a tag and whose float rides fifth.
 using ActorCallFn = void (*)(void* vm, std::uint32_t stack, void* actor);
@@ -166,7 +172,8 @@ SetStageFn          g_setStage = nullptr;
 GetObjectiveFn      g_getObjective = nullptr;
 SetObjectiveStateFn g_setObjectiveState = nullptr;
 AddItemFn    g_addItem = nullptr;
-RemoveItemFn g_removeItem = nullptr;
+AddFormFn    g_addForm = nullptr;
+RemoveFormFn g_removeForm = nullptr;
 ItemCountFn  g_itemCount = nullptr;
 GetPlayerFn  g_getPlayer = nullptr;
 SetEnabledFn  g_enable = nullptr;
@@ -194,6 +201,7 @@ SetValueFn     g_modValue = nullptr;
 SetValueFn     g_restoreValue = nullptr;
 SetValueFn     g_damageValue = nullptr;
 EquipItemFn    g_equipItem = nullptr;
+DrinkPotionFn  g_drinkPotion = nullptr;
 ActorCallFn    g_showBarterMenu = nullptr;
 ShowTrainingMenuFn g_showTrainingMenu = nullptr;
 ActorIntFn     g_getLevel = nullptr;
@@ -400,18 +408,18 @@ void SetQuestStage(const std::string& quest, int stage) {
 void AddItem(const std::string& owner, const std::string& item, int count) {
     void* ref = OwnerRef(owner);
     void* form = ItemForm(item);
-    if (!ref || !form || !g_addItem) return;
+    if (!ref || !form || !g_addForm) return;
     RunOnGameThread([ref, form, count]() {
-        g_addItem(PapyrusVm(), 0, ref, form, count, false);
+        g_addForm(ref, form, count, false, 0, PapyrusVm());
     });
 }
 
 void RemoveItem(const std::string& owner, const std::string& item, int count) {
     void* ref = OwnerRef(owner);
     void* form = ItemForm(item);
-    if (!ref || !form || !g_removeItem) return;
+    if (!ref || !form || !g_removeForm) return;
     RunOnGameThread([ref, form, count]() {
-        g_removeItem(PapyrusVm(), 0, ref, form, count, false, nullptr);
+        g_removeForm(ref, form, count, false, nullptr, 0, PapyrusVm());
     });
 }
 
@@ -457,6 +465,11 @@ int ItemCount(const std::string& owner, const std::string& item) {
     void* form = ItemForm(item);
     if (!ref || !form || !g_itemCount) return 0;
     return g_itemCount(PapyrusVm(), 0, ref, form);
+}
+
+std::uint32_t ItemFormId(const std::string& item) {
+    void* form = ItemForm(item);
+    return form ? FormIdOf(form) : 0;
 }
 
 void* PlayerRef() {
@@ -630,6 +643,22 @@ void KillIfDrained(void* ref, void* name) {
     if (g_getValue(PapyrusVm(), 0, ref, name) <= 0.0f) g_kill(PapyrusVm(), 0, ref, nullptr);
 }
 
+// The test runner's player fighting back: each nearby actor attacking the
+// player is killed by the player. Game thread. The kills come after the walk,
+// since a death changes the process lists being walked.
+void KillPlayerAttackers() {
+    void* player = PlayerRef();
+    if (!player || !g_kill) return;
+    std::vector<void*> attackers;
+    ForEachHighActor([player, &attackers](void* actor) {
+        if (!IsDead(actor) && CombatTargetOf(actor) == player) attackers.push_back(actor);
+    });
+    for (void* actor : attackers) {
+        Log("test: the player kills %08X, which attacked it", FormIdOf(actor));
+        g_kill(PapyrusVm(), 0, actor, player);
+    }
+}
+
 // OpenMW's OpSetDynamic: the base becomes `value` and the current value is
 // filled to the new maximum. Skyrim's SetActorValue moves only the base and
 // keeps the damage taken, so the damage is restored away after it -- a script
@@ -675,8 +704,16 @@ void EquipItem(const std::string& actor, const std::string& item) {
     void* ref = OwnerRef(actor);
     void* form = ItemForm(item);
     if (!ref || !form || !g_equipItem) return;
-    RunOnGameThread([ref, form]() {
-        g_equipItem(PapyrusVm(), 0, ref, form, false, false);
+    const bool potion = At<std::uint8_t>(form, ids::kOffFormType) == ids::kFormTypePotion;
+    RunOnGameThread([ref, form, potion]() {
+        if (potion && g_drinkPotion) {
+            const bool drank = g_drinkPotion(ref, form, nullptr);
+            Log("item: %08X drinks %08X -> %s", FormIdOf(ref), FormIdOf(form), drank ? "ok" : "REFUSED");
+        } else {
+            Log("item: %08X equips %08X (form type %02X)", FormIdOf(ref), FormIdOf(form),
+                       At<std::uint8_t>(form, ids::kOffFormType));
+            g_equipItem(PapyrusVm(), 0, ref, form, false, false);
+        }
     });
 }
 
@@ -1101,9 +1138,9 @@ void MoveGold(const std::string& from, const std::string& to, int count) {
     void* source = OwnerRef(from);
     void* target = OwnerRef(to);
     void* gold = GoldForm();
-    if (!source || !target || !gold || !g_removeItem || !g_addItem) return;
-    g_removeItem(PapyrusVm(), 0, source, gold, count, false, nullptr);
-    g_addItem(PapyrusVm(), 0, target, gold, count, false);
+    if (!source || !target || !gold || !g_removeForm || !g_addForm) return;
+    g_removeForm(source, gold, count, false, nullptr, 0, PapyrusVm());
+    g_addForm(target, gold, count, false, 0, PapyrusVm());
 }
 
 }  // namespace gamecalls
@@ -1121,8 +1158,9 @@ void InstallGameCalls() {
     g_setObjectiveState = Native<SetObjectiveStateFn>(
         "BGSQuestObjective::SetState", ids::kQuestObjectiveSetState);
     g_addItem = Native<AddItemFn>("ObjectReference.AddItem", ids::kRefAddItem);
-    g_removeItem = Native<RemoveItemFn>("ObjectReference.RemoveItem",
-                                        ids::kRefRemoveItem);
+    g_addForm = Native<AddFormFn>("ObjectReference AddItem worker", ids::kRefAddForm);
+    g_removeForm = Native<RemoveFormFn>("ObjectReference RemoveItem worker",
+                                        ids::kRefRemoveForm);
     g_itemCount = Native<ItemCountFn>("ObjectReference.GetItemCount",
                                       ids::kRefGetItemCount);
     g_getPlayer = Native<GetPlayerFn>("Game.GetPlayer", ids::kGameGetPlayer);
@@ -1158,6 +1196,7 @@ void InstallGameCalls() {
     g_damageValue = Native<SetValueFn>("Actor.DamageActorValue",
                                        ids::kActorDamageValue);
     g_equipItem = Native<EquipItemFn>("Actor.EquipItem", ids::kActorEquipItem);
+    g_drinkPotion = Native<DrinkPotionFn>("Actor::DrinkPotion", ids::kActorDrinkPotion);
     g_showBarterMenu = Native<ActorCallFn>("Actor.ShowBarterMenu",
                                            ids::kActorShowBarterMenu);
     g_showTrainingMenu = Native<ShowTrainingMenuFn>("Game.ShowTrainingMenu",
@@ -1230,6 +1269,8 @@ void InstallGameCalls() {
     hooks.addItem = AddItem;
     hooks.removeItem = RemoveItem;
     hooks.itemCount = ItemCount;
+    hooks.itemFormId = ItemFormId;
+    hooks.killPlayerAttackers = KillPlayerAttackers;
     hooks.setEnabled = SetEnabled;
     hooks.isDisabled = IsDisabled;
     InstallMoveCalls(hooks);

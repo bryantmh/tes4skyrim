@@ -15,6 +15,7 @@
 #include "addresses.h"
 #include "conversation.h"
 #include "cosave.h"
+#include "dialogue_state.h"
 #include "game_calls.h"
 #include "ids_pre_ae.h"
 #include "log.h"
@@ -159,6 +160,15 @@ __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
     }
     tesruntime::mw::QueryInterfaces(skse);
     return true;
+}
+
+// The headless test runner's `pick` for a game whose chargen asks this
+// runtime's class and birthsign menus (TES4_Chargen.Ask): TESRuntime's runner
+// finds this export and picks the row named `name`, as `pick` does here.
+// See: docs/commentary/headless_testing.md#tes4-quest-cases
+__declspec(dllexport) bool TESTestPick(const char* name) {
+    const auto pick = tesruntime::mw::Hooks().menuPick;
+    return name && pick && pick(name);
 }
 
 }  // extern "C"

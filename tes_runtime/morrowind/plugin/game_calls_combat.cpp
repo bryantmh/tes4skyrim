@@ -15,6 +15,7 @@
 // See: docs/commentary/morrowind_runtime.md#startcombat-between-allies
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -130,8 +131,15 @@ void GuardsEngage() {
     if (!guards || !hostile || !g_startCombat) return;
     const float radius = GmstNumber("fAlarmRadius", kAlarmRadius);
     std::vector<void*> fighting, idle;
+    static std::map<std::uint32_t, std::uint32_t> targets;
     ForEachHighActor([&](void* actor) {
         if (IsDead(actor)) return;
+        void* target = CombatTargetOf(actor);
+        const std::uint32_t id = FormIdOf(actor), on = target ? FormIdOf(target) : 0;
+        if (targets[id] != on) {
+            targets[id] = on;
+            Log("combat: %08X now targets %08X", id, on);
+        }
         const bool inCombat = ActorInCombat(actor);
         if (inCombat && FactionRank(actor, hostile) >= 0) fighting.push_back(actor);
         if (!inCombat && FactionRank(actor, guards) >= 0) idle.push_back(actor);

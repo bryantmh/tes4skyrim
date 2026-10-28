@@ -1,0 +1,36 @@
+# NQ00Merre "Arbeit in der Mine": Merre, in SchattenrufMinePart07, wants the three rat holes sealed. This quest gates the
+# main quest: Merre's reward INFO (0000F20B) sets NQ00Merre 25 and NQ00Karick 5, and Karick's helmet quest is what opens
+# the mine wall (MQ01Tate's script returns until NQ00Karick >= 19).
+# Stages are TES4 numbers: 5 offered, 10 accepted, 20 holes sealed (NQ00RattenlochPerformanceBox01Script), 25 reward.
+
+# Merre's greeting once Porim has arrived (MQ01Porim 6 or 7) adds "Arbeiten"; "Arbeiten" sets stage 5 and "Natuerlich" sets 10.
+case merre_takes_the_job
+talk MerreRef
+hear 300 MerreRef Ich bin Merre
+ask "Arbeiten"
+ask "Natürlich"
+bye
+expect GetStageDone NQ00Merre 10
+end
+
+# The player carries each loose brick (NQRatteStaticZiegel0N, grabbed with the Grab key in Oblivion) to its hole;
+# the script seals a hole when the brick is within 95 of MarkerRattenloch0NRef and stage 20 is set once all three are
+# sealed. Moving the brick stands in for grabbing and carrying it; killing the rats is not required (the hint at nine
+# dead rats only sets stage 15).
+case merre_seal_the_holes
+console Rattenloch01ZiegelRef.moveto MarkerRattenloch01Ref
+wait 30
+console Rattenloch02ZiegelRef.moveto MarkerRattenloch02Ref
+wait 30
+console Rattenloch03ZiegelRef.moveto MarkerRattenloch03Ref
+until 600 GetStageDone NQ00Merre 20
+end
+
+# Merre's greeting at stage 20 pays the reward and sets NQ00Merre 25 and NQ00Karick 5.
+case merre_reward
+talk MerreRef
+hear 300 MerreRef saubere Arbeit
+bye
+expect GetStageDone NQ00Merre 25
+expect GetStageDone NQ00Karick 5
+end

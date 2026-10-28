@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
+#include <deque>
 #include <fstream>
 #include <set>
 #include <string>
@@ -14,6 +16,7 @@
 #include "game_actor.h"
 #include "ids.h"
 #include "log.h"
+#include "menu.h"
 #include "script_context.h"
 #include "script_runner.h"
 
@@ -58,6 +61,20 @@ int g_passed = 0;
 int g_failed = 0;
 std::ofstream g_out;
 
+// `follow`: how far the NPC may get ahead before the player is moved up, how
+// far apart the trail's points are, how many it keeps, and how far behind the
+// NPC the player is put -- on a spot the NPC itself stood on, so on the ground.
+constexpr float kFollowSlack = 300.0f;
+constexpr float kTrailStep = 40.0f;
+// Ticks (one second) a dialogue step waits for a posted conversation to open.
+constexpr int kTalkWaitTicks = 30;
+constexpr std::size_t kTrailPoints = 24;
+constexpr float kFollowBehind = 120.0f;
+
+struct Spot {
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+};
+
 // The case in progress.
 struct Progress {
     bool started = false;
@@ -70,6 +87,10 @@ struct Progress {
     std::string expects;
     std::string said;
     std::vector<std::string> unportedBefore;
+    std::string follow;        // the NPC `follow` keeps the player behind, or empty
+    std::deque<Spot> trail;    // where that NPC has stood, oldest first
+    int talkWait = 0;          // ticks a dialogue step has waited for the menu to open
+    bool defend = false;       // the player kills whatever attacks it
 };
 
 Progress g_case;
@@ -193,6 +214,8 @@ bool Activated(const std::string& id) {
         g_case.error = "no activate hook";
         return true;
     }
+    // A load door activated while the player's own move is landing goes nowhere.
+    if (PlayerMovePending()) return false;
     if (Hooks().playerActivate(id)) {
         g_case.loadTicks = 0;
         return true;
@@ -222,8 +245,10 @@ bool Talked(const std::string& npc) {
 }
 
 // Waits for `step`'s condition to hold, up to its tick budget; true when done.
-// A miss records the condition, with its left side, as a failed expect.
+// A miss records the condition, with its left side, as a failed expect. A
+// player move still landing would let it judge the old position.
 bool Until(const TestCase& test, const TestStep& step) {
+    if (PlayerMovePending()) return false;
     if (g_case.ticksLeft < 0) g_case.ticksLeft = step.number;
     const bool held = Judge(test.actor, step.text) == 1;
     if (!held && --g_case.ticksLeft > 0) return false;
@@ -350,15 +375,51 @@ bool Advance(const TestCase& test, const TestStep& step) {
             return true;
         case Kind::kWalk:
             return Walked(step);
+        case Kind::kFollow:
+            g_case.follow = step.text;
+            g_case.trail.clear();
+            return true;
+        case Kind::kDefend:
+            g_case.defend = true;
+            return true;
         case Kind::kButton:
         case Kind::kPick:
         case Kind::kClose:
         case Kind::kSleep:
             return Answered(step);
         default:
+            // A greeting posts its menu, which opens a frame or more later, and
+            // one held for the player's move is already open in TES3 terms.
+            if (!Talking() && (MenuOpening() || ++g_case.talkWait < kTalkWaitTicks)) return false;
+            g_case.talkWait = 0;
             Click(step);
             return true;
     }
+}
+
+float Apart(const Spot& a, const Spot& b) {
+    return std::hypot(a.x - b.x, a.y - b.y);
+}
+
+// Keeps the player on the followed NPC's trail, as a player walking behind it
+// does: an `until` alone stands still while an escort walks off.
+void KeepFollowing() {
+    if (g_case.follow.empty() || !Hooks().position || !Hooks().distance || !Hooks().moveInCell) {
+        return;
+    }
+    const std::string& npc = g_case.follow;
+    const Spot at{Hooks().position(npc, 0), Hooks().position(npc, 1), Hooks().position(npc, 2)};
+    std::deque<Spot>& trail = g_case.trail;
+    if (trail.empty() || Apart(trail.back(), at) >= kTrailStep) trail.push_back(at);
+    while (trail.size() > kTrailPoints) trail.pop_front();
+    const float gap = Hooks().distance("player", npc);
+    if (gap < 0.0f || gap <= kFollowSlack) return;
+    const Spot* spot = &trail.front();
+    for (const Spot& point : trail) {
+        if (Apart(point, at) >= kFollowBehind) spot = &point;
+    }
+    const float facing = std::atan2(at.x - spot->x, at.y - spot->y) * 57.29578f;
+    Hooks().moveInCell("player", spot->x, spot->y, spot->z, facing);
 }
 
 bool IsAction(Kind kind) {
@@ -441,11 +502,17 @@ void RunSteps(const TestCase& test, bool held) {
 
 void SetTestConversation(const TestConversation& conversation) { g_talk = conversation; }
 
+const std::vector<std::string>& TestStepNames() {
+    static const std::vector<std::string> kNames = {
+        "run",  "wait",  "expect", "talk", "ask",     "choose",   "bye",   "button", "activate",
+        "until", "pick", "close",  "take", "console", "persuade", "sleep", "walk",   "follow", "defend"};
+    return kNames;
+}
+
 std::vector<TestCase> ParseTestCases(std::istream& in) {
-    static const std::set<std::string> kDirectives = {
-        "case", "run", "wait", "expect", "talk", "ask", "choose", "bye", "button",
-        "activate", "until", "pick", "close", "take", "console", "persuade", "sleep", "walk",
-        "end"};
+    const std::vector<std::string>& kinds = TestStepNames();
+    std::set<std::string> directives(kinds.begin(), kinds.end());
+    directives.insert({"case", "end"});
     std::vector<TestCase> cases;
     TestStep* body = nullptr;
     std::string line;
@@ -454,7 +521,7 @@ std::vector<TestCase> ParseTestCases(std::istream& in) {
         const std::string word = Lower(text.substr(0, text.find_first_of(" \t")));
         const std::string rest = Trim(text.substr(word.size()));
         if (text.empty() || text[0] == '#') continue;
-        if (body && !kDirectives.count(word)) {
+        if (body && !directives.count(word)) {
             body->text += text + "\n";
             continue;
         }
@@ -466,10 +533,6 @@ std::vector<TestCase> ParseTestCases(std::istream& in) {
             test.actor = rest;
             continue;
         }
-        const std::vector<std::string> kinds = {"run",  "wait",   "expect", "talk",  "ask",
-                                                "choose", "bye", "button", "activate", "until",
-                                                "pick", "close", "take", "console", "persuade",
-                                                "sleep", "walk"};
         const auto at = std::find(kinds.begin(), kinds.end(), word);
         if (at == kinds.end()) {
             // A script line after a step opens its own body rather than vanishing.
@@ -538,6 +601,12 @@ void TickTestRunner(bool held) {
         g_case.started = true;
         g_case.unportedBefore = UnportedCommandsSeen();
     }
+    // A player defending itself, or walking behind a guide, kills its attackers.
+    if (!held && !Talking() && (g_case.defend || !g_case.follow.empty()) &&
+        Hooks().killPlayerAttackers) {
+        Hooks().killPlayerAttackers();
+    }
+    if (!held && !Talking()) KeepFollowing();
     RunSteps(test, held);
     if (g_case.step < test.steps.size() && g_case.error.empty()) return;
     Report(test);

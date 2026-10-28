@@ -1,0 +1,198 @@
+# MQ00 "Schatten und Licht": the player wakes in the Schattenrufmine (cells StartCelle, SchattenrufMinePart01 ..
+# SchattenrufMinePart05), meets Celebro, loses him to the black cave troll, gets out with four torches and meets the
+# archmage Merzul at the exit. Journal stages are TES4 numbers: 5 torch lit, 10 shock troll dead, 15 Celebro talked to,
+# 20/25 Celebro02 killed, 27 first mine torch, 28 four torches, 29 black troll dead, 30 shaft below, 35 exit cave trigger,
+# 45 Merzul's spell, 55 Merzul talked to, 60 music script.
+# Placed refs without an EditorID (doors, levers, trigger zones, torches) are written as their TES4 FormID.
+# Everything NPC-driven (Celebro, the trolls, Merzul) is only waited for. walk is the engine-pathed walk; moveto only stands in for the shaft fall;
+# the troll and mage fights run with god mode on (set in 0000_chargen).
+
+# MQ01PlayerTorchScript (on the player's own torch, Torch01Startcelle) sets stage 5 when it is equipped ("I should light
+# the torch before going on"). MQ00CelebroScript then enables Celebro, MQ00ShocktrollScript moves the shock troll in,
+# Celebro fights it, and 4 s after it dies the script sets stage 10. Celebro (not the player) kills the troll: it has
+# 10 health. If he does not, this case fails and that is the bug.
+case mq00_torch
+console player.equipitem Torch01Startcelle
+until 300 GetStage MQ00 >= 5
+until 1800 GetStage MQ00 >= 10
+expect MQ00ShockTroll.GetDead
+end
+
+# Celebro's stage-10 greeting ("Danke fuer das Licht"), then "Ihr habt auch einen Brief bekommen?" (MQ00Topic01) sets
+# stage 15 and gives control back; Celebro's package then follows the player.
+case mq00_celebro_talk
+talk CelebroRef
+ask "Ihr habt auch einen Brief bekommen?"
+hear 300 CelebroRef Ja, habe ich
+bye
+until 300 GetStage MQ00 >= 15
+end
+
+# The start cave's way out is the lift. Step 1: the two special trolls (MQ00troll01Special) in the lift room attack
+# the player and Celebro when the player enters the room's trigger zone (StartCelleAufzugRaumTriggerZone01, no
+# EditorID). The wheel can only be put in after both are dead (StartCelleRotateXMinus03Script); the player kills them,
+# kill stands in for the fight.
+case mq00_lift_room_trolls
+walk 001BFB71
+wait 120
+console StartCelleAufzugRaumTroll01Ref.kill
+console StartCelleAufzugRaumTroll02Ref.kill
+wait 30
+expect GetDeadCount MQ00troll01Special >= 2
+end
+
+# Step 2: the player picks the gear wheel up off the floor (StartCelleZahnradAufnehmenScript sets the global Storyvar
+# to 5) and sets it into the hole at the lift (StartCelleRotateXMinus03Script needs the player within 128 of
+# StartCelleAufzugRadEinsetzenPosMarkerRef, sets Storyvar 6 and moves Celebro onto the lift). The hole is the enabled
+# StartCelleAAZahnradGrobLoch01 ref, 001BFC33.
+case mq00_gear_wheel
+walk StartCelleRadAufnehmenHinweisRef
+activate StartCelleRadAufnehmenHinweisRef
+wait 30
+expect GetGlobalValue Storyvar >= 5
+walk StartCelleAufzugRadEinsetzenPosMarkerRef
+activate 001BFC33
+wait 60
+expect GetGlobalValue Storyvar >= 6
+end
+
+# Step 3: player and Celebro both inside StartCelleAufzugTriggerZone01 and within 100 of each other sets Storyvar 7 and
+# the lift rises 940 units over 15 s. The player stands in the zone; Celebro is already on the platform.
+case mq00_lift_rides
+walk StartCelleAufzugTriggerZone01Ref
+until 600 GetGlobalValue Storyvar >= 7
+wait 600
+end
+
+# The start cave's door 0000956F (CDoor00) leads to SchattenrufMinePart01.
+case mq00_leave_start_cave
+walk 0000956F
+activate 0000956F
+until 600 player.GetInCell SchattenrufMinePart01
+end
+
+# MQ00SchattenrufDoor01 (000011C6) carries MQ00CaveDoor01: opening it disables CelebroRef. In SchattenrufMinePart02 the
+# NPC script MQ01CelebroDeadScript01 (on Celebro02) notices the player, speaks MQ00Cel03 and 3 s later sets stage 20
+# (INFO 000011D3, Celebro02's greeting, sets 20 as well). 2.5 s after that the black troll is enabled and attacks
+# Celebro02 behind the grate; his OnDeath sets stage 25 and gives control back.
+case mq00_part02_celebro_dies
+walk 000011C6
+activate 000011C6
+until 600 player.GetInCell SchattenrufMinePart02
+until 1800 GetStageDone MQ00 20
+until 1800 GetStageDone MQ00 25
+expect Celebro2Ref.GetDead
+end
+
+# The gondola lever (SchattenrufHebelGondel, 001AB374, no EditorID) works only within 150 of GondelmarkerRef. The ride
+# takes 45 s (SchattenrufGondelScript) and ends with SchattenrufGondelvar 10. The black troll breaks through its grate
+# once the player is within 400 of SchattenrufAlptraumTrollFreiMarkerRef (right at the lever) and chases the player
+# across the rope; god mode keeps the player alive.
+case mq00_gondola
+walk GondelmarkerRef
+activate 001AB374
+until 2400 GetGlobalValue SchattenrufGondelvar >= 10
+end
+
+# Door 00001236 (CDoor00) leads to SchattenrufMinePart03, the torch room.
+case mq00_enter_part03
+walk 00001236
+activate 00001236
+until 600 player.GetInCell SchattenrufMinePart03
+end
+
+# SchattenrufGitterTuerScript: the grate door stands open; once the player has walked past Gittermarker02Ref it shuts
+# behind them (stage < 28). The first TorchSchattenruf in the inventory while MQ00 is at 25 sets stage 27 (MQ00Script);
+# the fourth, with the grate shut, sets stage 28 and lets the grate be opened again. The four torches are placed refs
+# without EditorIDs: 0022CE66, 001AB57C, 001AB57B, 001AB579. If a torch does not land in the inventory the case fails
+# on the count.
+case mq00_four_torches
+walk Gittermarker02Ref
+wait 90
+take 0022CE66
+until 300 GetStageDone MQ00 27
+take 001AB57C
+take 001AB57B
+take 001AB579
+until 300 GetStageDone MQ00 28
+expect player.GetItemCount TorchSchattenruf == 4
+end
+
+# The player opens the grate again and sets a torch into each of the four posts
+# (SchattenrufAlptraumTrollFackelPfosten0NScript removes one torch each and lights SchattenrufAlptraumTrollFackel0NRef).
+# With all four lit the black troll flees and burns; 7 s later its script sets stage 29 ("Fallensteller" achievement).
+case mq00_torch_posts
+activate SchattenrufGitterTuer01Ref
+walk SchattenrufAlptraumTrollFackelPfosten01Ref
+activate SchattenrufAlptraumTrollFackelPfosten01Ref
+wait 30
+walk SchattenrufAlptraumTrollFackelPfosten02Ref
+activate SchattenrufAlptraumTrollFackelPfosten02Ref
+wait 30
+walk SchattenrufAlptraumTrollFackelPfosten03Ref
+activate SchattenrufAlptraumTrollFackelPfosten03Ref
+wait 30
+walk SchattenrufAlptraumTrollFackelPfosten04Ref
+activate SchattenrufAlptraumTrollFackelPfosten04Ref
+until 900 GetStageDone MQ00 29
+expect SchattenrufAlptraumTroll01Ref.GetDead
+end
+
+# The key the troll swallowed (MQ00KeyGefressen) is in the troll's inventory; the harness cannot take an item out of
+# a container, so the key is not exercised. SchattenrufMinePart03TrigBoxScript drops the player down the shaft with
+# a MoveTo to SchattenrufMineSchachtEndeMarker, which is what the moveto repeats. MQ00Cavedoor02 (on the cave doors of
+# SchattenrufMinePart04) sets stage 30 1.5 s after that cell loads.
+case mq00_shaft_below
+console player.moveto SchattenrufMineSchachtEndeMarker
+until 600 GetStageDone MQ00 30
+end
+
+# Cave door 00001A03 (MQ00CaveDoor002) leads to SchattenrufMinePart05, the exit cave. Its trigger zone MQ00AusgangTrigger
+# (ref 00001E99) sets stage 35 and wakes twelve cave trolls (MQ00TrollA01 .. A12), the fire wall and Merzul.
+case mq00_exit_cave
+walk 00001A03
+activate 00001A03
+until 600 player.GetInCell SchattenrufMinePart05
+walk 00001E99
+until 300 GetStageDone MQ00 35
+end
+
+# Merzul kills the trolls alone (his spell sets stage 45 through SpellMQ00Merzul01Script); when all twelve of
+# MQ00troll01Ausgang are dead the trigger script disables the controls and Merzul force-greets the player. The case
+# waits for the twelve deaths and the walk over, then the dialogue is already open (as in the Oblivion chargen cases).
+case mq00_merzul_arrives
+until 3600 GetDeadCount MQ00troll01Ausgang >= 12
+expect GetStageDone MQ00 45
+hear 1800 MQ00MerzulRef Der Magie zu Ehren
+end
+
+# MQ00Topic02 "Stammte dieser Brief von Euch?" (two INFOs split on GetPCInFaction, both set stage 55 and give the letter
+# and the directions). Stage 55's result script starts MQ01Tate, joins NehrimOrdenFaction and disables the teleport
+# marker; Merzul then casts his spell and vanishes (trigger script states 14 .. 17) and the controls return.
+case mq00_merzul_letter
+ask "Stammte dieser Brief von Euch?"
+hear 300 MQ00MerzulRef mehr oder weniger
+bye
+until 300 GetStageDone MQ00 55
+expect GetStageDone MQ01Tate 1
+expect player.GetItemCount MQ00Brief >= 1
+expect player.GetItemCount MQ00Wegbeschreibung >= 1
+expect player.GetInFaction NehrimOrdenFaction
+end
+
+# MQ00ExploreMusic sets stage 60 once stage 55 is reached; the teleport marker is disabled by the stage-55 result.
+case mq00_merzul_gone
+wait 300
+expect GetStageDone MQ00 60
+expect MQ00MerzulTeleportMarkerRef.GetDisabled
+end
+
+# The exit door (MQ00Exitdoor01, 00007218) only opens once MQ00 >= 55 (MQ00ExitdoorScn) and leads out of the mine.
+# The next chapter (MQ01Tate "Belagerung der Hexer", driven by NQ00Karick, then MQ01Porim and the hand-in at
+# Hohepriester Aratornias that sets MQ00 65 and MQ01 5) is not drafted here: the mine wall stays shut until MQ01Tate
+# stage 35.
+case mq00_leave_mine
+walk 00007218
+activate 00007218
+until 600 player.GetInCell SchattenrufMinePart05 == 0
+end

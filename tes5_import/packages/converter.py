@@ -55,6 +55,7 @@ from .templates import (
 )
 from ..base.conditions import convert_ctda_list_with_strings
 from .interrupt_morrowind import morrowind_interrupt
+from .location_morrowind import standing_wander_location
 from ..base.text_reader import (get_formid, get_int, get_str, remap_formid,
                           PLAYER_REF_FID, PLAYER_BASE_FID)
 
@@ -835,6 +836,10 @@ def resolve_target(rec: dict, ctx: PackContext, pack_fid: int) -> bytes:
 
 
 def resolve_location(rec: dict, ctx: PackContext, pack_fid: int) -> bytes:
+    """The TES5 PLDT for a package's TES4 location."""
+    standing = standing_wander_location(rec)
+    if standing:
+        return standing
     loc_type = get_int(rec, 'PLDT.Type', -1)
     if loc_type < 0:
         return _null_location()
@@ -1008,7 +1013,8 @@ def _pick_wander(p: _Pick) -> Inputs:
     A pre-pass flags (MARKER_KEY) a Morrowind wander package whose NPCs' own
     animation files became vanilla furniture (SitTarget on the linked marker)
     or vanilla idles (DoNothing, so the actor stays where MorrowindRuntime
-    holds it and plays them).
+    holds it and plays them). A Morrowind wander of distance 0 never moves its
+    actor in OpenMW, so it is DoNothing too.
     See: docs/commentary/asset_convert_animation.md#vanilla-markers-for-npc-animation-files
     """
     kind = get_str(p.rec, MARKER_KEY)
@@ -1017,7 +1023,7 @@ def _pick_wander(p: _Pick) -> Inputs:
         i.set('target', _LINKED_REF)
         i.set('wait_time', 0.0)
         return i
-    if kind == MARKER_IDLE:
+    if kind == MARKER_IDLE or standing_wander_location(p.rec):
         return Inputs(DO_NOTHING)
     return _sandbox(p.loc, allow_wandering=1, allow_sitting=1,
                     allow_idle_markers=1, allow_conversation=1,

@@ -1,0 +1,35 @@
+# MQ01 "Tutorial": the sewers and the way out. Baurus has told the player to leave through the sewers (Charactergen 88).
+# The player works through the rat and goblin tunnels and reaches the sewer exit gate; its OnActivate (CGSewerExitScript)
+# asks whether the player wants to revise the character, and "Finished - Exit Sewers" sets MQ01 stage 88, which starts
+# the 5 s timer to stage 90 and then 100 (stopquest MQ01 and Charactergen).
+# The tutorial hint stages are not driven here: they are message-only (MQ01Script) and depend on what the player
+# picks up. Only the dungeon-progress ones with a fixed trigger are checked.
+
+# The player walks the tunnels; moveto the door from the rats to the goblins stands in for that walk. MQ01Script sets
+# stage 76 (hotkey tutorial) when the player is within 1000 of CGDoorFromRatsToGoblins.
+case sewers_reach_goblin_door
+run
+player.moveto CGDoorFromRatsToGoblins
+until 600 GetStageDone MQ01 76
+end
+
+# The sewer exit gate is a door with CGSewerExitScript and no EditorID: its placed ref's TES4 FormID (0004BED7) is used.
+# Menu expected: the "Before exiting the sewers, you may revise your character." MessageBox; buttons 0 Edit Race,
+# 1 Edit Birthsign, 2 Edit Class, 3 Finished - Exit Sewers.
+case sewers_exit_gate
+activate 0004BED7
+wait 60
+button 3
+until 600 GetStageDone MQ01 88
+end
+
+# The gate takes the player outside. 5 s later MQ01 90 (the "red arrow on the compass" hint) sets 100, which stops
+# MQ01 and Charactergen.
+case sewers_tutorial_ends
+until 900 GetStageDone MQ01 90
+until 600 GetStageDone MQ01 100
+expect GetQuestRunning Charactergen == 0
+expect GetQuestRunning MQ01 == 0
+until 600 player.GetInWorldspace Tamriel
+expect player.GetItemCount AmuletofKings >= 1
+end

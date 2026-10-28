@@ -13,6 +13,7 @@ import re
 from asset_convert.sources import source_registry
 from core.plugin_masters import export_root, masters_from_export_header
 from tes4_export.morrowind_ids import load_index
+from ..base.text_reader import unescape_value
 
 #: Every TES3 type that can carry a script.
 SCRIPTED_EXPORTS = ('NPC_.txt', 'CREA.txt', 'ACTI.txt', 'ALCH.txt', 'AMMO.txt',
@@ -247,6 +248,6 @@ def script_named_ids(folder: str) -> dict:
     out = {}
     for name, field in _SCRIPT_TEXT:
         for rec in export_records(os.path.join(folder, name), (field,)):
-            for line in rec.get(field, '').replace('\\r', '').split('\\n'):
+            for line in unescape_value(rec.get(field, '')).splitlines():
                 out.update((word.lower(), word) for word in _line_names(line) if word)
     return out

@@ -794,6 +794,11 @@ void HoldMenusForPlayerMove() {
     g_loadShown = false;
 }
 
+bool PlayerMovePending() {
+    const std::lock_guard<std::mutex> lock(g_holdMutex);
+    return g_holdSince != 0;
+}
+
 void ReleaseHeldMenus() {
     std::vector<CustomMenu*> ready;
     bool shown = false;

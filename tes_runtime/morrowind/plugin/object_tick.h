@@ -25,6 +25,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace tesruntime::mw {
 
@@ -64,6 +65,10 @@ void NoteSleepStarted();
 void NoteSleepStopped();
 void WakePlayer();
 bool PlayerSleeping();
+
+// An item, by runtime FormID, entered or left the player's inventory, so the
+// tick polls its script. Any thread.
+void NoteCarriedChange(std::uint32_t itemFormId);
 
 // Forgets the discovery sweep's position, the last cell and the accumulator,
 // so one case cannot inherit the sweep's rest from the case before it.

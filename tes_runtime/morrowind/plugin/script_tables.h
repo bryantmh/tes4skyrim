@@ -200,18 +200,15 @@ const ScriptLocals* FindScriptLocals(const std::string& script);
 // The script an actor runs, or "" -- by the actor's TES3 id.
 const std::string& ScriptOf(const std::string& actor);
 
-// One object whose script declares `OnPCEquip` or `OnPCAdd`, and the sidecar
-// binding it.
+// One scripted item, and the sidecar binding it.
 struct EquipWatch {
     std::string item;
     std::string script;
     int layer = -1;
 };
 
-// Every object whose script declares `OnPCEquip` or `OnPCAdd`.
-//
-// 🛑 Precomputed because the alternative is asking the engine about all 1,547
-// scripted objects every tick. Only these can answer the question at all.
+// Every scripted item: TES3 runs the script of each one the player carries.
+// The tick polls only those the player may hold (object_tick.cpp).
 // See: docs/commentary/morrowind_runtime.md#engine-written-locals
 const std::vector<EquipWatch>& EquipWatchList();
 
@@ -323,6 +320,7 @@ struct SpellDef {
 // TES3 spell types `GetCommonDisease` and `GetBlightDisease` sort by.
 constexpr int kSpellBlight = 2;
 constexpr int kSpellDisease = 3;
+constexpr int kSpellCurse = 4;
 
 // The spell a TES3 id names -- SPEL.txt. Null when the chain defines none,
 // which AddSpell and its kin treat as nothing to do.

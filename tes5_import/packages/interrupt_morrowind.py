@@ -21,7 +21,7 @@ _FOLLOW, _ESCORT = 1, 2
 _GREETING_TYPES = frozenset({5, 6})
 
 #: The export field carrying the owning actor's AIDT Hello setting.
-_HELLO_FIELD = 'MorrowindHello'
+HELLO_FIELD = 'MorrowindHello'
 
 
 def interrupt_for_kind(package_type: int, hello: int, default: int) -> int:
@@ -38,7 +38,7 @@ def interrupt_for_kind(package_type: int, hello: int, default: int) -> int:
 
 def morrowind_interrupt(rec: dict, default: int) -> int:
     """`default` for a package Morrowind did not author, else its speech flags."""
-    if _HELLO_FIELD not in rec:
+    if HELLO_FIELD not in rec:
         return default
     return interrupt_for_kind(get_int(rec, 'PKDT.Type'),
-                              get_int(rec, _HELLO_FIELD), default)
+                              get_int(rec, HELLO_FIELD), default)

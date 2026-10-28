@@ -8,6 +8,7 @@
     python -m tools.live.test_instance menus
     python -m tools.live.test_instance stop
     python -m tools.live.test_instance mwtest [--cases X.mwtest|folder] [--cell QASmoke]
+    python -m tools.live.test_instance questtest --cases X.tes4test|folder [--new-game N]
 
 `build` makes the instance folder from HARD LINKS to only the vanilla files of
 the Steam install, plus SKSE, the game bridge and the named plugins, and
@@ -20,6 +21,7 @@ See: docs/commentary/headless_testing.md
 """
 import argparse
 import contextlib
+import dataclasses
 import glob
 import json
 import os
@@ -32,7 +34,7 @@ import time
 from asset_convert.lod.esm_scan import plugin_masters
 from core.chargen_source import candidates
 from source_paths import find_game_path
-from tools.live import hidden_launch
+from tools.live import hidden_launch, tes4_cases
 from tools.live.game_bridge import Bridge, BridgeError
 from tools.release.package_runtime_dll import (EXPORT_ROOT, MOD_NAME, MODS, chargen_table,
                                                configured_choice, morrowind_menus)
@@ -272,10 +274,10 @@ def launch(extra_env=None) -> None:
     print('launched pid %d on hidden desktop %s' % (pid, DESKTOP))
 
 
-def tail(path: str, lines: int) -> list:
+def tail(path: str, lines: int, encoding: str = 'utf-8') -> list:
     """The last `lines` lines of `path`, or [] when it does not exist."""
     try:
-        with open(path, encoding='utf-8', errors='replace') as f:
+        with open(path, encoding=encoding, errors='replace') as f:
             return f.read().splitlines()[-lines:]
     except OSError:
         return []
@@ -523,6 +525,9 @@ def speed(cell: str, settle: float, commands: list, seconds: float) -> None:
 
 #: Settings `--fast` adds: a fixed 1/6 s game step per frame, about 11x real time.
 FAST_INI = ['Skyrim.ini:General:iFPSClamp=6']
+#: Settings `questtest` adds: the Papyrus log, and subtitles, without which no spoken line is recorded.
+PAPYRUS_INI = ['Skyrim.ini:Papyrus:bEnableLogging=1', 'SkyrimPrefs.ini:Interface:bGeneralSubtitles=1',
+               'SkyrimPrefs.ini:Interface:bDialogueSubtitles=1']
 
 
 def checkpoint_name(case: str) -> str:
@@ -566,11 +571,20 @@ def run_console(bridge: Bridge, text: str) -> str:
         return 'ERROR %s' % error
 
 
-def handle_lines(bridge: Bridge, results: str, lines: list, handled: int, checkpoints: bool) -> int:
+def handle_lines(bridge: Bridge, results: str, lines: list, handled: int, checkpoints: bool,
+                 respond=None) -> int:
     """Runs each new console request and, with `checkpoints`, saves after each newly
-    passed case (retrying once), then acknowledges them to the runner; the lines handled."""
+    passed case (retrying once), then acknowledges them to the runner; the lines handled.
+
+    `respond(line)` sees every line first; text it returns is the line's answer,
+    written to `<results>.answer` before the ack.
+    """
     for line in lines[handled:]:
-        if 'console' in line:
+        reply = respond(line) if respond else None
+        if reply is not None:
+            with open(results + '.answer', 'w', encoding='utf-8') as f:
+                f.write(reply)
+        elif 'console' in line:
             print('console %s -> %s' % (line['console'], run_console(bridge, line['console'])))
         elif checkpoints and line.get('ok'):
             name = checkpoint_name(line['case'])
@@ -582,20 +596,21 @@ def handle_lines(bridge: Bridge, results: str, lines: list, handled: int, checkp
     return len(lines)
 
 
-def wait_results(path: str, seconds: float, bridge: Bridge, checkpoints: bool) -> list:
+def wait_results(path: str, seconds: float, bridge: Bridge, checkpoints: bool, game) -> list:
     """The result lines in `path` once its `done` line lands, the game exits, or
-    `seconds` pass, running the runner's console requests on the way."""
+    `seconds` pass, answering the runner's requests on the way (`game.respond`)."""
     deadline = time.time() + seconds
     lines, handled = [], 0
+    respond = game.respond(bridge) if game.respond else None
     while time.time() < deadline:
-        lines = [json.loads(l) for l in tail(path, 10000) if l.strip()]
-        handled = handle_lines(bridge, path, lines, handled, checkpoints)
+        lines = [json.loads(l) for l in tail(path, 10000, game.encoding) if l.strip()]
+        handled = handle_lines(bridge, path, lines, handled, checkpoints, respond)
         if lines and lines[-1].get('done'):
             break
         if not running_pid():
             print('GAME EXITED after %d result line(s)' % len(lines))
             break
-        time.sleep(0.5)
+        time.sleep(game.poll)
     return lines
 
 
@@ -669,43 +684,102 @@ def enter_game(bridge: Bridge, args, cases: str) -> None:
         bridge.console('tgm')
 
 
-def join_cases(path: str) -> str:
-    """`path` itself, or for a folder every `*.mwtest` in it, by name, joined into the profile."""
+def join_cases(path: str, ext: str) -> str:
+    """`path` itself, or for a folder every `*<ext>` in it, by name, joined into the profile."""
     if os.path.isfile(path):
         return os.path.abspath(path)
-    joined = os.path.join(PROFILE, 'cases.mwtest')
+    joined = os.path.join(PROFILE, 'cases' + ext)
     with open(joined, 'w', encoding='utf-8') as out:
-        for name in sorted(glob.glob(os.path.join(path, '*.mwtest'))):
+        for name in sorted(glob.glob(os.path.join(path, '*' + ext))):
             with open(name, encoding='utf-8') as f:
                 out.write(f.read() + '\n')
     return joined
 
 
-def mwtest(args) -> int:
-    """Launches with the MWScript cases, enters the game, reports, stops unless `--keep`; 0 when all pass.
+@dataclasses.dataclass
+class CaseGame:
+    """Which runtime runs a case run, and what the harness does for it."""
 
-    MorrowindRuntime runs the cases from its object tick once the player is
-    in a cell (test_runner.cpp) and writes one JSON line per case. With
-    `--checkpoints` the harness saves after each passing case.
+    prefix: str
+    ext: str
+    log: str
+    poll: float
+    #: (bridge) -> respond(line), the answers to the runner's requests (handle_lines).
+    respond: object = None
+    #: (case file) -> the case file the runner reads.
+    prepare: object = None
+    #: How the runner's results file is encoded.
+    encoding: str = 'utf-8'
+
+
+#: MorrowindRuntime runs MWScript itself; the harness only runs console lines.
+MW_GAME = CaseGame('TES_MW_TEST_', '.mwtest', 'MorrowindRuntime.log', 0.5)
+
+
+def tes4_game() -> CaseGame:
+    """TESRuntime's runner for converted TES4 plugins: the harness resolves names,
+    runs console lines and judges conditions, and reports each case's Papyrus errors.
+    See: docs/commentary/headless_testing.md#tes4-quest-cases
+    """
+    names = tes4_cases.build_names(os.path.join(LOCAL_APPDATA, 'Skyrim Special Edition', 'Plugins.txt'))
+
+    def respond(bridge: Bridge):
+        """The line handler for one run; reads the Papyrus log from its start."""
+        papyrus = tes4_cases.PapyrusLog(os.path.join(MY_GAMES, 'Logs', 'Script', 'Papyrus.0.log'))
+
+        def reply(line: dict):
+            """A request's answer; None for every other line, printing spoken lines and noting a case's
+            Papyrus errors."""
+            if 'speaker' in line:
+                tes4_cases.print_spoken(line, names)
+            if 'case' in line:
+                line['papyrus'] = papyrus.new_errors()
+                for error in line['papyrus']:
+                    print('  papyrus: %s' % error)
+            return tes4_cases.answer(bridge, line, names) if 'run' in line or 'judge' in line else None
+        return reply
+
+    prepared = os.path.join(PROFILE, 'cases_prepared.tes4test')
+    return CaseGame('TES_TEST_', '.tes4test', 'TESRuntime.log', 0.1, respond,
+                    lambda cases: tes4_cases.prepare(cases, names, prepared), tes4_cases.GAME_ENCODING)
+
+
+def mwtest(args) -> int:
+    """Runs MWScript cases under MorrowindRuntime (test_runner.cpp)."""
+    return run_cases(args, MW_GAME)
+
+
+def run_cases(args, game: CaseGame) -> int:
+    """Launches with `game`'s case file, enters the game, reports, stops unless `--keep`; 0 when all pass.
+
+    The runtime runs the cases from its tick once the player is in a cell and
+    writes one JSON line per case. With `--checkpoints` the harness saves after
+    each passing case.
     See: docs/commentary/headless_testing.md#quest-runs
     """
     results = os.path.join(PROFILE, 'mwtest.jsonl')
-    for stale in (results, results + '.ack'):
+    for stale in (results, results + '.ack', results + '.answer'):
         if os.path.exists(stale):
             os.remove(stale)
-    cases = join_cases(args.cases)
-    env = {'TES_MW_TEST_CASES': cases_from(cases, args.from_case) if args.from_case else cases,
-           'TES_MW_TEST_RESULTS': results}
-    flags = {'TES_MW_TEST_STOP_ON_FAIL': args.stop_on_fail, 'TES_MW_TEST_CHECKPOINTS': args.checkpoints}
+    cases = join_cases(args.cases, game.ext)
+    chosen = cases_from(cases, args.from_case) if args.from_case else cases
+    env = {game.prefix + 'CASES': game.prepare(chosen) if game.prepare else chosen,
+           game.prefix + 'RESULTS': results}
+    flags = {game.prefix + 'STOP_ON_FAIL': args.stop_on_fail, game.prefix + 'CHECKPOINTS': args.checkpoints}
     env.update({name: '1' for name, on in flags.items() if on})
     launch(env)
     try:
         with connect(120) as bridge:
             enter_game(bridge, args, cases)
-            lines = wait_results(results, args.timeout, bridge, args.checkpoints)
+            lines = wait_results(results, args.timeout, bridge, args.checkpoints, game)
     finally:
         if not args.keep:
             stop()
+    return report(lines, results, game)
+
+
+def report(lines: list, results: str, game: CaseGame) -> int:
+    """Prints each case and the summary; 0 when the run finished with no failure."""
     for line in lines:
         if 'case' in line:
             print('%s  %s%s' % ('ok  ' if line['ok'] else 'FAIL', line['case'],
@@ -713,19 +787,19 @@ def mwtest(args) -> int:
     done = lines[-1] if lines and lines[-1].get('done') else None
     if done:
         print('%s passed, %s failed, %s skipped; %d real command(s) no case names'
-              % (done['passed'], done['failed'], done['skipped'], len(done['uncovered'])))
+              % (done['passed'], done['failed'], done['skipped'], len(done.get('uncovered', []))))
     else:
-        print('runner did not finish; see %s and the MorrowindRuntime log' % results)
+        print('runner did not finish; see %s and the %s log' % (results, game.log))
     passed = bool(done) and not done['failed']
     if not passed:
-        keep_failed_log()
+        keep_failed_log(game.log)
     return 0 if passed else 1
 
 
-def keep_failed_log() -> None:
-    """Copies the runtime log into the profile, safe from the next launch."""
+def keep_failed_log(name: str) -> None:
+    """Copies the runtime log `name` into the profile, safe from the next launch."""
     kept = os.path.join(PROFILE, 'mwtest_failed.log')
-    shutil.copyfile(os.path.join(MY_GAMES, 'SKSE', 'MorrowindRuntime.log'), kept)
+    shutil.copyfile(os.path.join(MY_GAMES, 'SKSE', name), kept)
     print('runtime log kept at %s' % kept)
 
 
@@ -740,28 +814,37 @@ def stop() -> None:
 
 
 def _launched_parsers(sub) -> None:
-    """The subcommands that launch the game: smoke, mwtest and speed."""
+    """The subcommands that launch the game: smoke, mwtest, questtest and speed."""
     m = sub.add_parser('smoke', help='coc into a cell and check the instance runs unattended')
     w = sub.add_parser('mwtest', help='launch, run MWScript opcode cases in game, stop')
+    q = sub.add_parser('questtest', help='launch, run converted TES4 (.tes4test) cases in game, stop')
     p = sub.add_parser('speed', help='measure game seconds per real second under INI and console settings')
-    for each in (m, w, p):
+    for each in (m, w, q, p):
         each.add_argument('--ini', action='append', default=[],
                           help='File.ini:Section:key=value set in the profile for this run only')
         each.add_argument('--cell', default='QASmoke')
         each.add_argument('--settle', type=float, default=10, help='seconds at the main menu before coc')
     w.add_argument('--cases', default=os.path.join(REPO, 'tes_runtime', 'morrowind', 'testdata', 'ingame'),
                    help='a case file, or a folder whose *.mwtest files run in name order')
-    w.add_argument('--timeout', type=float, default=60, help='seconds to wait for the results')
-    w.add_argument('--keep', action='store_true', help='leave the instance running afterwards')
-    w.add_argument('--stop-on-fail', action='store_true', help='end the run at the first failing case')
-    w.add_argument('--new-game', type=int, metavar='BUTTON',
-                   help="click New Game and answer TESGameSelect's prompt with this button")
-    w.add_argument('--fast', action='store_true', help='about 11x game speed (iFPSClamp=6) and god mode')
-    w.add_argument('--checkpoints', action='store_true', help='save in the sandbox after each passing case')
-    w.add_argument('--from', dest='from_case', help='load the save of the case before this one and resume')
-    w.add_argument('--load', help='start from this sandbox save (e.g. mwtest_chargen_class)')
+    q.add_argument('--cases', required=True,
+                   help='a case file, or a folder whose *.tes4test files run in name order')
+    for each in (w, q):
+        _case_options(each)
     p.add_argument('--console', action='append', default=[], help='console command run after coc')
     p.add_argument('--seconds', type=float, default=10)
+
+
+def _case_options(parser) -> None:
+    """The options every case run takes."""
+    parser.add_argument('--timeout', type=float, default=60, help='seconds to wait for the results')
+    parser.add_argument('--keep', action='store_true', help='leave the instance running afterwards')
+    parser.add_argument('--stop-on-fail', action='store_true', help='end the run at the first failing case')
+    parser.add_argument('--new-game', type=int, metavar='BUTTON',
+                        help="click New Game and answer TESGameSelect's prompt with this button")
+    parser.add_argument('--fast', action='store_true', help='about 11x game speed (iFPSClamp=6) and god mode')
+    parser.add_argument('--checkpoints', action='store_true', help='save in the sandbox after each passing case')
+    parser.add_argument('--from', dest='from_case', help='load the save of the case before this one and resume')
+    parser.add_argument('--load', help='start from this sandbox save (e.g. mwtest_chargen_class)')
 
 
 def parse_args():
@@ -786,7 +869,8 @@ def parse_args():
 def main() -> int:
     """Command-line entry point."""
     args = parse_args()
-    with ini_overrides(getattr(args, 'ini', []) + (FAST_INI if getattr(args, 'fast', False) else [])):
+    extra = (FAST_INI if getattr(args, 'fast', False) else []) + (PAPYRUS_INI if args.cmd == 'questtest' else [])
+    with ini_overrides(getattr(args, 'ini', []) + extra):
         return run(args)
 
 
@@ -798,6 +882,8 @@ def run(args) -> int:
                'speed': lambda: speed(args.cell, args.settle, args.console, args.seconds)}
     if args.cmd == 'mwtest':
         return mwtest(args)
+    if args.cmd == 'questtest':
+        return run_cases(args, tes4_game())
     if args.cmd in ('status', 'smoke'):
         return status() if args.cmd == 'status' else smoke(args.cell, args.settle)
     actions[args.cmd]()

@@ -240,6 +240,7 @@ int ApplyHook(void* sink, const void* event, void* source) {
         const std::uint32_t by = caster ? FormIdOf(caster) : 0;
         PostToMainThread([actor, by, row]() { WatchAttributes(actor, by, row); });
     }
+    if (target && IsCure(index)) ApplyCure(target, index);
     if (target && IsTeleport(index) && target == PlayerRef()) {
         const bool byPlayer = caster == target;
         PostToMainThread([index, byPlayer]() { OnTeleportEffect(index, byPlayer); });

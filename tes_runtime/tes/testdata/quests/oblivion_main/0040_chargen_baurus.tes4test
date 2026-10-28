@@ -1,0 +1,49 @@
+# The Emperor's death and Baurus's farewell. After the Amulet is handed over (74) the final assassin (CGAssassinFinal)
+# kills the Emperor (CGEmperorScript sets 76) and the quest sets 80; the assassin attacks the player and Baurus. The
+# player kills him (84), Baurus kneels by the Emperor (85, 86) and force-greets the player. The player asks the Baurus
+# chain (CGBaurusA..I); "The sewers?" sets 87, which opens the class menu; "What about you?" sets 88, which starts MQ02
+# (stages 10 and 20) and adds the Amulet/Blades/Jauffre topics.
+
+case baurus_emperor_dies
+until 3600 GetStage Charactergen >= 76
+expect UrielSeptimRef.GetDead
+until 900 GetStage Charactergen >= 80
+end
+
+# The assassin is hostile to the player from stage 80; kill stands in for the fight (god mode is on).
+case baurus_kill_assassin
+run
+CGAssassinFinal.kill
+until 900 GetStage Charactergen >= 84
+until 3600 GetStage Charactergen >= 85
+until 3600 GetStage Charactergen >= 86
+hear 1800 BaurusRef We've failed
+end
+
+# Baurus's force-greet ("We've failed...") opens the dialogue on its own; the topics are the CGBaurus chain, each choice
+# leading to the next: A "The Emperor gave it to me." -> B -> C -> D (gives the sewer key) -> E "The sewers?" (stage 87).
+case baurus_topics
+wait 30
+ask "The Emperor gave it to me."
+ask "I must take it to Jauffre."
+ask "There is another heir."
+ask "How do I get there?"
+expect player.GetItemCount CGExitKey >= 1
+ask "The sewers?"
+until 300 GetStage Charactergen >= 87
+end
+
+# Menu expected: the class menu, asked through TES4_Chargen.Ask like the birthsign, so `pick` names the row (CLAS
+# FULL). Baurus then re-greets ("I thought so. A few rats and goblins ...").
+case baurus_class_menu
+pick Warrior
+hear 900 BaurusRef I thought so
+wait 30
+ask "After the sewers, then what?"
+ask "Yes, I understand."
+ask "What about you? What will you do?"
+until 300 GetStage Charactergen >= 88
+expect GetStageDone MQ02 10
+expect GetStageDone MQ02 20
+expect GetQuestRunning MQ02
+end

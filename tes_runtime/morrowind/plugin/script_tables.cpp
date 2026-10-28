@@ -1060,11 +1060,7 @@ const std::vector<EquipWatch>& EquipWatchList() {
         [](const std::string& item, const std::string& script, int layer) {
             const LayerScope scope(layer);
             if (g_actorScripts.FindLayer(item) != layer) return;
-            const ScriptLocals* locals = FindScriptLocals(script);
-            if (locals && (locals->TypeOf("onpcequip") != ' ' ||
-                           locals->TypeOf("onpcadd") != ' ')) {
-                g_watchList.push_back({item, script, layer});
-            }
+            if (FindItem(item)) g_watchList.push_back({item, script, layer});
         });
     return g_watchList;
 }

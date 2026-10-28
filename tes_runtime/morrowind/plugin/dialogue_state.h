@@ -83,6 +83,10 @@ struct GameHooks {
                        int count) = nullptr;
     int  (*itemCount)(const std::string& owner,
                       const std::string& item) = nullptr;
+    // The test runner's player kills every nearby actor attacking it.
+    void (*killPlayerAttackers)() = nullptr;
+    // The runtime FormID of an item's base form, or 0.
+    std::uint32_t (*itemFormId)(const std::string& item) = nullptr;
     // `attacker` attacks `target`; an empty `target` stops the fight instead.
     void (*setCombat)(const std::string& attacker,
                       const std::string& target) = nullptr;

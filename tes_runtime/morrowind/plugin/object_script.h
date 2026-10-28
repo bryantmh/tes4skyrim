@@ -278,4 +278,9 @@ std::size_t LiveInstanceCount();
 // Drops every instance. The locals stay in DialogueState, which owns them.
 void ClearInstances();
 
+// The engine reported this actor (runtime FormID) dying; any thread. Kept
+// until a death poll takes it, or the game reverts.
+void NoteEngineDeath(std::uint32_t runtimeFormId);
+bool TakeEngineDeath(std::uint32_t runtimeFormId);
+
 }  // namespace tesruntime::mw

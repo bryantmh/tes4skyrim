@@ -1,0 +1,26 @@
+# MQ02 "Die Pilgerreise": Vanmiria sends the player to Narathzul Arantheal's shrine (cell AranthealSchrein, south of the
+# Sanktum). Reading the inscription (MQ02SchreinScn on MQ03Inschrift) shows a message box, then moves the player into the
+# shadow world (MQ02SchattenweltMarker, MQ02Schicksalshallen); the trigger script MQ02TriggerSaranthaSCN speaks and sets
+# MQ02 6, and Sarantha02's greeting (INFO 001EE24D) sets MQ02 10. Stages are TES4 numbers.
+# Not drafted: the way back to Vanmiria (MQ02 14/15 and MQ03 5) because nothing in the export shows how the player leaves
+# the shadow world.
+
+# The shrine is a long walk from the Sanktum; moveto the inscription (placed ref 001A3DC3) stands in for it.
+# The inscription reacts only while MQ02 is exactly at stage 5; its box is a one-button Debug.MessageBox.
+case pilgrimage_inscription
+expect GetStage MQ02 == 5
+console player.moveto 001A3DC3
+activate 001A3DC3
+wait 30
+button 0
+until 900 GetStageDone MQ02 6
+end
+
+# The trigger zone's voice, then Sarantha02 in the shadow world; her greeting sets MQ02 10 and lets teleporting work again.
+case pilgrimage_shadow_world
+hear 900 Sarantha02 Willkommen, Schattengeborener
+talk Sarantha02
+hear 300 Sarantha02 Na, ein wenig
+bye
+expect GetStageDone MQ02 10
+end

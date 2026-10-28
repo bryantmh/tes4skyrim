@@ -11,7 +11,9 @@
 //     docs/commentary/tes_runtime_alchemy.md#alchemy-apparatus);
 //   * turns and moves what a converted TES4 GameMode block steps every frame,
 //     at a steady 30 Hz (spin.cpp,
-//     docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates).
+//     docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates);
+//   * runs headless quest cases when the test harness asks for them
+//     (test_game.cpp, docs/commentary/headless_testing.md#tes4-quest-cases).
 
 #include <windows.h>
 
@@ -27,6 +29,7 @@
 #include "paths.h"
 #include "skse_abi.h"
 #include "spin.h"
+#include "test_game.h"
 
 using namespace tesruntime;
 
@@ -61,6 +64,7 @@ void OnMessage(SKSEMessagingInterface::Message* msg) {
             // without it.
             InstallCrafting();
             InstallAlchemy();
+            InstallTestRunner();
         }
     }
 }

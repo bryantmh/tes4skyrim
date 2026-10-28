@@ -1,0 +1,41 @@
+# MQ01Tate "Belagerung der Hexer", part 1: the player has left the Schattenrufmine (MQ00 55) and walks down to the mine
+# wall, where the guard Morten (WachsoldatTate) holds the gate against the mages. Tate's topic "Was ist passiert?" sets
+# MQ01Tate 5 and MQ01Porim 1; the miner Porim then comes up the hill, calls out and leads the way to Merre in the upper
+# mine (SchattenrufMinePart07), which sets MQ01Porim 7 when his package is done. MQ01Tate 1 was set by MQ00 stage 55.
+# Everything NPC-driven is only waited for with hear/until. The long walk down the hill is the engine's own pathing.
+
+# MQ01TateScript: within 1600 of the player Tate adds the FindPlayer package and force-greets ("Bleibt zurueck!
+# Niemand darf das Tor passieren!", greeting INFO 0000E888, which adds the topic "Was ist passiert?").
+case gate_tate_stops_player
+walk WachsoldatTateRef
+hear 3600 WachsoldatTate Niemand darf das Tor
+ask "Was ist passiert?"
+hear 300 WachsoldatTate Magier! Die Bastarde
+bye
+expect GetStageDone MQ01Tate 5
+expect GetStageDone MQ01Porim 1
+end
+
+# MQ01PorimScript moves Porim to PorimMinenMarker at Tate stage 5 and has him call "He, Ihr da!" (MQ01Porim01) once the
+# player is within 750; his package then greets (INFO 00194B4E "Seid Ihr grade von da oben gekommen?"). Porim cannot be
+# activated before MQ01Porim 5, so the player does not use `talk`. "Arbeit" and "Zeigt mir den Weg." (MQ01PorimTopic01/02)
+# set MQ01Porim 5 and he leads the way.
+case gate_porim_calls_out
+walk MQ01PorimRef
+hear 1800 MQ01PorimRef Ihr da
+hear 1800 MQ01PorimRef Seid Ihr
+ask "Arbeit"
+ask "Zeigt mir den Weg."
+hear 300 MQ01PorimRef folgt mir
+bye
+expect GetStageDone MQ01Porim 5
+end
+
+# Porim walks to Merre in SchattenrufMinePart07 (package MQ01PorimAIPackageMineMerre; its OnPackageDone sets MQ01Porim 7).
+# The player follows on foot to the mine door (00001BC2, CDoor00 in the Nehrim world) and goes in.
+case gate_follow_porim_to_merre
+walk 00001BC2
+activate 00001BC2
+until 600 player.GetInCell SchattenrufMinePart07
+until 3600 GetStageDone MQ01Porim 7
+end

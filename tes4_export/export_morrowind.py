@@ -105,9 +105,6 @@ _PLACEMENT_SIGNATURES = {'NPC_': 'ACHR', 'CREA': 'ACRE'}
 #: TES4 record flag for a persistent reference; every load door carries it.
 _PERSISTENT = 1024
 
-#: How far a DODT destination may sit from the door it arrives beside.
-_PARTNER_RADIUS = 1024.0
-
 #: Signature every engine marker resolves as.
 _MARKER_SIGNATURE = 'STAT'
 
@@ -148,8 +145,10 @@ class MorrowindContext:
         self._master_weat = None
         self.pending_teleports = []
         self.doors_by_cell = {}
+        self.own_doors = {}
         self.gap_ids = {}
         self.unlinked_doors = 0
+        self.persisted_partners = 0
         self.vtex_by_cell = {}
         self.master_dirs = []
         self.effect_ranges = {}
@@ -542,6 +541,8 @@ def run_export(file_name: str, source: str, export_dir: str,
     if result['unlinked_doors']:
         print(f"  {result['unlinked_doors']} load doors lead to a cell that "
               f'is not converted and stay plain doors')
+    if result['persisted_partners']:
+        print(f"  {result['persisted_partners']} one-way doors' arrival doors made persistent")
     print(f'[{file_name}] Export complete in {time.time() - start:.2f}s')
     return True
 
@@ -625,7 +626,8 @@ def export_plugin(source_path: str, export_dir: str, masters=()) -> dict:
     print(f'  Text code page: {header.page.codec}')
     return {'plugin': plugin, 'output': out_dir, 'counts': counts,
             'dropped': sum(ctx.unresolved.values()),
-            'unlinked_doors': ctx.unlinked_doors}
+            'unlinked_doors': ctx.unlinked_doors,
+            'persisted_partners': ctx.persisted_partners}
 
 
 def _load_part_tables(ctx: MorrowindContext, source_path: str, records, export_dir: str) -> None:
@@ -1194,6 +1196,7 @@ def _emit_refs(refs, parent_cell: str, ctx: MorrowindContext,
         if ctx.base_signature(ref.record_id) == 'DOOR':
             ctx.doors_by_cell.setdefault(parent_cell, []).append(
                 (form_id, ref.pos))
+            ctx.own_doors[form_id] = lines
         if ref.teleport and ref.dest_pos and signature == 'REFR':
             ctx.pending_teleports.append((form_id, lines, ref))
         elif signature != 'REFR':
@@ -1290,14 +1293,15 @@ def _destination_cells(ctx: MorrowindContext, ref) -> list:
 
 def _partner_door(ctx: MorrowindContext, cells: list, pos: tuple,
                   door_id: str) -> str:
-    """The door reference standing at `pos` in any of `cells`, or '' if none
-    is near.
+    """The door reference nearest `pos` in any of `cells`, or '' if they hold none.
 
     Candidates are this plugin's placements AND its masters', since a
-    dependent plugin's door usually arrives in a cell the master owns.
+    dependent plugin's door usually arrives in a cell the master owns. A
+    one-way door arrives where no door stands; its nearest door still names the
+    right cell, and the XTEL position is where the player lands.
     See: docs/commentary/tes4_export_morrowind.md#teleport-doors
     """
-    best, best_dist = '', _PARTNER_RADIUS
+    best, best_dist = '', float('inf')
     for cell in cells:
         for form_id, other in ctx.doors_by_cell.get(cell, ()):
             if form_id == door_id:
@@ -1314,9 +1318,11 @@ def teleport_records(ctx: MorrowindContext) -> list:
     Skyrim's XTEL names a destination REFERENCE and vanilla's is another DOOR
     in 1,703 of 1,722 cases -- never once an XMarker, which is what an earlier
     pass minted. A door whose destination cell is not converted, or which has
-    no partner door there, stays a plain door and is counted.
+    no partner door there, stays a plain door and is counted. A partner that is
+    no load door itself (a one-way door's arrival) is made persistent too.
     See: docs/commentary/tes4_export_morrowind.md#teleport-doors
     """
+    partners = set()
     for door_id, lines, ref in ctx.pending_teleports:
         partner = _partner_door(ctx, _destination_cells(ctx, ref), ref.dest_pos, door_id)
         if not partner:
@@ -1325,8 +1331,21 @@ def teleport_records(ctx: MorrowindContext) -> list:
         rot = ref.dest_rot or (0.0, 0.0, 0.0)
         lines.append(f'XTEL.Door={partner}')
         lines.extend(_placement_lines(ref.dest_pos, rot, 'XTEL.'))
-        lines.append(f'RecordFlags={_PERSISTENT}')
-        _rehome_persistent(lines, ctx)
+        _make_persistent(lines, ctx)
+        partners.add(partner)
+    for partner in partners & ctx.own_doors.keys():
+        ctx.persisted_partners += _make_persistent(ctx.own_doors[partner], ctx)
+
+
+def _make_persistent(lines: list, ctx: MorrowindContext) -> bool:
+    """Flag a reference persistent and rehome it; False when it already was."""
+    flags = [line for line in lines if line.startswith('RecordFlags=')]
+    old = int(flags[-1][len('RecordFlags='):]) if flags else 0
+    if old & _PERSISTENT:
+        return False
+    lines.append(f'RecordFlags={old | _PERSISTENT}')
+    _rehome_persistent(lines, ctx)
+    return True
 
 def _master_region_weather(master_dirs) -> dict:
     """{lowercase region id: WEAT bytes} over every master's retained source.

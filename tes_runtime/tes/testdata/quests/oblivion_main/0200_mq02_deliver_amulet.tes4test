@@ -1,0 +1,48 @@
+# MQ02 "Deliver the Amulet". Charactergen 88 started it at stage 20 (task: take the Amulet of Kings to Jauffre at
+# Weynon Priory). MQ02Script polls: stage 30 when the player stands in the Chorrol exterior cell, stage 40 in the
+# WeynonPriory exterior cell (both only while OUTSIDE). Jauffre's topic chain then ends in "Where can I find Uriel's
+# son?", which sets MQ02 50 (-> 100) and starts MQ03 (stage 10).
+# The ride from the sewer exit to Chorrol and the priory is the player's walk; coc into the exterior cells stands in
+# for it (the cells are the TES4 EditorIDs Chorrol and WeynonPriory).
+
+case mq02_chorrol
+expect GetStageDone MQ02 20
+run
+coc Chorrol
+wait 90
+until 600 GetStageDone MQ02 30
+end
+
+case mq02_weynon_priory_exterior
+run
+coc WeynonPriory
+wait 90
+until 600 GetStageDone MQ02 40
+end
+
+# The player goes into the priory house, where Jauffre is (JauffreRef, WeynonPrioryHouse). Brother Piner / Prior
+# Maborel (stage 42) are optional and not visited.
+case mq02_enter_priory_house
+run
+coc WeynonPrioryHouse
+wait 90
+expect player.GetInCell WeynonPrioryHouse
+end
+
+# Jauffre's greeting offers "I brought you the Amulet of Kings." (MQ02JauffreA1). Each answer leads to the next topic:
+# A1 -> B1 "[Give Jauffre the Amulet]" (takes the amulet) -> C1 -> D1 -> D4 -> D3 -> E1.
+case mq02_give_amulet
+talk Jauffre
+ask "I brought you the Amulet of Kings."
+ask "[Give Jauffre the Amulet]"
+expect player.GetItemCount AmuletofKings == 0
+ask "Tell the emperor's last words."
+ask "Who is the Prince of Destruction?"
+ask "How can Oblivion threaten us, then?"
+ask "The Emperor asked me to find his son."
+ask "Where can I find Uriel's son?"
+bye
+until 300 GetStageDone MQ02 50
+until 300 GetStageDone MQ02 100
+expect GetStageDone MQ03 10
+end
