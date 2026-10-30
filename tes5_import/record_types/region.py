@@ -26,6 +26,7 @@ from .common import (
     pack_uint8_subrecord,
     world_music_enum,
 )
+from .weather_morrowind import vanilla_weather
 
 
 #: REGN data-entry type enum, shared verbatim by TES4 and TES5 (xEdit wbDefinitions*): 3 Weather, 7 Sound.
@@ -69,13 +70,18 @@ def _regn_music_type(rec: dict, i: int):
 
 
 def _regn_weather_list(rec: dict, i: int) -> bytes:
-    """RDWT entries for data entry `i`, widened 8 -> 12 bytes by a null Global."""
+    """RDWT entries for data entry `i`, widened 8 -> 12 bytes by a null Global.
+
+    A weather named only by its TES3 type takes that type's vanilla stand-in.
+    """
     wlist = b''
     for j in range(get_int(rec, f'RegionData[{i}].WeatherCount')):
-        wfid = get_formid(rec, f'RegionData[{i}].Weather[{j}].FormID')
+        key = f'RegionData[{i}].Weather[{j}]'
+        wfid = (get_formid(rec, f'{key}.FormID')
+                or vanilla_weather(get_int(rec, f'{key}.MorrowindType', -1)))
         if not wfid:
             continue
-        chance = get_int(rec, f'RegionData[{i}].Weather[{j}].Chance')
+        chance = get_int(rec, f'{key}.Chance')
         wlist += struct.pack('<III', wfid, chance, 0)
     return wlist
 

@@ -1,0 +1,47 @@
+# Tribunal "The Smith's Apprentice": Ilnori Faustus, Bols Indalen's idle
+# apprentice in the Craftsmen's Hall, quits to "become an adventurer" (1,
+# IlnoriCellCheck); after the next cell change Bols curses him and wants a new
+# apprentice (10). Therdon in the Winged Guar, laid off, takes the hint ("drink
+# away", "Continue" 1 then 2: 20, TherdonCellCheck), and after the next cell
+# change he greets the player at the forge (therdon2, 30).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_performers --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_job_hunt
+run
+player->PositionCell 88 1136 -124 0 "Mournhold, Craftsmen's Hall"
+until 600 "ilnori_faustus"->GetDistance player < 400
+talk ilnori_faustus
+ask don't belong here
+choose 1
+ask become an adventurer
+expect GetJournalIndex MS_JobHunt == 1
+bye
+run
+player->PositionCell -561 596 -348 0 "Mournhold, The Winged Guar"
+until 300 GetPCCell "Mournhold, The Winged Guar" == 1
+until 300 "bols indalen".change == 1
+run
+player->PositionCell 79 1321 -101 0 "Mournhold, Craftsmen's Hall"
+until 600 "bols indalen"->GetDistance player < 400
+talk bols indalen
+ask Ilnori Faustus
+expect GetJournalIndex MS_JobHunt == 10
+bye
+run
+player->PositionCell -561 596 -348 0 "Mournhold, The Winged Guar"
+until 600 "therdon"->GetDistance player < 400
+talk therdon
+ask drink away
+choose 1
+choose 2
+expect GetJournalIndex MS_JobHunt == 20
+bye
+run
+player->PositionCell -199 1195 -123 0 "Mournhold, Craftsmen's Hall"
+until 600 "therdon2"->GetDisabled == 0
+until 600 "therdon2"->GetDistance player < 400
+talk therdon2
+expect GetJournalIndex MS_JobHunt == 30
+bye
+end

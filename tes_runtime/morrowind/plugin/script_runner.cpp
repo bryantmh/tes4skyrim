@@ -1,5 +1,6 @@
 #include "script_runner.h"
 
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
@@ -132,16 +133,77 @@ Compiler::Locals SpeakerLocals(const std::string& actor) {
 }
 
 class LogErrors : public Compiler::ErrorHandler {
+public:
+    // The 0-based source line of the first error, or -1, and its token.
+    int firstErrorLine = -1;
+    std::string firstErrorToken;
+
+private:
     void report(const std::string& message, const Compiler::TokenLoc& loc,
                 Type type) override {
         Log("script: %s at line %d, '%s': %s",
             type == ErrorMessage ? "error" : "warning", loc.mLine + 1,
             loc.mLiteral.c_str(), message.c_str());
+        if (type == ErrorMessage && firstErrorLine < 0) {
+            firstErrorLine = loc.mLine;
+            firstErrorToken = loc.mLiteral;
+        }
     }
     void report(const std::string& message, Type) override {
         Log("script: %s", message.c_str());
     }
 };
+
+// Morrowind's compiler skipped a statement whose values were out of place and
+// compiled the rest; MPP's fix of one such line is what makes Seler vanish in
+// Bar Brawl. So a compile that trips on a NUMBER is retried with that line
+// blanked, while it is a plain statement: a block keyword reshapes the script,
+// and a name we cannot resolve is our tables' gap, which skipping would hide.
+// See: docs/commentary/morrowind_runtime.md#a-bad-statement-is-skipped
+constexpr int kMaxDroppedLines = 4;
+const std::set<std::string> kBlockKeywords = {"if", "elseif", "else", "endif", "while",
+                                              "endwhile", "begin", "end"};
+
+// Blanks 0-based `line` of `source` when it is a statement; false otherwise.
+bool DropStatementLine(std::string& source, int line, const std::string& what) {
+    std::size_t start = 0;
+    for (int at = 0; at < line && start != std::string::npos; ++at) {
+        start = source.find('\n', start);
+        if (start != std::string::npos) ++start;
+    }
+    if (start == std::string::npos || start >= source.size()) return false;
+    const std::size_t stop = std::min(source.find('\n', start), source.size());
+    const std::string text = source.substr(start, stop - start);
+    std::string keyword;
+    std::istringstream(text) >> keyword;
+    keyword = keyword.substr(0, keyword.find('('));
+    std::transform(keyword.begin(), keyword.end(), keyword.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (keyword.empty() || kBlockKeywords.count(keyword)) return false;
+    Log("script: %s skips line %d, as Morrowind's compiler did: %s", what.c_str(), line + 1,
+        text.c_str());
+    source.replace(start, stop - start, "");
+    return true;
+}
+
+// `attempt(source, errors)` until it compiles, dropping a failing statement
+// line each time it does not.
+template <class Attempt>
+bool CompileSkippingBadLines(std::string source, const std::string& what, Attempt attempt) {
+    for (int dropped = 0;; ++dropped) {
+        LogErrors errors;
+        if (attempt(source, errors)) return true;
+        const std::string& token = errors.firstErrorToken;
+        const bool misplacedValue =
+            !token.empty() && (std::isdigit(static_cast<unsigned char>(token[0])) ||
+                               (token[0] == '-' && token.size() > 1 &&
+                                std::isdigit(static_cast<unsigned char>(token[1]))));
+        if (dropped == kMaxDroppedLines || errors.firstErrorLine < 0 || !misplacedValue ||
+            !DropStatementLine(source, errors.firstErrorLine, what)) {
+            return false;
+        }
+    }
+}
 
 // ------------------------------------------------------------- real opcodes
 
@@ -176,7 +238,7 @@ class OpGetJournalIndex : public Interpreter::Opcode0 {
 
 class OpAddTopic : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
-        State().addedTopics.push_back(PopString(runtime));
+        State().LearnTopic(PopString(runtime));
     }
 };
 
@@ -927,48 +989,51 @@ Machine& TheMachine() {
 // DialogueManager::compile.
 bool Compile(Machine& machine, const std::string& source,
              const std::string& speaker, Interpreter::Program* program) {
-    LogErrors errors;
-    try {
-        std::istringstream input(source + "\n");
-        Compiler::Scanner scanner(errors, input, &machine.extensions);
-        Compiler::Locals locals = SpeakerLocals(speaker);
-        Compiler::ScriptParser parser(errors, machine.compilerContext, locals,
-                                      false);
-        scanner.scan(parser);
-        if (!errors.isGood()) return false;
-        *program = parser.getProgram();
-        return true;
-    } catch (const Compiler::SourceException&) {
-        return false;
-    } catch (const std::exception& error) {
-        Log("script: compile failed: %s", error.what());
-        return false;
-    }
+    const auto attempt = [&](const std::string& text, LogErrors& errors) {
+        try {
+            std::istringstream input(text + "\n");
+            Compiler::Scanner scanner(errors, input, &machine.extensions);
+            Compiler::Locals locals = SpeakerLocals(speaker);
+            Compiler::ScriptParser parser(errors, machine.compilerContext, locals, false);
+            scanner.scan(parser);
+            if (!errors.isGood()) return false;
+            *program = parser.getProgram();
+            return true;
+        } catch (const Compiler::SourceException&) {
+            return false;
+        } catch (const std::exception& error) {
+            Log("script: compile failed: %s", error.what());
+            return false;
+        }
+    };
+    return CompileSkippingBadLines(source, "a result script of " + speaker, attempt);
 }
 
 // A whole SCPT body, through FileParser -- which is what parses `begin`/`end`
 // and owns the locals the body declares for itself.
-bool CompileObject(Machine& machine, const std::string& source,
+bool CompileObject(Machine& machine, const std::string& name, const std::string& source,
                    Machine::ObjectProgram* out) {
-    LogErrors errors;
-    try {
-        std::istringstream input(source + "\n");
-        Compiler::Scanner scanner(errors, input, &machine.extensions);
-        Compiler::FileParser parser(errors, machine.objectContext);
-        scanner.scan(parser);
-        if (!errors.isGood()) return false;
-        out->program = parser.getProgram();
-        const Compiler::Locals& declared = parser.getLocals();
-        out->locals.shorts = declared.get('s');
-        out->locals.longs = declared.get('l');
-        out->locals.floats = declared.get('f');
-        return true;
-    } catch (const Compiler::SourceException&) {
-        return false;
-    } catch (const std::exception& error) {
-        Log("script: object compile failed: %s", error.what());
-        return false;
-    }
+    const auto attempt = [&](const std::string& text, LogErrors& errors) {
+        try {
+            std::istringstream input(text + "\n");
+            Compiler::Scanner scanner(errors, input, &machine.extensions);
+            Compiler::FileParser parser(errors, machine.objectContext);
+            scanner.scan(parser);
+            if (!errors.isGood()) return false;
+            out->program = parser.getProgram();
+            const Compiler::Locals& declared = parser.getLocals();
+            out->locals.shorts = declared.get('s');
+            out->locals.longs = declared.get('l');
+            out->locals.floats = declared.get('f');
+            return true;
+        } catch (const Compiler::SourceException&) {
+            return false;
+        } catch (const std::exception& error) {
+            Log("script: object compile failed: %s", error.what());
+            return false;
+        }
+    };
+    return CompileSkippingBadLines(source, "object '" + name + "'", attempt);
 }
 
 // A compiled body's cache key: the script qualified by the sidecar that
@@ -985,7 +1050,7 @@ Machine::ObjectProgram& ObjectProgramFor(const std::string& name,
     auto it = machine.objectPrograms.find(script);
     if (it != machine.objectPrograms.end()) return it->second;
     Machine::ObjectProgram built;
-    built.compiled = CompileObject(machine, source, &built);
+    built.compiled = CompileObject(machine, name, source, &built);
     if (!built.compiled) {
         Log("script: object '%s' did NOT compile -- it will not run",
             name.c_str());

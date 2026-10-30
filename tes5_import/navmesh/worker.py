@@ -130,6 +130,7 @@ def convert_job(job: dict, base_model_by_fid: dict, door_fids, geom_cache=None):
         geom_cache=geom_cache,
         extra_door_refrs=job.get('extra_door_refrs'),
         spawns=job.get('spawns'),
+        obstacles=job.get('obstacles'),
     )
 
 

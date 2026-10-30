@@ -1,0 +1,50 @@
+# Tribunal "The Summoner": Drathas Reyas in the Great Bazaar tells of a wizard
+# (latest rumors, which starts VelasCellCheck); the next cell change sets his
+# `change`, and Ovis Velas then appears within 750 units of the player,
+# force-greets and attacks (OvisScript). His death logs 1; Drathas names the
+# Velas Manor in Godsreach (10). There Gavis Velas force-greets within 250
+# units; "my unfortunate brother" logs 20 and he summons two golden saints and
+# an ogrim titan (GavisScript). His death logs 30.
+# Kills stand in for the fights; `defend` takes the summons. Ref FormIDs carry
+# Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_museum --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_summoner
+run
+player->PositionCell 1738 920 103 0 "Mournhold, Great Bazaar"
+until 600 "drathas reyas"->GetDistance player < 400
+talk drathas reyas
+ask latest rumors
+expect ScriptRunning VelasCellCheck == 1
+bye
+run
+player->PositionCell 1 220 -110 0 "Mournhold, Museum of Artifacts"
+until 300 GetPCCell "Mournhold, Museum of Artifacts" == 1
+until 300 "drathas reyas".change == 1
+run
+player->PositionCell 901 850 34 0 "Mournhold, Great Bazaar"
+until 300 GetPCCell "Mournhold, Great Bazaar" == 1
+until 900 "ovis velas"->GetDisabled == 0
+defend
+until 600 MenuMode == 1
+bye
+console 0670787D.kill
+until 600 GetJournalIndex MS_Summoner == 1
+run
+player->PositionCell 1738 920 103 0 "Mournhold, Great Bazaar"
+until 600 "drathas reyas"->GetDistance player < 400
+talk drathas reyas
+expect GetJournalIndex MS_Summoner == 10
+bye
+run
+player->PositionCell 6 300 -128 0 "Mournhold, Velas Manor"
+until 300 GetPCCell "Mournhold, Velas Manor" == 1
+until 600 "gavis velas"->GetDisabled == 0
+until 600 MenuMode == 1
+ask my unfortunate brother
+expect GetJournalIndex MS_Summoner == 20
+bye
+console 0679077A.kill
+until 600 GetJournalIndex MS_Summoner == 30
+end

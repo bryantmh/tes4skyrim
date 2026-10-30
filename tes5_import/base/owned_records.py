@@ -281,16 +281,23 @@ _MGEF_FALL_FLAGS = 0x8000
 #: MGEF archetype 0 Value Modifier on actor value 24 Health, at magnitude 0 (vanilla NN01PerkEffect).
 _MGEF_ARCHETYPE_VALUE_MOD, _AV_HEALTH = 0, 24
 
-#: Casting type 1 Fire and Forget, delivery 0 Self.
-_FIRE_AND_FORGET, _DELIVERY_SELF = 1, 0
+#: Casting type 0 Constant Effect, 1 Fire and Forget; delivery 0 Self.
+_CONSTANT_EFFECT, _FIRE_AND_FORGET, _DELIVERY_SELF = 0, 1, 0
+
+#: SPIT spell type 4 Ability (vanilla RaceKhajiitClaws).
+_SPELL_TYPE_ABILITY = 4
 
 
-def multiply_entry(entry_point: bytes, conditions: bytes = b'') -> bytes:
-    """One rank-0 PERK entry multiplying its value by 0 while `conditions` (packed CTDAs) hold."""
+def multiply_entry(entry_point: bytes, conditions=b'') -> bytes:
+    """One rank-0 PERK entry multiplying its value by 0 while `conditions` hold.
+
+    `conditions` is packed CTDAs on tab 0 (the owner), or {tab: CTDAs}.
+    """
+    tabs = conditions if isinstance(conditions, dict) else {0: conditions}
     subs = pack_subrecord('PRKE', bytes((2, 0, 0)))
     subs += pack_subrecord('DATA', entry_point)
-    if conditions:
-        subs += pack_subrecord('PRKC', bytes((0,))) + conditions
+    for tab, ctdas in sorted(tabs.items()):
+        subs += pack_subrecord('PRKC', bytes((tab,))) + ctdas if ctdas else b''
     subs += pack_subrecord('EPFT', bytes((1,)))
     subs += pack_subrecord('EPFD', struct.pack('<f', 0.0))
     return subs + pack_subrecord('PRKF', b'')
@@ -308,13 +315,14 @@ def hidden_perk(fid: int, edid: str, entries: bytes) -> bytes:
     return pack_record('PERK', fid, 0, subs + entries)
 
 
-def _fall_damage_effect(fid: int, edid: str, perk: int) -> bytes:
-    """MGEF whose only job is PerkToApply, the way an NPC receives a perk."""
+def perk_effect(fid: int, edid: str, perk: int, ability: bool = False) -> bytes:
+    """MGEF whose only job is PerkToApply, the way an NPC receives a perk; Constant for an `ability`."""
     data = bytearray(152)
     struct.pack_into('<I', data, 0, _MGEF_FALL_FLAGS)
     struct.pack_into('<ii', data, 12, -1, -1)
     struct.pack_into('<Ii', data, 64, _MGEF_ARCHETYPE_VALUE_MOD, _AV_HEALTH)
-    struct.pack_into('<II', data, 80, _FIRE_AND_FORGET, _DELIVERY_SELF)
+    casting = _CONSTANT_EFFECT if ability else _FIRE_AND_FORGET
+    struct.pack_into('<II', data, 80, casting, _DELIVERY_SELF)
     struct.pack_into('<i', data, 88, -1)
     struct.pack_into('<f', data, 104, 1.0)
     struct.pack_into('<I', data, 136, perk)
@@ -323,15 +331,18 @@ def _fall_damage_effect(fid: int, edid: str, perk: int) -> bytes:
     return pack_record('MGEF', fid, 0, subs)
 
 
-def _fall_damage_spell(fid: int, edid: str, effect: int) -> bytes:
-    """Fire-and-forget self SPEL (type 0) holding the effect for the protection window."""
+def perk_spell(fid: int, edid: str, effect: int, ability: bool = False) -> bytes:
+    """Self SPEL holding `effect`: an `ability` for good, else a fire-and-forget spell for the fall window."""
+    kind, casting = ((_SPELL_TYPE_ABILITY, _CONSTANT_EFFECT) if ability
+                     else (0, _FIRE_AND_FORGET))
     subs = pack_string_subrecord('EDID', edid)
     subs += pack_obnd()
     subs += pack_subrecord('ETYP', struct.pack('<I', SPELL_EQUIP_EITHER_HAND))
     subs += pack_subrecord('SPIT', struct.pack(
-        '<IIIfII12x', 0, 0, 0, 0.0, _FIRE_AND_FORGET, _DELIVERY_SELF))
+        '<IIIfII12x', 0, 0, kind, 0.0, casting, _DELIVERY_SELF))
     subs += pack_subrecord('EFID', struct.pack('<I', effect))
-    subs += pack_subrecord('EFIT', struct.pack('<fII', 0.0, 0, _FALL_WINDOW_SECONDS))
+    duration = 0 if ability else _FALL_WINDOW_SECONDS
+    subs += pack_subrecord('EFIT', struct.pack('<fII', 0.0, 0, duration))
     return pack_record('SPEL', fid, 0, subs)
 
 
@@ -353,8 +364,8 @@ def create_fall_damage_spell(writer: PluginWriter, master_index=None) -> dict:
         mgef = writer.derive_formid('MGEF', name + 'Effect')
         spel = writer.derive_formid('SPEL', name)
         writer.add_record('PERK', hidden_perk(perk, name + 'Perk', FALL_DAMAGE_ENTRY))
-        writer.add_record('MGEF', _fall_damage_effect(mgef, name + 'Effect', perk))
-        writer.add_record('SPEL', _fall_damage_spell(spel, name, mgef))
+        writer.add_record('MGEF', perk_effect(mgef, name + 'Effect', perk))
+        writer.add_record('SPEL', perk_spell(spel, name, mgef))
     return {name: spel}
 
 

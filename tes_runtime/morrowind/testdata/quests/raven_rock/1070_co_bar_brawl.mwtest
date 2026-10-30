@@ -1,0 +1,50 @@
+# Bloodmoon "Bar Brawl", Falco's side: three days after Uryn (ColonyTimer),
+# Falco sends the player to old Seler Favelnim, who picks fights in the bar.
+# ColonySeler moves him there, greets within 300 units (40) and attacks; after
+# 30 seconds he tires (50) and greets again. Talking him down through the
+# "fight me" choices spares him (60), and Falco closes it (80, ColonyState 11).
+# The fight is not a brawler's (no OnPCHitMe), so the brawl switch is moot.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_thief --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_bar_brawl
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+until 600 ColonyState == 10
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+ask Seler Favelnim
+expect GetJournalIndex CO_7 == 10
+bye
+run
+player->PositionCell 4480 3700 15820 0 "Raven Rock, Bar"
+until 600 GetJournalIndex CO_7 == 40
+bye
+until 1800 GetJournalIndex CO_7 == 50
+ask fight me
+choose 2
+choose 3
+choose 4
+choose 5
+expect GetJournalIndex CO_7 == 60
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask Seler Favelnim
+expect GetJournalIndex CO_7 == 80
+expect ColonyState == 11
+bye
+end

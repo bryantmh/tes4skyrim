@@ -1,0 +1,39 @@
+# Tribunal "An Attack on Mournhold": the day after Almalexia takes the Mazed Band,
+# with the player away from the Plaza Brindisi Dorom, the fabricants attack
+# (TribFabAttackCheck sets FabAttack). In the plaza they come out and fight the
+# guards (fab_attack_1: 10; the Royal Guard and High Ordinator shouts: 20, 25).
+# Four hulking and four verminous fabricants dead log 30 (TribFabAttackCheck),
+# and Tienius Delitian's greeting logs 110.
+# The player sleeps in Ebonheart's Underground Caves, an hour at a time, until
+# the attack comes. The kills stand in for the fight. Ref FormIDs carry
+# Tribunal.esm's slot 06 and Morrowind.esm's 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_mazed_band --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_mh_attack
+run
+player->PositionCell -210 1800 760 0 "Ebonheart, Underground Caves"
+until 300 GetPCCell "Ebonheart, Underground Caves" == 1
+rest 60 05554237 FabAttack == 1
+defend
+run
+player->PositionCell 0 0 200 0 "Mournhold, Plaza Brindisi Dorom"
+until 300 GetPCCell "Mournhold, Plaza Brindisi Dorom" == 1
+until 600 GetJournalIndex TR_MHAttack >= 10
+wait 300
+console 063EC344.kill
+console 0691F9EF.kill
+console 066CE6B5.kill
+console 06BD20DC.kill
+console 06939550.kill
+console 06729D21.kill
+console 065E8872.kill
+console 06E6C5B7.kill
+until 600 GetJournalIndex TR_MHAttack == 30
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+expect GetJournalIndex TR_MHAttack == 110
+bye
+end

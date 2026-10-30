@@ -1,0 +1,146 @@
+# Bloodmoon "Razing the Forest", Falco's side: Falco sends the player after
+# the Spriggans. Each of the four rises twice before staying dead (ColonySpriggan
+# deathvar 1-3; the fourth appears at the second's first death), and the last
+# logs 30. Unel Lloran in the bar names the grove (40); a miner names the roots
+# (50); coming within 1,000 units of the roots in the abandoned shaft logs 55
+# (ColonyRoot1a). Unel follows the player to them (60, 70) and asks for five
+# bittergreen petals (80), looted from four plants on Vvardenfell (90); the
+# first three hold six but have yielded four (headless_quest_runs.md §3). Falco closes it (100). Kills and looting stand in for the
+# fights and the container menus.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_report --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_razing_forest
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+ask Spriggans
+expect GetJournalIndex CO_10 == 20
+bye
+run
+player->Position -195000 160500 1100 0
+console 062B6F21.kill
+console 06A5D990.kill
+console 068EF261.kill
+until 600 "BM_spriggan_co1".deathvar >= 1
+until 600 "BM_spriggan_co2".deathvar >= 1
+until 600 "BM_spriggan_co3".deathvar >= 1
+until 600 "BM_spriggan_co4"->GetDisabled == 0
+until 600 "BM_spriggan_co1"->GetHealth > 0
+until 600 "BM_spriggan_co2"->GetHealth > 0
+until 600 "BM_spriggan_co3"->GetHealth > 0
+console 062B6F21.kill
+console 06A5D990.kill
+console 068EF261.kill
+console 06DB3867.kill
+until 600 "BM_spriggan_co1".deathvar >= 2
+until 600 "BM_spriggan_co2".deathvar >= 2
+until 600 "BM_spriggan_co3".deathvar >= 2
+until 600 "BM_spriggan_co4".deathvar >= 1
+until 600 "BM_spriggan_co1"->GetHealth > 0
+until 600 "BM_spriggan_co2"->GetHealth > 0
+until 600 "BM_spriggan_co3"->GetHealth > 0
+until 600 "BM_spriggan_co4"->GetHealth > 0
+console 062B6F21.kill
+console 06A5D990.kill
+console 068EF261.kill
+console 06DB3867.kill
+until 600 "BM_spriggan_co4".deathvar >= 2
+until 600 "BM_spriggan_co4"->GetHealth > 0
+console 06DB3867.kill
+until 600 GetJournalIndex CO_10 == 30
+run
+player->PositionCell -70 400 90 0 "Raven Rock, Bar"
+until 600 "Unel Lloran"->GetDistance player < 400
+talk Unel Lloran
+ask grove
+expect GetJournalIndex CO_10 == 40
+bye
+run
+player->PositionCell 5008 3530 12700 0 "Raven Rock, Mine"
+until 300 GetPCCell "Raven Rock, Mine" == 1
+run
+set TestResult to ( "Aldam Berendus"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Aldam Berendus"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Aldam Berendus"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Aldam Berendus"->GetDistance player < 400
+talk Aldam Berendus
+ask roots
+expect GetJournalIndex CO_10 == 50
+bye
+run
+player->PositionCell 3935 4300 15300 0 "Raven Rock, Abandoned Mine Shaft"
+until 600 GetJournalIndex CO_10 == 55
+run
+player->PositionCell -70 400 90 0 "Raven Rock, Bar"
+until 600 "Unel Lloran"->GetDistance player < 400
+talk Unel Lloran
+ask roots
+choose 1
+expect GetJournalIndex CO_10 == 60
+bye
+run
+player->PositionCell 500 2 61 0 "Raven Rock, Bar"
+until 900 "Unel Lloran"->GetDistance player < 400
+activate 06B3B477
+until 300 GetPCCell "Raven Rock, Bar" == 0
+run
+player->Position -198250 160900 930 0
+until 1800 "Unel Lloran"->GetDistance player < 400
+activate 06675D75
+until 300 GetPCCell "Raven Rock, Mine Entrance" == 1
+run
+player->PositionCell 260 253 87 0 "Raven Rock, Mine Entrance"
+until 900 "Unel Lloran"->GetDistance player < 400
+activate 063AEC9A
+until 300 GetPCCell "Raven Rock, Mine" == 1
+run
+player->PositionCell 6640 1751 11535 0 "Raven Rock, Mine"
+until 3600 "Unel Lloran"->GetDistance player < 400
+activate 068DC05F
+until 300 GetPCCell "Raven Rock, Abandoned Mine Shaft" == 1
+run
+player->PositionCell 4019 4300 15434 0 "Raven Rock, Abandoned Mine Shaft"
+until 1800 GetJournalIndex CO_10 == 70
+ask roots
+expect GetJournalIndex CO_10 == 80
+bye
+run
+player->Position 10900 100850 9950 0
+until 600 GetPCCell "Raven Rock" == 0
+activate 058AD438
+close ContainerMenu
+console 058AD438.removeallitems player
+activate 05436488
+close ContainerMenu
+console 05436488.removeallitems player
+activate 05500A91
+close ContainerMenu
+console 05500A91.removeallitems player
+run
+player->Position 20250 101000 9900 0
+activate 0593BF93
+close ContainerMenu
+console 0593BF93.removeallitems player
+expect player->GetItemCount "ingred_bittergreen_petals_01" >= 5
+run
+player->PositionCell 4019 4300 15434 0 "Raven Rock, Abandoned Mine Shaft"
+until 600 "Unel Lloran"->GetDistance player < 1500
+talk Unel Lloran
+ask roots
+choose 3
+expect GetJournalIndex CO_10 == 90
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask grove
+expect GetJournalIndex CO_10 == 100
+bye
+end

@@ -6,6 +6,7 @@ import struct
 
 from asset_convert.game_paths import ascii_path, current_namespace
 from ..base.mesh_bounds import get_mesh_obnd
+from ..base.obstacles import OBSTACLE_FLAG, is_obstacle
 from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..base.writer import (
     pack_float_subrecord,
@@ -196,7 +197,8 @@ def _simple_object(rec: dict, sig: str, has_full: bool = True,
                    has_model: bool = True, extra_subs: bytes = b'') -> bytes:
     """Generic simple-object converter.
 
-    Produces: EDID + OBND + FULL + MODL + extra_subs.
+    Produces: EDID + OBND + FULL + MODL + extra_subs; an obstacle base gets the Obstacle flag.
+    See: docs/commentary/tes5_import_navmesh.md#scripted-blockers-are-obstacles
     """
     subs = _common_header_subs(rec, need_full=has_full, obnd_sig=sig)
     if has_model:
@@ -204,7 +206,10 @@ def _simple_object(rec: dict, sig: str, has_full: bool = True,
         if path:
             subs += pack_string_subrecord('MODL', prefix_path(path))
     subs += extra_subs
-    return pack_record(sig, get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
+    flags = get_int(rec, 'RecordFlags')
+    if is_obstacle(rec, sig):
+        flags |= OBSTACLE_FLAG
+    return pack_record(sig, get_formid(rec, 'FormID'), flags, subs)
 
 
 def _convert_biped_flags(tes4_flags: int) -> int:

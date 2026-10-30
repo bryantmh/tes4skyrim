@@ -180,9 +180,43 @@ Corpus Walk(const std::string& dir) {
 }  // namespace
 }  // namespace tesruntime::mw
 
+// Siblings on one master are one game and share an id's state; an unrelated
+// root stays apart. Tribunal and Bloodmoon both define the TR_DBAttack journal.
+void TestLayers() {
+    using namespace tesruntime::mw;
+    std::printf("layers\n");
+    ClearLayers();
+    const int mw = AddLayer("Morrowind");
+    const int tb = AddLayer("Tribunal");
+    const int bm = AddLayer("Bloodmoon");
+    const int ak = AddLayer("Arktwend");
+    FinishLayersWith({{"Morrowind", {}},
+                      {"Tribunal", {"Morrowind.esm"}},
+                      {"Bloodmoon", {"Morrowind.esm"}},
+                      {"Arktwend", {}}});
+    Check(LayersRelated(tb, bm), "siblings on one master see each other");
+    Check(LayersRelated(mw, bm), "a master and its dependent see each other");
+    Check(!LayersRelated(ak, tb), "an unrelated root stays apart");
+    NoteId(tb, "tr_dbattack");
+    NoteId(bm, "tr_dbattack");
+    std::string fromTribunal, fromBloodmoon;
+    {
+        const LayerScope scope(tb);
+        fromTribunal = StateKey("TR_DBAttack");
+    }
+    {
+        const LayerScope scope(bm);
+        fromBloodmoon = StateKey("TR_DBAttack");
+    }
+    Check(fromTribunal == fromBloodmoon, "both siblings key the journal alike");
+    Check(fromTribunal == StateKey("TR_DBAttack"), "the merged view keys it alike too");
+    ClearLayers();
+}
+
 int main(int argc, char** argv) {
     using namespace tesruntime::mw;
     TestUnescape();
+    TestLayers();
     TestParse();
     TestOwnForm();
 

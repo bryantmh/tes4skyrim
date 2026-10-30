@@ -1,0 +1,62 @@
+# Tribunal "Sotha Sil": with the blade reforged, Almalexia, asked through
+# "unstable", "Clockwork City", "his madness" and "man he once was", says Sotha
+# Sil must be stopped (10) and, told "I am prepared to go." (1), sends the player to the
+# Clockwork City (20, SothaSilTeleport to the Outer Flooded Halls). In the Dome
+# of Sotha Sil his body hangs from a machine; activated, it logs 50
+# (Sotha_SothaSil). Almalexia appears when the player comes within 240, speaks
+# four lines with the player's controls off, then fights (70, Sotha_Alma); her
+# death logs 100. Azura's spirit in the Temple Courtyard then appears and speaks
+# (110, TribEnd), and Helseth, told of the attacks, gives his guard's armor
+# (TR_Champion 110).
+# The player walks from the Outer Flooded Halls to the Dome with PositionCell,
+# and the damage stands in for the fight. Ref FormIDs carry Tribunal.esm's
+# slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_blade --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_sotha_sil
+run
+player->PositionCell 1 49 -659 0 "Mournhold Temple: High Chapel"
+until 600 "almalexia"->GetDistance player < 400
+talk almalexia
+ask unstable
+ask Clockwork City
+ask his madness
+ask man he once was
+ask must be stopped
+expect GetJournalIndex TR_SothaSil == 10
+choose 1
+expect GetJournalIndex TR_SothaSil == 20
+bye
+until 600 GetPCCell "Sotha Sil, Outer Flooded Halls" == 1
+run
+player->PositionCell 4032 3900 12300 0 "Sotha Sil, Dome of Sotha Sil"
+until 300 GetPCCell "Sotha Sil, Dome of Sotha Sil" == 1
+wait 300
+activate 06833643
+button 0
+until 300 GetJournalIndex TR_SothaSil == 50
+player->PositionCell 4048 3500 12300 0 "Sotha Sil, Dome of Sotha Sil"
+until 2400 GetJournalIndex TR_SothaSil == 70
+console 0629B3A3.damageav health 10000
+until 600 GetJournalIndex TR_SothaSil == 100
+run
+player->PositionCell 8 -1750 431 0 "Mournhold, Temple Courtyard"
+until 300 GetPCCell "Mournhold, Temple Courtyard" == 1
+until 2400 GetJournalIndex TR_SothaSil == 110
+run
+player->PositionCell 2 53 -92 0 "Mournhold, Royal Palace Throne Room"
+until 300 GetPCCell "Mournhold, Royal Palace Throne Room" == 1
+wait 300
+set TestResult to ( "King Hlaalu Helseth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "King Hlaalu Helseth"->GetPos y )
+set TestResult to ( TestResult + 100 )
+player->SetPos y TestResult
+until 600 "King Hlaalu Helseth"->GetDistance player < 400
+talk King Hlaalu Helseth
+ask learn more about the attacks
+expect GetJournalIndex TR_Champion == 110
+expect player->GetItemCount "Helsethguard_cuirass" == 1
+bye
+end

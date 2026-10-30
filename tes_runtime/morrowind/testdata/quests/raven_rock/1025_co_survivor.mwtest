@@ -1,0 +1,45 @@
+# Bloodmoon "Missing Supply Ship", the survivor: Apronia Alfena hides in the
+# wreck from three draugr (DraugrKilled). Once they are dead she follows the
+# player, and on coming within 1,024 units of Falco she settles and greets
+# (CO_3b 20). CO_5 needs her: she holds Elberoth's saber. Only her rescue
+# greeting teaches "go with you", and from CO_4 on another greeting wins, so
+# this runs before the choice. Kills stand in for the fight. The player moves
+# in hops along the navmesh path and waits for her each time; she follows on
+# her own. An AI-driven player walk left the navmesh by the shore twice.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_supply_ship --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_survivor
+run
+player->Position -216500 178100 300 0
+console 06BE6A0D.kill
+console 06494C91.kill
+console 06A56F9C.kill
+until 600 DraugrKilled >= 3
+run
+set TestResult to ( "Apronia Alfena"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Apronia Alfena"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Apronia Alfena"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Apronia Alfena"->GetDistance player < 400
+talk Apronia Alfena
+ask go with you
+choose 1
+expect GetJournalIndex CO_3b == 10
+bye
+run
+player->Position -213000 174500 200 0
+until 900 "Apronia Alfena"->GetDistance player < 600
+run
+player->Position -209000 172500 300 0
+until 900 "Apronia Alfena"->GetDistance player < 600
+run
+player->Position -206848 169984 400 0
+until 900 "Apronia Alfena"->GetDistance player < 600
+run
+player->Position -197200 160250 870 0
+until 1800 GetJournalIndex CO_3b == 20
+bye
+end

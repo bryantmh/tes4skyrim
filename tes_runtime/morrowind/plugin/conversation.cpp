@@ -588,8 +588,6 @@ void Deliver(const std::string& title, const Reply& reply) {
         g_history.push_back(notice);
     }
     State().messages.clear();
-    Learn(State().addedTopics);
-    State().addedTopics.clear();
     Learn(MentionedTopics(reply.text, *g_actor));
     RebuildItems();
     g_hoverItem = -1;
@@ -909,7 +907,8 @@ void OnTick() {
 void InstallConversation() {
     SetTestConversation({ConversationOpen, ConversationTopics, ConversationAsk,
                          ConversationChoose, ConversationGoodbye, ConversationLastText,
-                         ConversationChoices, ConversationPersuade});
+                         ConversationChoices, ConversationPersuade, MenuOpening,
+                         PlayerMovePending});
     MenuInput input;
     input.hover = [](double x, double y) {
         const LayerScope scope(g_layer);

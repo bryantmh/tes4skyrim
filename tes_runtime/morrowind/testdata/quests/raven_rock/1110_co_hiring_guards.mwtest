@@ -1,0 +1,72 @@
+# Bloodmoon "Hiring Guards", Falco's side: Falco wants volunteers (20). Afer
+# Flaccus in the bar (30), Gratian Caerellius in the mine (40) and Garnas
+# Uvalen outside (50) each agree; telling Falco "I've finished" (1), then that
+# all three volunteered (3), closes it (60, ColonyGuards, ColonyState 13). Each recruit is reached where he stands.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_razing_forest --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_hiring_guards
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+ask hire guards
+expect GetJournalIndex CO_11 == 20
+bye
+run
+player->PositionCell -410 -462 90 0 "Raven Rock, Bar"
+until 300 GetPCCell "Raven Rock, Bar" == 1
+run
+set TestResult to ( "Afer Flaccus"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Afer Flaccus"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Afer Flaccus"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Afer Flaccus"->GetDistance player < 400
+talk Afer Flaccus
+ask hire guards
+expect GetJournalIndex CO_11 == 30
+bye
+run
+player->PositionCell 4644 3777 12080 0 "Raven Rock, Mine"
+until 300 GetPCCell "Raven Rock, Mine" == 1
+run
+set TestResult to ( "Gratian Caerellius"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Gratian Caerellius"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Gratian Caerellius"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Gratian Caerellius"->GetDistance player < 400
+talk Gratian Caerellius
+ask hire guards
+expect GetJournalIndex CO_11 == 40
+bye
+run
+player->Position -193567 159259 950 0
+until 300 GetPCCell "Raven Rock, Mine" == 0
+run
+set TestResult to ( "Garnas Uvalen"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Garnas Uvalen"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Garnas Uvalen"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Garnas Uvalen"->GetDistance player < 400
+talk Garnas Uvalen
+ask hire guards
+expect GetJournalIndex CO_11 == 50
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask hire guards
+choose 1
+choose 3
+expect GetJournalIndex CO_11 == 60
+expect ColonyState == 13
+bye
+end

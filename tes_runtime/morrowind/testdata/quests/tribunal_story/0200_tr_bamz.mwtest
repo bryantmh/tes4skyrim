@@ -1,0 +1,30 @@
+# Tribunal "Investigate Bamz-Amschend": Tienius Delitian, after the attack, wants
+# the Dwemer ruins under the Plaza Brindisi Dorom looked into ("investigate the
+# disturbance": 15). In Hearthfire Hall the constructs fight the fabricants, and
+# coming within 200 of the watcher there logs 50 (fab_cent_fight_watch). Tienius
+# takes the report (100).
+# Ref FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_mh_attack --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_bamz
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask investigate the disturbance
+expect GetJournalIndex TR_Bamz == 15
+bye
+defend
+run
+player->PositionCell 3688 3888 13447 0 "Bamz-Amschend, Hearthfire Hall"
+until 300 GetPCCell "Bamz-Amschend, Hearthfire Hall" == 1
+until 600 GetJournalIndex TR_Bamz == 50
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask investigate the disturbance
+expect GetJournalIndex TR_Bamz == 100
+bye
+end

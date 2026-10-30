@@ -1,0 +1,58 @@
+# Tribunal "Disloyalty Among the Guards": Tienius Delitian wants the Royal
+# Guard sounded out ("disloyalty among the Guards", "I'll take care of it." 1:
+# 1). Ivulen Irano in the Throne Room, asked to "join the Royal Guards", gives a
+# hollow answer about King Helseth (2: 5) and, told of Hlaalu connections, sends
+# the player to Aleri Aren (3: 10); she covers for him in the Guards' Quarters
+# (3: 15). Irano's roster note beside his chest there logs 50 when activated
+# (Irano_note), and Tienius takes it (100).
+# Ref FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr06_temple --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr07_guard
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask disloyalty among the Guards
+choose 1
+expect GetJournalIndex TR07_Guard == 1
+bye
+run
+set TestResult to ( "Ivulen Irano"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "Ivulen Irano"->GetPos y )
+set TestResult to ( TestResult + 100 )
+player->SetPos y TestResult
+until 600 "Ivulen Irano"->GetDistance player < 400
+talk Ivulen Irano
+ask join the Royal Guards
+choose 2
+expect GetJournalIndex TR07_Guard == 5
+ask join the Royal Guards
+choose 3
+expect GetJournalIndex TR07_Guard == 10
+bye
+run
+player->PositionCell -109 531 -95 0 "Mournhold, Royal Palace: Guards' Quarters"
+until 600 "Aleri Aren"->GetDistance player < 400
+talk Aleri Aren
+ask join the Royal Guards
+choose 3
+expect GetJournalIndex TR07_Guard == 15
+bye
+run
+player->PositionCell 160 1545 387 0 "Mournhold, Royal Palace: Guards' Quarters"
+until 300 GetPCCell "Mournhold, Royal Palace: Guards' Quarters" == 1
+until 600 "bk_Irano_note"->GetDisabled == 0
+activate 06AD7813
+close Book Menu
+until 300 GetJournalIndex TR07_Guard == 50
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask disloyalty among the Guards
+expect GetJournalIndex TR07_Guard == 100
+bye
+end

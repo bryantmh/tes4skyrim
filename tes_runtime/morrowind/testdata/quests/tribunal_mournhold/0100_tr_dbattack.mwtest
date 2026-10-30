@@ -1,0 +1,52 @@
+# Tribunal "Dark Brotherhood Attacks": dbAttackScript rolls on every sleep
+# (20-90% by level) and sends assassins; the first one's death logs 10
+# (db_assassinScript). A guard's greeting names Apelles Matius in Ebonheart
+# (30; the greeting without the dart, an authored path); Apelles names Asciene
+# Rane (50), whose transport (choice 1) sends the player to the Royal Palace
+# (60, MHTransportScript). A Royal Guard names the sewers (100).
+# The player sleeps in the unowned bed in Ebonheart's Underground Caves; the
+# rats are killed first, and `defend` stands in for the fight. The roll is
+# random (20% a sleep at level 1), so `rest` sleeps an hour at a time until the
+# first assassin's death logs 10 (60 sleeps leave a 1-in-650,000 miss). Ref
+# FormIDs carry Morrowind.esm's slot 05 and Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_estate --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_dbattack
+run
+player->PositionCell -210 1800 760 0 "Ebonheart, Underground Caves"
+until 300 GetPCCell "Ebonheart, Underground Caves" == 1
+console 05624BA5.kill
+console 05A43F8A.kill
+console 0553AEE8.kill
+defend
+wait 60
+rest 60 05554237 GetJournalIndex TR_DBAttack >= 10
+run
+player->Position 13831 -101615 760 0
+talk 05533705
+expect GetJournalIndex TR_DBAttack == 30
+bye
+run
+player->Position 13612 -100323 1200 0
+until 600 "apelles matius"->GetDistance player < 400
+talk apelles matius
+ask Dark Brotherhood
+ask the mainland
+ask Asciene Rane
+expect GetJournalIndex TR_DBAttack == 50
+bye
+run
+player->PositionCell 1271 550 -123 0 "Ebonheart, Grand Council Chambers"
+until 600 "asciene rane"->GetDistance player < 400
+talk asciene rane
+ask transport to Mournhold
+choose 1
+expect GetJournalIndex TR_DBAttack == 60
+bye
+until 600 GetPCCell "Mournhold, Royal Palace: Reception Area" == 1
+talk 06A948E5
+ask Dark Brotherhood
+expect GetJournalIndex TR_DBAttack == 100
+bye
+end

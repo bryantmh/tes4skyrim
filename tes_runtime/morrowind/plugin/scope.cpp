@@ -27,6 +27,9 @@ struct Layer {
     std::string lower;
     // Every OTHER layer this one is built on, through any chain of masters.
     std::vector<bool> ancestors;
+    // Every layer of the same game: this one, its masters, its dependents, and
+    // siblings sharing a master (Tribunal and Bloodmoon on Morrowind).
+    std::vector<bool> kin;
     // False when the plugin's header could not be read.
     bool known = false;
     int depth = 0;
@@ -112,6 +115,17 @@ void MarkAncestors(std::size_t layer,
     }
 }
 
+// Whether `a` and `b` are one game: the same layer, one built on the other, or
+// built on a common master. TES3 keeps one namespace for everything loaded, so
+// Bloodmoon reads Tribunal's journal; only unrelated games stay apart.
+bool SameGame(const Layer& a, const Layer& b, std::size_t ia, std::size_t ib) {
+    if (ia == ib || a.ancestors[ib] || b.ancestors[ia]) return true;
+    for (std::size_t k = 0; k < a.ancestors.size(); ++k) {
+        if (a.ancestors[k] && b.ancestors[k]) return true;
+    }
+    return false;
+}
+
 // Deeper layers first, then folder order.
 void AssignRanks() {
     std::vector<int> order(g_layers.size());
@@ -192,6 +206,12 @@ void FinishLayersWith(
         g_layers[i].depth = static_cast<int>(std::count(
             g_layers[i].ancestors.begin(), g_layers[i].ancestors.end(), true));
     }
+    for (std::size_t i = 0; i < g_layers.size(); ++i) {
+        g_layers[i].kin.assign(g_layers.size(), false);
+        for (std::size_t j = 0; j < g_layers.size(); ++j) {
+            g_layers[i].kin[j] = SameGame(g_layers[i], g_layers[j], i, j);
+        }
+    }
     AssignRanks();
     LogLayers();
 }
@@ -217,7 +237,7 @@ bool LayersRelated(int a, int b) {
     if (a < 0 || b < 0 || a >= count || b >= count) return false;
     const Layer& la = g_layers[a];
     const Layer& lb = g_layers[b];
-    return !la.known || !lb.known || la.ancestors[b] || lb.ancestors[a];
+    return !la.known || !lb.known || la.kin[b];
 }
 
 bool LayerVisible(int layer) { return LayersRelated(g_current, layer); }

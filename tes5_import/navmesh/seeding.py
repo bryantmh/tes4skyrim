@@ -233,7 +233,7 @@ def grow_into_empty(cache, seedable, sources, derive_fid, run) -> list:
 # The flood, in the worker
 # ----------------------------------------------------------------------------
 
-class _Ground:
+class Ground:
     """Walkable height and wall tests over one cell's collision and terrain."""
 
     def __init__(self, walkable, blocking, land):
@@ -329,7 +329,7 @@ def _flooded(seed_links, lattice_edges):
 
 def seed_graph(seeds, walkable, blocking, land, ox, oy):
     """(points, edges) of the synthetic pathgrid flooded from `seeds`; ([], []) when none walks in."""
-    ground = _Ground(walkable, blocking, land)
+    ground = Ground(walkable, blocking, land)
     nodes = _lattice(ground, ox, oy)
     placed, links = _seed_links(ground, seeds, nodes)
     lattice_edges = _lattice_edges(ground, nodes)

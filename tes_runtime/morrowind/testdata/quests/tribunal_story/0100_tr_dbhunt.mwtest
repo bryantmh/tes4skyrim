@@ -1,0 +1,30 @@
+# Tribunal "Hunt the Dark Brotherhood": after the Royal Guard names the sewers
+# (TR_DBAttack 100), coming within 512 units of a hideout marker in the Manor
+# District logs 1 (dbHideoutScript). Dandras Vules leads the Brotherhood in
+# Moril Manor's North Building; at 50 health or less (or dead, which his
+# script resurrects) he force-greets from his deathbed, sets his health to 0
+# and logs 100 (dandrasScript). The contract he carries logs 110 once the
+# player holds it (dbcontractScript).
+# The kill stands in for the fight; `defend` takes the guards. Ref FormIDs
+# carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_scroll_sales --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_dbhunt
+run
+player->PositionCell 1536 -380 763 0 "Old Mournhold: Manor District"
+until 300 GetPCCell "Old Mournhold: Manor District" == 1
+until 600 GetJournalIndex TR_DBHunt == 1
+defend
+run
+player->PositionCell 2 3100 -19 0 "Old Mournhold: Moril Manor, North Building"
+until 300 GetPCCell "Old Mournhold: Moril Manor, North Building" == 1
+until 600 "dandras vules"->GetDistance player < 600
+wait 150
+console 06CAA5D5.kill
+until 600 MenuMode == 1
+bye
+until 300 GetJournalIndex TR_DBHunt == 100
+console 06CAA5D5.removeallitems player
+until 300 GetJournalIndex TR_DBHunt == 110
+end

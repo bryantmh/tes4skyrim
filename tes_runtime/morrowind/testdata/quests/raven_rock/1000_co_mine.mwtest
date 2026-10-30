@@ -1,7 +1,9 @@
 # Bloodmoon "Establish the Mine": the player joins the East Empire Company
 # under Carnius Magius at Fort Frostmoth, escorts Gidar, Gamin and Sabinus to
 # the Raven Rock site, takes Falco's ebony and brings five pieces back. The
-# escort is a real walk so the three miners follow the player there; AddItem
+# escort is a real walk so the three miners follow the player there. The walk
+# goes round the fort's west side: Skyrim's shortest path runs through the
+# fort walls' load doors, where an AI-driven player stops. AddItem
 # stands in for mining the other four pieces. Ref FormIDs carry Bloodmoon.esm's
 # slot 06.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_bm_wildhunt
@@ -26,7 +28,10 @@ talk Gidar Verothan
 ask ready to go
 choose 1
 expect GetJournalIndex CO_1 == 20
+bye
 defend
+walk -177800 139000 600
+walk -178000 145500 900
 walk -197322 160100 870
 until 600 GetJournalIndex CO_1 == 30
 bye

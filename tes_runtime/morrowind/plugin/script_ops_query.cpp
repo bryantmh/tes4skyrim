@@ -7,8 +7,10 @@
 // mechanism are elsewhere (movement, AI packages, sound).
 // See: docs/commentary/morrowind_runtime.md#the-query-commands
 
+#include <algorithm>
 #include <cmath>
 #include <string>
+#include <vector>
 
 #include <components/compiler/opcodes.hpp>
 #include <components/interpreter/context.hpp>
@@ -26,9 +28,8 @@ namespace tesruntime::mw {
 // -1 none, 0 pleasant, 1 cloudy, 2 rainy, 3 snow.
 //
 // 🛑 The two schemes do NOT line up, so this is a mapping and not a cast.
-// Skyrim has no ash or blight, and a script testing for one is asking about
-// Morrowind's own hazard weather; those answer Cloudy, the nearest thing the
-// classification can say.
+// The classification has no ash or blight; it is only the fallback for a
+// weather that is none of the ten (CurrentTes3Weather).
 constexpr int kTes3Clear = 0;
 constexpr int kTes3Cloudy = 1;
 constexpr int kTes3Foggy = 2;
@@ -43,6 +44,14 @@ int Tes3Weather(int classification) {
         case 3: return kTes3Snow;
         default: return kTes3Foggy;
     }
+}
+
+// The sky's weather by identity first: one of the ten the sidecar names is
+// its own type, Ashstorm and Blight included; any other answers by class.
+int CurrentTes3Weather() {
+    const int type = Hooks().weatherType ? Hooks().weatherType() : -1;
+    if (type >= 0) return type;
+    return Hooks().weather ? Tes3Weather(Hooks().weather()) : kTes3Clear;
 }
 
 namespace {
@@ -104,6 +113,15 @@ class OpItemQuery : public Interpreter::Opcode0 {
 };
 
 template <class R> using OpHasItemEquipped = OpItemQuery<R, &GameHooks::itemEquipped>;
+
+// `GetWeaponType`: -1, hand-to-hand, when nothing answers.
+template <class R>
+class OpGetWeaponType : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string actor = R::Target(runtime);
+        runtime.push(Hooks().weaponType ? Hooks().weaponType(actor) : -1);
+    }
+};
 template <class R> using OpHitOnMe = OpItemQuery<R, &GameHooks::hitOnMe>;
 
 // The forced-SNEAK latch. TES3 keeps it on the actor until cleared and reads
@@ -153,8 +171,29 @@ class OpDrop : public Interpreter::Opcode0 {
 
 class OpGetCurrentWeather : public Interpreter::Opcode0 {
     void execute(Interpreter::Runtime& runtime) override {
-        runtime.push(Hooks().weather ? Tes3Weather(Hooks().weather())
-                                     : kTes3Clear);
+        runtime.push(CurrentTes3Weather());
+    }
+};
+
+// `ChangeWeather "region" type` (OpenMW OpChangeWeather).
+class OpChangeWeather : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string region = PopString(runtime);
+        const int type = PopInt(runtime);
+        if (Hooks().changeWeather) Hooks().changeWeather(region, type);
+    }
+};
+
+// `ModRegion "region" chance...`: up to ten chances, one per weather type in
+// order, each clamped to 0..100 as OpenMW's OpModRegion does.
+class OpModRegion : public Interpreter::Opcode1 {
+    void execute(Interpreter::Runtime& runtime, unsigned int arg0) override {
+        const std::string region = PopString(runtime);
+        std::vector<int> chances;
+        for (; arg0 > 0; --arg0) {
+            chances.push_back(std::clamp(PopInt(runtime), 0, 100));
+        }
+        if (Hooks().modRegion) Hooks().modRegion(region, chances);
     }
 };
 
@@ -234,6 +273,8 @@ void InstallQueryOps(OpcodeInstaller& into) {
     into.Real<OpWakeUpPc>(M::opcodeWakeUpPc);
     InstallPair<OpHasItemEquipped>(into, N::opcodeHasItemEquipped,
                                    N::opcodeHasItemEquippedExplicit);
+    InstallPair<OpGetWeaponType>(into, N::opcodeGetWeaponType,
+                                 N::opcodeGetWeaponTypeExplicit);
     InstallPair<OpHitOnMe>(into, M::opcodeHitOnMe, M::opcodeHitOnMeExplicit);
     InstallPair<OpForceSneak>(into, C::opcodeForceSneak,
                               C::opcodeForceSneakExplicit);
@@ -246,6 +287,8 @@ void InstallQueryOps(OpcodeInstaller& into) {
     into.Real<OpDrop<Implicit>>(M::opcodeDrop);
     into.Real<OpDrop<Explicit>>(M::opcodeDropExplicit);
     into.Real<OpGetCurrentWeather>(K::opcodeGetCurrentWeather);
+    into.Real<OpChangeWeather>(K::opcodeChangeWeather);
+    into.Real3<OpModRegion>(K::opcodeModRegion);
     into.Real<OpGetSquareRoot>(M::opcodeGetSquareRoot);
     into.Real<OpFall<Implicit>>(M::opcodeFall);
     into.Real<OpFall<Explicit>>(M::opcodeFallExplicit);

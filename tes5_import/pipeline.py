@@ -50,6 +50,7 @@ from .record_types.npc_markers_morrowind import place_npc_markers, write_idle_ta
 from .record_types.spell_tomes import create_spell_tomes
 from .record_types.spell_tomes_morrowind import chain_tables
 from .record_types.npc_morrowind import load_tes3_tables
+from .record_types.weather_morrowind import set_weather_masters, with_weather_masters
 from .record_types.world_falloutnv import is_fallout_export
 from .actors.combat_approach import create_combat_approach
 from .actors.combat_style import create_combat_styles
@@ -57,6 +58,7 @@ from .actors.confidence import create_confidence_records
 from .actors.misc_stats import create_misc_stat_globals
 from .actors import npc_face_morrowind
 from .actors.stat_factions import create_stat_factions
+from .actors.brawl import create_brawl_ability
 from .actors.disposition import create_disposition_factions
 from script_convert.constants import FORCE_FLEE_QUEST, FORCE_GREET_QUEST
 from .packages.force_flee import write_force_flee_quest
@@ -313,6 +315,8 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
     WELL_KNOWN_PROPERTIES.update(create_disposition_factions(
         writer, getattr(ctx, 'master_index', None),
         wanted=tes4_source or is_tes3_export(export_dir), tes3=is_tes3_export(export_dir)))
+    WELL_KNOWN_PROPERTIES.update(create_brawl_ability(
+        writer, getattr(ctx, 'master_index', None), wanted=is_tes3_export(export_dir)))
     if tes4_source:
         WELL_KNOWN_PROPERTIES.update(create_misc_stat_globals(
             writer, getattr(ctx, 'master_index', None), by_type))
@@ -828,7 +832,7 @@ def _prescan_mesh_caches(export_dir: str, plugin_out_dir: str, _step_done):
     axis_path = str(assets_for(export_dir) / 'door_panel_axis_cache.json')
     _refresh_master_mesh_caches(export_dir)
     rescan_mesh_caches(export_dir, os.path.join(plugin_out_dir, 'meshes'))
-    if not door_axis_cache_is_current(axis_path):
+    if not door_axis_cache_is_current(axis_path, export_dir):
         print("  Door threshold cache missing or stale, measuring door "
               "panels...")
         scan_door_axes(export_dir, axis_path)
@@ -1280,8 +1284,9 @@ def import_plugin(export_dir: str, output_path: str, masters: list = None,
 
     if output_root is None and masters_from_export_header(export_dir):
         output_root = os.path.dirname(plugin_out_dir) or '.'
-    masters, num_tes4_masters, ctx = open_masters(export_dir, masters,
-                                                  output_root)
+    masters, num_tes4_masters, ctx = open_masters(
+        export_dir, with_weather_masters(masters, export_dir), output_root)
+    set_weather_masters(masters)
     all_records, by_type = _read_export(export_dir, ctx, all_skip)
     _phase_done('parse export text')
 

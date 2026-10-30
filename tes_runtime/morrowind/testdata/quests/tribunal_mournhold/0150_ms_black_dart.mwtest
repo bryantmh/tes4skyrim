@@ -1,0 +1,37 @@
+# Tribunal "The Black Dart Gang": Narisa Adus in the Bazaar Sewers tells how
+# the gang killed her lover ("I'm sorry. Can I help?" is choice 1; the entry,
+# 1, 5 or 10, follows the player's level). The four gang members wait in the
+# Temple Sewers West; once all four are dead, Narisa gives Variner's Ring
+# (100). Kills stand in for the fights; `defend` takes the darts. Ref FormIDs
+# carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_summoner --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_black_dart
+run
+player->PositionCell -2681 4317 -163 0 "Old Mournhold: Bazaar Sewers"
+until 600 "Narisa Adus"->GetDistance player < 400
+talk Narisa Adus
+ask Black Dart Gang
+choose 1
+expect GetJournalIndex MS_BlackDart >= 1
+bye
+run
+player->PositionCell -5400 0 -800 0 "Old Mournhold: Temple Sewers West"
+until 300 GetPCCell "Old Mournhold: Temple Sewers West" == 1
+defend
+wait 150
+console 06927036.kill
+console 06B2AD3F.kill
+console 06B8EC6F.kill
+console 066E5B43.kill
+until 600 GetDeadCount "Black Dart Urvyn" == 1
+run
+player->PositionCell -2681 4317 -163 0 "Old Mournhold: Bazaar Sewers"
+until 600 "Narisa Adus"->GetDistance player < 400
+talk Narisa Adus
+ask Black Dart Gang
+expect GetJournalIndex MS_BlackDart == 100
+expect player->GetItemCount "Variner's Ring" == 1
+bye
+end

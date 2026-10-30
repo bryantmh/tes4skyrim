@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <deque>
 #include <fstream>
 #include <set>
@@ -34,6 +35,17 @@ constexpr const char* kVerdictGlobal = "TestResult";
 // action gets when no `wait` follows it.
 constexpr int kTalkTicks = 90;
 constexpr int kSettleTicks = 2;
+// The beat a player takes between closing a conversation and moving off: a
+// move two frames after `bye` drags the speaker along through the doors.
+// See: docs/audits/headless_quest_runs.md#raven-rock-open
+constexpr int kByeSettleTicks = 30;
+// How long `rest` lets a sleep's aftermath (a wake-up, an attacker) land, or a
+// bed's menu open, before it activates the bed again.
+constexpr int kRestSettleTicks = 30;
+// `persuade <kind> until <condition>`: the word that splits it, and how many
+// attempts the player makes before the case fails.
+constexpr const char* kUntilWord = " until ";
+constexpr int kPersuadeTries = 30;
 // How long a menu other than the conversation may hold a step that needs the
 // world before the case fails naming it, rather than the run hanging.
 constexpr int kHeldTicks = 300;
@@ -64,7 +76,7 @@ std::ofstream g_out;
 // `follow`: how far the NPC may get ahead before the player is moved up, how
 // far apart the trail's points are, how many it keeps, and how far behind the
 // NPC the player is put -- on a spot the NPC itself stood on, so on the ground.
-constexpr float kFollowSlack = 300.0f;
+constexpr float kFollowSlack = 150.0f;
 constexpr float kTrailStep = 40.0f;
 // Ticks (one second) a dialogue step waits for a posted conversation to open.
 constexpr int kTalkWaitTicks = 30;
@@ -91,12 +103,19 @@ struct Progress {
     std::deque<Spot> trail;    // where that NPC has stood, oldest first
     int talkWait = 0;          // ticks a dialogue step has waited for the menu to open
     bool defend = false;       // the player kills whatever attacks it
+    int punches = 0;           // punches the current `punch` step has thrown
+    int rests = 0;             // hours the current `rest` step has slept
 };
+
+// Ticks between a `punch` step's swings: room for one unarmed attack to land.
+constexpr int kPunchTicks = 45;
 
 Progress g_case;
 TestConversation g_talk;
 
 bool Talking() { return g_talk.open && g_talk.open(); }
+bool MenuStillOpening() { return g_talk.menuOpening && g_talk.menuOpening(); }
+bool MoveLanding() { return g_talk.playerMovePending && g_talk.playerMovePending(); }
 
 std::string Env(const char* name) {
     char buf[1024];
@@ -215,7 +234,7 @@ bool Activated(const std::string& id) {
         return true;
     }
     // A load door activated while the player's own move is landing goes nowhere.
-    if (PlayerMovePending()) return false;
+    if (MoveLanding()) return false;
     if (Hooks().playerActivate(id)) {
         g_case.loadTicks = 0;
         return true;
@@ -248,7 +267,7 @@ bool Talked(const std::string& npc) {
 // A miss records the condition, with its left side, as a failed expect. A
 // player move still landing would let it judge the old position.
 bool Until(const TestCase& test, const TestStep& step) {
-    if (PlayerMovePending()) return false;
+    if (MoveLanding()) return false;
     if (g_case.ticksLeft < 0) g_case.ticksLeft = step.number;
     const bool held = Judge(test.actor, step.text) == 1;
     if (!held && --g_case.ticksLeft > 0) return false;
@@ -298,6 +317,60 @@ bool Answered(const TestStep& step) {
     return Retried(up, "menu '" + step.text + "' never opened");
 }
 
+// Whether the game reports menu `name` open; false when it cannot say.
+bool MenuReported(const char* name) { return Hooks().menuOpen && Hooks().menuOpen(name); }
+
+// `rest <max> <bed> <condition>`: the player sleeps an hour in the bed, again
+// and again, until the condition holds -- as a player sleeps until something
+// happens. A message box between sleeps (a wake-up notice) is dismissed. A bed
+// of `-` waits on the spot instead, as the Wait key does.
+bool Rested(const TestCase& test, const TestStep& step) {
+    const std::size_t gap = step.text.find(' ');
+    const std::string bed = step.text.substr(0, gap);
+    const std::string condition = Trim(step.text.substr(std::min(step.text.size(), gap)));
+    if (MoveLanding() || Talking()) return false;
+    const bool held = Judge(test.actor, condition) == 1;
+    if (held || g_case.rests >= step.number) {
+        Expect(test.actor, condition);
+        if (!held) g_case.error = "rest: not true after " + std::to_string(step.number) + " sleeps";
+        g_case.rests = 0;
+        g_case.ticksLeft = -1;
+        return true;
+    }
+    if (MenuReported("MessageBoxMenu") && Hooks().pressButton) {
+        Hooks().pressButton(0);
+        return false;
+    }
+    if (--g_case.ticksLeft > 0) return false;
+    g_case.ticksLeft = kRestSettleTicks;
+    if (MenuReported(ids::kSleepWaitMenu) && Hooks().sleepFor) {
+        Hooks().sleepFor(1);
+        ++g_case.rests;
+    } else if (bed == "-") {
+        if (Hooks().playerWait) Hooks().playerWait();
+    } else if (Hooks().playerActivate) {
+        Hooks().playerActivate(bed);
+    }
+    return false;
+}
+
+// `persuade <kind> until <condition>`: the player keeps persuading, as a player
+// keeps bribing until the speaker comes round, up to kPersuadeTries.
+void PersuadedUntil(const TestCase& test, const TestStep& step) {
+    const std::size_t at = step.text.find(kUntilWord);
+    const std::string kind = Trim(step.text.substr(0, at));
+    const std::string condition = Trim(step.text.substr(at + std::strlen(kUntilWord)));
+    for (int tries = 0; Judge(test.actor, condition) != 1; ++tries) {
+        if (!Talking() || tries >= kPersuadeTries || !g_talk.persuade || !g_talk.persuade(kind)) {
+            Expect(test.actor, condition);
+            g_case.error = "persuade " + kind + ": not true after " + std::to_string(tries) + " tries";
+            return;
+        }
+        Said();
+    }
+    Expect(test.actor, condition);
+}
+
 void Click(const TestStep& step) {
     if (!Talking()) {
         g_case.error = "no conversation is open";
@@ -316,8 +389,29 @@ void Click(const TestStep& step) {
     }
 }
 
+// `punch <n> <npc>`: the player throws up to n bare-fisted punches at the NPC,
+// a real attack the engine lands. A greeting that opens ends it, as with `walk`.
+bool Punched(const TestStep& step) {
+    const bool done = Talking() || g_case.punches >= step.number;
+    if (!done && g_case.ticksLeft > 0) {
+        --g_case.ticksLeft;
+        return false;
+    }
+    if (!done && !(Hooks().playerPunch && Hooks().playerPunch(step.text))) {
+        g_case.error = "punch: the player cannot punch " + step.text;
+    } else if (!done) {
+        ++g_case.punches;
+        g_case.ticksLeft = kPunchTicks;
+        return false;
+    }
+    g_case.punches = 0;
+    g_case.ticksLeft = -1;
+    return true;
+}
+
 // `walk x y z`: the player walks to the point in the current cell, as a player
-// would, so what follows or watches the player sees a walk and not a jump.
+// would, so what follows or watches the player sees a walk and not a jump. A
+// greeting that opens on the way ends it there, as a player stops to talk.
 bool Walked(const TestStep& step) {
     float x = 0.0f, y = 0.0f, z = 0.0f;
     if (!Hooks().playerWalk || !Hooks().playerWalkDone ||
@@ -332,6 +426,11 @@ bool Walked(const TestStep& step) {
     }
     if (Hooks().playerWalkDone()) {
         g_case.ticksLeft = -1;
+        return true;
+    }
+    if (Talking()) {
+        g_case.ticksLeft = -1;
+        if (Hooks().playerWalkStop) Hooks().playerWalkStop();
         return true;
     }
     if (--g_case.ticksLeft > 0) return false;
@@ -362,6 +461,8 @@ bool Advance(const TestCase& test, const TestStep& step) {
         case Kind::kRun:
             if (!RunAs(test.actor, step.text)) g_case.error = "the script did not compile or run";
             return true;
+        case Kind::kRest:
+            return Rested(test, step);
         case Kind::kUntil:
             return Until(test, step);
         case Kind::kActivate:
@@ -375,6 +476,8 @@ bool Advance(const TestCase& test, const TestStep& step) {
             return true;
         case Kind::kWalk:
             return Walked(step);
+        case Kind::kPunch:
+            return Punched(step);
         case Kind::kFollow:
             g_case.follow = step.text;
             g_case.trail.clear();
@@ -390,9 +493,13 @@ bool Advance(const TestCase& test, const TestStep& step) {
         default:
             // A greeting posts its menu, which opens a frame or more later, and
             // one held for the player's move is already open in TES3 terms.
-            if (!Talking() && (MenuOpening() || ++g_case.talkWait < kTalkWaitTicks)) return false;
+            if (!Talking() && (MenuStillOpening() || ++g_case.talkWait < kTalkWaitTicks)) return false;
             g_case.talkWait = 0;
-            Click(step);
+            if (step.kind == Kind::kPersuade && step.text.find(kUntilWord) != std::string::npos) {
+                PersuadedUntil(test, step);
+            } else {
+                Click(step);
+            }
             return true;
     }
 }
@@ -402,9 +509,11 @@ float Apart(const Spot& a, const Spot& b) {
 }
 
 // Keeps the player on the followed NPC's trail, as a player walking behind it
-// does: an `until` alone stands still while an escort walks off.
+// does: an `until` alone stands still while an escort walks off. Not Position,
+// which sends an indoor player to the exterior; nor SetPos, which, repeated
+// every tick on the player, never lands.
 void KeepFollowing() {
-    if (g_case.follow.empty() || !Hooks().position || !Hooks().distance || !Hooks().moveInCell) {
+    if (g_case.follow.empty() || !Hooks().position || !Hooks().distance || !Hooks().placeHere) {
         return;
     }
     const std::string& npc = g_case.follow;
@@ -418,8 +527,10 @@ void KeepFollowing() {
     for (const Spot& point : trail) {
         if (Apart(point, at) >= kFollowBehind) spot = &point;
     }
-    const float facing = std::atan2(at.x - spot->x, at.y - spot->y) * 57.29578f;
-    Hooks().moveInCell("player", spot->x, spot->y, spot->z, facing);
+    Log("follow: the player moves to (%g, %g, %g), %g behind %s", spot->x, spot->y, spot->z, gap,
+        npc.c_str());
+    Hooks().placeHere("player", spot->x, spot->y, spot->z,
+                      std::atan2(at.x - spot->x, at.y - spot->y) * 57.29578f);
 }
 
 bool IsAction(Kind kind) {
@@ -505,7 +616,8 @@ void SetTestConversation(const TestConversation& conversation) { g_talk = conver
 const std::vector<std::string>& TestStepNames() {
     static const std::vector<std::string> kNames = {
         "run",  "wait",  "expect", "talk", "ask",     "choose",   "bye",   "button", "activate",
-        "until", "pick", "close",  "take", "console", "persuade", "sleep", "walk",   "follow", "defend"};
+        "until", "pick", "close",  "take", "console", "persuade", "sleep", "walk",   "follow", "defend",
+        "punch", "rest"};
     return kNames;
 }
 
@@ -542,7 +654,9 @@ std::vector<TestCase> ParseTestCases(std::istream& in) {
         }
         TestStep step{static_cast<Kind>(at - kinds.begin()), rest,
                       std::max(0, std::atoi(rest.c_str()))};
-        if (word == "until") step.text = Trim(rest.substr(std::min(rest.size(), rest.find(' '))));
+        if (word == "until" || word == "punch" || word == "rest") {
+            step.text = Trim(rest.substr(std::min(rest.size(), rest.find(' '))));
+        }
         const bool quoted = rest.size() > 1 && rest.front() == '"' && rest.back() == '"';
         if (quoted && word != "run" && word != "expect") step.text = rest.substr(1, rest.size() - 2);
         test.steps.push_back(step);
@@ -552,8 +666,8 @@ std::vector<TestCase> ParseTestCases(std::istream& in) {
         for (std::size_t i = test.steps.size(); i-- > 0;) {
             const bool waits = i + 1 < test.steps.size() && test.steps[i + 1].kind == Kind::kWait;
             if (IsAction(test.steps[i].kind) && !waits) {
-                test.steps.insert(test.steps.begin() + i + 1,
-                                  TestStep{Kind::kWait, "", kSettleTicks});
+                const int settle = test.steps[i].kind == Kind::kBye ? kByeSettleTicks : kSettleTicks;
+                test.steps.insert(test.steps.begin() + i + 1, TestStep{Kind::kWait, "", settle});
             }
         }
     }

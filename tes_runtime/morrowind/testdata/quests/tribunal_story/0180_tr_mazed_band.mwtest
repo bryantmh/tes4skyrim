@@ -1,0 +1,58 @@
+# Tribunal "Barilzar's Mazed Band": Gavas Drin, asked again about service to our
+# Lady, sends the player to Fedris Hler (10), who wants Barilzar's ring found
+# ("service to our Lady", then "Barilzar's Mazed Band": 20). The lich Barilzar
+# in the Abandoned Crypt force-greets once the player is within 512
+# (barilzarScript), refuses (60) and fights. The player walks in from the
+# crypt's inner door after his script has bound, as a player would arrive.
+# Holding the ring logs 70 (mazedbandScript); Gavas sends the player on to Almalexia (90), who takes it
+# in the High Chapel ("It is my pleasure to serve you." 2: 100).
+# The kill stands in for the fight, and taking his things for looting him. Ref
+# FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_shrine_dead --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_mazed_band
+run
+player->PositionCell -1120 100 -229 0 "Mournhold Temple: Office of the Lord Archcanon"
+until 600 "gavas drin"->GetDistance player < 400
+talk gavas drin
+ask service to our Lady
+expect GetJournalIndex TR_MazedBand == 10
+bye
+run
+player->PositionCell -116 483 -684 0 "Mournhold Temple: Reception Area"
+until 600 "fedris hler"->GetDistance player < 400
+talk fedris hler
+ask service to our Lady
+ask Barilzar's Mazed Band
+expect GetJournalIndex TR_MazedBand == 20
+bye
+run
+player->PositionCell -2411 336 -12 0 "Old Mournhold: Abandoned Crypt"
+until 300 GetPCCell "Old Mournhold: Abandoned Crypt" == 1
+wait 300
+walk -5030 1603 471
+until 600 MenuMode == 1
+bye
+expect GetJournalIndex TR_MazedBand == 60
+defend
+console 064C404B.kill
+until 600 GetDeadCount "lich_barilzar" >= 1
+console 064C404B.removeallitems player
+until 300 GetJournalIndex TR_MazedBand == 70
+run
+player->PositionCell -1120 100 -229 0 "Mournhold Temple: Office of the Lord Archcanon"
+until 600 "gavas drin"->GetDistance player < 400
+talk gavas drin
+ask Barilzar's Mazed Band
+expect GetJournalIndex TR_MazedBand == 90
+bye
+run
+player->PositionCell 1 49 -659 0 "Mournhold Temple: High Chapel"
+until 600 "almalexia"->GetDistance player < 400
+talk almalexia
+ask Barilzar's Mazed Band
+choose 2
+expect GetJournalIndex TR_MazedBand == 100
+bye
+end

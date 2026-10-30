@@ -588,6 +588,16 @@ function of the door, computed in `corridor_doors` and passed through
   wrong — which is what rotated the CharacterGen pen gate's Door Triangle
   90° and put a corner at the door center.  z_min (the closed slab's base)
   also replaces the whole-NIF bounds z-min as the pivot→floor drop.
+  **A node's stored rotation rows are the row-vector form and are
+  transposed** (`_node_local`), as `book_inam`, `furniture_markers` and
+  `tree_billboard` read them. A pure Z turn hid the error, since its
+  transpose only flips the swing. A cyclic one such as Bloodmoon's
+  `Ex_colony_door06` panel (rows `[0,1,0]`, `[0,0,1]`) swapped X and Y: it
+  measured 193 wide across the passage instead of 130 across the doorway, and
+  the door got no Door Triangle. The fix changed 11 models' axis across
+  Morrowind, Bloodmoon, Oblivion, Nehrim and Morrowind_ob.
+  `door_thirsk_double01` now measures 85.12 against its partner's 85.06
+  (was 108), and `in_thirsk_door` 104 (was 386). Schema 4.
 * **Attach completion ladder** (in order, each a measured failure): stitch →
   T-junction split → apex bridges → **carve** (`_carve_door`: locally remove
   the same-storey triangles overlapping the wedge, retriangulate the region
@@ -4324,6 +4334,71 @@ The input is valid every time; only the buffered ring is (measured on 0100604B: 
 **A REFR placing a leveled creature is gone before the navmesh gathers** (`pool.drop_leveled_placements`). `leveled_actors.build_leveled_actor_shells` rewrites every such REFR into an ACHR aimed at a shell NPC_, and it runs in the pre-scan phase -- BEFORE phase 4a. A navmesh built from the raw REFR list therefore carves placements the import never carves.
 
 This is what made the pre-push gate refuse a cache the import had just written: `job_trace.load_export` parsed the export and gathered jobs directly, so Morroblivion cell 024C16D6 came to 48 refs in the checker against the import's 42 (**501 verts stored, 514 rebuilt**). The checker must run the same preparation as the import, so the filter lives here and BOTH paths call it; only the import also mints the shells. Every other step the import performs between parse and gather -- `exclude=RUNTIME_ONLY_TYPES`, `drop_author_deleted_records`, `set_namespace`, `set_formid_index_offset` -- is on the checker's path for the same reason.
+
+## <a id="scripted-blockers-are-obstacles"></a>A base its script removes is an obstacle, not a wall
+
+**Code:** `tes5_import/base/obstacles.py`, `navmesh/pool.build_base_model_index`, `record_types/common._simple_object`
+
+Skyrim never rebuilds a navmesh at runtime. A blocker baked in as a wall stays
+cut after a script disables it. Measured in Bloodmoon's `Raven Rock, Mine`
+(`02785F7B`): seven `in_co_mine_boulder*` activators carry `ColonyMineBoulder2`,
+which disables them once CO_10 reaches 10. Baked as walls, they split the
+corridor to the abandoned shaft into its own 46-triangle component, so
+`reach.py` reported the shaft door unreachable. In the headless run, Unel
+Lloran followed the player through three load doors and stopped at the
+boulder line, 1,608 units short.
+
+Skyrim's own mechanism is the base record's **Obstacle** flag (bit 25 on
+ACTI/CONT/FURN/MSTT/DOOR). The CK wiki says it "will cut the navmesh".
+Skyrim.esm sets it on 38 ACTI and 6 MSTT, all objects that can move or go away
+(port gates, movable shelves, destructible webs, falling rocks). An obstacle
+base carves nothing into the generated navmesh, and its record carries the flag.
+
+**The indicator is the script's own verbs: it calls `Disable` with no target
+and never `Enable`.** The first draft also counted bases that enable themselves.
+It marked 190 Bloodmoon and 123 Morrowind bases, most of them buildings a script
+raises during play: Raven Rock's inn, houses, pier and walls, and the player
+strongholds' towers, stairs and docks. Their end state is standing, with
+walkable floors that a runtime cut would remove. Under the disable-only rule:
+
+| Export | Scripts | Bases | Placed refs |
+|---|---|---|---|
+| Morrowind.esm | 36 | 9 | 227 |
+| Bloodmoon.esm | 46 | 103 | 253 |
+| Oblivion.esm | 94 | 13 | 116 |
+| Nehrim.esm | 104 | 72 | 828 |
+
+Each listed case was read. They are the boulders and the colony terrain rocks
+that get cleared, the snow-drift and tomb doors, the first-stage colony
+buildings that later stages replace, Morrowind's chargen blockers and the Vivec
+puzzle-canal stairs, which `puzzlecanal` removes when the puzzle is solved.
+Nehrim adds 58 `SchattenrufMineCollisionBox` blockers.
+
+A named call (`"x"->Disable`, `ref.Disable`) does not qualify: it names one
+placement, and the flag lives on the base. The tools that rebuild the carving
+table (`probe.py`, `audit.py`, `job_trace.py`) index the scripts first;
+`cell_index.BASES` is 3, and `navmesh_index.pkl` stores its type list so a
+cache without SCPT is re-parsed.
+
+### <a id="a-removed-obstacle-is-bridged"></a>The pathgrid is bridged across a removed obstacle
+
+**Code:** `navmesh/obstacle_bridge.py`, `pool._obstacles_by_cell`, `from_pgrd._cell_geometry`
+
+Leaving the obstacle out of the collision is not enough on its own. The corridor
+generator meshes only along pathgrid edges, and the pathgrid was authored with
+the obstacle standing. In `Raven Rock, Mine`, node 94 at the shaft corridor's
+mouth has no edge to tunnel node 37. With the boulders gone, a strip about 90
+units wide between them stayed unmeshed.
+
+Each job carries its cell's obstacle placements with their model keys. After a
+cache miss, each placement's footprint is measured from its own collision, and
+footprints that touch in plan are merged into clusters. For each cluster, every
+pathgrid component with a node within the cluster's half-diagonal (in plan, and
+from an agent height below it to its top) offers its nearest node. Two of those
+nodes are joined when `seeding.Ground.walk` passes the straight line between
+them over the cell's collision, which no longer holds the obstacle. The cache
+key is unchanged: the obstacle placements are among the hashed references, and
+the bridge is a function of them and the collision.
 
 ## <a id="base-ids-carry-their-plugin-index"></a>Base ids carry their plugin index
 

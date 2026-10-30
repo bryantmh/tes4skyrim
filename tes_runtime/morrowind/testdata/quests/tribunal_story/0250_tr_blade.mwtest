@@ -1,0 +1,155 @@
+# Tribunal "The Blade of Nerevar": after The Missing Hand, Almalexia names the
+# player Nerevarine ("you are the one": 10), tells of the twin blades (15) and of
+# Trueflame, giving its hilt (20, bladepiece_02). Barenziah points to Karrod
+# ("pieces of the blade": 30); Karrod gives his blade (35, bladepiece_01). Torasa
+# Aram at the Museum of Artifacts trades her Dwemer piece for two donations
+# ("pieces of the blade", "one piece", "compensation": 40); the player donates
+# Helseth's Dagger of Symmachus and the Fang of Haynekhtnamet, picked up in
+# Mamaea ("Donate the item." 3 each, MuseumDonations), and gets the Dwemer Battle
+# Shield (45). Yagak gro-Gluk pulls the spike from it (50, bladepiece_03), takes
+# the three pieces (60, bladefixScript), and after two days hands over the blade
+# (65) and sends the player to a Dwemer (70). Radac's ghost in Bamz-Amschend will
+# add the fire (75) with Pyroil Tar from Norenen-dur ("Myn Dhrur": 77); given the
+# tar he lights the blade (80), and Almalexia sees it reforged (100).
+# Torasa's own script (MuseumScript) offers an artifact's topic once she sees it
+# in the player's inventory, so each visit waits for it to bind. The player
+# stands beside each wandering NPC, read off its position. Ref FormIDs
+# carry Tribunal.esm's slot 06 and Morrowind.esm's 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_missing_hand --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_blade
+run
+player->PositionCell 1 49 -659 0 "Mournhold Temple: High Chapel"
+until 600 "almalexia"->GetDistance player < 400
+talk almalexia
+ask you are the one
+expect GetJournalIndex TR_Blade == 10
+ask reclaim your station
+ask twin blades
+expect GetJournalIndex TR_Blade == 15
+ask Trueflame
+expect GetJournalIndex TR_Blade == 20
+expect player->GetItemCount "bladepiece_02" == 1
+bye
+run
+player->PositionCell -105 -35 -112 0 "Mournhold, Royal Palace: Barenziah's Chambers"
+until 300 GetPCCell "Mournhold, Royal Palace: Barenziah's Chambers" == 1
+wait 300
+set TestResult to ( "barenziah"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "barenziah"->GetPos y )
+set TestResult to ( TestResult + 100 )
+player->SetPos y TestResult
+until 600 "barenziah"->GetDistance player < 400
+talk barenziah
+ask pieces of the blade
+expect GetJournalIndex TR_Blade == 30
+bye
+run
+player->PositionCell -188 51 -93 0 "Mournhold, Royal Palace Throne Room"
+until 300 GetPCCell "Mournhold, Royal Palace Throne Room" == 1
+wait 300
+set TestResult to ( "karrod"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "karrod"->GetPos y )
+set TestResult to ( TestResult + 100 )
+player->SetPos y TestResult
+until 600 "karrod"->GetDistance player < 400
+talk karrod
+ask pieces of the blade
+expect GetJournalIndex TR_Blade == 35
+expect player->GetItemCount "bladepiece_01" == 1
+bye
+run
+player->PositionCell 4388 -2402 14640 0 "Mamaea, Shrine of Pitted Dreams"
+until 300 GetPCCell "Mamaea, Shrine of Pitted Dreams" == 1
+wait 300
+activate 0535214A
+until 300 player->GetItemCount "dagger_fang_unique" == 1
+run
+player->PositionCell 1 211 -110 0 "Mournhold, Museum of Artifacts"
+until 300 GetPCCell "Mournhold, Museum of Artifacts" == 1
+wait 300
+set TestResult to ( "Torasa Aram"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "Torasa Aram"->GetPos y )
+set TestResult to ( TestResult + 100 )
+player->SetPos y TestResult
+until 600 "Torasa Aram"->GetDistance player < 400
+talk Torasa Aram
+ask pieces of the blade
+ask one piece
+ask compensation
+expect GetJournalIndex TR_Blade == 40
+ask Dagger of Symmachus
+choose 3
+ask Fang of Haynekhtnamet
+choose 3
+ask compensation
+expect GetJournalIndex TR_Blade == 45
+expect player->GetItemCount "dwemer_shield_battle_unique" == 1
+bye
+run
+player->PositionCell -11 1425 -119 0 "Mournhold, Craftsmen's Hall"
+until 300 GetPCCell "Mournhold, Craftsmen's Hall" == 1
+wait 300
+set TestResult to ( "yagak gro-gluk"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "yagak gro-gluk"->GetPos y )
+set TestResult to ( TestResult + 100 )
+player->SetPos y TestResult
+until 600 "yagak gro-gluk"->GetDistance player < 400
+talk yagak gro-gluk
+ask Dwemer Battle Shield
+expect GetJournalIndex TR_Blade == 50
+ask forge the blade
+expect GetJournalIndex TR_Blade == 60
+bye
+rest 72 - bladefix == 2
+run
+set TestResult to ( "yagak gro-gluk"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "yagak gro-gluk"->GetPos y )
+set TestResult to ( TestResult + 100 )
+player->SetPos y TestResult
+until 600 "yagak gro-gluk"->GetDistance player < 400
+talk yagak gro-gluk
+ask forge the blade
+expect GetJournalIndex TR_Blade == 65
+expect player->GetItemCount "nerevarblade_01" == 1
+ask talk to a Dwemer
+expect GetJournalIndex TR_Blade == 70
+bye
+run
+player->PositionCell -2382 6157 13935 0 "Bamz-Amschend, Radac's Forge"
+until 600 "dwarven ghost_radac"->GetDistance player < 400
+talk dwarven ghost_radac
+ask talk to a Dwemer
+ask add fire
+expect GetJournalIndex TR_Blade == 75
+ask Myn Dhrur
+expect GetJournalIndex TR_Blade == 77
+bye
+run
+player->PositionCell 3588 4436 -900 0 "Norenen-dur, The Wailingdelve"
+until 300 GetPCCell "Norenen-dur, The Wailingdelve" == 1
+wait 300
+activate 067C7DAE
+until 300 player->GetItemCount "pyroil_tar_unique" == 1
+run
+player->PositionCell -2382 6157 13935 0 "Bamz-Amschend, Radac's Forge"
+until 600 "dwarven ghost_radac"->GetDistance player < 400
+talk dwarven ghost_radac
+ask Pyroil Tar
+expect GetJournalIndex TR_Blade == 80
+expect player->GetItemCount "nerevarblade_01_flame" == 1
+bye
+run
+player->PositionCell 1 49 -659 0 "Mournhold Temple: High Chapel"
+until 600 "almalexia"->GetDistance player < 400
+talk almalexia
+ask forge the blade
+expect GetJournalIndex TR_Blade == 100
+bye
+end

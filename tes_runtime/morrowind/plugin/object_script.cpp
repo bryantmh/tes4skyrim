@@ -87,6 +87,17 @@ const ScriptLocals* CompiledLocals(const std::string& script) {
 
 }  // namespace
 
+bool IsBrawler(const ObjectScript& instance) {
+    static std::map<std::string, bool> known;
+    const auto [it, fresh] = known.try_emplace(instance.Script(), false);
+    if (fresh) {
+        const ScriptLocals* locals = CompiledLocals(instance.Script());
+        it->second = locals && locals->TypeOf(kOnPcHitMe) != ' ' &&
+                     LowerId(ScriptSource(instance.Script())).find("getfatigue") != std::string::npos;
+    }
+    return it->second;
+}
+
 bool ObjectEvents::Any() const {
     return activated || died || cellChanged || pcDropped || pcHitMe;
 }
@@ -149,7 +160,7 @@ bool ObjectScript::RunOnce() {
 }
 
 void ObjectScript::PollDeath() {
-    if (mDeathSeen || !mRuntimeFormId || !Hooks().isDead) return;
+    if (!mRuntimeFormId || !Hooks().isDead) return;
     const bool dead = Hooks().isDead(mRuntimeFormId);
     // 🛑 A TRANSITION, not a state. TES3 raises `OnDeath` on the tick an actor
     // dies; a corpse placed dead in the cell never had that tick. The first
@@ -164,7 +175,9 @@ void ObjectScript::PollDeath() {
         mDeathSeen = dead && !reported;
         if (!reported) return;
     }
-    if (!dead) return;
+    // `Resurrect` re-arms it: each later death is a transition of its own.
+    if (!dead) mDeathSeen = false;
+    if (!dead || mDeathSeen) return;
     mDeathSeen = true;
     mEvents.died = true;
     Log("object: %s died (%s)", mScript.c_str(), mBaseId.c_str());

@@ -41,6 +41,7 @@ import time
 import traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
+from tes5_import.base.obstacles import index_obstacles
 from tes5_import.navmesh import cache_audit, pool as navm_pool
 from tes5_import.navmesh import worker as navm_worker
 from tes5_import.record_types.world_morrowind import register_tes3_locks
@@ -101,6 +102,7 @@ def load_export(export_dir, offset):
               flush=True)
     register_tes3_locks(by_type, export_dir, master_export)
     door_fids = navm_pool.build_door_fid_set(by_type, master_export)
+    index_obstacles(by_type, master_export)
     base_model_by_fid = navm_pool.build_base_model_index(by_type,
                                                          master_export)
     jobs = navm_pool.gather_navm_jobs(by_type, door_fids, master_export)

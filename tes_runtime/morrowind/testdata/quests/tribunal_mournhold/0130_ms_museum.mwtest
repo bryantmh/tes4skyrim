@@ -1,0 +1,15 @@
+# Tribunal "The Museum": Torasa Aram, the Museum of Artifacts' curator, explains
+# that the museum buys artifacts (10). Selling to her is open-ended; the case
+# checks only the entry.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_estate_sale --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_museum
+run
+player->PositionCell 1 220 -110 0 "Mournhold, Museum of Artifacts"
+until 600 "Torasa Aram"->GetDistance player < 400
+talk Torasa Aram
+ask Museum of Artifacts
+expect GetJournalIndex MS_Museum == 10
+bye
+end

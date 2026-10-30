@@ -35,6 +35,7 @@ from ..record_types.world import build_cell_xclw, cell_water_height
 from ..record_types.world_falloutnv import parent_use_flags
 from ..record_types.world_morrowind import is_tes3_source
 from ..base.master_export import records_of
+from ..base.obstacles import OBSTACLE_SIGS, is_obstacle
 from ..base.text_reader import (get_float, get_formid, get_formid_index_offset,
                            get_injected_formids, get_int, get_str)
 
@@ -181,16 +182,18 @@ def build_base_model_index(by_type: dict, master_export: dict = None) -> dict:
     """Map base-object FormID (index byte included) -> normalized model key.
 
     Only blocking base types are indexed, so carving never removes triangles
-    under doors, lights, markers or actors.  `master_export` is REQUIRED for a
-    plugin with masters.
+    under doors, lights, markers or actors -- nor under an obstacle, which the
+    engine cuts at runtime.  `master_export` is REQUIRED for a plugin with masters.
 
     See: docs/commentary/tes5_import_navmesh.md#base-ids-carry-their-plugin-index
+    See: docs/commentary/tes5_import_navmesh.md#scripted-blockers-are-obstacles
     """
     index = {}
-    for fid, rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
-        key = base_model_key(rec)
-        if key:
-            index[fid] = key
+    for sig in _BLOCKING_BASE_TYPES:
+        for fid, rec in _records_of(by_type, master_export, (sig,)):
+            key = None if is_obstacle(rec, sig) else base_model_key(rec)
+            if key:
+                index[fid] = key
     return index
 
 
@@ -391,9 +394,27 @@ def _spawns_by_cell(by_type: dict, master_export: dict) -> dict:
     return {cell: sorted(points) for cell, points in out.items()}
 
 
+def _obstacles_by_cell(by_type: dict, master_export: dict, refr_by_cell: dict) -> dict:
+    """{cell FormID: [(placement, model key)]} for each placed obstacle with a model.
+
+    See: docs/commentary/tes5_import_navmesh.md#a-removed-obstacle-is-bridged
+    """
+    keys = {fid: base_model_key(rec) for sig in OBSTACLE_SIGS
+            for fid, rec in _records_of(by_type, master_export, (sig,)) if is_obstacle(rec, sig)}
+    keys = {fid: key for fid, key in keys.items() if key}
+    if not keys:
+        return {}
+    out = {}
+    for cell, refrs in refr_by_cell.items():
+        placed = [(r, keys[base_fid(r)]) for r in refrs if base_fid(r) in keys]
+        if placed:
+            out[cell] = sorted(placed, key=lambda p: get_formid(p[0], 'FormID'))
+    return out
+
+
 def _job(pgrd_rec, cell_rec, land_rec, indexes, extra_door_refrs, extra_refrs) -> dict:
     """One navmesh job: a pathgrid and everything its cell's carving reads."""
-    refr_by_cell, _, _, spawns_by_cell = indexes
+    refr_by_cell, _, _, spawns_by_cell, obstacles_by_cell = indexes
     cell_fid = get_formid(cell_rec, 'FormID')
     cell_refrs = refr_by_cell.get(cell_fid, [])
     if extra_refrs:
@@ -406,6 +427,7 @@ def _job(pgrd_rec, cell_rec, land_rec, indexes, extra_door_refrs, extra_refrs) -
         'refr_recs': cell_refrs,
         'extra_door_refrs': extra_door_refrs or [],
         'spawns': spawns_by_cell.get(cell_fid, []),
+        'obstacles': obstacles_by_cell.get(cell_fid, []),
     }
 
 
@@ -561,12 +583,13 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
     """
     cells = by_type.get('CELL', [])
     if not by_type.get('PGRD'):
-        _gather_exteriors([], by_type, cells, ({}, lambda _square: None, {}, {}), {})
+        _gather_exteriors([], by_type, cells, ({}, lambda _square: None, {}, {}, {}), {})
         return []
     refr_by_cell = _by_parent_cell(_merged(by_type, master_export, 'REFR'))
     pgrd_by_cell = _by_parent_cell(by_type.get('PGRD', []))
     indexes = (refr_by_cell, navmesh_land_at(by_type, master_export),
-               pgrd_by_cell, _spawns_by_cell(by_type, master_export))
+               pgrd_by_cell, _spawns_by_cell(by_type, master_export),
+               _obstacles_by_cell(by_type, master_export, refr_by_cell))
     pers_doors = _persistent_doors_by_grid(cells, refr_by_cell,
                                            door_fids or set())
     overhang = _overhang_index(

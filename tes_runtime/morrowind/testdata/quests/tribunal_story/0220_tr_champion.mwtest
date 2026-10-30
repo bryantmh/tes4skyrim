@@ -1,0 +1,59 @@
+# Tribunal "Helseth's Champion": King Helseth, asked about service to his king,
+# wants the player to prove themselves against his bodyguard ("prove yourself",
+# "Karrod": 10; "fight my champion": 20, KarrodMovement). Karrod waits at the
+# Winged Guar for a day while the player is away, then is back in the Throne
+# Room (KarrodFightStart 2). Helseth starts the duel ("fight my champion": 70);
+# Karrod at 100 health or less, or dead, is revived, stops and force-greets
+# (karrodScript); his greeting, "I am beaten", sets KarrodBeaten 2 and says
+# goodbye itself. Helseth, impressed, gives Symmachus's dagger (80), then speaks
+# of his plans ("plans for you", "recent events") and sends the player to
+# Almalexia ("learn more about the attacks": 100).
+# The player sleeps in Ebonheart's Underground Caves while the day passes. The
+# damage stands in for the duel: Karrod is essential, so a kill never lands.
+# Ref FormIDs carry Tribunal.esm's slot 06 and Morrowind.esm's 05.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_assassins --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_champion
+run
+player->PositionCell 2 53 -92 0 "Mournhold, Royal Palace Throne Room"
+until 600 "King Hlaalu Helseth"->GetDistance player < 400
+talk King Hlaalu Helseth
+ask service to your king
+ask prove yourself
+ask Karrod
+expect GetJournalIndex TR_Champion == 10
+ask fight my champion
+expect GetJournalIndex TR_Champion == 20
+bye
+run
+player->PositionCell -210 1800 760 0 "Ebonheart, Underground Caves"
+until 300 GetPCCell "Ebonheart, Underground Caves" == 1
+rest 48 05554237 KarrodFightStart == 2
+run
+player->PositionCell 2 53 -92 0 "Mournhold, Royal Palace Throne Room"
+until 600 "King Hlaalu Helseth"->GetDistance player < 400
+talk King Hlaalu Helseth
+ask fight my champion
+expect GetJournalIndex TR_Champion == 70
+bye
+until 1200 KarrodFightStart == 3
+wait 600
+console 065F5724.damageav health 1000
+until 600 KarrodBeaten == 2
+run
+set TestResult to ( "King Hlaalu Helseth"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "King Hlaalu Helseth"->GetPos y )
+set TestResult to ( TestResult + 100 )
+player->SetPos y TestResult
+until 600 "King Hlaalu Helseth"->GetDistance player < 400
+talk King Hlaalu Helseth
+ask fight my champion
+expect GetJournalIndex TR_Champion == 80
+ask plans for you
+ask recent events
+ask learn more about the attacks
+expect GetJournalIndex TR_Champion == 100
+bye
+end

@@ -210,6 +210,12 @@ void SetSpeakerInstance(const std::string& id, std::uint32_t runtimeFormId);
 // but a one-tick flag belonging to THIS placement.
 ObjectScript* RunningInstance();
 
+// Whether the instance's script stages a fistfight: it declares `OnPCHitMe`
+// and reads `GetFatigue`, counting on TES3's punch, which tires rather than
+// wounds. The player's punches then move to its Stamina.
+// See: docs/commentary/morrowind_runtime.md#brawls
+bool IsBrawler(const ObjectScript& instance);
+
 // Every placement that runs a script, by the FormID it has in the RUNNING
 // game, built once the load order is known. Null for anything else.
 //

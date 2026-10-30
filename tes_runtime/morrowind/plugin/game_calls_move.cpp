@@ -137,6 +137,11 @@ void MoveRefInCell(const std::string& id, float x, float y, float z,
     PlaceAt(ref, x, y, z, zRot);
 }
 
+// The test runner's `follow`: in the cell `id` is in, the player indoors too.
+void PlaceHere(const std::string& id, float x, float y, float z, float zRot) {
+    if (void* ref = OwnerRef(id)) PlaceAt(ref, x, y, z, zRot);
+}
+
 // The chain `ref` is gliding in when it asked last tick or this one, else null.
 Goal* LiveGoal(void* ref) {
     const std::size_t tick = TicksRun();
@@ -429,6 +434,7 @@ void InstallMoveCalls(GameHooks& hooks) {
     hooks.setAngle = SetAngle;
     hooks.moveToCell = MoveRefToCell;
     hooks.moveInCell = MoveRefInCell;
+    hooks.placeHere = PlaceHere;
     hooks.moveBy = MoveRefBy;
     hooks.rotateBy = RotateRefBy;
     hooks.scale = RefScale;

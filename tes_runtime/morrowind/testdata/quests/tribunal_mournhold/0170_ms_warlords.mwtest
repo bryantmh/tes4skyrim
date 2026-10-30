@@ -1,0 +1,104 @@
+# Tribunal "The Warlords": Dovor Oren and two partners in the Vacant Manor want
+# four warlords dead and their arms brought back. Dovor talks business at
+# disposition 60 (10) and names Soscean (20, 30); his sword and cuirass pay
+# 5,000 (choice 3, 40). Felvan Ienith wants Elanande's axe and robe (60, 70),
+# Olvyne Dobar Bels Uvenim's spear and helm (90, 100), and Dovor last
+# Suldreni Salandas's amulet and mace (110, 120).
+# Bribes, repeated until they land, raise Dovor from his base 50; kills and looting stand in for the
+# fights. Ref FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_barbarian_book --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_warlords
+run
+player->PositionCell -204 330 -368 0 "Mournhold, Vacant Manor"
+until 600 "Dovor Oren"->GetDistance player < 400
+talk Dovor Oren
+persuade bribe100 until "Dovor Oren"->GetDisposition >= 60
+ask business
+expect GetJournalIndex MS_Warlords == 10
+ask assist
+expect GetJournalIndex MS_Warlords == 20
+ask Soscean
+choose 1
+expect GetJournalIndex MS_Warlords == 30
+bye
+run
+player->PositionCell -620 -274 -375 0 "Mournhold, The Winged Guar"
+until 600 "Soscean"->GetDistance player < 400
+defend
+console 068B2F9C.kill
+until 300 GetDeadCount "Soscean" == 1
+console 068B2F9C.removeallitems player
+expect player->GetItemCount "ebony shortsword_soscean" == 1
+run
+player->PositionCell -204 330 -368 0 "Mournhold, Vacant Manor"
+until 600 "Dovor Oren"->GetDistance player < 400
+talk Dovor Oren
+ask Soscean
+choose 3
+expect GetJournalIndex MS_Warlords == 40
+ask assist
+expect GetJournalIndex MS_Warlords == 50
+bye
+talk Felvan Ienith
+expect GetJournalIndex MS_Warlords == 60
+bye
+run
+player->PositionCell 1728 3196 112 0 "Mournhold, Godsreach"
+until 600 "Elanande"->GetDistance player < 400
+console 06623994.kill
+until 300 GetDeadCount "Elanande" == 1
+console 06623994.removeallitems player
+expect player->GetItemCount "ebony war axe_elanande" == 1
+run
+player->PositionCell -20 40 -376 0 "Mournhold, Vacant Manor"
+until 600 "Felvan Ienith"->GetDistance player < 400
+talk Felvan Ienith
+ask Elanande
+choose 1
+expect GetJournalIndex MS_Warlords == 70
+bye
+talk Dovor Oren
+ask assist
+expect GetJournalIndex MS_Warlords == 80
+bye
+talk Olvyne Dobar
+expect GetJournalIndex MS_Warlords == 90
+bye
+run
+player->PositionCell -2709 3115 137 0 "Mournhold, Temple Courtyard"
+until 600 "Bels Uvenim"->GetDistance player < 400
+console 06688FEB.kill
+until 300 GetDeadCount "Bels Uvenim" == 1
+console 06688FEB.removeallitems player
+expect player->GetItemCount "silver spear_uvenim" == 1
+run
+player->PositionCell -176 119 -377 0 "Mournhold, Vacant Manor"
+until 600 "Olvyne Dobar"->GetDistance player < 400
+talk Olvyne Dobar
+ask Bels Uvenim
+choose 1
+expect GetJournalIndex MS_Warlords == 100
+bye
+talk Dovor Oren
+ask assist
+ask Suldreni Salandas
+expect GetJournalIndex MS_Warlords == 110
+bye
+run
+player->PositionCell -4588 1184 344 0 "Mournhold, Great Bazaar"
+until 600 "Suldreni Salandas"->GetDistance player < 400
+console 0664AD9D.kill
+until 300 GetDeadCount "Suldreni Salandas" == 1
+console 0664AD9D.removeallitems player
+expect player->GetItemCount "amulet_salandas" == 1
+run
+player->PositionCell -204 330 -368 0 "Mournhold, Vacant Manor"
+until 600 "Dovor Oren"->GetDistance player < 400
+talk Dovor Oren
+ask Suldreni Salandas
+choose 1
+expect GetJournalIndex MS_Warlords == 120
+bye
+end

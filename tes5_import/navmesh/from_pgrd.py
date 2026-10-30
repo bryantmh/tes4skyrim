@@ -97,6 +97,7 @@ from ..base.navmesh_pins import (apply_hand_edits, cell_key, digest,
                                  hand_edits_for, plugin_of)
 from ..base.text_reader import get_int, get_float, get_str, get_formid
 from .lookup_grid import build_navmesh_grid
+from .obstacle_bridge import bridge_obstacles, cell_ground
 from .spawn_nodes import add_spawn_nodes
 from .world import base_fid, cell_water_z, open_water_z
 from ..base.writer import pack_subrecord, pack_string_subrecord
@@ -280,8 +281,9 @@ def _apply_door_axis(key, a):
 def _load_door_axes(apath) -> None:
     """Read door_panel_axis_cache.json into the axis/width/center globals.
 
-    '__schema__' carries the cache version, not a door model.  A centers-cache
-    model absent here keeps its marker via _DOOR_NO_THRESHOLD.
+    '__'-prefixed keys ('__schema__', '__meshes__') describe the cache, not a
+    door model.  A centers-cache model absent here keeps its marker via
+    _DOOR_NO_THRESHOLD.
     See: docs/commentary/tes5_import_navmesh.md#door-base-line-is-local-y
     """
     if not os.path.exists(apath):
@@ -289,7 +291,7 @@ def _load_door_axes(apath) -> None:
     try:
         with open(apath, encoding='utf-8') as fh:
             axes = json.load(fh)
-        axes = {k: v for k, v in axes.items() if k != '__schema__'}
+        axes = {k: v for k, v in axes.items() if not k.startswith('__')}
         for k, a in axes.items():
             _apply_door_axis(k, a)
         for k in _DOOR_CENTROIDS:
@@ -1045,15 +1047,16 @@ def _cell_frame(rec, cell_rec):
 
 def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
                    is_exterior, land_rec, refr_recs, base_model_by_fid,
-                   door_fids, doors, geom_cache, cell_rec=None, lone=()):
+                   door_fids, doors, geom_cache, cell_rec=None, lone=(), obstacles=()):
     """(verts, tris, ledges, geom_cached, geom_key) from real Havok collision.
 
-    Serves a cache hit matching this cell's input hash, else builds the corridor
-    mesh and stores it.  `lone` are the edgeless spawn nodes in `points`.
-    `geom_key` is the hash VALUE; `geom_hash` is the module FUNCTION -- never
-    name a local after it.
+    Serves a cache hit matching this cell's input hash, else bridges the
+    pathgrid across `obstacles` and builds the corridor mesh and stores it.
+    `lone` are the edgeless spawn nodes in `points`. `geom_key` is the hash
+    VALUE; `geom_hash` is the module FUNCTION -- never name a local after it.
 
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
+    See: docs/commentary/tes5_import_navmesh.md#a-removed-obstacle-is-bridged
     """
     geom_key = cache_path = None
     verts3d = tris = None
@@ -1076,16 +1079,19 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
     from asset_convert.collision.collision_extract import get_collision
     import numpy as np
 
+    land = land_rec if is_exterior else None
+    door_bases = set(door_fids.keys()) if isinstance(door_fids, dict) else set(door_fids or ())
+    bridge_obstacles(points, edges, obstacles, lambda: cell_ground(
+        refr_recs or [], base_model_by_fid or {}, get_collision, land,
+        origin_x, origin_y, door_bases, water_z), get_collision)
     verts3d, tris = navmesh_build.build_navmesh(
         refr_recs or [], base_model_by_fid or {}, get_collision,
         points, edges,
-        land_rec=land_rec if is_exterior else None,
+        land_rec=land,
         origin_x=origin_x, origin_y=origin_y,
         doors=[(x, y, z, r, tp, w) for (x, y, z, r, _f, tp, w) in doors],
         ledges_out=ledges,
-        door_bases=(set(door_fids.keys())
-                    if isinstance(door_fids, dict)
-                    else set(door_fids or ())),
+        door_bases=door_bases,
         lone=lone, water_z=water_z)
     if verts3d:
         verts3d = [tuple(v) for v in
@@ -1109,12 +1115,14 @@ def convert_PGRD(rec: dict, writer=None,
                  navm_fid: int = None,
                  geom_cache: tuple = None,
                  extra_door_refrs: list = None,
-                 spawns: list = None) -> tuple:
+                 spawns: list = None,
+                 obstacles: list = None) -> tuple:
     """Convert one TES4 PGRD to a TES5 NAVM record.
 
     Returns (navm_bytes, meta), or (None, None) when the pathgrid is too sparse
     to form a ribbon or the build yields under 3 verts.  `spawns` are actor
-    spawn points (spawn_nodes) the pathgrid must reach.
+    spawn points (spawn_nodes) the pathgrid must reach; `obstacles` are the
+    (placement, model key) pairs it is bridged across (obstacle_bridge).
 
     See: docs/commentary/tes5_import_navmesh.md#convert-pgrd-arguments
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
@@ -1140,7 +1148,7 @@ def convert_PGRD(rec: dict, writer=None,
     verts3d, tris, ledges, geom_cached, geom_key = _cell_geometry(
         rec, cell_fid, points, edges, origin_x, origin_y, is_exterior,
         land_rec, refr_recs, base_model_by_fid, door_fids, doors, geom_cache,
-        cell_rec=cell_rec, lone=lone)
+        cell_rec=cell_rec, lone=lone, obstacles=obstacles)
     if verts3d is None or len(verts3d) < 3 or not tris:
         return None, None
 

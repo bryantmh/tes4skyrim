@@ -427,6 +427,15 @@ constexpr std::uint64_t kCellIsAttached = 56055;
 constexpr std::uint64_t kDebugSendAnimationEvent = 55380;
 constexpr std::size_t kGraphHolderOffset = 0x38;
 constexpr std::size_t kNotifyGraphSlot = 1;
+// Actor.DrawWeapon (0x9eb940 on 1.6.1170), the `lea r9` beside "DrawWeapon":
+// it calls the actor's vtable slot +0x530 with true.
+constexpr std::uint64_t kActorDrawWeapon = 54779;
+// Actor.GetEquippedWeapon(bool abLeftHand) (0x9f52d0 on 1.6.1170), stored at
+// +0x50 of the function object beside "GetEquippedWeapon"; and
+// Actor.UnequipItem(Form, bool abPreventEquip, bool abSilent) (0x9eb330), the
+// `lea r9` beside "UnequipItem".
+constexpr std::uint64_t kActorGetEquippedWeapon = 54924;
+constexpr std::uint64_t kActorUnequipItem = 54774;
 // Actor.IsInCombat (0x9f54a0), found at its registration beside "IsInCombat".
 constexpr std::uint64_t kActorIsInCombat = 54945;
 constexpr std::uint64_t kActorGetValue = 54675;
@@ -644,6 +653,14 @@ constexpr std::uint64_t kActorResurrect = 54736;
 constexpr std::uint64_t kRefDropObject = 56157;
 constexpr std::uint64_t kWeatherCurrent = 56803;
 constexpr std::uint64_t kWeatherClassification = 56775;
+
+// The two weather setters, found at their Weather registrations the same way:
+//   void Weather.SetActive(bool override, bool accelerate)  0xa4b210  [0x9ec1d0]
+//   void Weather.ReleaseOverride()                          0xa4c630  [0x9ed5f0]  global
+// Live-image RVAs (1.6.1170), GOG 1.6.659 in brackets.
+// See: docs/commentary/morrowind_runtime.md#region-weather
+constexpr std::uint64_t kWeatherSetActive = 56774;
+constexpr std::uint64_t kWeatherReleaseOverride = 56807;
 
 // int ActorBase.GetDeadCount() (0x9c5370): the engine's own per-base kill
 // count, the only native of that name.

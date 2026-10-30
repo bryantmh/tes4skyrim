@@ -110,9 +110,9 @@ void InstallAiOps(OpcodeInstaller& into);
 // Fall. script_ops_query.cpp.
 void InstallQueryOps(OpcodeInstaller& into);
 
-// The TES3 weather id Skyrim's weather classification stands for, which
-// `GetCurrentWeather` answers and the bark state publishes.
-int Tes3Weather(int classification);
+// The TES3 weather id of the sky's weather, which `GetCurrentWeather`
+// answers and the bark state publishes.
+int CurrentTes3Weather();
 
 // Get/Set/Mod for the attributes, the skills and the magic-effect
 // magnitudes, and GetLevel. script_ops_stats.cpp.

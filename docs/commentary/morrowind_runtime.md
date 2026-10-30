@@ -2380,6 +2380,40 @@ a cleared latch writes nothing.
 Papyrus cannot reach. Its 9 call sites stay stubbed; the hook was removed
 rather than left declared and unbound.
 
+### <a id="a-bad-statement-is-skipped"></a>A statement with misplaced values is skipped, not the script
+
+**Code:** `CompileSkippingBadLines` in `plugin/script_runner.cpp`
+
+Morrowind's Construction Set compiled past a statement whose values were out of
+place, and the engine ran the rest of the script. Bloodmoon's `ColonySeler`
+(Bar Brawl) writes `PositionCell "Raven Rock, Bar" 4480 3968 15820 0`, with the
+cell first. The vendored OpenMW compiler rejects the float after the cell name,
+and the whole script, which drives Seler's fight and greetings, never ran. UESP
+records the original behavior: MPP 1.6.5 "fixes a syntax error that the
+Morrowind game engine and the Construction Set usually ignored", and that fix is
+what makes Seler vanish to (4480, 3968, 15820). The bar's own placements span
+x -509..1112, so the line was never meant to run.
+
+A compile that fails on a number is retried with that line blanked, up to four
+times. Only a plain statement is dropped: an `if`/`else`/`endif`/`while`/`begin`/`end`
+line would reshape the script. A failure on a NAME is never dropped. That is a
+member or variable our tables cannot resolve, so skipping it would hide a data
+gap. Each skip is logged as `skips line N, as Morrowind's compiler did`.
+
+Measured with `script_test --sweep-objects`, the line is the only one skipped in
+both modes:
+
+| Sidecars | Bodies | Failed before | Failed after |
+|---|---|---|---|
+| Morrowind + Bloodmoon (authored) | 1,644 | 5 | 4 |
+| Patch + Tamriel_Data + TR_Mainland | 5,520 | 133 | 132 |
+
+A first version that skipped on any error recovered 35 more TR scripts. Every
+line it dropped was a cross-script member write, for example
+`set "Athyn Sarethi".duelOndresNerano to 2`. Those fail because the patch
+sidecar maps no script to the vanilla actor, so dropping them would have
+silenced real writes.
+
 ### <a id="the-query-commands"></a>The query commands are one native each
 
 **Code:** `plugin/script_ops_query.cpp`, `plugin/game_calls.cpp`
@@ -2407,6 +2441,18 @@ backwards answers a different question and reads as a sneaking bug.
 🛑 **`GetTarget` is a comparison.** It asks whether the actor's combat target
 is one named reference, not what the target is, so the native's return value
 is compared rather than returned.
+
+**`GetWeaponType` answers the authored TES3 type.** OpenMW returns the
+right-hand weapon's WPDT type (0 short blade to 13 bolt), or -1 for an empty
+hand. The export's weapon type is TES4's, which folds Morrowind's axes, spears
+and blunt kinds together, so the sidecar reads WPDT from the TES3 binaries
+(`weapon_kinds`) and adds it as the third field of each weapon's
+`items_formid.txt` row. That covers both modes: in Morroblivion mode the TES3 id
+still resolves to Morrowind_ob's form. The runtime maps each row to its runtime
+FormID once and looks up `GetEquippedWeapon(false)`. A weapon no TES3 plugin
+defines (Skyrim's own), and OpenMW's -2 lockpick and -3 probe, which Skyrim
+never puts in a hand, answer -1. Baro Egnatius's script (Raven Rock's CO_5)
+uses it.
 
 <a id="two-registration-shapes"></a>**A native's id: TWO registration shapes,
 and reading only one finds nothing.** The ids for `IsEquipped` (54707),
@@ -2852,6 +2898,22 @@ Two consequences worth keeping:
   world, and a stale flag would let the gate below unbind it again before its
   3D exists.
 
+### <a id="a-deleted-reference-unbinds"></a>A deleted reference unbinds, and only actors die
+
+**Code:** `plugin/game_calls.cpp` (`DeleteRef`, `IsDead`), `plugin/object_script.cpp` (`PollDeath`)
+
+- **`SetDelete 1` unbinds the instance before the engine deletes the
+  reference.** Bloodmoon's `sprigganeffect` deletes its own spawned object.
+  The tick kept polling it, and `Game.GetForm` on the deleted spawn's id
+  (`FF000D73`) returned the freed reference. A captured crash shows an access
+  violation inside `Game.GetForm` (`SkyrimSE+0xa2d560`), called from the runtime
+  with that id.
+- **`Actor.IsDead` is asked only of actors.** Asked of the effect activator, it
+  read past the object and logged a false "sprigganeffect died".
+- **`OnDeath` re-arms when the actor is seen alive again.** `ColonySpriggan1`
+  `Resurrect`s its body twice and counts three deaths. A latch set once per
+  instance counted only the first.
+
 ### <a id="a-spawn-is-not-loaded-on-its-first-frame"></a>Unloading is a TRANSITION, not a state
 
 **Code:** `plugin/object_tick.cpp`, `plugin/object_script.h`
@@ -3122,6 +3184,68 @@ not own, with the engine's own message, then the Sleep/Wait menu toggle
 (`0x95e0d0`, id 52490) with `sleeping` set. The wait key calls the same toggle
 with false. Where Morrowind would charge `iCrimeTresspass` for a witnessed
 sleep in an owned bed, Skyrim refuses the bed.
+
+## <a id="startcombat-between-allies"></a>A scripted fight lasts until a death or StopCombat
+
+**Code:** `plugin/game_calls_combat.cpp`
+
+OpenMW's `StartCombat` gives the actor an AiCombat package that lasts until
+the target dies or `StopCombat` removes it, whatever their factions say.
+Skyrim's combat gives up sooner, in two measured ways:
+
+- **Between allies:** on Arktwend's bridge three Thieves Guild shadows walked
+  away from Tate, their guild brother, within seconds. Between two NPCs that
+  are not already enemies, the attacker's relationship to its target is set
+  to archnemesis for the fight. The rank it replaced is kept in the co-save
+  and put back once either side is dead or the attacker gets `StopCombat`.
+- **A target it cannot find:** in Barenziah's Chambers (Tribunal's
+  assassination attempt), one of the two assassins left behind the screens
+  dropped the player within a second, a different one each run. Archnemesis
+  did not keep it on the player. Each live fight whose attacker has no combat
+  target (and has its 3D) is started again every 10 ticks.
+
+A fight on the player is recorded but changes no relationship: Skyrim keeps
+relationships per BASE record, and `ordinator wander`, placed 81 times, has
+three `StartCombat Player` rows, so one ordinator would turn them all.
+
+## <a id="region-weather"></a>ChangeWeather and ModRegion
+
+**Code:** `plugin/game_calls_weather.cpp`, `plugin/script_ops_query.cpp`,
+`tes5_import/dialogue/morrowind_travel.py` (`cell_regions.txt`)
+
+Skyrim rolls each region's weather itself, from the REGN records the import
+writes (see
+[tes5_import_weather.md](tes5_import_weather.md#morrowind-weather-types)).
+The two script commands that change it follow OpenMW (`mwworld/weather.cpp`):
+
+- `ChangeWeather "region" type` sets the region's weather. It shows at once
+  when the player is in that region, otherwise when they next enter it.
+- `ModRegion "region" chances...` replaces the region's chances for good, up
+  to ten, clamped to 0..100; a missing one is 0. If the player is in that
+  region and its current weather is still allowed, the weather stays; if not,
+  a new one is rolled.
+- Every set weather expires together every 20 game hours (OpenMW's
+  `Weather_Hours_Between_Weather_Changes`, read off `GameDaysPassed`). A
+  region with chances then rolls again: 1..100 against the running sum,
+  Clear when the chances fall short (`RegionWeather::chooseNewWeather`).
+
+What the scripts set is kept in the co-save (`weather|chances`,
+`weather|set`, `weather|clock`). Every 10 ticks the runtime finds the
+player's TES3 region from `cell_regions.txt`: the exterior's TES3 grid, or the
+name of a quasi exterior (Mournhold's districts). It then applies what is set
+there with `Weather.SetActive` (1.6.1170 id 56774).
+
+A region `ModRegion` changed is held with SetActive's override, because the
+engine would otherwise roll the REGN's own chances. The override is a global
+lock that outlives whatever set it (see
+[tes5_import_weather.md](tes5_import_weather.md#scripted-weather)), so it is
+released (`Weather.ReleaseOverride`, id 56807) on the way out of the region,
+and once after every load in case the save carried one.
+
+`GetCurrentWeather` answers the sky's weather by identity: one of the ten
+forms the sidecar's `weather0`..`weather9` rows name is its own type, so an
+ash storm answers 6. Any other weather falls back to Skyrim's
+classification.
 
 ## <a id="travel"></a>Travel is OpenMW's TravelWindow
 
@@ -3697,6 +3821,38 @@ Morrowind_ob.esm is a TES4 plugin and stages no Morrowind sidecar, so its
 markers reach the runtime only through a dependent. Rows repeated across
 sidecars are harmless. Measured anchors: 1,128 for Morrowind.esm and 4,623
 over the TR chain.
+
+### <a id="brawls"></a>Brawls
+
+**Code:** `plugin/game_calls_brawl.cpp`, `IsBrawler` in `plugin/object_script.cpp`,
+`NoteHit` in `plugin/game_calls_query.cpp`; `tes5_import/actors/brawl.py`
+
+**Switched off** (`kBrawlsOn`): Skyrim's Stamina regeneration outruns the punch drain, and
+the drain and regeneration a brawler gets are not chosen yet
+([run log](../audits/headless_quest_runs.md#raven-rock-open)).
+
+A TES3 punch drains fatigue and leaves health alone (OpenMW
+`getHandToHandDamage`); a Skyrim punch takes health. Scripts that stage a
+fistfight count on the first. A brawler is an object script that declares
+`OnPCHitMe` and reads `GetFatigue`. Three scripts match across Morrowind,
+Bloodmoon, Tamriel_Data and TR_Mainland, all fistfights:
+- `HroldarScript`: beaten at fatigue 150, then 50. Hroldar has 40 health and
+  300 fatigue.
+- `TR_m4_NPC_Anbarnag`
+- `TR_m4_NPC_Sarus_Savrethi`
+
+Only those actors change. Every other actor keeps Skyrim's punch, and a
+weapon or spell still wounds a brawler.
+
+- The import writes `TES3BrawlAbility` for a TES3 source. Its perk is a Mod
+  Incoming Damage entry ×0 whose attacker is `GetIsID Player` and whose
+  weapon is `GetIsID Unarmed` (`0x1F4`). Both tabs follow vanilla's
+  `DeftMovement` and its weapon-tab `GetIsID`. `effects_formid.txt`
+  (`brawl=plugin|FormID`) names it.
+- The tick gives the ability to a brawler's reference when it first loads.
+- `NoteHit` sees each player punch on a brawler (hit source `0x1F4`) and takes
+  the player's `UnarmedDamage` from the brawler's Stamina, which `GetFatigue`
+  reads.
 
 ## <a id="the-control-switches"></a>The player-control switches
 

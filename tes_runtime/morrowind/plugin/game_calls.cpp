@@ -533,6 +533,13 @@ void ShowRestMenu(const std::string& bedId) {
     });
 }
 
+// The Wait key's own call: the same toggle with `sleeping` false.
+// See: docs/commentary/morrowind_runtime.md#show-rest-menu
+void PlayerWait() {
+    if (!g_toggleSleepMenu) return;
+    PostToMainThread([]() { g_toggleSleepMenu(false); });
+}
+
 void SleepFor(int hours) {
     PostToMainThread([hours]() {
         void* view = nullptr;
@@ -563,6 +570,10 @@ bool IsLocked(const std::string& id) {
 void DeleteRef(const std::string& id) {
     void* ref = OwnerRef(id);
     if (!ref || !g_delete) return;
+    // 🛑 Its script ends with it: `Game.GetForm` on a deleted spawn's id
+    // returns the freed reference, and the next tick's poll crashed on it.
+    // See: docs/commentary/morrowind_runtime.md#a-deleted-reference-unbinds
+    UnbindInstance(FormIdOf(ref));
     PostToMainThread([ref]() { g_delete(PapyrusVm(), 0, ref); });
 }
 
@@ -607,6 +618,17 @@ std::string PlayerCellName() {
     return PlayerInInterior() ? InteriorName(PlayerRef()) : ExteriorName(PlayerRef());
 }
 
+std::string PlayerRegion() {
+    void* player = PlayerRef();
+    if (!player || !PlayerCell()) return std::string();
+    const std::string* region =
+        PlayerInInterior()
+            ? FindInteriorRegion(InteriorName(player))
+            : FindExteriorRegion(Tes3GridIndex(RefPositionAxis(PapyrusVm(), player, 0)),
+                                 Tes3GridIndex(RefPositionAxis(PapyrusVm(), player, 1)));
+    return region ? *region : std::string();
+}
+
 // 🛑 Whether a GAME is loaded, which is the player standing in SOME cell --
 // never whether that cell has a NAME. An unnamed exterior is most of the
 // world: gating the tick on the name stopped every object script outdoors.
@@ -624,6 +646,8 @@ void* PlaceOf(void* ref) {
     return WorldSpaceOf(ref);
 }
 
+// A dead actor's health reads at most 0, as TES3 has no death without it;
+// Skyrim's Kill leaves the value where it was.
 float DynamicStat(const std::string& actor, int which) {
     void* ref = OwnerRef(actor);
     void* name = nullptr;
@@ -631,7 +655,8 @@ float DynamicStat(const std::string& actor, int which) {
         !FixedString(&name, kDynamicNames[which])) {
         return 0.0f;
     }
-    return g_getValue(PapyrusVm(), 0, ref, &name);
+    const float value = g_getValue(PapyrusVm(), 0, ref, &name);
+    return which == 0 && IsDead(ref) ? std::min(value, 0.0f) : value;
 }
 
 // OpenMW's Actors::update: an actor whose current health is at or below 0
@@ -989,8 +1014,9 @@ void* RefByRuntimeId(std::uint32_t runtimeFormId) {
 
 void* SpeakerRef() { return RefByRuntimeId(g_speakerFormId); }
 
+// 🛑 Actors only: `Actor.IsDead` on any other reference reads past its end.
 bool IsDead(void* ref) {
-    return ref && g_isDead && g_isDead(PapyrusVm(), 0, ref);
+    return ref && g_isDead && IsActorRef(ref) && g_isDead(PapyrusVm(), 0, ref);
 }
 
 bool IsDeadRef(std::uint32_t runtimeFormId) {
@@ -1251,6 +1277,7 @@ void InstallGameCalls() {
     hooks.playerTake = PlayerTake;
     hooks.showRestMenu = ShowRestMenu;
     hooks.sleepFor = SleepFor;
+    hooks.playerWait = PlayerWait;
     hooks.setLocked = SetLocked;
     hooks.isLocked = IsLocked;
     hooks.deleteRef = DeleteRef;
@@ -1282,11 +1309,13 @@ void InstallGameCalls() {
     InstallStateCalls(hooks);
     InstallCrimeCalls(hooks);
     InstallCombatCalls(hooks);
+    InstallWeatherCalls(hooks);
     InstallMessageCalls(hooks);
     InstallTeleportCalls();
     InstallFlightCalls(hooks);
     InstallStillCalls();
     InstallAttributeCalls(hooks);
+    InstallBrawlCalls(hooks);
     InstallAnimCalls(hooks);
     Log("game: %zu spell(s) and %zu magic effect(s) resolvable by id",
         SpellCount(), EffectCount());

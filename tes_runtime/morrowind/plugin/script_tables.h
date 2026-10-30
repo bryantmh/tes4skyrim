@@ -282,6 +282,9 @@ const ActorDef* FindActor(const std::string& actor);
 const std::vector<TravelDest>* FindTravel(const std::string& actor);
 // An item by TES3 id; a filled soul gem's staged id (SLGM.txt) counts as one.
 const FormRef* FindItem(const std::string& item);
+// `fn(form, type)` for each weapon with its TES3 WPDT type, items_formid.txt's
+// third field: what `GetWeaponType` answers.
+void ForEachWeaponType(const std::function<void(const FormRef&, int)>& fn);
 const FormRef* FindQuest(const std::string& quest);
 
 // The SNDR a TES3 sound id names -- SOUN.txt. Null when the sound has no
@@ -376,6 +379,11 @@ std::size_t CellCount();
 // The TES3 name of the exterior at grid (x, y): the cell's own name, else its
 // region's. Null when the chain staged none there.
 const std::string* FindExteriorName(int x, int y);
+// The lowercased TES3 region the exterior at grid (x, y), or the quasi
+// exterior of that name, lies in. Null outside every region.
+// See: docs/commentary/morrowind_runtime.md#region-weather
+const std::string* FindExteriorRegion(int x, int y);
+const std::string* FindInteriorRegion(const std::string& cell);
 
 // Every staged Intervention marker and interior anchor, once per sidecar that
 // staged it: a dependent re-stages its masters' rows, which repeat harmlessly.

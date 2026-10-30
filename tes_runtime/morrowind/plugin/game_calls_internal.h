@@ -70,6 +70,9 @@ void* PlayerCell();
 bool PlayerInInterior();
 // The name of the interior `ref` stands in; empty outdoors.
 std::string InteriorName(void* ref);
+// The lowercased TES3 region the player is in: its exterior grid's, or its
+// quasi exterior's. Empty in an ordinary interior or outside every region.
+std::string PlayerRegion();
 // `ref`'s worldspace, null in an interior. game_calls_teleport.cpp.
 void* WorldSpaceOf(void* ref);
 // Where `ref` is as MoveInto takes it: its cell indoors, its worldspace outdoors.
@@ -133,6 +136,9 @@ void InstallCrimeCalls(GameHooks& hooks);
 // StartCombat and StopCombat, with the feud that keeps allies fighting.
 // See: docs/commentary/morrowind_runtime.md#startcombat-between-allies
 void InstallCombatCalls(GameHooks& hooks);
+// ChangeWeather and ModRegion, and the TES3 type of the sky's weather.
+// See: docs/commentary/morrowind_runtime.md#region-weather
+void InstallWeatherCalls(GameHooks& hooks);
 void PublishState();
 // Mark, Recall and the two Interventions, on the VM's OnMagicEffectApply sink.
 // See: docs/commentary/morrowind_runtime.md#teleport-effects
@@ -194,6 +200,15 @@ void WatchSanctuary(std::uint32_t actorId);
 // Whether `ref` is a placed actor: an id saved in one session may name
 // something else in the next.
 bool IsActorRef(void* ref);
+// The weapon `actor` holds in that hand, or null. game_calls_query.cpp.
+void* EquippedWeapon(void* actor, bool left);
+// Brawls: the ability a brawler gets when it loads, and the Stamina a player's
+// punch takes from it. Game thread. game_calls_brawl.cpp.
+// See: docs/commentary/morrowind_runtime.md#brawls
+void InstallBrawlCalls(GameHooks& hooks);
+void TireBrawler(std::uint32_t target);
+// Skyrim.esm's Unarmed WEAP, the source a bare-fisted hit reports.
+constexpr std::uint32_t kUnarmedWeapon = 0x000001F4;
 // Keeps the player's and each watched actor's Sanctuary faction rank at its
 // summed Sanctuary. game_calls_sanctuary.cpp.
 void TickSanctuary(void* player);

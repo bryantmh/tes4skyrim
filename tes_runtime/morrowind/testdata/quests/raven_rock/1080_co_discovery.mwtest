@@ -1,0 +1,78 @@
+# Bloodmoon "Discovery in the Mine", Falco's side: two days after Seler, away
+# from Raven Rock (ColonyState 12), Falco sends the player to the outcast
+# Skaal on the Felsaad coast. Coventina Celata, enabled at CO_8 10, attacks
+# Graring; killing her while he lives logs 20 (ColonyCoventina). Graring gives
+# the player his pick (30); activating the Stalhrim deposit with it logs 40
+# (ColonyStalhrim); bringing him ore logs 50, and Falco closes it (60). The
+# kill and the looting stand in for the fight and the container menu.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_bar_brawl --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_discovery
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 ColonyState == 12
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+expect GetJournalIndex CO_8 == 10
+bye
+run
+player->Position -171400 201700 700 0
+until 600 "graring"->GetDistance player < 1500
+console 063B7F65.kill
+until 600 GetJournalIndex CO_8 == 20
+run
+set TestResult to ( "graring"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "graring"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "graring"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "graring"->GetDistance player < 400
+talk graring
+ask Stalhrim
+ask misuse it
+expect GetJournalIndex CO_8 == 30
+bye
+run
+player->PositionCell 4879 6050 12120 0 "Raven Rock, Mine"
+until 600 GetPCCell "Raven Rock, Mine" == 1
+activate 069DAAC6
+close ContainerMenu
+expect GetJournalIndex CO_8 == 40
+console 069DAAC6.removeallitems player
+expect player->GetItemCount "ingred_raw_Stalhrim_01" >= 1
+run
+player->Position -171400 201700 700 0
+until 300 GetPCCell "Raven Rock, Mine" == 0
+run
+set TestResult to ( "graring"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "graring"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "graring"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "graring"->GetDistance player < 400
+talk graring
+ask Stalhrim
+expect GetJournalIndex CO_8 == 50
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+expect GetJournalIndex CO_8 == 60
+bye
+end

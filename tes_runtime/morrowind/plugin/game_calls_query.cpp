@@ -8,6 +8,7 @@
 #include <set>
 #include <string>
 
+#include "activation.h"
 #include "addresses.h"
 #include "ids.h"
 #include "log.h"
@@ -58,6 +59,10 @@ using HandQueryFn = void* (*)(void* vm, std::uint32_t stack, void* ref,
                               std::int32_t hand);
 FormQueryFn      g_isEquipped = nullptr;
 HandQueryFn      g_equippedSpell = nullptr;
+// Actor.GetEquippedWeapon(bool abLeftHand).
+using EquippedWeaponFn = void* (*)(void* vm, std::uint32_t stack, void* actor,
+                                   bool left);
+EquippedWeaponFn g_equippedWeapon = nullptr;
 ProcessEventFn   g_sleepStart = nullptr;
 ProcessEventFn   g_sleepStop = nullptr;
 ProcessEventFn   g_hit = nullptr;
@@ -274,7 +279,7 @@ bool WasAttacked(const std::string& actor) {
 
 // A hit lands: the target remembers what struck it, and a hit by the PLAYER
 // raises the target's `OnPCHitMe`, as OpenMW's `Npc::onHit` and
-// `Creature::onHit` do. Main thread.
+// `Creature::onHit` do; a brawler the player punched is tired. Main thread.
 void NoteHit(std::uint32_t target, std::uint32_t source, bool byPlayer,
              std::uint32_t attacker) {
     LogVerbose("hit: %08X struck by %08X%s", target, source, byPlayer ? " (player)" : "");
@@ -283,6 +288,9 @@ void NoteHit(std::uint32_t target, std::uint32_t source, bool byPlayer,
     if (!byPlayer) return;
     if (ObjectScript* instance = InstanceForRef(target)) {
         instance->Events().pcHitMe = true;
+        if (!IsBrawler(*instance)) return;
+        Log("brawl: the player hits %08X with %08X", target, source);
+        if (source == kUnarmedWeapon) TireBrawler(target);
     }
 }
 
@@ -440,7 +448,31 @@ int WeatherClassification() {
     return weather ? g_classification(PapyrusVm(), 0, weather) : -1;
 }
 
+// `GetWeaponType`: the TES3 type of the right hand's weapon, -1 for none, as
+// OpenMW reads `Slot_CarriedRight`. The types are the sidecar's, by runtime
+// FormID, resolved once: the load order cannot change after. A weapon no TES3
+// plugin defines has no TES3 type, and answers -1.
+// See: docs/commentary/morrowind_runtime.md#the-query-commands
+int WeaponTypeOf(const std::string& actor) {
+    static std::map<std::uint32_t, int> types;
+    static bool built = false;
+    if (!built) {
+        ForEachWeaponType([](const FormRef& ref, int type) {
+            if (void* form = Form(&ref)) types[FormIdOf(form)] = type;
+        });
+        built = true;
+    }
+    void* ref = OwnerRef(actor);
+    void* weapon = IsActorRef(ref) ? EquippedWeapon(ref, false) : nullptr;
+    const auto found = weapon ? types.find(FormIdOf(weapon)) : types.end();
+    return found == types.end() ? -1 : found->second;
+}
+
 }  // namespace
+
+void* EquippedWeapon(void* actor, bool left) {
+    return g_equippedWeapon ? g_equippedWeapon(PapyrusVm(), 0, actor, left) : nullptr;
+}
 
 void InstallQueryCalls(GameHooks& hooks) {
     g_hasLos = Native<PairQueryFn>("Actor.HasLOS", ids::kActorHasLos);
@@ -471,6 +503,9 @@ void InstallQueryCalls(GameHooks& hooks) {
     InstallSleepSinks();
     g_equippedSpell = Native<HandQueryFn>("Actor.GetEquippedSpell",
                                           ids::kActorEquippedSpell);
+    g_equippedWeapon = Native<EquippedWeaponFn>("Actor.GetEquippedWeapon",
+                                                ids::kActorGetEquippedWeapon);
+    hooks.weaponType = WeaponTypeOf;
     hooks.weaponDrawn = WeaponIsDrawn;
     hooks.sneaking = ActorSneaking;
     hooks.running = ActorRunning;

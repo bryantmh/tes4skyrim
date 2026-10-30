@@ -67,6 +67,8 @@ APP_ID = '489830'
 UNPACKED_EXE = (r'C:\Program Files (x86)\Steam\steamapps\content\app_489830'
                 r'\depot_489833\SkyrimSE.1.6.1170.unpacked.exe')
 SKSE_DLL = 'skse64_1_6_1170.dll'
+#: The SKSE release archive, extracted here: its Data\Scripts are the .pex its Papyrus functions need.
+SKSE_RELEASE = os.path.join(INSTANCE, '_skse')
 ADDRESS_LIBRARY = os.path.join('SKSE', 'Plugins', 'versionlib-1-6-1170-0.bin')
 SANDBOX_DLL = os.path.join(REPO, 'game_bridge', 'sandbox', 'TESSandbox.dll')
 BRIDGE_DLL = os.path.join(REPO, 'game_bridge', 'TESGameBridge.dll')
@@ -204,6 +206,16 @@ def link_runtime(data: str, plugins: list) -> None:
     print('wrote %d composed menu and table file(s)' % len(composed))
 
 
+def link_skse_scripts(data: str) -> int:
+    """Links the SKSE release's Papyrus scripts into `data`; how many it linked."""
+    scripts = glob.glob(os.path.join(SKSE_RELEASE, '*', 'Data', 'Scripts', '*.pex'))
+    for path in scripts:
+        link(path, os.path.join(data, 'Scripts', os.path.basename(path)))
+    if not scripts:
+        print('no SKSE scripts under %s: extract the SKSE release archive there' % SKSE_RELEASE)
+    return len(scripts)
+
+
 def loadable(data: str, plugins: list) -> list:
     """The `plugins` whose every master is in `data`, so a linked folder's dev patch
     for a game not in the instance stays off."""
@@ -235,6 +247,7 @@ def build(steam_exe: bool, plugins, mods=()) -> None:
         link(os.path.join(root, 'Data', name), os.path.join(data, name))
     link(os.path.join(root, 'Data', ADDRESS_LIBRARY), os.path.join(data, ADDRESS_LIBRARY))
     link(BRIDGE_DLL, os.path.join(data, 'SKSE', 'Plugins', 'TESGameBridge.dll'))
+    link_skse_scripts(data)
     with open(os.path.join(INSTANCE, 'steam_appid.txt'), 'w') as f:
         f.write(APP_ID)
     enabled = loadable(data, enabled)

@@ -614,6 +614,49 @@ Cyrodiil.
   Known limit: a master-dependent ESP's cells only keep refs to its OWN
   emitted regions, not the master's.
 
+## <a id="morrowind-weather-types"></a>Morrowind's ten weather types without Morroblivion
+
+**Code:** `tes5_import/record_types/weather_morrowind.py`,
+`tes4_export/morrowind_region.py`
+
+TES3 has no weather records, only ten hardcoded types a region's `WEAT`
+gives a chance each. Morroblivion converted all ten as WTHR, and the export
+names those by EditorID when a master holds them. Authored mode
+(Morrowind/Tribunal/Bloodmoon with no Morroblivion) has none, so every
+region used to be dropped and Vvardenfell and Mournhold had one sky. Now the
+export writes such a weather as `Weather[i].MorrowindType=<type>` and the
+import places each type on the vanilla weather a census picked from
+`references/Skyrim.esm/WTHR.txt` and a dump of Dragonborn.esm. The census
+read each WTHR's `DATA` classification byte (offset 11: 01 pleasant, 02
+cloudy, 04 rainy, 08 snow) and its precipitation shader (`MNAM`):
+
+| TES3 type | Stand-in | Class, precipitation |
+|---|---|---|
+| 0 Clear | `SkyrimClear` 0000081A | pleasant, none |
+| 1 Cloudy | `SkyrimCloudy` 00012F89 | pleasant, none |
+| 2 Foggy | `SkyrimFog` 000C821E | cloudy, none |
+| 3 Overcast | `SkyrimOvercastWar` 000D299E | cloudy, none (the only overcast without rain) |
+| 4 Rain | `SkyrimOvercastRain` 000C821F | rainy |
+| 5 Thunderstorm | `SkyrimStormRain` 000C8220 | rainy |
+| 6 Ashstorm | `DLC02VolcanicAshStorm01` (Dragonborn 032336) | snow class, ash particles |
+| 7 Blight | `DLC02VolcanicAshStorm01` (the same) | Skyrim has no second ash storm |
+| 8 Snow | `SkyrimOvercastSnow` 0004D7FB | snow |
+| 9 Blizzard | `SkyrimStormSnow` 000C8221 | snow |
+
+Skyrim.esm has no ash weather at all; Dragonborn's nine WTHR hold the only
+ash storm. So a plugin whose regions name Ashstorm or Blight by type gets
+Dragonborn.esm in its master list, right after Skyrim.esm
+(`with_weather_masters`, decided from `REGN.txt` before the master list is
+opened); `reconcile_masters` keeps every vanilla master ahead of the TES4
+ones. Every Special Edition install has Dragonborn.esm. A plugin whose
+regions name no ash keeps Skyrim.esm alone.
+
+The same ten forms go into the sidecar as `weather0`..`weather9` rows of
+`effects_formid.txt` (Morroblivion's WTHR when converted), which is how
+MorrowindRuntime's `ChangeWeather`, `ModRegion` and `GetCurrentWeather`
+name a weather. See
+[morrowind_runtime.md](morrowind_runtime.md#region-weather).
+
 ## Scripted weather (ForceWeather / SetWeather / ReleaseWeatherOverride)
 <a id="scripted-weather"></a>
 

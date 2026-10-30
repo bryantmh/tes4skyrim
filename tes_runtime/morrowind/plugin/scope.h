@@ -55,7 +55,8 @@ int CurrentLayer();
 // Whether rows from `layer` are visible to the current layer.
 bool LayerVisible(int layer);
 
-// Whether `a` and `b` see each other: one is the other, or a master of it.
+// Whether `a` and `b` see each other: one is the other or a master of it, or
+// both are built on a common master -- one game, as TES3 has one namespace.
 bool LayersRelated(int a, int b);
 
 // Precedence among visible rows: a plugin overrides its masters, so a deeper

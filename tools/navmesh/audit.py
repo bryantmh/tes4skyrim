@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from asset_convert.collision import collision_extract as ce
 from asset_convert.game_paths import namespace_for, set_namespace
 from tes5_import.navmesh import build, params
+from tes5_import.base.obstacles import index_obstacles
 from tes5_import.navmesh.pool import build_base_model_index, model_key
 from tes5_import.navmesh.from_pgrd import (collect_doors,
                                       load_door_centroids)
@@ -46,7 +47,9 @@ from output_layout import assets_for
 
 #: Every base type the import's `build_base_model_index` may carve with.
 _BASE_TYPES = {'STAT', 'CONT', 'FURN', 'ACTI', 'TREE', 'FLOR'}
-_TYPES = {'CELL', 'REFR', 'PGRD', 'LAND', 'DOOR', 'WRLD'} | _BASE_TYPES
+#: The base types plus the scripts that make one of them an obstacle.
+_BASE_PARSE = _BASE_TYPES | {'SCPT'}
+_TYPES = {'CELL', 'REFR', 'PGRD', 'LAND', 'DOOR', 'WRLD'} | _BASE_PARSE
 
 
 def _pgrd_nodes(pgrd):
@@ -302,7 +305,7 @@ def _parse_tables(export):
     set_namespace(namespace_for(export))
     recs = parse_export_directory(export, type_filter=_TYPES)
     by_type = group_records_by_type(recs)
-    base_model = build_base_model_index(by_type)
+    base_model = _carving_bases(by_type)
     refr_by_cell = {}
     for r in by_type.get('REFR', []):
         refr_by_cell.setdefault((r.get('ParentCELL') or '').upper(), []).append(r)
@@ -317,8 +320,17 @@ def _parse_tables(export):
 def _base_model_table(export):
     """`export`'s own carving base-model table, parsed from its base records alone."""
     set_namespace(namespace_for(export))
-    return build_base_model_index(group_records_by_type(
-        parse_export_directory(export, type_filter=_BASE_TYPES)))
+    return _carving_bases(group_records_by_type(
+        parse_export_directory(export, type_filter=_BASE_PARSE)))
+
+
+def _carving_bases(by_type):
+    """The import's base-model table: obstacles indexed first, so they carve nothing.
+
+    See: docs/commentary/tes5_import_navmesh.md#scripted-blockers-are-obstacles
+    """
+    index_obstacles(by_type, None)
+    return build_base_model_index(by_type)
 
 
 def _ensure_store(export, reindex=False):

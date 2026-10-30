@@ -7,7 +7,8 @@
 // their guild brother, and he never dies. So between two NPCs that are not
 // already enemies, the attacker's relationship to its target is set to
 // archnemesis for the fight, and put back once either side is dead or the
-// attacker is told to StopCombat.
+// attacker is told to StopCombat. Any such fight, the player's included, is
+// started again while it lasts if the attacker loses its target.
 //
 // 🛑 Skyrim keeps a relationship between the two BASE records, in the save.
 // The rank it replaced is kept in the co-save, so a fight saved and loaded
@@ -54,10 +55,15 @@ std::string FeudName(const std::string& attacker, const std::string& target) {
     return Lower(attacker) + "|" + Lower(target);
 }
 
-// Puts the rank `name`'s feud replaced back, and marks it ended.
+// Puts back the rank `name`'s feud replaced, and marks it ended. A fight on
+// the player replaced none.
 void EndFeud(const std::string& name, void* actor, void* foe) {
     const float rank = State().Var(kFeuds, name);
     State().SetVar(kFeuds, name, kEnded);
+    if (foe == PlayerRef()) {
+        Log("combat: %s ends", name.c_str());
+        return;
+    }
     if (g_setRank) g_setRank(PapyrusVm(), 0, actor, foe, static_cast<std::int32_t>(rank));
     Log("combat: %s ends -- relationship back to %d", name.c_str(),
         static_cast<int>(rank));
@@ -76,10 +82,15 @@ void ForEachFeud(Fn fn) {
 }
 
 // Game thread: the feud that keeps `actor` on `foe`, unless they are enemies
-// already or the target is the player, whom Skyrim's combat never drops.
+// already. A fight on the player is only recorded: its relationship is the
+// BASE record's, and one of 81 placed `ordinator wander` would turn them all.
 void BeginFeud(const std::string& name, void* actor, void* foe) {
-    if (foe == PlayerRef() || !g_getRank || !g_setRank) return;
     if (State().HasVar(kFeuds, name) && State().Var(kFeuds, name) != kEnded) return;
+    if (foe == PlayerRef()) {
+        State().SetVar(kFeuds, name, 0.0f);
+        return;
+    }
+    if (!g_getRank || !g_setRank) return;
     const std::int32_t rank = g_getRank(PapyrusVm(), 0, actor, foe);
     if (rank <= kArchnemesis) return;
     State().SetVar(kFeuds, name, static_cast<float>(rank));
@@ -154,12 +165,25 @@ void GuardsEngage() {
     }
 }
 
+// OpenMW's AiCombat lasts until a death or StopCombat; Skyrim's gives up on a
+// target it cannot find: of the two Tribunal assassins left standing behind
+// screens, one dropped the player within a second, a different one each run.
+// A live feud whose attacker has no target is started again. Game thread.
+void RenewFeuds() {
+    ForEachFeud([](const std::string& name, void* actor, void* foe) {
+        if (!g_startCombat || !Has3D(actor) || CombatTargetOf(actor)) return;
+        g_startCombat(PapyrusVm(), 0, actor, foe);
+        Log("combat: %s -- target dropped, fight renewed", name.c_str());
+    });
+}
+
 void CombatTick() {
     ForEachFeud([](const std::string& name, void* actor, void* foe) {
         if (IsDead(actor) || IsDead(foe)) EndFeud(name, actor, foe);
     });
     static int untilGuards = 0;
     if (--untilGuards > 0) return;
+    PostToMainThread(RenewFeuds);
     untilGuards = kGuardTicks;
     PostToMainThread(GuardsEngage);
 }

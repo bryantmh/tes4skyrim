@@ -1,0 +1,66 @@
+# Bloodmoon "Missing Supply Ship": three days after Hroldar leaves
+# (ColonyTimer), Carnius sends the player to Falco about the overdue ship.
+# Gamin saw it head north; the wreck (ex_co_shipwreck, enabled at CO_3 10)
+# logs the find when the player comes within 2,500 units. Position stands in
+# for the walk up the coast; `sleep` passes the days.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_blocked_door --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_supply_ship
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+until 600 ColonyState == 3
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask assignment
+expect GetJournalIndex CO_3 == 10
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+expect GetJournalIndex CO_3 == 20
+bye
+run
+player->Position -198700 160450 970 0
+until 600 "Gamin Girith"->GetDistance player < 400
+talk Gamin Girith
+ask seen anything
+expect GetJournalIndex CO_3 == 30
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask seen anything
+expect GetJournalIndex CO_3 == 40
+bye
+run
+player->Position -215700 177601 300 0
+until 600 GetJournalIndex CO_3 == 50
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask seen anything
+expect GetJournalIndex CO_3 == 60
+bye
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask assignment
+expect GetJournalIndex CO_3 == 70
+bye
+end

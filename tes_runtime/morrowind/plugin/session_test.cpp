@@ -3,7 +3,7 @@
 //   session_test.exe <sidecar root> <actor id> [--race R] [--class C]
 //                    [--faction F] [--rank N] [--cell NAME] [--disp N]
 //                    [--topic T] [--female] [--pcfaction NAME RANK]
-//                    [--journal QUEST INDEX]
+//                    [--journal QUEST INDEX] [--global NAME VALUE]
 //
 // Prints the greeting, the offered topic list and one topic's answer, so the
 // filter is checked against a REAL actor before any menu exists to show it.
@@ -48,6 +48,7 @@ public:
     // What the player has joined, so a guild's own quest line is testable.
     std::map<RefId, int> playerFactions;
     std::map<RefId, int> journal;
+    std::map<std::string, float> globals;
 
     int   PlayerFactionRank(const RefId& f) const override {
         const auto it = playerFactions.find(f);
@@ -85,9 +86,10 @@ public:
         *found = false;
         return 0.0f;
     }
-    float GlobalVariable(const std::string&, bool* found) const override {
-        *found = false;
-        return 0.0f;
+    float GlobalVariable(const std::string& name, bool* found) const override {
+        const auto it = globals.find(name);
+        *found = it != globals.end();
+        return *found ? it->second : 0.0f;
     }
     int Choice() const override { return -1; }
 };
@@ -158,6 +160,10 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--journal") && i + 2 < argc) {
             const std::string quest = argv[++i];
             actor.journal[quest] = std::atoi(argv[++i]);
+        }
+        else if (!std::strcmp(argv[i], "--global") && i + 2 < argc) {
+            const std::string name = argv[++i];
+            actor.globals[name] = static_cast<float>(std::atof(argv[++i]));
         }
         else if (!std::strcmp(argv[i], "--topic") && more) wanted = argv[++i];
     }

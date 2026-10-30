@@ -85,6 +85,12 @@ struct GameHooks {
                       const std::string& item) = nullptr;
     // The test runner's player kills every nearby actor attacking it.
     void (*killPlayerAttackers)() = nullptr;
+    // A brawler's reference has loaded: it gets the ability that stops the
+    // player's bare fists wounding it.
+    void (*armBrawler)(std::uint32_t runtimeFormId) = nullptr;
+    // The test runner's punch: the player faces `npc`, draws its fists and
+    // swings once. False when there is no such actor to punch.
+    bool (*playerPunch)(const std::string& npc) = nullptr;
     // The runtime FormID of an item's base form, or 0.
     std::uint32_t (*itemFormId)(const std::string& item) = nullptr;
     // `attacker` attacks `target`; an empty `target` stops the fight instead.
@@ -251,6 +257,8 @@ struct GameHooks {
     // A headless run's sleep in the open Sleep/Wait menu: the hours slider
     // set to `hours`, then its Sleep button.
     void  (*sleepFor)(int hours) = nullptr;
+    // A headless run's Wait key: the Sleep/Wait menu opened for waiting.
+    void  (*playerWait)() = nullptr;
     // The key the player bound to Skyrim's user event `userEvent`, by name
     // (menu.h BoundKeyName), for `^ActionForward` and the rest in text.
     std::string (*boundKeyName)(const char* userEvent) = nullptr;
@@ -258,9 +266,12 @@ struct GameHooks {
     // (x, y, z) with a Z rotation of `zRot` DEGREES.
     void (*moveToCell)(const std::string& ref, const std::string& cell,
                        float x, float y, float z, float zRot) = nullptr;
-    // `Position`: the same, staying in the cell the reference is already in.
+    // `Position`: the same, staying in the cell the reference is already in --
+    // except the player indoors, whom it moves to the exterior, as OpenMW does.
     void (*moveInCell)(const std::string& ref, float x, float y, float z,
                        float zRot) = nullptr;
+    // The same, keeping even the player in its cell: the test runner's `follow`.
+    void (*placeHere)(const std::string& ref, float x, float y, float z, float zRot) = nullptr;
     // `Move`/`MoveWorld`/`Rotate`/`RotateWorld`: adds a DELTA to one axis.
     // `local` rotates the offset into the object's own frame, which is what
     // separates `Move` from `MoveWorld`.
@@ -322,6 +333,8 @@ struct GameHooks {
                      const std::string& other) = nullptr;
     // Draw state and movement, all on one actor.
     bool (*weaponDrawn)(const std::string& actor) = nullptr;
+    // `GetWeaponType`: the TES3 type of the right hand's weapon, -1 for none.
+    int (*weaponType)(const std::string& actor) = nullptr;
     bool (*sneaking)(const std::string& actor) = nullptr;
     bool (*running)(const std::string& actor) = nullptr;
     // `GetSpellReadied`: TES3's third draw state, magic, which Skyrim reports
@@ -349,6 +362,18 @@ struct GameHooks {
                      int count) = nullptr;
     // `GetCurrentWeather`: Skyrim's weather CLASSIFICATION, 0..4.
     int  (*weather)() = nullptr;
+    // The TES3 weather type the sky's weather stands for, or -1 when it is
+    // none of the ten the sidecar names.
+    int  (*weatherType)() = nullptr;
+    // `ChangeWeather` and `ModRegion`, by region id.
+    // See: docs/commentary/morrowind_runtime.md#region-weather
+    void (*changeWeather)(const std::string& region, int type) = nullptr;
+    void (*modRegion)(const std::string& region,
+                      const std::vector<int>& chances) = nullptr;
+    // Polled by the tick: brings the sky to what the scripts set for the
+    // player's region. Reset when a game is loaded.
+    void (*weatherTick)() = nullptr;
+    void (*weatherReset)() = nullptr;
     // Writes one Skyrim actor value by name, and any actor's level.
     void (*setActorValue)(const std::string& actor, const char* name,
                           float value) = nullptr;
@@ -636,7 +661,6 @@ public:
     // --- the conversation in progress --------------------------------------
     // Reset by BeginConversation; filled by result scripts as they run.
     std::vector<ChoiceLine>  choices;
-    std::vector<std::string> addedTopics;
     std::vector<std::string> messages;
     bool goodbye = false;
     int  choice = -1;

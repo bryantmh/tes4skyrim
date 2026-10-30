@@ -1,0 +1,63 @@
+# Bloodmoon "To Catch a Thief", Falco's side: Falco suspects Uryn Maren of
+# stealing ore and gives the player his key. The chest is empty (CO_6 30,
+# ColonyChestMaryn); the player then trails Uryn through the mine. Uryn
+# sneaks along a chain of AiTravels (ColonyUryn) and, at the end, logs the
+# catch when the player is within 512 units (50). Uryn explains, and Falco and
+# Carnius close it (80, ColonyState 9). PositionCell skips the locked door.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_supply_route --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_thief
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+expect GetJournalIndex CO_6 == 10
+ask Uryn Maren
+expect GetJournalIndex CO_6 == 20
+bye
+run
+player->PositionCell 250 54 40 0 "Raven Rock, Uryn Maren's House"
+activate 06630511
+close ContainerMenu
+expect GetJournalIndex CO_6 == 30
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask Uryn Maren
+expect GetJournalIndex CO_6 == 40
+bye
+run
+player->PositionCell 2438 1100 12900 0 "Raven Rock, Mine"
+follow Uryn Maren
+until 1800 GetJournalIndex CO_6 == 50
+follow
+talk Uryn Maren
+ask explanation
+expect GetJournalIndex CO_6 == 60
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask Uryn Maren
+expect GetJournalIndex CO_6 == 65
+bye
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask Uryn Maren
+expect GetJournalIndex CO_6 == 70
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask Uryn Maren
+expect GetJournalIndex CO_6 == 80
+expect ColonyState == 9
+bye
+end

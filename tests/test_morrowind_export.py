@@ -475,6 +475,20 @@ def test_region_weather_names_morroblivion_weathers():
     assert any(l.startswith('Area[0].PointsHex=') for l in lines)
 
 
+def test_region_weather_without_morroblivion_names_the_type():
+    """With no Morroblivion WTHR in any master, a weather is named by its TES3 type.
+
+    See: docs/commentary/tes5_import_weather.md#morrowind-weather-types
+    """
+    from tes4_export.morrowind_region import region_records
+    ctx = MorrowindContext()
+    ctx.region_cells['red mountain region'] = ('Red Mountain Region', {(2, 6)})
+    out = region_records([_regn('Red Mountain Region', bytes([0] * 7 + [100]))], ctx)
+    lines = out[0][1]
+    assert 'RegionData[0].Weather[0].MorrowindType=7' in lines
+    assert 'RegionData[0].Weather[0].Chance=100' in lines
+
+
 def test_region_with_no_cells_is_dropped():
     """A region no cell claims has no polygon and nowhere to apply."""
     from tes4_export.morrowind_region import region_records

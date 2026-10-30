@@ -1,0 +1,36 @@
+# Tribunal "Speak to the People": Tienius Delitian, Captain of the Royal Guard
+# in the Throne Room, wants the source of the rumors about King Llethan's death
+# ("official matter": "Tell me more." 1, then "I'll take care of it." 4: 1).
+# Anrel in Llethan Manor, at disposition 70, admits spreading them (50), and
+# Tienius takes the report (100).
+# Bribes, repeated until they land, raise Anrel. Ref FormIDs carry
+# Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_dbhunt --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr05_people
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask official matter
+choose 1
+choose 4
+expect GetJournalIndex TR05_People == 1
+bye
+run
+player->PositionCell -210 885 -353 0 "Mournhold, Llethan Manor"
+until 600 "Anrel"->GetDistance player < 400
+talk Anrel
+persuade bribe100 until "Anrel"->GetDisposition >= 70
+ask King Llethan's death
+expect GetJournalIndex TR05_People == 50
+bye
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask King Llethan's death
+expect GetJournalIndex TR05_People == 100
+bye
+end

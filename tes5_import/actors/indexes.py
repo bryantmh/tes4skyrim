@@ -13,6 +13,7 @@ See: docs/commentary/tes5_import_falloutnv_actors.md
 from output_layout import assets_for
 
 from ..base.master_export import values_of
+from ..base.obstacles import index_obstacles
 from .creature_races import build_creature_death_piles, build_creature_races
 from .starts_dead import index_starts_dead
 from ..record_types.actors_falloutnv import flatten_actor_templates
@@ -70,6 +71,9 @@ def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
     n_dead = index_starts_dead(by_type, master_export)
     if n_dead:
         print(f'  Starts Dead: {n_dead} placed corpse(s) with a 0 health pool')
+    n_obstacles = index_obstacles(by_type, master_export)
+    if n_obstacles:
+        print(f'  Navmesh obstacles: {n_obstacles} script(s) only ever disable their own object')
 
     build_creature_races(by_type, writer, export_dir, master_export)
     n_piles = build_creature_death_piles(writer)

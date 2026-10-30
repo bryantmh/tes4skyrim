@@ -8,7 +8,7 @@ window on the player's screen, no sound, no input, no keystroke bootstrap, and
 nothing written to the player's install, INIs, saves or logs.
 
 ```bash
-python -m tools.live.test_instance build      # once, and after a bridge rebuild
+python -m tools.live.test_instance build      # once, and after any rebuild (see below)
 python -m tools.live.test_instance launch
 python -m tools.live.test_instance smoke      # coc, no pausing menu, time runs, screenshot
 python -m tools.live.test_instance menus | shot | status | close <Menu> | stop
@@ -25,8 +25,18 @@ passes with 0, 10 and 20 s spent at the main menu first.
 files of the Steam install: the exe, the game-root DLLs, the five masters,
 `_ResourcePack`, `MarketplaceTextures.bsa` and the `Skyrim - *.bsa` archives,
 plus SKSE, the Address Library bin, the game bridge and any `--plugin`.
+SKSE's Papyrus scripts come from its release archive, extracted once into
+`C:\Other Games\Skyrim Test\_skse` (`SKSE_RELEASE`): without them every
+converted script's SKSE call (`RegisterForModEvent`, `Math.LeftShift`) fails
+in the instance, as it never does in a player's game.
 Creation Club content, ENB, `winhttp.dll` loaders, the CK and every other mod
 stay out. Hard links cost no disk and leave the install untouched.
+
+**Re-run `build` with the same `--mod`s after every import or new sidecar
+table.** The importer writes a new file rather than rewriting the old one, so
+the instance's link keeps pointing at the previous build, and a file new to
+the output is never linked at all. Show of Power ran on the old masters this
+way, with no `cell_regions.txt`, and its weather never changed.
 
 The exe is the unpacked `SkyrimSE.1.6.1170.unpacked.exe` from the depot
 folder; `build --steam-exe` switches to Steam's. Both reach the main menu

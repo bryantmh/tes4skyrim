@@ -5165,6 +5165,37 @@ class TestRegionWeatherConversion:
         assert struct.unpack('<I', rpli)[0] == 1024
         assert len(_find_subrecord(out, b'RPLD')) == 32   # 4 points x 8 bytes
 
+    def test_morrowind_type_takes_its_vanilla_stand_in(self):
+        """A weather named by TES3 type lands on its census pick, Blight on Dragonborn's ash storm.
+
+        See: docs/commentary/tes5_import_weather.md#morrowind-weather-types
+        """
+        from tes5_import.record_types.region import convert_REGN
+        from tes5_import.record_types.weather_morrowind import set_weather_masters
+        set_weather_masters(['Skyrim.esm', 'Dragonborn.esm', 'Morrowind.esm'])
+        try:
+            out = convert_REGN(self._rec(**{
+                'RegionData[1].Weather[0].FormID': None,
+                'RegionData[1].Weather[0].MorrowindType': '0',
+                'RegionData[1].Weather[1].FormID': None,
+                'RegionData[1].Weather[1].MorrowindType': '7'}))
+        finally:
+            set_weather_masters([])
+        rdwt = _find_subrecord(out, b'RDWT')
+        assert struct.unpack_from('<I', rdwt, 0)[0] == 0x0000081A
+        assert struct.unpack_from('<I', rdwt, 12)[0] == 0x01032336
+
+    def test_weather_masters_add_dragonborn_after_skyrim(self, tmp_path):
+        """Only a region naming ash or blight by type makes Dragonborn.esm a master."""
+        from tes5_import.record_types.weather_morrowind import with_weather_masters
+        (tmp_path / 'REGN.txt').write_text(
+            'RegionData[0].Weather[0].MorrowindType=6\n', encoding='utf-8')
+        assert with_weather_masters(['Skyrim.esm', 'Morrowind.esm'], str(tmp_path)) == [
+            'Skyrim.esm', 'Dragonborn.esm', 'Morrowind.esm']
+        (tmp_path / 'REGN.txt').write_text(
+            'RegionData[0].Weather[0].MorrowindType=0\n', encoding='utf-8')
+        assert with_weather_masters(['Skyrim.esm'], str(tmp_path)) == ['Skyrim.esm']
+
     def test_non_weather_entries_are_dropped(self):
         from tes5_import.record_types.region import convert_REGN
         out = convert_REGN(self._rec())

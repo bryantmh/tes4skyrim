@@ -54,9 +54,6 @@ void PrintState() {
     for (const ChoiceLine& choice : State().choices) {
         std::printf("  choice %d: %s\n", choice.index, choice.text.c_str());
     }
-    for (const std::string& topic : State().addedTopics) {
-        std::printf("  topic: %s\n", topic.c_str());
-    }
     for (const std::string& message : State().messages) {
         std::printf("  message: %s\n", message.c_str());
     }
@@ -233,6 +230,43 @@ void AiAndDeathCases(DialogueContext& context, const GameActor& actor) {
     State().Deserialize(saved);
     Check(State().AiSetting("test_actor", kAiFight) == 80,
           "an AI setting survives a save and load");
+}
+
+std::string g_weatherRegion;
+int g_weatherType = -1;
+std::vector<int> g_regionChances;
+
+void RecordWeather(const std::string& region, int type) {
+    g_weatherRegion = region;
+    g_weatherType = type;
+}
+
+void RecordChances(const std::string& region, const std::vector<int>& chances) {
+    g_weatherRegion = region;
+    g_regionChances = chances;
+}
+
+int AshNow() { return 6; }
+
+// ChangeWeather and ModRegion hand their region and numbers to the game in
+// the order written; GetCurrentWeather answers the sky's own TES3 type.
+void WeatherCases(DialogueContext& context) {
+    std::printf("region weather\n");
+    Hooks().changeWeather = RecordWeather;
+    Hooks().modRegion = RecordChances;
+    Hooks().weatherType = AshNow;
+    RunResultScript("ChangeWeather \"Mournhold Region\" 6", context);
+    Check(g_weatherRegion == "Mournhold Region" && g_weatherType == 6,
+          "ChangeWeather passes its region and type");
+    RunResultScript("ModRegion \"Mournhold Region\" 15 30 15 20 10 10 0 120", context);
+    Check(g_regionChances == std::vector<int>({15, 30, 15, 20, 10, 10, 0, 100}),
+          "ModRegion passes its chances in order, clamped to 100");
+    RunResultScript("set TestGlobal to GetCurrentWeather", context);
+    Check(State().Global("TestGlobal") == 6.0f,
+          "GetCurrentWeather answers the sky's TES3 type");
+    Hooks().changeWeather = nullptr;
+    Hooks().modRegion = nullptr;
+    Hooks().weatherType = nullptr;
 }
 
 std::string TestCell();
@@ -829,6 +863,19 @@ void DeathOnUnloadCases() {
     TickObjectScripts(TickDelta());
     Check(State().Var("scripts.esm|00C001", "deaddone") == 1.0f,
           "and it can die AGAIN after a load");
+
+    // `Resurrect` re-arms it: ColonySpriggan1 counts three deaths of one body.
+    std::printf("a resurrected actor raises OnDeath again\n");
+    State().SetVar("scripts.esm|00C001", "deaddone", 0.0f);
+    TickObjectScripts(TickDelta());
+    Check(State().Var("scripts.esm|00C001", "deaddone") == 0.0f,
+          "lying dead raises nothing more");
+    g_actorDead = false;
+    TickObjectScripts(TickDelta());
+    g_actorDead = true;
+    TickObjectScripts(TickDelta());
+    Check(State().Var("scripts.esm|00C001", "deaddone") == 1.0f,
+          "the second death raises OnDeath");
 
     g_actorDead = false;
     Hooks().isDead = nullptr;
@@ -2006,6 +2053,7 @@ void Cases() {
     RankNameCases(context);
     CoSaveCases(context);
     AiAndDeathCases(context, actor);
+    WeatherCases(context);
     GlobalScriptCases(context);
     SharedLocalsCases(context);
     StartScriptCases();
@@ -2034,8 +2082,13 @@ void Cases() {
     Check(State().JournalIndex("ms_test") == 10, "journal index is 10");
     Check(State().choices.size() == 2 && State().choices[1].index == 2,
           "two choices, second answers 2");
-    Check(State().addedTopics.size() == 1, "one topic added");
+    Check(State().KnowsTopic("little secret"), "the topic is learned at once");
     Check(State().goodbye, "goodbye said");
+
+    std::printf("AddTopic outside a conversation outlasts the next one\n");
+    Check(RunResultScript("AddTopic \"museum of artifacts\"\n", context), "compiles and runs");
+    State().BeginConversation();
+    Check(State().KnowsTopic("museum of artifacts"), "still known once a conversation begins");
 
     std::printf("journal only rises; SetJournalIndex always sets\n");
     RunResultScript("Journal MS_Test 5", context);
@@ -2157,12 +2210,9 @@ int SweepObjects(const char* root) {
     std::size_t total = 0, failed = 0;
     for (const auto& entry : ScriptSources()) {
         ++total;
-        if (!EnsureObjectScript(entry.first, entry.second) && ++failed <= 40) {
+        if (!EnsureObjectScript(entry.first, entry.second)) {
+            ++failed;
             std::printf("--- FAILED %s\n", entry.first.c_str());
-            LogToStdout(true);
-            ClearObjectPrograms();
-            EnsureObjectScript(entry.first, entry.second);
-            LogToStdout(false);
         }
         if (total % 500 == 0) {
             std::printf("... %zu compiled, %zu failed\n", total, failed);
@@ -2178,7 +2228,7 @@ int SweepObjects(const char* root) {
 int main(int argc, char** argv) {
     if (argc > 2 && std::string(argv[1]) == "--sweep") return Sweep(argv[2]);
     if (argc > 2 && std::string(argv[1]) == "--sweep-objects") {
-        LogToStdout(false);
+        LogToStdout(true);
         return SweepObjects(argv[2]);
     }
     LogToStdout(true);

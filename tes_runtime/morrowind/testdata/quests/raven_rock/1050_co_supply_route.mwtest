@@ -1,0 +1,59 @@
+# Bloodmoon "Supply Route Problems", Falco's side: the new supply ship's
+# captain, Baro Egnatius, wants extra payment. Apronia gives the player
+# Elberoth's saber; Baro, seeing it drawn within 512 units (ColonyBaro's
+# saberout), thinks the player killed Elberoth and backs down. EquipItem and
+# SetAlert stand in for the player drawing the saber.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_setting_up_shop --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_supply_route
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+ask extra payment
+expect GetJournalIndex CO_5 == 20
+bye
+run
+player->Position -199000 156900 300 0
+until 600 "Baro Egnatius"->GetDistance player < 400
+talk Baro Egnatius
+ask extra payment
+expect GetJournalIndex CO_5 == 30
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask extra payment
+expect GetJournalIndex CO_5 == 40
+bye
+until 600 "Apronia Alfena"->GetDistance player < 1500
+talk Apronia Alfena
+ask Elberoth
+ask his saber
+expect GetJournalIndex CO_5 == 50
+bye
+talk Falco Galenus
+ask Elberoth
+expect GetJournalIndex CO_5 == 55
+bye
+run
+player->Position -199000 156900 300 0
+until 600 "Baro Egnatius"->GetDistance player < 400
+console player.equipitem 0641C122
+console player.setalert 1
+until 600 "Baro Egnatius".saberout == 1
+talk Baro Egnatius
+ask his saber
+expect GetJournalIndex CO_5 == 60
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask extra payment
+expect GetJournalIndex CO_5 == 80
+bye
+end

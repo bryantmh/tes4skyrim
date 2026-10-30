@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from asset_convert.collision import collision_extract as ce
 from tes5_import.navmesh import world
+from tes5_import.base.obstacles import index_obstacles
 from tes5_import.navmesh.pool import build_base_model_index, model_key
 from tes5_import.base.text_reader import (
     parse_export_directory, group_records_by_type, get_float, get_formid,
@@ -29,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from output_layout import assets_for
 
 _TYPES = {'CELL', 'REFR', 'PGRD', 'LAND', 'STAT', 'CONT', 'FURN', 'ACTI',
-          'TREE', 'FLOR', 'DOOR', 'WRLD'}
+          'TREE', 'FLOR', 'DOOR', 'WRLD', 'SCPT'}
 
 
 _BY_TYPE_MEMO = {}
@@ -90,37 +91,36 @@ def _guard_ram(cache_path):
 
 
 def load_by_type(export_dir, reindex=False):
-    """Parsed export records grouped by type, CACHED to disk AND in-process.
+    """Parsed export records grouped by type, cached to disk and memoized per process.
 
-    Parsing the export is ~78s single-threaded (1.1M records) and every tool here
-    needs it, so a re-render used to cost more in parsing than in rendering.  The
-    parsed slices are pickled next to the export and reused.
-
-    The in-process memo is NOT an optimisation, it is a safety belt: the pickle
-    is ~2 GB on disk and expands to several GB of live objects, so a caller that
-    loads two cells in one process (a profiling sweep, a batch compare) used to
-    allocate a SECOND independent multi-GB graph and could exhaust RAM and wedge
-    the machine into swap.  One graph per (dir, process), shared by every caller.
+    One graph per (dir, process): the pickle expands to several GB, so a second
+    copy can exhaust RAM. The import's obstacle index is built from it, so
+    carving matches the import.
+    See: docs/commentary/tes5_import_navmesh.md#scripted-blockers-are-obstacles
     """
     key = os.path.abspath(export_dir)
     if not reindex and key in _BY_TYPE_MEMO:
         return _BY_TYPE_MEMO[key]
+    by_type = _read_by_type(export_dir, reindex)
+    index_obstacles(by_type, None)
+    _BY_TYPE_MEMO[key] = by_type
+    return by_type
 
+
+def _read_by_type(export_dir, reindex):
+    """The pickled slices when they hold exactly `_TYPES`, else a fresh parse written back."""
     cache = os.path.join(export_dir, 'navmesh_index.pkl')
     if os.path.exists(cache) and not reindex:
         _guard_ram(cache)
         with open(cache, 'rb') as fh:
-            by_type = pickle.load(fh)
-        _BY_TYPE_MEMO[key] = by_type
-        return by_type
-
+            stored = pickle.load(fh)
+        if isinstance(stored, tuple) and stored[0] == sorted(_TYPES):
+            return stored[1]
     t0 = time.time()
-    recs = parse_export_directory(export_dir, type_filter=_TYPES)
-    by_type = group_records_by_type(recs)
+    by_type = group_records_by_type(parse_export_directory(export_dir, type_filter=_TYPES))
     with open(cache, 'wb') as fh:
-        pickle.dump(by_type, fh, pickle.HIGHEST_PROTOCOL)
+        pickle.dump((sorted(_TYPES), by_type), fh, pickle.HIGHEST_PROTOCOL)
     print('indexed export in %.0fs -> %s' % (time.time() - t0, cache))
-    _BY_TYPE_MEMO[key] = by_type
     return by_type
 
 

@@ -1,0 +1,68 @@
+# Tribunal "Evidence of Conspiracy": Tienius Delitian sends the player to search
+# Llethan Manor ("evidence of conspiracy", "I'll take care of it." 1: 1). The
+# letter on the desk there logs 50 when read (Alen_note), and Tienius, shown
+# it, hands over three writs ("I'll take care of it." 4: 70). Each target's
+# death with a writ out logs its _A entry (WritBerano, WritHloggar, WritAlen):
+# Forven Berano in the Temple Courtyard, Hloggar the Bloody in the West Sewers,
+# Bedal Alen at the Bookseller. With all three dead, Tienius pays in full (170).
+# The kills stand in for the fights; `defend` takes anyone who joins in. Ref
+# FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr07_guard --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr08_hlaalu
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask evidence of conspiracy
+choose 1
+expect GetJournalIndex TR08_Hlaalu == 1
+bye
+run
+player->PositionCell 588 1546 -318 0 "Mournhold, Llethan Manor"
+until 300 GetPCCell "Mournhold, Llethan Manor" == 1
+until 600 "bk_Alen_note"->GetDisabled == 0
+activate 063582E9
+close Book Menu
+until 300 GetJournalIndex TR08_Hlaalu == 50
+take 063582E9
+until 300 player->GetItemCount "bk_Alen_note" == 1
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask evidence of conspiracy
+choose 4
+expect GetJournalIndex TR08_Hlaalu == 70
+bye
+defend
+run
+player->PositionCell 952 2943 161 0 "Mournhold, Temple Courtyard"
+until 300 GetPCCell "Mournhold, Temple Courtyard" == 1
+until 600 "Forven Berano"->GetDistance player < 1500
+wait 300
+console 06B2EB1E.kill
+until 600 GetJournalIndex TR08_Hlaalu_Berano_A >= 1
+run
+player->PositionCell -224 11979 -883 0 "Old Mournhold: West Sewers"
+until 300 GetPCCell "Old Mournhold: West Sewers" == 1
+until 600 "Hloggar the Bloody"->GetDistance player < 1500
+wait 300
+console 0646A0F7.kill
+until 600 GetJournalIndex TR08_Hlaalu_Hloggar_A >= 1
+run
+player->PositionCell 138 202 -97 0 "Mournhold, Bookseller"
+until 300 GetPCCell "Mournhold, Bookseller" == 1
+until 600 "Bedal Alen"->GetDistance player < 1500
+wait 300
+console 06EF639A.kill
+until 600 GetJournalIndex TR08_Hlaalu_Alen_A >= 1
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask evidence of conspiracy
+expect GetJournalIndex TR08_Hlaalu == 170
+bye
+end

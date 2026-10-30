@@ -1,0 +1,37 @@
+# Tribunal "The Barbarian and the Book": Thrud in Godsreach greets the player
+# about his friend Dilborn (10) and, asked to help ("Dilborn", choice 1), follows
+# (20). Drathas Nerus holds Dilborn in the Residential Sewers for a gambling debt
+# (30). Refusing to pay ("Let him go now or feel my wrath.", choice 3) starts the
+# fight; once Drathas, Melur Savil and Alam Merys are dead with Thrud and
+# Dilborn alive, dilbornScript logs 160.
+# Kills stand in for the fight, before the menu closes: Melur and Alam go for
+# Dilborn at once, and his death logs 150 instead (measured). Ref FormIDs carry
+# Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_black_dart --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_barbarian_book
+run
+player->PositionCell 133 74 106 0 "Mournhold, Godsreach"
+until 600 "thrud"->GetDistance player < 400
+talk thrud
+expect GetJournalIndex MS_BarbarianBook == 10
+ask Dilborn
+choose 1
+expect GetJournalIndex MS_BarbarianBook == 20
+bye
+run
+player->PositionCell -212 6000 746 0 "Old Mournhold: Residential Sewers"
+until 300 GetPCCell "Old Mournhold: Residential Sewers" == 1
+until 600 "drathas nerus"->GetDistance player < 400
+talk drathas nerus
+expect GetJournalIndex MS_BarbarianBook == 30
+ask owe me money
+choose 3
+console 067D404C.kill
+console 06AB1305.kill
+console 066FFF12.kill
+bye
+defend
+until 900 GetJournalIndex MS_BarbarianBook == 160
+end

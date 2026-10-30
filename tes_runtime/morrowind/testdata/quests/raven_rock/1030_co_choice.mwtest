@@ -1,0 +1,20 @@
+# Bloodmoon "Making a Choice": once the supply ship is found, Falco asks the
+# player to help him keep Carnius in check. The player sides with Falco
+# (ColonySide 1), which routes every later assignment through him.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_survivor --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_choice
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask crossroads
+ask aiding me
+expect GetJournalIndex CO_Choice == 22
+ask aiding me
+choose 1
+expect GetJournalIndex CO_Choice == 40
+expect ColonySide == 1
+bye
+end

@@ -2,7 +2,8 @@
 
 Morrowind has no weather records: the engine hardcodes ten weather types and a
 region's WEAT subrecord is one chance byte per type. Morroblivion already
-authored all ten as real WTHR records, so a region converts by naming those.
+authored all ten as real WTHR records, so a region converts by naming those;
+without them it names the bare type, which the import places.
 
 See: docs/commentary/tes4_export_morrowind.md#region-weather
 """
@@ -29,18 +30,20 @@ _EDGE_FALLOFF = 1024
 
 
 def _weather_list(weat: bytes, ctx) -> list:
-    """(FormID, chance) for every weather type this region authors.
+    """(KEY=VALUE naming the weather, chance) for every type this region authors.
 
-    A chance of zero is dropped rather than emitted: the entry would claim a
-    weather the region never rolls.
+    A master's Morroblivion WTHR is named by FormID; without one the TES3
+    type itself is written, for the import to place. A chance of zero is
+    dropped rather than emitted: the entry would claim a weather the region
+    never rolls.
     """
     entries = []
     for index, chance in enumerate(weat[:len(WEATHER_EDITOR_IDS)]):
         if not chance:
             continue
         form_id = ctx.index.lookup_editor_id(WEATHER_EDITOR_IDS[index])
-        if form_id:
-            entries.append((form_id, chance))
+        entries.append((f'FormID={form_id}' if form_id
+                        else f'MorrowindType={index}', chance))
     return entries
 
 
@@ -65,8 +68,8 @@ def _polygon(grids) -> str:
 def _weather_lines(weathers: list) -> list:
     """The RegionData[0] weather entries, as KEY=VALUE lines."""
     lines = [f'RegionData[0].WeatherCount={len(weathers)}']
-    for i, (form_id, chance) in enumerate(weathers):
-        lines.append(f'RegionData[0].Weather[{i}].FormID={form_id}')
+    for i, (weather, chance) in enumerate(weathers):
+        lines.append(f'RegionData[0].Weather[{i}].{weather}')
         lines.append(f'RegionData[0].Weather[{i}].Chance={chance}')
     return lines
 

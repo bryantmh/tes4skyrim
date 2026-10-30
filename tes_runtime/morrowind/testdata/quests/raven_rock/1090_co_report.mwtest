@@ -1,0 +1,48 @@
+# Bloodmoon "Race Against the Clock", Falco's side: Falco hands the player the
+# colony report, due to Carnius within five game hours (ColonyReportTimer).
+# The timer sends Carnius to one of three places at random (Carniusloc);
+# Constans in the shrine says which (20, 30 or 40). The player is placed beside
+# Carnius wherever he went, hands it over (50), and Falco closes it (60).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_discovery --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_report
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+ask report
+expect GetJournalIndex CO_9 == 10
+expect player->GetItemCount "bk_colonyreport" == 1
+bye
+run
+player->PositionCell 3411 4000 16401 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Constans Atrius"->GetDistance player < 400
+talk Constans Atrius
+ask report
+expect GetJournalIndex CO_9 >= 20
+bye
+run
+player->Position -197200 160250 870 0
+until 300 GetPCCell "Fort Frostmoth" == 0
+run
+set TestResult to ( "Carnius Magius"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Carnius Magius"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Carnius Magius"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask report
+expect GetJournalIndex CO_9 == 50
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask report
+expect GetJournalIndex CO_9 == 60
+bye
+end

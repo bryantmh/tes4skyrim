@@ -1,0 +1,48 @@
+# Morroblivion from New Game: the game selector hands off to fbmwChargen stage 1 (the prison ship: Jiub speaks three
+# times with the player's controls off, then looks at the guard) and pops the RaceSex Menu.
+# Stages are fbmwChargen's (TES4 numbers): 1 ship, 5 off the ship, 10 class menu, 20 birthsign menu, 30 after Sellus
+# Gravius, 100 arrived. The quest script's own counters (JiubSpeak, Guard01Stage, GuardDockStage, CensusStage,
+# ClassQuizStage) step through each conversation.
+# Drafted, not yet run.
+# Run: python -m tools.live.test_instance questtest --cases <this folder> --new-game 3 --fast --checkpoints --stop-on-fail --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case mb_chargen_ship
+until 900 GetStage fbmwChargen >= 1
+end
+
+# Menu expected: "RaceSex Menu" (TESGameSelect BeginChosenGame calls Game.ShowRaceMenu 0.5 s after the hand-off).
+case mb_chargen_race_menu
+wait 60
+close RaceSex Menu
+end
+
+# Jiub's three lines, then he looks at the guard (JiubSpeak -1).
+case mb_chargen_jiub
+until 1800 fbmwChargen.JiubSpeak == -1
+end
+
+# Jiub's second line sets Guard01Stage 1 and starts the guard's move; at its end the guard speaks (2, 3), the player's
+# controls come back and the guard turns to his escort (4).
+case mb_chargen_guard
+until 3600 fbmwChargen.Guard01Stage >= 4
+end
+
+# The player goes up through the hatch and down to the dock, where the dock guard's trigger zone (01F8E963, no
+# EditorID) stops the player for his two lines; moveto stands in for the walk.
+case mb_chargen_dock
+run
+player.moveto 01F8E963
+until 1800 fbmwChargen.GuardDockStage >= 4
+end
+
+# In the Census and Excise Office the trigger zone (01F8E962) hands the player to Socucius Ergalla, who offers the
+# class quiz; the player skips it (button 1 of "Take Quiz|Skip Quiz"), and stage 10 opens the class menu.
+case mb_chargen_census
+run
+player.moveto 01F8E962
+until 1800 fbmwChargen.ClassQuizStage >= 1
+wait 120
+button 1
+until 1800 GetStage fbmwChargen >= 10
+end

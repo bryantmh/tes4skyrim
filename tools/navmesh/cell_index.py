@@ -27,7 +27,7 @@ SHARED = ('base_model', 'door_fids', 'cells')
 SCHEMA = 5
 
 #: Version of the stored `base_model` table; a mismatch rewrites that row alone.
-BASES = 2
+BASES = 3
 
 
 def db_path(export):

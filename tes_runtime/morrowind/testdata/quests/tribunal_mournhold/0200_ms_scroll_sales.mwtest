@@ -1,0 +1,56 @@
+# Tribunal "Scroll Sales": Ten-Tongues Weerhat at the Pawnbroker sells cheap
+# scrolls. At disposition 60 she mentions the offers (10); at 70, asking where
+# they come from (choice 3) logs 20 and names Ahnia; at 85 she admits Ahnia's
+# hideout in the Bazaar Sewers (30, ScrollSales). Reading Ahnia's note there
+# logs 35 and Ahnia force-greets (AhniaNote); the note ("Book Menu") opens under
+# her greeting. Her death logs 40 (AhniaDead).
+# Ten-Tongues then hands over Elbert Nermarc's stolen notes (60), and Elbert,
+# given them back, logs 100.
+# Bribes, repeated until they land, raise Ten-Tongues from her base 50; the kill
+# stands in for the fight. Ref FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_job_hunt --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_scroll_sales
+run
+player->PositionCell -29 203 -365 0 "Mournhold, Pawnbroker"
+until 600 "Ten-Tongues_Weerhat"->GetDistance player < 400
+talk Ten-Tongues_Weerhat
+persuade bribe100 until "Ten-Tongues_Weerhat"->GetDisposition >= 85
+ask Special Offers
+expect GetJournalIndex MS_ScrollSales >= 10
+ask Special Offers
+choose 3
+expect GetJournalIndex MS_ScrollSales == 20
+ask Ahnia
+expect GetJournalIndex MS_ScrollSales == 30
+bye
+run
+player->PositionCell 1460 -2200 -255 0 "Old Mournhold: Bazaar Sewers"
+until 300 GetPCCell "Old Mournhold: Bazaar Sewers" == 1
+until 600 "bk_ahnia"->GetDisabled == 0
+activate 062188FE
+until 300 GetJournalIndex MS_ScrollSales == 35
+until 600 MenuMode == 1
+bye
+close Book Menu
+defend
+console 069F29B0.kill
+until 600 GetJournalIndex MS_ScrollSales == 40
+run
+player->PositionCell -29 203 -365 0 "Mournhold, Pawnbroker"
+until 600 "Ten-Tongues_Weerhat"->GetDistance player < 400
+talk Ten-Tongues_Weerhat
+ask Ahnia
+expect GetJournalIndex MS_ScrollSales == 60
+expect player->GetItemCount "bk_nermarcnotes" == 1
+bye
+run
+player->PositionCell 100 0 146 0 "Mournhold, Craftsmen's Hall"
+until 600 "Elbert Nermarc"->GetDistance player < 400
+talk Elbert Nermarc
+ask stolen book
+choose 1
+expect GetJournalIndex MS_ScrollSales == 100
+bye
+end

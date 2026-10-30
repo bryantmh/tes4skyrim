@@ -69,9 +69,7 @@ float StateValue(const std::string& key, const std::string& cell) {
     if (kind == "journal") return static_cast<float>(State().JournalIndex(id));
     if (kind == "cell") return CellMatches(cell, id) ? 1.0f : 0.0f;
     if (kind == "reputation") return static_cast<float>(State().reputation);
-    if (kind == "weather" && Hooks().weather) {
-        return static_cast<float>(Tes3Weather(Hooks().weather()));
-    }
+    if (kind == "weather") return static_cast<float>(CurrentTes3Weather());
     return 0.0f;
 }
 

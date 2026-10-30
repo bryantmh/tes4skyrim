@@ -36,14 +36,17 @@ from .morrowind_placements import (PLACED_EXPORTS, SCRIPTED_EXPORTS, SCRIPTED_TY
                                    placement, rebased_formid)
 from .morrowind_sidecar_source import (forget_gathered, gather,
                                        own_dialogue_blocks, source_chain,
-                                       spell_kinds)
+                                       spell_kinds, weapon_kinds)
 from .morrowind_temples import skyrim_rows
 from ..record_types.magic_morrowind import effect_form_rows
+from ..record_types.weather_morrowind import weather_rows
+from ..actors.brawl import brawl_rows
 from ..actors.disposition import disposition_rows
 from .morrowind_teleport import (ANCHORS_TABLE, EFFECT_FORMS_TABLE, MARKERS_TABLE,
                                  TELEPORTS_TABLE, WORLDS_TABLE, marker_lines,
                                  target_lines, teleport_lines, world_lines)
-from .morrowind_travel import (EXTERIOR_NAMES_TABLE, TRAVEL_TABLE, exterior_name_lines,
+from .morrowind_travel import (CELL_REGIONS_TABLE, EXTERIOR_NAMES_TABLE, TRAVEL_TABLE,
+                               cell_region_lines, exterior_name_lines,
                                marker_index, travel_lines)
 from .say_morrowind import SAY_TABLE, say_rows
 
@@ -95,7 +98,7 @@ SKILLS_TABLE = 'SKIL.txt'
 #: Each race's starting attributes under the Skyrim races a player of it wears: `FORMID=race|male|female`.
 RACES_TABLE = 'RACE.txt'
 
-#: What AddItem and its kin need: `item id=Plugin.esm|FormID`.
+#: What AddItem and its kin need: `item id=Plugin.esm|FormID`, plus `|TES3 type` on a weapon.
 ITEMS_TABLE = 'items_formid.txt'
 
 #: What `id->Command` needs: the PLACED reference, `id=Plugin.esm|FormID`.
@@ -211,11 +214,12 @@ _INT32_MAX = 2147483647
 
 
 def _global_value(kind: str, raw: str) -> str:
-    """A GLOB's FLTV as its FNAM type reads it: `s`/`l` TRUNCATE toward zero.
+    """A GLOB's FLTV as its FNAM type reads it, as OpenMW's `floatCast` does.
 
-    TES3 stores every global's value as a float, so vanilla short globals carry
-    uninitialized junk -- `WearingOrdinatorUni` holds 7.1e-31, which must read
-    as 0 the way the engine reads it.
+    `s`/`l` truncate toward zero; out of range or NaN reads as INT32_MIN, and a
+    short keeps only its low 16 bits of that. Vanilla short globals carry
+    uninitialized junk (`WearingOrdinatorUni` 7.1e-31, `MuseumDonations`
+    7.6e+23), which must read as 0.
     See: docs/commentary/tes4_export_morrowind.md#globals-are-always-filled
     """
     if kind.lower() not in ('s', 'l'):
@@ -224,9 +228,11 @@ def _global_value(kind: str, raw: str) -> str:
         value = float(raw)
     except (TypeError, ValueError):
         return '0'
-    if math.isnan(value) or not _INT32_MIN <= value <= _INT32_MAX:
-        return str(_INT32_MIN)
-    return str(int(value))
+    whole = (_INT32_MIN if math.isnan(value) or not _INT32_MIN <= value <= _INT32_MAX
+             else int(value))
+    if kind.lower() == 's':
+        whole = (whole + 0x8000) % 0x10000 - 0x8000
+    return str(whole)
 
 
 def _state_lines(dirs: list) -> list:
@@ -545,6 +551,12 @@ def _soulgem_lines(dirs: list) -> list:
     return list(seen.values())
 
 
+def _weapon_types(gathered: dict) -> dict:
+    """`{lower weapon id: TES3 type}`, the items table's third field."""
+    return {key: str(kind) for key, kind
+            in weapon_kinds(gathered.get('table_records', [])).items()}
+
+
 def _line_ids(gathered: dict, table: str) -> dict:
     """`{lower id: id}` for a gathered table whose values are `id=...` lines."""
     return {key: line.split('=', 1)[0]
@@ -693,7 +705,8 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
                                            plugin_name))
             + _write_lines(os.path.join(out_dir, ITEMS_TABLE),
                            _owned_lines(dirs, root, ids.get('items', {}),
-                                        _ITEM_EXPORTS, _ITEM_TYPES))
+                                        _ITEM_EXPORTS, _ITEM_TYPES,
+                                        _weapon_types(ids)))
             + _write_lines(os.path.join(out_dir, REFS_TABLE),
                            _ref_lines(dirs, root, ids.get('objects', {})))
             + _write_lines(os.path.join(out_dir, BASES_TABLE),
@@ -703,7 +716,9 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
                                        _row_keeper(export_dir, plugin_name),
                                        _cell_names(ids), _wilderness(ids)))
             + _write_lines(os.path.join(out_dir, EXTERIOR_NAMES_TABLE),
-                           exterior_name_lines(ids)))
+                           exterior_name_lines(ids))
+            + _write_lines(os.path.join(out_dir, CELL_REGIONS_TABLE),
+                           cell_region_lines(ids)))
 
 
 def _export_starts(export_dir: str) -> dict:
@@ -997,7 +1012,10 @@ def _teleport_tables(export_dir: str, output_path: str, plugin_name: str,
                                           len(writer.masters)))
             + _write_lines(os.path.join(out_dir, EFFECT_FORMS_TABLE),
                            effect_form_rows(plugin_name, writer.masters)
-                           + disposition_rows(plugin_name, writer.masters)))
+                           + disposition_rows(plugin_name, writer.masters)
+                           + brawl_rows(plugin_name, writer.masters)
+                           + weather_rows(plugin_name, writer.masters,
+                                          master_index)))
 
 
 def _apparatus(export_dir: str, output_path: str, plugin_name: str,

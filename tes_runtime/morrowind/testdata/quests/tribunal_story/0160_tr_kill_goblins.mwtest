@@ -1,0 +1,50 @@
+# Tribunal "The Goblin Army": Fedris Hler in the Temple Reception Area, asked
+# about service to our Lady and the matters to discuss, tells of the king's new
+# recruits (10), the goblin army (20) and its Altmer trainers
+# (30). The second goblin warchief to die in the Tears of Amun-Shae logs 50
+# (goblinchiefScript1/2); the trainers Armion and Yarnar in Teran Hall's East
+# Building log 57 and 58 (armionScript, yarnarScript). With all four dead,
+# Fedris pays 15000 (100).
+# The kills stand in for the fights; `defend` takes the goblins that join in.
+# Ref FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr09_journalist --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_kill_goblins
+run
+player->PositionCell -116 483 -684 0 "Mournhold Temple: Reception Area"
+until 600 "fedris hler"->GetDistance player < 400
+talk fedris hler
+ask service to our Lady
+ask matters to discuss
+ask new recruits
+expect GetJournalIndex TR_KillGoblins == 10
+ask goblin army
+expect GetJournalIndex TR_KillGoblins == 20
+ask Altmer trainers
+expect GetJournalIndex TR_KillGoblins == 30
+bye
+defend
+run
+player->PositionCell -4573 2855 975 0 "Old Mournhold: Tears of Amun-Shae"
+until 300 GetPCCell "Old Mournhold: Tears of Amun-Shae" == 1
+wait 300
+console 06A5CF20.kill
+console 069D675F.kill
+until 600 GetJournalIndex TR_KillGoblins == 50
+run
+player->PositionCell 3443 2198 -346 0 "Old Mournhold: Teran Hall, East Bldg"
+until 300 GetPCCell "Old Mournhold: Teran Hall, East Bldg" == 1
+wait 300
+console 06E27A85.kill
+console 069A3FEC.kill
+until 600 GetDeadCount "armion" >= 1
+until 600 GetDeadCount "yarnar" >= 1
+run
+player->PositionCell -116 483 -684 0 "Mournhold Temple: Reception Area"
+until 600 "fedris hler"->GetDistance player < 400
+talk fedris hler
+ask goblin army
+expect GetJournalIndex TR_KillGoblins == 100
+bye
+end

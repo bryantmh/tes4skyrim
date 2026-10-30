@@ -381,7 +381,8 @@ def _take(out: dict, rec, topic: str) -> str:
 
 
 #: The tables `gather` stages as the plugin's own records alone; a master stages its own.
-_OWN_TABLES = ('npcs', 'factions', 'gmsts', 'skills', 'races', 'exteriors')
+_OWN_TABLES = ('npcs', 'factions', 'gmsts', 'skills', 'races', 'exteriors',
+               'quasi_exteriors')
 
 
 def _reset_own(out: dict) -> None:
@@ -398,7 +399,7 @@ def _own_rows(out: dict, table: str) -> dict:
 
 #: Record types `gather` keeps whole in `table_records`, for `read_tables`.
 TABLE_TYPES = frozenset({'SPEL', 'NPC_', 'CREA', 'RACE', 'CLAS', 'GMST',
-                         'SKIL', 'MGEF'})
+                         'SKIL', 'MGEF', 'WEAP'})
 
 
 #: `gather`'s one kept answer, `{(chain, whole): tables}`.
@@ -426,23 +427,39 @@ def forget_gathered(keep: tuple = ()) -> None:
         _GATHERED.clear()
 
 
-def spell_kinds(table_records: list) -> dict:
-    """`{lower spell id: SPDT type}` over the chain's SPELs, a later plugin's winning.
+def _record_kinds(table_records: list, sig: str, sub: str, layout: str) -> dict:
+    """`{lower id: last field of struct layout}` read from each `sig` record's `sub`.
 
-    The export folds blight and disease into one TES4 type, so the TES3 type
-    is read here. See: docs/commentary/morrowind_runtime.md#disease-queries
+    A later plugin's record wins; a deleted one drops its id.
     """
     kinds = {}
+    size = struct.calcsize(layout)
     for rec in table_records:
-        if rec.type != 'SPEL' or not rec.record_id:
+        if rec.type != sig or not rec.record_id:
             continue
-        spdt = get_subrecord(rec, 'SPDT')
+        data = get_subrecord(rec, sub)
         key = rec.record_id.lower()
-        if rec.deleted or spdt is None or len(spdt.data) < 4:
+        if rec.deleted or data is None or len(data.data) < size:
             kinds.pop(key, None)
         else:
-            kinds[key] = struct.unpack_from('<i', spdt.data)[0]
+            kinds[key] = struct.unpack_from(layout, data.data)[-1]
     return kinds
+
+
+def weapon_kinds(table_records: list) -> dict:
+    """`{lower weapon id: WPDT type}`, what `GetWeaponType` answers.
+
+    See: docs/commentary/morrowind_runtime.md#the-query-commands
+    """
+    return _record_kinds(table_records, 'WEAP', 'WPDT', '<fih')
+
+
+def spell_kinds(table_records: list) -> dict:
+    """`{lower spell id: SPDT type}`, a later plugin's winning.
+
+    See: docs/commentary/morrowind_runtime.md#disease-queries
+    """
+    return _record_kinds(table_records, 'SPEL', 'SPDT', '<i')
 
 
 def _gather(chain: tuple, whole: bool) -> dict:
@@ -457,7 +474,8 @@ def _gather(chain: tuple, whole: bool) -> dict:
     out = {'npcs': {}, 'races': {}, 'classes': {},
            'skills': {}, 'gmsts': {}, 'factions': {}, 'items': {},
            'objects': {}, 'sounds': {}, 'spells': {}, 'exteriors': {},
-           'regions': {}, 'cells': set(), 'table_records': []}
+           'quasi_exteriors': {}, 'regions': {}, 'cells': set(),
+           'table_records': []}
     _reset_own(out)
     for _name, path in chain:
         topic = ''

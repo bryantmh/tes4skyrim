@@ -133,13 +133,18 @@ def _close_pose_overrides(data):
 
 
 def _node_local(node, o):
-    """(local rotation, local translation) of `node`; the Close-pose override `o` wins."""
+    """(local rotation, local translation) of `node`; the Close-pose override `o` wins.
+
+    A node's stored rows are the row-vector form (`v @ R`), so they are
+    transposed into the column-vector form `quat_mat` and `_shape_box` use.
+    See: docs/commentary/tes5_import_navmesh.md#door-closed-pose-cache
+    """
     if o and o[0] is not None:
         lr = o[0]
     else:
         m = getattr(node, 'rotation', None)
-        lr = ([[m.m_11, m.m_12, m.m_13], [m.m_21, m.m_22, m.m_23],
-               [m.m_31, m.m_32, m.m_33]] if m is not None else _IDENT)
+        lr = ([[m.m_11, m.m_21, m.m_31], [m.m_12, m.m_22, m.m_32],
+               [m.m_13, m.m_23, m.m_33]] if m is not None else _IDENT)
     if o and o[1] is not None:
         return lr, o[1]
     tr = getattr(node, 'translation', None)

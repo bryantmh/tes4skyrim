@@ -1,0 +1,80 @@
+# Tribunal "The Shrine of the Dead": Gavas Drin in his office ("service to our
+# Lady": 20, "shrine has been corrupted", "Shrine of the Dead": 30, "must be
+# cleansed": 40) wants the shrine
+# beneath the Temple cleansed. The fifth Profane lich to die logs 50
+# (profaneScript). Urvel Dulni, told the Profane are dead, follows the player
+# (his greeting's AiFollow) through the Hall of Ministry, the Basement, the
+# Temple Sewers, Sewers East and the Gardens to the Temple Shrine. Within 256
+# of the player and 1028 of the shrine he force-greets, walks to it and
+# cleanses it (dulniScript: 60), and Gavas gives the Blessed Spear (100).
+# The player walks every leg so Urvel can keep up. The kills stand in for the
+# fights; `defend` takes the undead on the way. Ref FormIDs carry Tribunal.esm's
+# slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_kill_goblins --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_shrine_dead
+run
+player->PositionCell -1120 100 -229 0 "Mournhold Temple: Office of the Lord Archcanon"
+until 600 "gavas drin"->GetDistance player < 400
+talk gavas drin
+ask service to our Lady
+expect GetJournalIndex TR_ShrineDead == 20
+ask shrine has been corrupted
+ask Shrine of the Dead
+expect GetJournalIndex TR_ShrineDead == 30
+ask must be cleansed
+expect GetJournalIndex TR_ShrineDead == 40
+bye
+defend
+run
+player->PositionCell 2327 -1924 -138 0 "Old Mournhold: Temple Shrine"
+until 300 GetPCCell "Old Mournhold: Temple Shrine" == 1
+wait 300
+console 06B8DA51.kill
+console 06CE1372.kill
+console 0625A895.kill
+console 068817BE.kill
+console 069E7CBC.kill
+until 600 GetJournalIndex TR_ShrineDead == 50
+run
+player->PositionCell -1107 312 -226 0 "Mournhold Temple: Office of the Lord Archcanon"
+until 600 "urvel dulni"->GetDistance player < 400
+talk urvel dulni
+bye
+walk 768 1600 -128
+activate 065292A7
+until 300 GetPCCell "Mournhold Temple: Hall of Ministry" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk 2048 -192 -384
+activate 062C7442
+until 300 GetPCCell "Mournhold Temple: Basement" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk -18 1040 -128
+activate 06672804
+until 300 GetPCCell "Old Mournhold: Temple Sewers" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk 3367 -2050 -97
+activate 068040CD
+until 300 GetPCCell "Old Mournhold: Temple Sewers East" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk 5649 10940 11938
+activate 06BE8D86
+until 300 GetPCCell "Old Mournhold: Temple Gardens" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk 1217 -3260 13
+activate 067EEA5A
+until 300 GetPCCell "Old Mournhold: Temple Shrine" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk 2000 -2300 -170
+until 900 MenuMode == 1
+bye
+until 1800 GetJournalIndex TR_ShrineDead == 60
+run
+player->PositionCell -1120 100 -229 0 "Mournhold Temple: Office of the Lord Archcanon"
+until 600 "gavas drin"->GetDistance player < 400
+talk gavas drin
+ask Shrine of the Dead
+expect GetJournalIndex TR_ShrineDead == 100
+bye
+end

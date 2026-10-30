@@ -303,23 +303,32 @@ BOUNDS_SCHEMA_VERSION = 4
 _BOUNDS_SCHEMA_KEY = '__schema__'
 
 #: Bumped when a door axis entry gains a field or a field changes meaning, or the reader measures more doors.
-DOOR_AXIS_SCHEMA_VERSION = 3
+DOOR_AXIS_SCHEMA_VERSION = 4
 
 
-def door_axis_cache_is_current(axis_cache: str) -> bool:
-    """True if the door axis cache exists AND was written at this schema.
+#: Axis-cache key listing the door meshes the scan measured, so a later mesh extraction re-measures.
+_DOOR_MESHES_KEY = '__meshes__'
+
+
+def door_axis_cache_is_current(axis_cache: str, export_plugin_dir: str = None) -> bool:
+    """True if the door axis cache exists, was written at this schema, and measured the doors there now.
 
     Entries are plain lists, so one written before a field existed loads
-    cleanly and silently contributes no center and no floor drop.
+    cleanly and silently contributes no center and no floor drop. With
+    `export_plugin_dir`, a cache that measured a different set of door meshes
+    (one written before the meshes were extracted) is stale too.
     See: docs/commentary/tes5_import_pipeline.md#phase-0-stale-bounds-cache
     """
     try:
         with open(axis_cache, encoding='utf-8') as fh:
             raw = json.load(fh)
-        return int(raw[_BOUNDS_SCHEMA_KEY][0]) >= DOOR_AXIS_SCHEMA_VERSION
+        current = int(raw[_BOUNDS_SCHEMA_KEY][0]) >= DOOR_AXIS_SCHEMA_VERSION
     except (OSError, json.JSONDecodeError, ValueError, KeyError,
             TypeError, IndexError):
         return False
+    if not current or export_plugin_dir is None:
+        return current
+    return raw.get(_DOOR_MESHES_KEY) == sorted(key for _path, key in _door_axis_jobs(export_plugin_dir))
 
 
 def bounds_cache_is_current(bounds_cache: str) -> bool:
@@ -911,6 +920,7 @@ def scan_door_axes(export_plugin_dir: str, dest: str,
     os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
     n = len(out)
     out[_BOUNDS_SCHEMA_KEY] = [DOOR_AXIS_SCHEMA_VERSION]
+    out[_DOOR_MESHES_KEY] = sorted(key for _path, key in jobs)
     with open(dest, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, indent=0, sort_keys=True)
     print(f"  Door axes: {n} / {len(jobs)} door meshes classified")

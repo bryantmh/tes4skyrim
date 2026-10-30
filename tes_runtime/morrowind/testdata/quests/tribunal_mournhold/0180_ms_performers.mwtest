@@ -1,0 +1,50 @@
+# Tribunal "A Star is Born": Meryn Othralas in the Great Bazaar needs a stand-in
+# for his lead ("looks like Tarvus", choice 1: the playscript, 10); greeting him
+# with it opens the play (30). The player must stand within 100 units of the
+# stage marker inside 15 s (else 150, playScript), then picks each line from a
+# message box while Gureryne speaks hers: buttons 0, 2, 1, 2, 0, 1, 0 and 2,
+# the authored right ones. Dravil Indrano, an assassin in the audience, then
+# attacks; his death logs 50 (dravilScript). Meryn explains ("Go on." 1,
+# "Continue" 5) and pays by the misses (120).
+# The kill stands in for the fight. Ref FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_warlords --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_performers
+run
+player->PositionCell -1339 -260 93 0 "Mournhold, Great Bazaar"
+until 600 "meryn othralas"->GetDistance player < 400
+talk meryn othralas
+ask its own drama
+ask looks like Tarvus
+choose 1
+expect GetJournalIndex MS_Performers == 10
+bye
+talk meryn othralas
+expect GetJournalIndex MS_Performers == 30
+bye
+run
+player->PositionCell -1689 -30 116 0 "Mournhold, Great Bazaar"
+button 0
+button 2
+button 1
+button 2
+button 0
+button 1
+button 0
+button 2
+defend
+until 300 "dravil indrano"->GetDisabled == 0
+console 06851A54.kill
+until 600 GetJournalIndex MS_Performers == 50
+run
+player->PositionCell -1339 -260 93 0 "Mournhold, Great Bazaar"
+until 600 "meryn othralas"->GetDistance player < 400
+talk meryn othralas
+ask assassin would attack
+choose 1
+choose 5
+expect GetJournalIndex MS_Performers == 120
+expect "meryn othralas".missCounter == 0
+bye
+end

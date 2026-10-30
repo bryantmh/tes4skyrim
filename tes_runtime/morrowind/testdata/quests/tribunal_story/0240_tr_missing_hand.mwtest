@@ -1,0 +1,42 @@
+# Tribunal "The Missing Hand": Almalexia's greeting after A Show of Power names
+# her Missing Hand; asked, she tells of Salas Valor ("Continue" 1: 1). Salas
+# Valor in Godsreach greets the player, attacks and says goodbye (10). Killed,
+# he sets 90 (SalasDead); Almalexia then grants a gift ("Skin like iron" 2:
+# 100), which TR_Blade waits on.
+# Ref FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_show_power --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_missing_hand
+run
+player->PositionCell 1 49 -659 0 "Mournhold Temple: High Chapel"
+until 600 "almalexia"->GetDistance player < 400
+talk almalexia
+ask missing Hand
+choose 1
+expect GetJournalIndex TR_MissingHand_02 == 1
+bye
+run
+player->PositionCell 1862 -2774 88 0 "Mournhold, Godsreach"
+until 300 GetPCCell "Mournhold, Godsreach" == 1
+wait 300
+set TestResult to ( "Salas Valor"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "Salas Valor"->GetPos y )
+set TestResult to ( TestResult + 100 )
+player->SetPos y TestResult
+until 600 "Salas Valor"->GetDistance player < 400
+talk Salas Valor
+expect GetJournalIndex TR_MissingHand_02 == 10
+bye
+console 06DA606D.damageav health 10000
+until 600 GetJournalIndex TR_MissingHand_02 == 90
+run
+player->PositionCell 1 49 -659 0 "Mournhold Temple: High Chapel"
+until 600 "almalexia"->GetDistance player < 400
+talk almalexia
+ask missing Hand
+choose 2
+expect GetJournalIndex TR_MissingHand_02 == 100
+bye
+end

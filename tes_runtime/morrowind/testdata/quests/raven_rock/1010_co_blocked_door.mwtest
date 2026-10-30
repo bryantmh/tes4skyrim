@@ -1,0 +1,67 @@
+# Bloodmoon "A Blocked Door": three days after the mine opens (ColonyTimer),
+# Carnius sends the player to Falco. Hroldar the Strange refuses to leave,
+# Falco allows a fistfight. The brawl is switched off until its stamina rules
+# are chosen, so the case takes the quest's other path: Hroldar dies (journal
+# 60), Falco is angry (80), Carnius closes it (100). `sleep` passes the days.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_bm_wildhunt --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_blocked_door
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+until 600 ColonyState == 2
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask assignment
+expect GetJournalIndex CO_2 == 10
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+ask get rid of him
+expect GetJournalIndex CO_2 == 20
+bye
+run
+player->Position -198100 160900 975 0
+until 600 "Hroldar the Strange"->GetDistance player < 400
+talk Hroldar the Strange
+expect GetJournalIndex CO_2 == 30
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask get rid of him
+expect GetJournalIndex CO_2 == 40
+bye
+run
+player->Position -198100 160900 975 0
+until 600 "Hroldar the Strange"->GetDistance player < 400
+console 06EE657A.kill
+until 600 GetJournalIndex CO_2 == 60
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask get rid of him
+expect GetJournalIndex CO_2 == 80
+bye
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask assignment
+expect GetJournalIndex CO_2 == 100
+bye
+end

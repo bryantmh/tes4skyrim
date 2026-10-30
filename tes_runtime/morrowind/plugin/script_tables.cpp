@@ -44,6 +44,8 @@ std::unordered_map<std::uint32_t, const InstanceRow*> g_instanceByLocal;
 std::vector<const InstanceRow*> g_instanceList;
 LayeredTable<ActorDef> g_actors;
 LayeredTable<FormRef> g_items;
+// Each weapon's TES3 type, by TES3 id.
+LayeredTable<int> g_weaponTypes;
 LayeredTable<FormRef> g_quests;
 LayeredTable<SayLineDef> g_sayLines{false};
 LayeredTable<FormRef> g_refs;
@@ -51,6 +53,8 @@ LayeredTable<FormRef> g_bases;
 LayeredTable<FormRef> g_cells;
 // Exterior names by TES3 grid, `x|y`.
 LayeredTable<std::string> g_exteriorNames{false};
+// Region ids by TES3 grid `x|y`, or by lowercased quasi-exterior name.
+LayeredTable<std::string> g_cellRegions{false};
 LayeredTable<TeleportMarker> g_markers{false};
 LayeredTable<CellAnchor> g_anchors{false};
 LayeredTable<RuntimeEffect> g_teleports{false};
@@ -90,6 +94,8 @@ constexpr const char* kFileBases = "bases_formid.txt";
 constexpr const char* kFileCells = "cells_formid.txt";
 // Skyrim keeps no name on an exterior CELL, so GetPCCell reads these outdoors.
 constexpr const char* kFileExteriorNames = "exterior_names.txt";
+// The region each exterior grid and quasi exterior lies in, for the weather.
+constexpr const char* kFileCellRegions = "cell_regions.txt";
 
 // The Divine and Temple markers, and where each interior opens onto the world.
 // See: docs/commentary/morrowind_runtime.md#teleport-effects
@@ -499,6 +505,7 @@ void ClearScriptTables() {
     g_instanceList.clear();
     g_actors.clear();
     g_items.clear();
+    g_weaponTypes.clear();
     g_sounds.clear();
     g_spells.clear();
     g_effects.clear();
@@ -511,6 +518,7 @@ void ClearScriptTables() {
     g_bases.clear();
     g_cells.clear();
     g_exteriorNames.clear();
+    g_cellRegions.clear();
     g_markers.clear();
     g_anchors.clear();
     g_teleports.clear();
@@ -610,6 +618,10 @@ void LoadRecordRows(int layer, const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileItems,
                [layer](const std::string& item, const std::string& value) {
                    g_items.Add(layer, Lower(item), ParseFormRef(value));
+                   const std::vector<std::string> f = Split(value, '|');
+                   if (f.size() > 2 && !f[2].empty()) {
+                       g_weaponTypes.Add(layer, Lower(item), std::atoi(f[2].c_str()));
+                   }
                });
     ForEachRow(pluginDir + kFileQuests,
                [layer](const std::string& quest, const std::string& value) {
@@ -645,6 +657,10 @@ void LoadRecordRows(int layer, const std::string& pluginDir) {
     ForEachRow(pluginDir + kFileExteriorNames,
                [layer](const std::string& grid, const std::string& name) {
                    g_exteriorNames.Add(layer, grid, name);
+               });
+    ForEachRow(pluginDir + kFileCellRegions,
+               [layer](const std::string& cell, const std::string& region) {
+                   g_cellRegions.Add(layer, Lower(cell), Lower(region));
                });
     ForEachRow(pluginDir + kFileTravel,
                [layer](const std::string& actor, const std::string& value) {
@@ -856,6 +872,12 @@ const FormRef* FindItem(const std::string& item) {
     return found ? found : g_filledGems.Find(key);
 }
 
+void ForEachWeaponType(const std::function<void(const FormRef&, int)>& fn) {
+    g_weaponTypes.ForEachVisible([&fn](const std::string& id, int type, int) {
+        if (const FormRef* form = g_items.Find(id)) fn(*form, type);
+    });
+}
+
 const FormRef* FindQuest(const std::string& quest) {
     return g_quests.Find(Lower(quest));
 }
@@ -968,6 +990,14 @@ std::size_t CellCount() { return g_cells.size(); }
 
 const std::string* FindExteriorName(int x, int y) {
     return g_exteriorNames.Find(std::to_string(x) + "|" + std::to_string(y));
+}
+
+const std::string* FindExteriorRegion(int x, int y) {
+    return g_cellRegions.Find(std::to_string(x) + "|" + std::to_string(y));
+}
+
+const std::string* FindInteriorRegion(const std::string& cell) {
+    return g_cellRegions.Find(Lower(cell));
 }
 
 void ForEachTeleportMarker(const std::function<void(const TeleportMarker&)>& fn) {

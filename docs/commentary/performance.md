@@ -694,6 +694,25 @@ triangle connectivity (derived), so each split sibling keys on the sorted
 **door REFRs its triangles touch** — authored ids that survive
 re-triangulation.
 
+### <a id="added-masters-never-move-a-hash"></a>Added masters never move a hash
+
+**Code:** `tes5_import/base/formid_hash.py`
+
+Many keys hold a FormID after the load-order shift (`get_formid(rec, 'FormID')`),
+so the index byte is part of the hash input. When the importer adds a vanilla
+master, every later index moves up one and every such key hashes to a new id.
+Adding Dragonborn.esm to authored-mode Morrowind.esm, for the ash storm weather,
+moved **10,475** generated ids (outfits, armor addons, navmeshes, locations and
+4 generated quests) before this rule.
+
+`derive_formid` therefore hashes each FormID with the index it would have if
+Update, Dawnguard, HearthFires and Dragonborn were not listed. A FormID inside
+one of those masters is hashed as `(file name, local id)`. No plugin had a
+vanilla master past Skyrim.esm before this rule, so it moved nothing that
+already existed, and a vanilla master added later moves nothing either. The
+rule covers integer keys and tuples of them. A key that spells a shifted FormID
+into a string is not covered, so build string keys from the export's raw hex.
+
 ### Collisions
 
 Hashing into a finite space collides. Resolution **rehashes with a salt**

@@ -19,6 +19,7 @@ import threading
 
 from core.skyrim_language import text_codec
 
+from .formid_hash import hash_key
 from .tes5_reader import (GRP_HDR, GRP_TEMPORARY_CHILDREN, REC_HDR,
                           SUB_HDR, walk)
 
@@ -912,7 +913,7 @@ class PluginWriter:
             if existing is not None:
                 return existing
 
-            payload = f'{site}\x00{key!r}'.encode('utf-8')
+            payload = f'{site}\x00{hash_key(key, self.masters)!r}'.encode('utf-8')
             probe = 0
             while True:
                 salt = b'' if probe == 0 else b'\x00%d' % probe

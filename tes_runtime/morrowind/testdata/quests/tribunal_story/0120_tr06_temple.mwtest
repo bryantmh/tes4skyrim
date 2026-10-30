@@ -1,0 +1,36 @@
+# Tribunal "A Temple Informant": Tienius Delitian wants an informant inside the
+# Temple ("Temple informant", "I'll take care of it." 1: 1). Galsa Andrano in
+# the Temple Infirmary, at disposition 90, says what the priests think of
+# Helseth ("discontent in the Temple", "Ask about the Temple and King Helseth"
+# 1: 50), and Tienius takes the report (100).
+# Bribes, repeated until they land, raise Galsa. Ref FormIDs carry
+# Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr05_people --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr06_temple
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask Temple informant
+choose 1
+expect GetJournalIndex TR06_Temple == 1
+bye
+run
+player->PositionCell 4119 4220 14866 0 "Mournhold Temple: Infirmary"
+until 600 "Galsa Andrano"->GetDistance player < 400
+talk Galsa Andrano
+persuade bribe100 until "Galsa Andrano"->GetDisposition >= 90
+ask discontent in the Temple
+choose 1
+expect GetJournalIndex TR06_Temple == 50
+bye
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask Temple informant
+expect GetJournalIndex TR06_Temple == 100
+bye
+end

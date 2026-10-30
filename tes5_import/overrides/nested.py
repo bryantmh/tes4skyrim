@@ -25,6 +25,7 @@ from output_layout import paths
 
 from core.plugin_masters import (export_root, master_chain, master_dir,
                                  master_index_map, masters_from_export_header)
+from ..base.vanilla_quests import VANILLA_MASTERS
 from .diff import diff_records
 from .manifest import load_master_manifests
 from .builder import (RECONVERT_KEYS, apply_changes, join_subrecords,
@@ -91,7 +92,7 @@ def inherited_masters(export_dir: str, output_root: str) -> list:
 
 
 def reconcile_masters(masters: list, header: list, inherited: list) -> list:
-    """`masters` as Skyrim.esm, then `inherited`, then the export `header`'s.
+    """`masters` as its vanilla masters, then `inherited`, then the export `header`'s.
 
     The header is the authority on what this plugin was BUILT against; the
     caller's binary-derived list can name files the conversion replaced.
@@ -103,8 +104,9 @@ def reconcile_masters(masters: list, header: list, inherited: list) -> list:
     if not header:
         return masters
     lowered = [name.lower() for name in masters]
+    vanilla = {name.lower() for name in VANILLA_MASTERS}
     kept = [] if lowered == [name.lower() for name in header] else [
-        name for name in masters if name.lower() == 'skyrim.esm']
+        name for name in masters if name.lower() in vanilla]
     merged = kept + inherited + header
     if merged != masters:
         print(f"  Masters (from export header): {', '.join(merged)}")

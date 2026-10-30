@@ -314,6 +314,16 @@ cache happened to be rebuilt an hour after that commit, so the bug looked
 Nehrim-only. Version 4 widened bit 0 from "constrained island" to "any simulated
 body" ([STAT → MSTT](asset_convert_collision.md#stat-simulated-mstt)).
 
+**The door axis cache is also stale when it measured a different set of door
+meshes.** `scan_door_axes` writes `__meshes__`, the sorted keys of the door
+meshes it found, and `door_axis_cache_is_current(path, export_dir)` compares it
+with the meshes there now. Bloodmoon's cache was written before its meshes were
+extracted: 0 of 0 doors, at the current schema, so it never rescanned. All 27 of
+its door models then fell back to the pivot (the hinge) and a 45-unit half-width.
+The abandoned shaft's `Ex_colony_door06` (193 units wide, its panel centered 60
+units off the hinge) put its threshold inside `BM_colony_cave_door01`'s wall,
+every candidate edge read as blocked, and the door got no Door Triangle.
+
 **A current cache still takes the mesh stage's pending fragments.** The mesh
 stage records each mesh it writes as a fragment, and only this function merges
 them. It used to return as soon as both caches were current, so a scoped

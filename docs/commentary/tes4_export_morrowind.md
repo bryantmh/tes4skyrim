@@ -781,6 +781,14 @@ every player, and Ordinators set fight 100 and attacked on sight. A `set`
 cannot repair it either: the compiler's `getGlobalType` returns `' '` for an
 unknown global, so the patch's own `OrdinatorUniform` script fails to compile.
 
+A short or long global's FLTV is read the way OpenMW's `floatCast`
+(`variantimp.cpp`) reads it: truncated toward zero, with NaN or a value beyond
+32 bits read as INT32_MIN, and a short keeps only the low 16 bits of the
+result. INT32_MIN's low 16 bits are 0, so an out-of-range short reads as 0.
+Tribunal's `MuseumDonations` holds 7.6e+23; written as -2,147,483,648, Torasa
+Aram's two donations could never bring it to 2, and The Blade of Nerevar
+stopped at 40.
+
 BSGN is always filled for the same reason: a birthsign is read, by the
 runtime's one birthsign menu, never placed, and Morroblivion's 13 signs are
 Oblivion's records with Oblivion's effects. The patch carries Morrowind's 13,

@@ -1,0 +1,84 @@
+# Tribunal "A Show of Power": Almalexia tells of a task (10), the End of Times
+# preachers (20) and a priest found dead (30). Meralyn Othan in the Great Bazaar
+# speaks of Sevil (40) and the End of Times (50); Eno Romari in Godsreach of the
+# End of Times (55) and, through "beliefs", "making ourselves ready" and "great
+# horror", the Cleansing (60). Almalexia, told of the End of Times and its
+# beliefs, gives her lesson in power (70), names the Karstangz-Bcharn and gives
+# the Dwemer Coherer for the ashstorms (80). In Bamz-Amschend's
+# Skybreak Gallery the coherer goes in the junction box ("Yes" 0: 90,
+# powerboxScript); with the power on, lever A up and B and C down make the
+# machine call an ashstorm (95, tr_weathmachine), and Almalexia hears of it
+# ("Karstangz-Bcharn": 100).
+# The machine's ModRegion and ChangeWeather put an ashstorm over Mournhold
+# Region, which the player sees in Godsreach. Ref FormIDs carry Tribunal.esm's
+# slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_champion --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_show_power
+run
+player->PositionCell 1 49 -659 0 "Mournhold Temple: High Chapel"
+until 600 "almalexia"->GetDistance player < 400
+talk almalexia
+ask task
+expect GetJournalIndex TR_ShowPower == 10
+ask End of Times
+expect GetJournalIndex TR_ShowPower == 20
+ask found dead
+expect GetJournalIndex TR_ShowPower == 30
+bye
+run
+player->PositionCell 3262 -105 345 0 "Mournhold, Great Bazaar"
+until 600 "meralyn othan"->GetDistance player < 400
+talk meralyn othan
+ask Sevil
+expect GetJournalIndex TR_ShowPower == 40
+ask End of Times
+expect GetJournalIndex TR_ShowPower == 50
+bye
+run
+player->PositionCell 1605 -498 234 0 "Mournhold, Godsreach"
+until 600 "eno romari"->GetDistance player < 400
+talk eno romari
+ask End of Times
+expect GetJournalIndex TR_ShowPower == 55
+ask beliefs
+ask making ourselves ready
+ask great horror
+ask the Cleansing
+expect GetJournalIndex TR_ShowPower == 60
+bye
+run
+player->PositionCell 1 49 -659 0 "Mournhold Temple: High Chapel"
+until 600 "almalexia"->GetDistance player < 400
+talk almalexia
+ask End of Times
+ask beliefs
+ask lesson in power
+expect GetJournalIndex TR_ShowPower == 70
+ask Karstangz-Bcharn
+ask Ashstorms in Mournhold
+expect GetJournalIndex TR_ShowPower == 80
+expect player->GetItemCount "misc_dwrv_weather" == 1
+bye
+run
+player->PositionCell 4224 3556 12432 0 "Bamz-Amschend, Skybreak Gallery"
+until 300 GetPCCell "Bamz-Amschend, Skybreak Gallery" == 1
+wait 300
+activate 06473270
+button 0
+until 300 GetJournalIndex TR_ShowPower == 90
+activate 065BBDD3
+until 600 GetJournalIndex TR_ShowPower == 95
+expect MournWeather == 7
+run
+player->PositionCell 1605 -498 234 0 "Mournhold, Godsreach"
+until 600 GetCurrentWeather == 6
+run
+player->PositionCell 1 49 -659 0 "Mournhold Temple: High Chapel"
+until 600 "almalexia"->GetDistance player < 400
+talk almalexia
+ask Karstangz-Bcharn
+expect GetJournalIndex TR_ShowPower == 100
+bye
+end

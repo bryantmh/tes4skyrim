@@ -1,0 +1,59 @@
+# Bloodmoon "Setting up Shop", Falco's side: three days after the supply ship
+# (ColonyTimer), Falco asks the player to pick the colony's first service.
+# The player picks the smith, tells Carnius, and after the builders' four
+# days (ColonyServTimer) Carnius greets the player to close it. `sleep`
+# passes the days.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_choice --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_setting_up_shop
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+until 600 ColonyState == 5
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+ask decision
+expect GetJournalIndex CO_4 == 20
+ask decision
+choose 1
+choose 4
+expect GetJournalIndex CO_4 == 30
+bye
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask decision
+expect GetJournalIndex CO_4 == 50
+bye
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+until 600 GetJournalIndex CO_4 == 80
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+expect GetJournalIndex CO_4 == 100
+bye
+end

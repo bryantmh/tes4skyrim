@@ -1,0 +1,50 @@
+# Tribunal "Muckraking Journalist": Tienius Delitian wants the anonymous writer
+# of 'The Common Tongue' silenced ("anonymous writer", "Tell me more about this
+# mission." 1, then "I'll take care of it." 4: 1). Ten-Tongues Weerhat at the
+# Pawnbroker, at disposition 80, names Trels Varis (20). In the Secret Office
+# under the Craftsmen's Hall, told to stop
+# printing lies (1), Trels takes a 3000-gold donation to the Widows and Orphans
+# Fund instead (7: 60), and Tienius, told to cover the expenses (5), pays 8000
+# (100).
+# Bribes, repeated until they land, raise Ten-Tongues. The donation needs the
+# 3000 gold Evidence of Conspiracy pays. Ref FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr08_hlaalu --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr09_journalist
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask anonymous writer
+choose 1
+choose 4
+expect GetJournalIndex TR09_Journalist == 1
+bye
+run
+player->PositionCell -29 203 -365 0 "Mournhold, Pawnbroker"
+until 600 "Ten-Tongues_Weerhat"->GetDistance player < 400
+talk Ten-Tongues_Weerhat
+persuade bribe100 until "Ten-Tongues_Weerhat"->GetDisposition >= 80
+ask anonymous writer
+expect GetJournalIndex TR09_Journalist == 20
+bye
+expect player->GetItemCount "Gold_001" >= 3000
+run
+player->PositionCell 3871 3987 15630 0 "Mournhold, Secret Office"
+until 300 GetPCCell "Mournhold, Secret Office" == 1
+until 600 "Trels Varis"->GetDistance player < 400
+talk Trels Varis
+choose 1
+choose 7
+expect GetJournalIndex TR09_Journalist == 60
+bye
+run
+player->PositionCell 193 -138 -90 0 "Mournhold, Royal Palace Throne Room"
+until 600 "Tienius Delitian"->GetDistance player < 400
+talk Tienius Delitian
+ask anonymous writer
+choose 5
+expect GetJournalIndex TR09_Journalist == 100
+bye
+end

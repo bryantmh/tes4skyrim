@@ -20,7 +20,7 @@ namespace tesruntime::mw {
 struct TestStep {
     enum class Kind {
         kRun, kWait, kExpect, kTalk, kAsk, kChoose, kBye, kButton, kActivate, kUntil, kPick, kClose,
-        kTake, kConsole, kPersuade, kSleep, kWalk, kFollow, kDefend
+        kTake, kConsole, kPersuade, kSleep, kWalk, kFollow, kDefend, kPunch, kRest
     };
     Kind kind = Kind::kRun;
     std::string text;   // the script, condition, NPC id or topic
@@ -44,6 +44,9 @@ struct TestConversation {
     std::string (*lastText)() = nullptr;
     std::vector<std::string> (*choices)() = nullptr;
     bool (*persuade)(const std::string& kind) = nullptr;
+    // A menu still opening, and a player move still landing (menu.h).
+    bool (*menuOpening)() = nullptr;
+    bool (*playerMovePending)() = nullptr;
 };
 
 void SetTestConversation(const TestConversation& conversation);
@@ -56,7 +59,8 @@ void SetTestConversation(const TestConversation& conversation);
 //   persuade <admire|intimidate|taunt|bribe10|bribe100|bribe1000> /
 //   follow <npc> (keeps the player on the NPC's trail; a bare `follow` stops) /
 //   defend (the player kills whatever attacks it, as `follow` also does, for
-//   the rest of the case) /
+//   the rest of the case) / punch <n> <npc> (up to n bare-fisted punches; a
+//   greeting ends it) /
 //   end. `#` starts a comment line. Steps run in file
 //   order, and an action not followed by a `wait` settles for 2 ticks. `until`
 //   fails the case when its condition does not hold within the ticks; `button`,

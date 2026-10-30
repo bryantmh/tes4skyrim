@@ -277,6 +277,7 @@ void RunOneTick() {
     const bool inWorld = SessionLive();
     if (inWorld && Hooks().crimeTick) Hooks().crimeTick();
     if (inWorld && Hooks().combatTick) Hooks().combatTick();
+    if (inWorld && Hooks().weatherTick) Hooks().weatherTick();
     if (inWorld) TickTestRunner(GameHeldByMenu());
     if (!inWorld || GameHeldByMenu()) {
         g_lastCount = 0;
@@ -315,6 +316,9 @@ void RunOneTick() {
         TraceLoadState(*instance);
         if (Hooks().is3DLoaded) {
             if (Hooks().is3DLoaded(instance->RuntimeFormId())) {
+                if (!instance->WasLoaded() && Hooks().armBrawler && IsBrawler(*instance)) {
+                    Hooks().armBrawler(instance->RuntimeFormId());
+                }
                 instance->MarkLoaded();
             } else if (instance->Events().died) {
                 ReportUnbind(*instance, "died");
@@ -417,6 +421,7 @@ void ResetTickState() {
     g_gameSeconds = 0.0;
     g_sleep = Sleep::kAwake;
     ResetNpcAnims();
+    if (Hooks().weatherReset) Hooks().weatherReset();
 }
 
 }  // namespace tesruntime::mw

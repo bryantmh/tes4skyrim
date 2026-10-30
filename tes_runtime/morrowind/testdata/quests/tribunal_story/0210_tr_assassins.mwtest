@@ -1,0 +1,63 @@
+# Tribunal "An Assassination Attempt": King Helseth, led from "bit of
+# misinformation" through "threat to our monarchy", "see us dead" and "plot",
+# sends the player to his informant ("this matter": 10). Bakh gro-Sham in the Winged Guar, at
+# disposition 60, answers the code phrase ("uncle's farm": 40) and, after "what
+# you should know", names the Queen Mother as the target ("disturbing
+# information": 50). Helseth, told of it ("plot"), orders the player to guard
+# her ("protect Barenziah": 80). Waiting within 192 of the
+# marker in Barenziah's Chambers until nightfall on a later day logs 85
+# (barAssScript) and brings the three assassins (helsAssScript); their deaths
+# log 90, and Helseth gives his collar (100).
+# The player waits an hour at a time on the spot, as the Wait key does. Bribes,
+# repeated until they land, raise Bakh. The fight is `defend`'s. Ref FormIDs
+# carry Tribunal.esm's slot 06.
+# Drafted, not yet run.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_bamz --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tr_assassins
+run
+player->PositionCell 2 53 -92 0 "Mournhold, Royal Palace Throne Room"
+until 600 "King Hlaalu Helseth"->GetDistance player < 400
+talk King Hlaalu Helseth
+ask bit of misinformation
+ask threat to our monarchy
+ask see us dead
+ask plot
+ask this matter
+expect GetJournalIndex TR_Assassins == 10
+bye
+run
+player->PositionCell -480 -74 -357 0 "Mournhold, The Winged Guar"
+until 600 "bakh gro-sham"->GetDistance player < 400
+talk bakh gro-sham
+persuade bribe100 until "bakh gro-sham"->GetDisposition >= 60
+ask uncle's farm
+expect GetJournalIndex TR_Assassins == 40
+ask what you should know
+ask disturbing information
+expect GetJournalIndex TR_Assassins == 50
+bye
+run
+player->PositionCell 2 53 -92 0 "Mournhold, Royal Palace Throne Room"
+until 600 "King Hlaalu Helseth"->GetDistance player < 400
+talk King Hlaalu Helseth
+ask plot
+ask protect Barenziah
+expect GetJournalIndex TR_Assassins == 80
+bye
+run
+player->PositionCell 372 -300 -91 0 "Mournhold, Royal Palace: Barenziah's Chambers"
+until 300 GetPCCell "Mournhold, Royal Palace: Barenziah's Chambers" == 1
+wait 300
+rest 48 - GetJournalIndex TR_Assassins >= 85
+defend
+until 1800 GetJournalIndex TR_Assassins == 90
+run
+player->PositionCell 2 53 -92 0 "Mournhold, Royal Palace Throne Room"
+until 600 "King Hlaalu Helseth"->GetDistance player < 400
+talk King Hlaalu Helseth
+ask protect Barenziah
+expect GetJournalIndex TR_Assassins == 100
+bye
+end

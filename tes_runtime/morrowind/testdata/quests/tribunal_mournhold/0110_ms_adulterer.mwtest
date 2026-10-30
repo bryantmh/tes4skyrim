@@ -1,0 +1,43 @@
+# Tribunal "Infidelities": Deldrise Andoren in Andoren Manor asks the player to
+# spy on her husband ("Yes, I will help you." is choice 1, journal 10), which
+# enables Taren in Godsreach (tarenScript). A player 500-1024 units off logs 20
+# and starts his sneak; within 500 he notices ("too close", a force-greet that
+# fails it at 110). He meets Velyna Seran at (-866, -3052), and a player within
+# 2,000 there logs 30. Deldrise pays for the report (150).
+# The player watches from 800 units south of where Taren stands; from his
+# placement (-45, -1195) that is more than 500 from every point of his walk,
+# and 1,334 from where it ends.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_dbattack --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_adulterer
+run
+player->PositionCell -43 300 -97 0 "Mournhold, Andoren Manor"
+until 600 "deldrise andoren"->GetDistance player < 400
+talk deldrise andoren
+ask see my husband
+choose 1
+expect GetJournalIndex MS_Adulterer == 10
+bye
+run
+player->PositionCell -45 -2000 300 0 "Mournhold, Godsreach"
+until 300 GetPCCell "Mournhold, Godsreach" == 1
+until 600 "taren andoren"->GetDisabled == 0
+run
+set TestResult to ( "taren andoren"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "taren andoren"->GetPos y ) - 800 )
+player->SetPos y TestResult
+set TestResult to ( ( "taren andoren"->GetPos z ) + 100 )
+player->SetPos z TestResult
+expect "taren andoren"->GetDistance player > 500
+until 900 GetJournalIndex MS_Adulterer == 20
+until 3600 GetJournalIndex MS_Adulterer == 30
+run
+player->PositionCell -43 300 -97 0 "Mournhold, Andoren Manor"
+until 600 "deldrise andoren"->GetDistance player < 400
+talk deldrise andoren
+ask see my husband
+expect GetJournalIndex MS_Adulterer == 150
+bye
+end

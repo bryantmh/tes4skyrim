@@ -1,0 +1,95 @@
+# Bloodmoon "The Factor's Estate", Falco's side: three days after Under Siege
+# (ColonyTimer, ColonyState 30) Falco's "assignment" names the estate, and the
+# new Factor asks him about it (10). Aldam Berendus explains the three torch-marked sites
+# (20), follows the player (30) out of the mine to the second torch, and on
+# confirmation starts the build (40, factorestate 2, ColonyEstateTimer). Two
+# days on and away from Raven Rock the site is staked (ColonyState 32); three
+# more days and away again, the estate stands (35, CO_Estate 50).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_under_siege --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_estate
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+until 600 ColonyState == 30
+run
+player->Position -199700 160300 1000 0
+until 300 GetPCCell "Raven Rock" == 1
+run
+set TestResult to ( "Falco Galenus"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+ask estate
+expect GetJournalIndex CO_Estate == 10
+bye
+run
+player->PositionCell 8897 3610 11720 0 "Raven Rock, Mine"
+until 600 "Aldam Berendus"->GetDistance player < 400
+talk Aldam Berendus
+ask estate
+expect GetJournalIndex CO_Estate == 20
+bye
+talk Aldam Berendus
+ask estate
+choose 1
+expect GetJournalIndex CO_Estate == 30
+bye
+run
+player->PositionCell 600 2240 13056 0 "Raven Rock, Mine"
+until 3600 "Aldam Berendus"->GetDistance player < 400
+activate 06E6EF4F
+until 300 GetPCCell "Raven Rock, Mine Entrance" == 1
+run
+player->PositionCell 690 4 66 0 "Raven Rock, Mine Entrance"
+until 900 "Aldam Berendus"->GetDistance player < 400
+activate 06D6EAA3
+until 300 GetPCCell "Raven Rock, Mine Entrance" == 0
+run
+player->Position -194012 161200 1150 0
+until 2700 "Aldam Berendus".torch == 2
+until 600 "Aldam Berendus"->GetDistance player < 600
+talk Aldam Berendus
+ask estate
+choose 5
+expect GetJournalIndex CO_Estate == 40
+bye
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+run
+player->PositionCell 3504 4453 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 ColonyState == 32
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+run
+player->PositionCell 3504 4453 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 GetJournalIndex CO_Estate == 50
+expect ColonyState == 35
+end

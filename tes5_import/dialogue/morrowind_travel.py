@@ -27,14 +27,19 @@ EXTERIOR_NAMES_TABLE = 'exterior_names.txt'
 #: A TES3 exterior cell is this many units across.
 _CELL_SIZE = 8192
 
-#: CELL DATA: flags, grid x, grid y; bit 0 of the flags marks an interior.
+#: What ChangeWeather and ModRegion read: `grid x|grid y=region id` outdoors, `cell=region id` in a quasi exterior.
+CELL_REGIONS_TABLE = 'cell_regions.txt'
+
+#: CELL DATA: flags, grid x, grid y; flag bit 0 marks an interior, bit 7 one that behaves as an exterior.
 _CELL_DATA = '<Iii'
 _INTERIOR = 0x1
+_QUASI_EXTERIOR = 0x80
 
 
 def take_place(out: dict, rec) -> None:
     """Fold one CELL or REGN into `out['exteriors']` `{(x, y): (name,
-    region id)}` and `out['regions']` `{lower id: display name}`."""
+    region id)}`, `out['quasi_exteriors']` `{lower name: region id}` and
+    `out['regions']` `{lower id: display name}`."""
     if rec.type == 'REGN':
         name = get_subrecord(rec, 'FNAM')
         out['regions'][rec.record_id.lower()] = (
@@ -44,11 +49,14 @@ def take_place(out: dict, rec) -> None:
     if data is None or len(data.data) < struct.calcsize(_CELL_DATA):
         return
     flags, grid_x, grid_y = struct.unpack_from(_CELL_DATA, data.data)
-    if flags & _INTERIOR:
-        return
     region = get_subrecord(rec, 'RGNN')
-    out['exteriors'][(grid_x, grid_y)] = (
-        rec.record_id, get_string(region).lower() if region else '')
+    region = get_string(region).lower() if region else ''
+    if flags & _INTERIOR:
+        if region and flags & _QUASI_EXTERIOR:
+            out['quasi_exteriors'][rec.record_id.lower()] = region
+            out['own']['quasi_exteriors'].add(rec.record_id.lower())
+        return
+    out['exteriors'][(grid_x, grid_y)] = (rec.record_id, region)
     out['own']['exteriors'].add((grid_x, grid_y))
 
 
@@ -68,6 +76,20 @@ def exterior_name_lines(gathered: dict) -> list:
     names = ((grid, _grid_name(gathered, grid))
              for grid in sorted(gathered.get('own', {}).get('exteriors', ())))
     return [f'{x}|{y}={name}' for (x, y), name in names if name]
+
+
+def cell_region_lines(gathered: dict) -> list:
+    """`x|y=region` per own exterior grid and `cell=region` per own quasi exterior that names a region.
+
+    See: docs/commentary/morrowind_runtime.md#region-weather
+    """
+    own = gathered.get('own', {})
+    exteriors = gathered.get('exteriors', {})
+    rows = [f'{x}|{y}={exteriors[(x, y)][1]}'
+            for x, y in sorted(own.get('exteriors', ())) if exteriors[(x, y)][1]]
+    quasi = gathered.get('quasi_exteriors', {})
+    return rows + [f'{name}={quasi[name]}'
+                   for name in sorted(own.get('quasi_exteriors', ()))]
 
 
 def marker_index(folders: list) -> dict:

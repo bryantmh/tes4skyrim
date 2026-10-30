@@ -1,0 +1,42 @@
+# Tribunal "Estate Sale": Geon Auline, a collector, names the Droth Dagger (10)
+# and asks the player to get it from the widow Arnsa Thendas ("Yes, I'll help."
+# is choice 1, journal 20). The player takes it from her locked chest in
+# Thendas Manor; the dagger's own script logs 30 once the player holds it
+# (DrothDagger). Handing it to Geon ("Here's the dagger." is choice 3) pays 800
+# (70), and leaving his house logs 80 (DrothPost).
+# Unlocking stands in for the lockpick. Ref FormIDs carry Tribunal.esm's slot 06.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_adulterer --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ms_estate_sale
+run
+player->PositionCell 68 300 -115 0 "Mournhold, Geon Auline's House"
+until 600 "Geon Auline"->GetDistance player < 400
+talk Geon Auline
+ask collector
+expect GetJournalIndex MS_EstateSale == 10
+ask Droth Dagger
+choose 1
+expect GetJournalIndex MS_EstateSale == 20
+bye
+run
+player->PositionCell 303 230 -106 0 "Mournhold, Thendas Manor"
+until 300 GetPCCell "Mournhold, Thendas Manor" == 1
+console 06AA37A4.unlock
+activate 06AA37A4
+close ContainerMenu
+console 06AA37A4.removeallitems player
+until 300 GetJournalIndex MS_EstateSale == 30
+run
+player->PositionCell 68 300 -115 0 "Mournhold, Geon Auline's House"
+until 600 "Geon Auline"->GetDistance player < 400
+talk Geon Auline
+ask Droth Dagger
+choose 3
+expect GetJournalIndex MS_EstateSale == 70
+expect player->GetItemCount "silver dagger_droth_unique" == 0
+bye
+run
+player->PositionCell 303 230 -106 0 "Mournhold, Thendas Manor"
+until 300 GetJournalIndex MS_EstateSale == 80
+end

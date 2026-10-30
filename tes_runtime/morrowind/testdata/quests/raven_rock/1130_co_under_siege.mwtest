@@ -1,0 +1,117 @@
+# Bloodmoon "Under Siege", Falco's side: two days after Protect Falco
+# (ColonyState 21), Falco greets the player (1) and Constans arms the colony
+# (5, ColonyState 22), which enables ten Nord raiders in the mine (ColonyNordAttack). Each
+# death counts in ColonyNord; Toralf_b carries the letter that shows Carnius
+# hired them. Falco reads it (20) and hands it back (30); Carnius, shown it,
+# attacks (40), and his death logs 60 (ColonyCarnius). Falco closes it (70,
+# ColonyState 23). Kills and looting stand in for the fights.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_protect_falco --timeout 2400
+# See docs/commentary/headless_testing.md#quest-runs
+
+case co_under_siege
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+until 600 ColonyState == 21
+run
+player->Position -199700 160300 1000 0
+until 300 GetPCCell "Raven Rock" == 1
+run
+set TestResult to ( "Falco Galenus"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+expect GetJournalIndex CO_13 == 1
+bye
+run
+player->PositionCell 3411 4000 16401 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Constans Atrius"->GetDistance player < 400
+talk Constans Atrius
+expect GetJournalIndex CO_13 == 5
+expect ColonyState == 22
+bye
+run
+player->Position -199700 160300 1000 0
+until 300 GetPCCell "Raven Rock" == 1
+run
+set TestResult to ( "Falco Galenus"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask Skaal attack
+expect GetJournalIndex CO_13 == 10
+bye
+run
+player->PositionCell 5008 3530 12700 0 "Raven Rock, Mine"
+until 300 GetPCCell "Raven Rock, Mine" == 1
+until 600 "Toralf_b"->GetDisabled == 0
+wait 300
+console 062A5F82.kill
+console 065B1858.kill
+console 06A5255F.kill
+console 06B722A1.kill
+console 068727CC.kill
+console 06D49ACB.kill
+console 06CC42A7.kill
+console 064EA946.kill
+console 0652BAB8.kill
+console 0633818E.kill
+until 900 ColonyNord >= 10
+console 062A5F82.removeallitems player
+expect player->GetItemCount "bk_colony_Toralf" == 1
+run
+player->Position -199700 160300 1000 0
+until 300 GetPCCell "Raven Rock" == 1
+run
+set TestResult to ( "Falco Galenus"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask Skaal attack
+expect GetJournalIndex CO_13 == 20
+bye
+talk Falco Galenus
+expect GetJournalIndex CO_13 == 30
+bye
+run
+player->PositionCell 3504 4453 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask Skaal attack
+expect GetJournalIndex CO_13 == 40
+bye
+console 06223A46.kill
+until 600 GetJournalIndex CO_13 == 60
+run
+player->Position -199700 160300 1000 0
+until 300 GetPCCell "Raven Rock" == 1
+run
+set TestResult to ( "Falco Galenus"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+expect GetJournalIndex CO_13 == 70
+expect ColonyState == 23
+bye
+end

@@ -5,7 +5,7 @@ See: docs/commentary/tes5_import_magic.md#power-affects
 
 import struct
 
-from tes5_import.base.owned_records import _fall_damage_effect
+from tes5_import.base.owned_records import perk_effect
 from tes5_import.record_types.magic import (F_NO_MAGNITUDE,
                                            F_POWER_AFFECTS_DURATION,
                                            F_POWER_AFFECTS_MAGNITUDE,
@@ -70,4 +70,4 @@ def test_no_magnitude_survives_only_on_a_switch_actor_value():
 
 def test_fall_damage_effect_never_heals():
     """The fall-damage Health value modifier carries no No Magnitude."""
-    assert not _data_flags(_fall_damage_effect(0x100, 'X', 0x200)) & F_NO_MAGNITUDE
+    assert not _data_flags(perk_effect(0x100, 'X', 0x200)) & F_NO_MAGNITUDE

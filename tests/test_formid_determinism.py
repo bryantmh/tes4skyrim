@@ -212,6 +212,21 @@ def test_derived_ids_do_not_depend_on_allocation_ORDER():
         'added — this is FormID drift, and it breaks every existing save')
 
 
+def test_an_added_vanilla_master_moves_no_derived_id():
+    """Listing Dragonborn.esm shifts own FormIDs from 01 to 02; the generated ids keep their local part.
+
+    See: docs/commentary/performance.md#added-masters-never-move-a-hash
+    """
+    from tes5_import.base.writer import PluginWriter
+
+    a = PluginWriter(masters=['Skyrim.esm'], is_esm=True)
+    b = PluginWriter(masters=['Skyrim.esm', 'Dragonborn.esm'], is_esm=True)
+    before = [a.derive_formid('OTFT', 0x01012345), a.derive_formid('NAVM', (0x01000ABC, 3))]
+    after = [b.derive_formid('OTFT', 0x02012345), b.derive_formid('NAVM', (0x02000ABC, 3))]
+    assert [fid & 0xFFFFFF for fid in before] == [fid & 0xFFFFFF for fid in after]
+    assert b.derive_formid('OTFT', 0x01032336) != b.derive_formid('OTFT', 0x01012345)
+
+
 def test_derived_ids_never_land_on_an_authored_record():
     """A companion colliding with a real record silently destroys one of them."""
     from tes5_import.base.writer import PluginWriter, DERIVED_ID_BASE

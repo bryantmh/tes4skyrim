@@ -407,7 +407,6 @@ void RefreshBaseline(DialogueState& state) {
 // keeps it too, so a conversation cut short still settles on the next end.
 void DialogueState::BeginConversation(const std::string& who) {
     choices.clear();
-    addedTopics.clear();
     messages.clear();
     goodbye = false;
     choice = -1;
