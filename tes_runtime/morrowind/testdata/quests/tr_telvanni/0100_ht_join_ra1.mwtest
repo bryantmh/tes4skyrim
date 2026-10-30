@@ -1,0 +1,60 @@
+# TR House Telvanni: joining at the Telvanni Council House in Port Telvannis, then "A Message from Vvardenfell"
+# (TR_m1_HT_Ra1). Areth Morvayn, Mouth in the Chambers, takes the player in ("join House Telvanni": "Yes, I want to
+# join." 2, then 1), sends the player for a report from Rathra's agent south of Bahrammu's main gate (10); the agent
+# answers the password (Choice 1) and hands the report over (20); Areth pays for it (100).
+# Morroblivion mode (TR_Mainland on Morrowind_ob); starts from morroblivion_main's save after the census exit.
+# PositionCell and Position stand in for the travel.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_mb_chargen_exit --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Vero Renim greets visitors at the Council House entrance with "Have you come to join House Telvanni?", which
+# teaches the topic; he sends a worthy candidate on to the Mouths in the Chambers.
+case ht_join
+run
+player->PositionCell 5583 5900 12650 0 "Port Telvannis, Telvanni Council House: Entrance"
+until 600 "TR_m1_Vero_Renim"->GetDistance player < 400
+wait 120
+talk TR_m1_Vero_Renim
+ask join House Telvanni
+bye
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Areth_Morvayn"->GetDistance player < 400
+wait 120
+talk TR_m1_T_Areth_Morvayn
+ask join House Telvanni
+choose 2
+choose 1
+expect player->GetPCRank Telvanni >= 0
+bye
+end
+
+case ht_ra1_start
+talk TR_m1_T_Areth_Morvayn
+ask chores
+ask report from Vvardenfell
+expect GetJournalIndex TR_m1_HT_Ra1 == 10
+bye
+end
+
+case ht_ra1_contact
+run
+player->Position 125559 211182 600 0
+until 900 "TR_M1_Q66_Ra1_Contact"->GetDistance player < 600
+talk TR_M1_Q66_Ra1_Contact
+choose 1
+until 300 GetJournalIndex TR_m1_HT_Ra1 >= 20
+expect player->GetItemCount "TR_M1_Q66_GHT_Ra1_Report" >= 1
+end
+
+case ht_ra1_report
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Areth_Morvayn"->GetDistance player < 400
+wait 120
+talk TR_m1_T_Areth_Morvayn
+ask report from Vvardenfell
+choose 1
+expect GetJournalIndex TR_m1_HT_Ra1 == 100
+bye
+end

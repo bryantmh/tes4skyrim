@@ -1,0 +1,74 @@
+# TR House Telvanni: "Accounting Error" (TR_m1_HT_Rathra_q4). After the Septis, Rathra's "chores" turns to Mithras
+# ("Master Mithras": "Continue" 1, then 10, adds "cover our tracks"). Azariah Thelas, Mithras's accountant and
+# Rathra's agent in Ranyon-ruhn, hands over a forged mining ledger ("Continue" 1, then 20). The forged ledger goes
+# into the Mine Office desk (TR_m1_q_desk_RathraQ4_sc: 30, TR_m1_HT_FakeLedgerPlanted 1); with the real ledger and
+# twenty raw ebony, Azariah takes the ledger (40); Rathra takes the ebony ("Here are twenty pieces of raw ebony." 1:
+# 100, +5 reputation).
+# PositionCell stands in for the travel; RemoveItem/AddItem on the desk for the container menu; the ebony AddItem
+# for the player stealing it from the mine. MWScript names the desk by its (once-placed) base id; the real ledger's
+# ref carries TR_Mainland's slot 09: 09E9A266.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_rathra_q3_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_rathra_q4_start
+run
+player->PositionCell 4123 3980 14430 0 "Tel Ouada, Tower: Rathra's Chambers"
+until 600 "TR_m1_T_Rathra"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rathra
+ask chores
+ask Master Mithras
+choose 1
+expect GetJournalIndex TR_m1_HT_Rathra_q4 == 10
+bye
+end
+
+case ht_rathra_q4_azariah
+run
+player->PositionCell 4170 3850 14320 0 "Ranyon-ruhn, Azariah Thelas' House"
+until 600 "TR_m1_Azariah_Thelas"->GetDistance player < 800
+wait 120
+talk TR_m1_Azariah_Thelas
+ask cover our tracks
+choose 1
+expect GetJournalIndex TR_m1_HT_Rathra_q4 == 20
+expect player->GetItemCount "TR_m1_q_ForgedMineList" == 1
+bye
+end
+
+case ht_rathra_q4_ledger
+run
+player->PositionCell 4450 4150 15630 0 "Ranyon-ruhn, Mine Office"
+wait 150
+run
+player->RemoveItem "TR_m1_q_ForgedMineList" 1
+"TR_m1_Q_desk_RathraQ4"->AddItem "TR_m1_q_ForgedMineList" 1
+until 300 GetJournalIndex TR_m1_HT_Rathra_q4 >= 30
+take 09E9A266
+run
+player->AddItem "ingred_raw_ebony_01" 20
+expect player->GetItemCount "TR_m1_bk_RR_MineList" == 1
+end
+
+case ht_rathra_q4_azariah_ledger
+run
+player->PositionCell 4170 3850 14320 0 "Ranyon-ruhn, Azariah Thelas' House"
+until 600 "TR_m1_Azariah_Thelas"->GetDistance player < 800
+wait 120
+talk TR_m1_Azariah_Thelas
+ask cover our tracks
+expect GetJournalIndex TR_m1_HT_Rathra_q4 == 40
+bye
+end
+
+case ht_rathra_q4_done
+run
+player->PositionCell 4123 3980 14430 0 "Tel Ouada, Tower: Rathra's Chambers"
+until 600 "TR_m1_T_Rathra"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rathra
+ask cover our tracks
+choose 1
+expect GetJournalIndex TR_m1_HT_Rathra_q4 == 100
+bye
+end

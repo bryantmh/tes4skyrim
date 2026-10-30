@@ -533,15 +533,37 @@ void OnSignHover(double x, double y) {
     PushSign();
 }
 
-// The class the player has now, chosen when the menu opens again; a name the
-// list lacks is the custom class, restored whole. With none yet, the first
-// row, as OpenMW's PickClassDialog starts.
+// The index of the row named `name` (any case) in `rows`, or -1.
+template <typename Row>
+int RowNamed(const std::vector<Row>& rows, const std::string& name) {
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (_stricmp(rows[i].name.c_str(), name.c_str()) == 0) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+// The row the asking plugin's class choice global already names (a converted
+// SetClass writes it before asking, as a class quiz's result), or -1.
+int SuggestedClassIndex() {
+    if (!g_asked.table) return -1;
+    const float* slot = Slot(g_asked.table->classChoice);
+    const int named = slot ? static_cast<int>(*slot) : 0;
+    const std::vector<std::string>& names = g_asked.table->classes;
+    if (named < 1 || named > static_cast<int>(names.size())) return -1;
+    return RowNamed(Classes(), names[named - 1]);
+}
+
+// The class the script suggests, else the class the player has now, chosen
+// when the menu opens again; a name the list lacks is the custom class,
+// restored whole. With none yet, the first row, as OpenMW's PickClassDialog
+// starts.
 int ChosenClassIndex() {
+    const int suggested = SuggestedClassIndex();
+    if (suggested >= 0) return suggested;
     const std::string chosen = ChosenClass();
     const std::vector<ClassRow>& rows = Classes();
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        if (_stricmp(rows[i].name.c_str(), chosen.c_str()) == 0) return static_cast<int>(i);
-    }
+    const int row = RowNamed(rows, chosen);
+    if (row >= 0) return row;
     if (chosen.empty()) return 0;
     g_customName = chosen;
     for (int slot = 0; slot < kFavoredCount; ++slot) {
@@ -552,12 +574,9 @@ int ChosenClassIndex() {
 
 // The sign the player has now, else the first, as OpenMW's BirthDialog starts.
 int ChosenSignIndex() {
-    const std::string chosen = ChosenBirthsign();
     const std::vector<SignRow>& rows = Signs();
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        if (_stricmp(rows[i].name.c_str(), chosen.c_str()) == 0) return static_cast<int>(i);
-    }
-    return rows.empty() ? -1 : 0;
+    const int row = RowNamed(rows, ChosenBirthsign());
+    return row >= 0 ? row : rows.empty() ? -1 : 0;
 }
 
 // Picks the chosen row, scrolled into view.
@@ -647,15 +666,6 @@ void Opened(int kind) {
     }
     PickColors(kind == kClassKind ? ClassMenu() : SignMenu());
     kind == kClassKind ? PushClass() : PushSign();
-}
-
-// The index of the row named `name` (any case) in `rows`, or -1.
-template <typename Row>
-int RowNamed(const std::vector<Row>& rows, const std::string& name) {
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        if (_stricmp(rows[i].name.c_str(), name.c_str()) == 0) return static_cast<int>(i);
-    }
-    return -1;
 }
 
 // A headless run's pick: the row named `name` in the open menu, then OK.

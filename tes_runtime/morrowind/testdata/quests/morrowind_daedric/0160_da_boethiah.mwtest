@@ -1,0 +1,53 @@
+# Morrowind Daedric quests: Boethiah's shrine rebuilt (DA_Boethiah). Boethiah's ruined statue off the Bitter Coast
+# asks for its shrine rebuilt (10, 20, 30: "sculptor"). In Caldera the orc Duma gro-Lag offers a statue ("sculptor":
+# 40; "I wish for you to recreate the Shrine of Boethiah." 1) for 2000 gold and the book Boethiah's Glory; a player
+# already carrying both hands them over at once (60, StartScript ShrineBoethiah), as the line for 60 comes first. After twenty days of work the new statue stands on Khartag Point and
+# gives Goldbrand (70, DaedraBoethiah2).
+# PositionCell and Position stand in for the travel, the AddItem of gold for money the player earned, take for buying
+# the book at Jobasha's, waiting for the days passing. FormIDs carry Morrowind.esm's slot 05: 0537637E the ruined
+# statue, 05ABDC44 the book, 053DD7C8 the rebuilt statue.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_da_mephala_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case da_boethiah_start
+run
+player->Position -65652 -26700 -1900 0
+wait 120
+activate 0537637E
+until 300 GetJournalIndex DA_Boethiah == 30
+end
+
+case da_boethiah_duma
+run
+player->AddItem Gold_001 2000
+player->PositionCell 644 -250 -385 0 "Vivec, Jobasha's Rare Books"
+wait 60
+take 05ABDC44
+until 120 player->GetItemCount "bk_Boethiah's Glory_unique" >= 1
+run
+player->PositionCell -142 -300 651 0 "Caldera, Ghorak Manor"
+until 600 "duma gro-lag"->GetDistance player < 600
+wait 60
+talk duma gro-lag
+ask sculptor
+expect GetJournalIndex DA_Boethiah == 40
+choose 1
+expect GetJournalIndex DA_Boethiah == 60
+bye
+end
+
+case da_boethiah_build
+run
+player->Position -60692 26800 303 0
+wait 60
+rest 600 - "Ex_DAE_Boethiah_fixed"->GetDisabled == 0
+end
+
+case da_boethiah_done
+run
+player->Position -70751 40300 539 0
+wait 120
+activate 053DD7C8
+until 300 GetJournalIndex DA_Boethiah == 70
+expect player->GetItemCount katana_goldbrand_unique == 1
+end

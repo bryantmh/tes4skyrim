@@ -1,0 +1,47 @@
+# TR House Telvanni: "Uncharted Waters" (TR_m1_HT_Dr2). Malvas Relvani's "chores" adds "vital experiment"; complying
+# (Choice 1) sends the player to Archmagister Dral in Tel Thenim within a day (10, TR_m1_q_Dr2Timer: late logs 45).
+# Dral's "What do you have in mind?" (Choice 1) logs 20 and starts TR_M1_Q68_PocRel_scpt: the player is sent to
+# Dral's Sanctum for 17 seconds, brought back (30) and force-greeted (40, his reward). Malvas pays (41, +5 reputation).
+# PositionCell stands in for the travel; the script does the rest itself.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_fa2_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_dr2_start
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Malvas_Relvani"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Malvas_Relvani
+ask chores
+ask vital experiment
+choose 1
+expect GetJournalIndex TR_m1_HT_Dr2 == 10
+bye
+end
+
+case ht_dr2_sanctum
+run
+player->PositionCell 3168 5250 14784 0 "Port Telvannis, Tel Thenim: Archmagister's Chamber"
+until 600 "TR_m1_T_Rilvin_Dral"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rilvin_Dral
+ask vital experiment
+choose 1
+expect GetJournalIndex TR_m1_HT_Dr2 == 20
+bye
+until 3600 GetJournalIndex TR_m1_HT_Dr2 >= 40
+bye
+expect player->GetItemCount "TR_m1_q_Dr2Reward" == 1
+end
+
+case ht_dr2_done
+run
+EnablePlayerControls
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Malvas_Relvani"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Malvas_Relvani
+ask vital experiment
+expect GetJournalIndex TR_m1_HT_Dr2 == 41
+bye
+end

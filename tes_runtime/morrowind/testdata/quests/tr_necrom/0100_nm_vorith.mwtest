@@ -1,0 +1,33 @@
+# TR Necrom: "Old Soldiers" (TR_m2_Nm_Vorith). In Necrom's Upper District the Indoril soldier Vorith asks the player
+# to "pay his respects" ("I will fulfil your vow." 1: 10, his sword and ring). His widow Emeni Udani in Seitur, given
+# the tokens ("Offer Vorith's tokens." 1, then "A Dunmer named Vorith gave them to me at Necrom." 2), learns he
+# found his way to the ancestors (20).
+# Position and PositionCell stand in for the travel.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_nu1_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case nm_vorith_start
+run
+player->Position 361526 -87200 1440 0
+until 900 "TR_m2_Vorith"->GetDistance player < 600
+wait 120
+talk TR_m2_Vorith
+ask pay his respects
+choose 1
+expect GetJournalIndex TR_m2_Nm_Vorith == 10
+expect player->GetItemCount "TR_m2_q_A9_4_VorithRing" == 1
+bye
+end
+
+case nm_vorith_done
+run
+player->PositionCell 200 -200 -100 0 "Seitur, Emeni Udani's House"
+until 600 "TR_m3_Emeni Udani"->GetDistance player < 600
+wait 120
+talk TR_m3_Emeni Udani
+ask Emeni Udani
+choose 1
+choose 2
+expect GetJournalIndex TR_m2_Nm_Vorith == 20
+bye
+end

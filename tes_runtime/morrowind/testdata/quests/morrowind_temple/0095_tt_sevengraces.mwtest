@@ -1,0 +1,109 @@
+# Morrowind Temple: "Pilgrimages of the Seven Graces" (TT_SevenGraces), which Tuls Valen asks for before any duty.
+# He hands over "The Pilgrim's Path" ("Seven Graces": 10). At each shrine the pilgrim donates and asks a blessing
+# (the shrine's MessageBox "Yes", then the Grace's text): mucksponge at the Fields of Kummu (TT_FieldsKummu 100), a
+# soul gem at Ghostgate (TT_Ghostgate), a cure disease potion at the Gnisis Temple (TT_MaskVivec), Dreugh wax in
+# Koal Cave (TT_RuddyMan), 100 gold at Vivec's palace (TT_PalaceVivec), a rising force potion at the Stopped Moon
+# (TT_StopMoon). In the Puzzle Canal the unarmed Dremora takes a silver longsword ("silver longsword": "Yes, take it."
+# 1: TT_PuzzleCanal 50) and the shrine completes the Grace of Courtesy (100). Back in Ald'ruhn, templeStewards sets
+# Tuls Valen's completedGraces on the cell change, and he closes the pilgrimage (100).
+# Position and PositionCell stand in for the travel, AddItem for buying or gathering the donations.
+# Ref FormIDs carry Morrowind.esm's slot 05: 05932999 Kummu, 05D4ABE2 Ghostgate, 054A292D Gnisis, 05854536 Koal Cave,
+# 0549E254 the palace, 058EF2FE the Stopped Moon, 05E0A126 the Puzzle Canal.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_join --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_sevengraces_start
+talk tuls valen
+ask duties
+ask Seven Graces
+expect GetJournalIndex TT_SevenGraces == 10
+expect player->GetItemCount "bk_PilgrimsPath" == 1
+bye
+run
+player->AddItem "Ingred_Muck_01" 10
+player->AddItem "Misc_soulgem_petty" 1
+player->AddItem "P_Cure_Common_S" 1
+player->AddItem "Ingred_Dreugh_Wax_01" 1
+player->AddItem "P_Levitation_S" 1
+player->AddItem "silver longsword" 1
+player->AddItem "Gold_001" 100
+end
+
+case tt_sevengraces_kummu
+run
+player->Position 14594 -33550 800 0
+wait 300
+activate 05932999
+button 0
+until 300 GetJournalIndex TT_FieldsKummu == 100
+end
+
+case tt_sevengraces_ghostgate
+run
+player->Position 24438 45150 4600 0
+wait 300
+activate 05D4ABE2
+button 0
+until 300 GetJournalIndex TT_Ghostgate == 100
+end
+
+case tt_sevengraces_gnisis
+run
+player->PositionCell 899 2800 372 0 "Gnisis, Temple"
+wait 150
+activate 054A292D
+button 0
+until 300 GetJournalIndex TT_MaskVivec == 100
+end
+
+case tt_sevengraces_koal
+run
+player->PositionCell 2956 880 212 0 "Koal Cave"
+wait 150
+activate 05854536
+button 0
+until 300 GetJournalIndex TT_RuddyMan == 100
+end
+
+case tt_sevengraces_palace
+run
+player->Position 33096 -106560 2000 0
+wait 300
+activate 0549E254
+button 0
+until 300 GetJournalIndex TT_PalaceVivec == 100
+end
+
+case tt_sevengraces_stopmoon
+run
+player->Position 31856 -102140 1120 0
+wait 300
+activate 058EF2FE
+button 0
+until 300 GetJournalIndex TT_StopMoon == 100
+end
+
+case tt_sevengraces_puzzle
+run
+player->PositionCell 5389 7580 848 0 "Vivec, Puzzle Canal, Center"
+until 600 "dremora_ttpc"->GetDistance player < 600
+wait 120
+talk dremora_ttpc
+ask silver longsword
+choose 1
+expect GetJournalIndex TT_PuzzleCanal == 50
+bye
+activate 05E0A126
+until 300 GetJournalIndex TT_PuzzleCanal == 100
+end
+
+case tt_sevengraces_done
+run
+player->PositionCell 3637 3900 14723 0 "Ald-ruhn, Temple"
+until 600 "tuls valen"->GetDistance player < 600
+wait 120
+talk tuls valen
+ask Seven Graces
+expect GetJournalIndex TT_SevenGraces == 100
+bye
+end

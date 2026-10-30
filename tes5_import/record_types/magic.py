@@ -31,8 +31,9 @@ from tes4_export.record_types.morrowind import MW_ENCHANT_SKILL
 from . import magic_art, magic_art_morrowind
 from .common import pack_keywords
 from ..generated.vanilla_mgef_data import VANILLA_MGEF_DATA
-from ..base.constants import mgef_family_keyword_name
-from ..base.conditions import (FUNC_HAS_KEYWORD, FUNC_HAS_MAGIC_EFFECT_KEYWORD,
+from ..base.constants import ENGINE_GLOBAL_FORMIDS, mgef_family_keyword_name
+from ..base.conditions import (FUNC_GET_GLOBAL_VALUE, FUNC_HAS_KEYWORD,
+                               FUNC_HAS_MAGIC_EFFECT_KEYWORD, FUNC_IS_IN_INTERIOR,
                                build_ctda)
 from ..base.owned_records import MGEF_FAMILY_KEYWORDS, WELL_KNOWN_PROPERTIES
 from ..base.text_reader import get_float, get_formid, get_int, get_str
@@ -995,11 +996,14 @@ def mgef_parts(rec: dict) -> tuple:
 
 
 def mgef_tail(rec: dict) -> bytes:
-    """The subrecords after ESCE: the sound set, the description, then a Paralysis effect's conditions."""
+    """The subrecords after ESCE: sound set, description, then Paralysis or Sun Damage conditions."""
     desc = get_str(rec, 'DESC')
     tail = magic_art.sound_set(rec) + (pack_string_subrecord('DNAM', desc) if desc else b'')
-    if get_archetype(get_str(rec, 'EditorID'), rec) == A_PARALYSIS:
+    code = get_str(rec, 'EditorID')
+    if get_archetype(code, rec) == A_PARALYSIS:
         tail += PARALYSIS_CONDITIONS
+    if code == 'SUDG' or morrowind_index(rec) == MW_SUN_DAMAGE:
+        tail += SUN_CONDITIONS
     return tail
 
 
@@ -1016,6 +1020,17 @@ PARALYSIS_CONDITIONS = b''.join(
     for func, kw in ((FUNC_HAS_KEYWORD, KW_ACTOR_TYPE_DRAGON),
                      (FUNC_HAS_KEYWORD, KW_IMMUNE_PARALYSIS),
                      (FUNC_HAS_MAGIC_EFFECT_KEYWORD, KW_IMMUNE_PARALYSIS)))
+
+
+#: Morrowind's Sun Damage effect index, Oblivion's SUDG.
+MW_SUN_DAMAGE = 135
+
+#: Skyrim.esm's own sun window on its vampire sun-damage spells: outdoors, GameHour 5 through 19.
+SUN_CONDITIONS = b''.join(
+    pack_subrecord('CTDA', build_ctda(func, param1=glob, comp_value=value, operator=op))
+    for func, glob, value, op in ((FUNC_IS_IN_INTERIOR, 0, 0.0, 0x00),
+                                  (FUNC_GET_GLOBAL_VALUE, ENGINE_GLOBAL_FORMIDS['gamehour'], 5.0, 0x60),
+                                  (FUNC_GET_GLOBAL_VALUE, ENGINE_GLOBAL_FORMIDS['gamehour'], 19.0, 0xA0)))
 
 
 def effect_keywords(rec: dict, family: int = 0) -> bytes:

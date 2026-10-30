@@ -1,0 +1,46 @@
+# TR House Telvanni: "Fools That Meddle" (TR_m1_HT_Va1), the peaceful way. Norahin Darys, a Mouth in the Chambers,
+# wants the Temple priest Sevroth Teles out of Port Telvannis ("leave town": "What is that?" 4, then 10; the
+# priest's script enables him at 10). Persuaded ("I don't know why they want you gone..." 2, then the descent
+# answer 3), he agrees to go (20, his control 10); Norahin, told he has left (Choice 2), pays out (101, +5
+# reputation).
+# PositionCell and Position stand in for the travel.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_mi1_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_va1_start
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Norahin_Darys"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Norahin_Darys
+ask chores
+ask leave town
+choose 4
+expect GetJournalIndex TR_m1_HT_Va1 == 10
+bye
+end
+
+case ht_va1_priest
+run
+player->Position 342815 140900 1600 0
+until 900 "TR_m1_q67_Va1_Priest"->GetDistance player < 600
+wait 120
+talk TR_m1_q67_Va1_Priest
+ask leave town
+choose 2
+choose 3
+expect GetJournalIndex TR_m1_HT_Va1 == 20
+bye
+end
+
+case ht_va1_done
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Norahin_Darys"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Norahin_Darys
+ask leave town
+choose 2
+expect GetJournalIndex TR_m1_HT_Va1 == 101
+bye
+end

@@ -1,0 +1,44 @@
+# Morrowind Temple: Tuls Valen's "Compassion" (TT_Compassion). In the Ald'ruhn Temple Tuls Valen asks the player to
+# cure the Orc Bulfim gra-Shugarz of her Ash-Chancre ("duties" names "compassion": 10, a cure blight potion). In
+# Maelkashishi she lets the player try ("Ash-chancre": "I will heal you." 2, then "I offer you this potion." 4:
+# RemoveSpell); BILL_TT_Bulfim_gra-Shugharz logs 50 once GetBlightDisease is 0.
+# Tuls Valen thanks the player (99, a skill book), and taking the unused potion back is not offered once she drank
+# it ("No. I had to use it." 2: 100).
+# PositionCell stands in for the travel.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_sevengraces_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_compassion_start
+talk tuls valen
+ask duties
+ask compassion
+expect GetJournalIndex TT_Compassion == 10
+expect player->GetItemCount "p_cure_blight_s" >= 1
+bye
+end
+
+case tt_compassion_cure
+run
+player->PositionCell 3998 4500 13579 0 "Maelkashishi, Shrine"
+until 600 "bulfim_gra_shugarz"->GetDistance player < 600
+wait 120
+talk bulfim_gra_shugarz
+ask disease
+ask Ash-chancre
+choose 2
+choose 4
+until 300 GetJournalIndex TT_Compassion == 50
+end
+
+case tt_compassion_done
+run
+player->PositionCell 3637 3900 14723 0 "Ald-ruhn, Temple"
+until 600 "tuls valen"->GetDistance player < 600
+wait 120
+talk tuls valen
+ask compassion
+expect GetJournalIndex TT_Compassion == 99
+choose 2
+expect GetJournalIndex TT_Compassion == 100
+bye
+end

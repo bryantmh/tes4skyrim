@@ -489,6 +489,14 @@ constexpr std::uint64_t kShowMessageBox = 52269;
 // text's data pointer and copies it into the menu's static string (0x31ac978).
 // See: docs/commentary/morrowind_runtime.md#book-text-defines
 constexpr std::uint64_t kOpenBookMenu = 51053;
+// TES3's `Equip` of a book READS it (OpenMW's useItem). Skyrim's EquipItem
+// does not, so the runtime opens it as the inventory does (0x92f740 on
+// 1.6.1170): TESDescription::Get(out, parent, 'DESC') (14552, 0x1dbcc0) on
+// the book's TESDescription at +0xa8, then OpenBookMenu with no ref.
+constexpr std::uint64_t kDescriptionGet = 14552;
+constexpr std::size_t kOffBookDescription = 0xa8;
+constexpr std::uint32_t kDescField = 0x43534544;
+constexpr std::uint8_t kFormTypeBook = 0x1B;
 
 // ObjectReference.PlaceAtMe(Form base, int count, bool persist, bool disabled)
 // (0x9cf630), found at its registration like the rest: `lea r8,
@@ -987,6 +995,40 @@ constexpr std::size_t kOffPlayerJailFaction = 0x720;
 
 // TESObjectREFR's base form, which TESObjectREFR::ActivateRef dispatches on.
 constexpr std::size_t kOffRefBase = 0x40;
+
+// A soul the player traps rides on the gem's inventory stack as ExtraSoul,
+// so the soul gem commands walk the inventory. Read off 1.6.1170:
+//   TESObjectREFR::GetInventoryChanges (id 16040) passes `ref+0x70`, the
+//        ref's ExtraDataList, to ExtraDataList::GetInventoryChanges (11717:
+//        the type-0x15 extra's +0x10), whose list of entries sits at +0
+//   InventoryEntryData::GetSoulLevel (0x223250) reads the entry's base form
+//        at +0 and its list of ExtraDataLists at +8, then asks one list
+//        ExtraDataList::GetSoulLevel (11707: ExtraSoul, type 0x9C, byte +0x10)
+//   ExtraDataList::GetCount (11704: ExtraCount, type 0x24, word +0x10, else 1)
+//   TESObjectREFR::RemoveItem is vtable slot 86 (0x2e1750): (ret handle,
+//        item, count, reason, ExtraDataList*, moveTo, dropLoc, rotate), the
+//        list passed on to InventoryChanges::RemoveItem
+// None is in the pre-AE tables, so pre-AE builds count only filled records.
+// See: docs/commentary/morrowind_runtime.md#soul-gems
+constexpr std::size_t kOffRefExtraList = 0x70;
+constexpr std::uint64_t kExtraListInventoryChanges = 11717;
+constexpr std::uint64_t kExtraListSoulLevel = 11707;
+constexpr std::uint64_t kExtraListCount = 11704;
+constexpr std::size_t kOffEntryObject = 0x0;
+constexpr std::size_t kOffEntryExtraLists = 0x8;
+constexpr std::size_t kRefRemoveItemSlot = 86;
+
+// Soul Trap sizes a soul by the victim's LEVEL, not the plugin's soul value
+// (Sittali, level 20, a grand soul in TES3, trapped as soul 3). Read off
+// 1.6.1170: Actor::GetSoulSize (38817, 0x6c6a80; actor in rcx, size 0..5 in
+// eax) passes level and black-soul flag to 0x41ae60 (5 when black, else the
+// level against four thresholds). Its four direct callers, all repointed:
+//   0x6c6bdf / 0x6c6ca1  Actor::TrapSoul (0x6c6ae0) matching the gem, then
+//                        writing the size into its ExtraSoul (0x224720)
+//   0x2319ba             the best-soul-gem search
+//   0x5d3e3a             SoulTrapEffect
+// See: docs/commentary/morrowind_runtime.md#soul-gems
+constexpr std::uint64_t kActorGetSoulSize = 38817;
 
 // TESObjectREFR's own scale in percent (uint16, 100 by default): what TES3's
 // GetScale reads. Papyrus GetScale multiplies in the race height and lags a

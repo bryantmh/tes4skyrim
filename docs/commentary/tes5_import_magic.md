@@ -1143,6 +1143,30 @@ Skyrim equivalent, and any magnitude now grants full immunity. Every creature
 and quest ability in Oblivion.esm authors 100; the partial values (10-60%)
 are only on enchantments and ingredients.
 
+## <a id="sun-damage"></a>Sun Damage burns only outdoors by day
+
+**Code:** `tes5_import/record_types/magic.py` (`mgef_tail`, `SUN_CONDITIONS`)
+
+Oblivion's Sun Damage (SUDG) and Morrowind's effect 135 hurt only in
+sunlight; the engine gates them. Skyrim has no sunlight archetype, so SUDG
+converts to a Health value modifier. On an ability, Skyrim applies that every
+second wherever the owner stands. Measured headless (2026-10-30) on Tamriel
+Rebuilt's Velyn Alari in Sadalvel Ancestral Tomb: his script adds Morroblivion's
+`vampire sun damage` (Morrowind_ob `0vampireSsunSdamage`, SUDG 5), and his
+113 health ran out in about 20 s, indoors and out of combat. Removing that one
+spell by console stopped the drain at once.
+
+Every Sun Damage effect now carries the window Skyrim.esm puts on its own
+vampire sun-damage spells: `IsInInterior == 0`, `GameHour >= 5`,
+`GameHour <= 19`. Vanilla's fourth condition excludes one Skyrim worldspace
+(0x2EE41) and has no TES4 or TES3 counterpart.
+
+Sources carrying it: Oblivion.esm's player vampirism abilities
+(`Vampirism50/75/100`), one test spell and one constant enchantment
+(`DBenAppHands`); three Nehrim item enchantments; Morrowind_ob's vampire spell
+and Mantle of Woe enchantment; Morrowind.esm's `vampire sun damage`. Before
+this, each drained its owner or wearer nonstop.
+
 ## <a id="morrowind-effects"></a>Morrowind effects key on an index, not a code
 
 **Code:** `tes5_import/record_types/magic_morrowind.py`

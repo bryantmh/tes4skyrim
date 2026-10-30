@@ -1,0 +1,45 @@
+# Morrowind Temple: Tuls Valen's "Pilgrimage to Maar Gan" (TT_MaarGan). The rock in the Maar Gan shrine tells of
+# Vivec taunting Mehrunes Dagon (shrineMaarGan: 20, the "taunt the Daedra" topic). Four taunts make the Dremora at
+# the shrine attack (30); praying at the rock again blesses the player (60). Tuls Valen hears of it (100, a Block
+# book).
+# PositionCell stands in for the travel; god mode takes the Dremora's attack. Ref FormIDs carry Morrowind.esm's
+# slot 05: 057464E4 the rock.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_falseincarnate_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_maargan_start
+talk tuls valen
+ask duties
+ask Maar Gan
+expect GetJournalIndex TT_MaarGan == 10
+bye
+end
+
+case tt_maargan_shrine
+run
+player->PositionCell -2177 1250 970 0 "Maar Gan, Shrine"
+until 600 "dremora_ttmg"->GetDistance player < 1500
+wait 120
+activate 057464E4
+until 300 GetJournalIndex TT_MaarGan == 20
+talk dremora_ttmg
+ask taunt the Daedra
+ask taunt the Daedra
+ask taunt the Daedra
+ask taunt the Daedra
+until 300 GetJournalIndex TT_MaarGan == 30
+wait 60
+activate 057464E4
+until 300 GetJournalIndex TT_MaarGan == 60
+end
+
+case tt_maargan_done
+run
+player->PositionCell 3637 3900 14723 0 "Ald-ruhn, Temple"
+until 600 "tuls valen"->GetDistance player < 600
+wait 120
+talk tuls valen
+ask Maar Gan
+expect GetJournalIndex TT_MaarGan == 100
+bye
+end

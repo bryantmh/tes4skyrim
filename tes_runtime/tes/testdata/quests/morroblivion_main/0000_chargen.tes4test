@@ -3,7 +3,6 @@
 # Stages are fbmwChargen's (TES4 numbers): 1 ship, 5 off the ship, 10 class menu, 20 birthsign menu, 30 after Sellus
 # Gravius, 100 arrived. The quest script's own counters (JiubSpeak, Guard01Stage, GuardDockStage, CensusStage,
 # ClassQuizStage) step through each conversation.
-# Drafted, not yet run.
 # Run: python -m tools.live.test_instance questtest --cases <this folder> --new-game 3 --fast --checkpoints --stop-on-fail --timeout 3600
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -28,21 +27,77 @@ case mb_chargen_guard
 until 3600 fbmwChargen.Guard01Stage >= 4
 end
 
-# The player goes up through the hatch and down to the dock, where the dock guard's trigger zone (01F8E963, no
-# EditorID) stops the player for his two lines; moveto stands in for the walk.
+# The player goes up through the hatch (mwCGshipdoorRef) and walks down to the dock, where the dock guard's trigger
+# zone (01F8E963, no EditorID) stops the player for his two lines. The deck's navmesh is its own island, so setpos
+# stands in for the gangplank, to a dock spot 300 units short of the zone, and the player walks into it from there.
 case mb_chargen_dock
+activate mwCGshipdoorRef
+wait 300
 run
-player.moveto 01F8E963
+player.setpos x -8950
+player.setpos y -73150
+player.setpos z 140
+wait 60
+walk 01F8E963
 until 1800 fbmwChargen.GuardDockStage >= 4
 end
 
-# In the Census and Excise Office the trigger zone (01F8E962) hands the player to Socucius Ergalla, who offers the
-# class quiz; the player skips it (button 1 of "Take Quiz|Skip Quiz"), and stage 10 opens the class menu.
+# The player walks to the Census and Excise Office's dock-side door (0181BCE5) and goes in; the trigger zone inside it
+# (01F8E962) hands the player to Socucius Ergalla, who offers the class quiz; the player skips it (button 1 of
+# "Take Quiz|Skip Quiz"), and stage 10 opens the class menu.
 case mb_chargen_census
-run
-player.moveto 01F8E962
+walk 0181BCE5
+activate 0181BCE5
+wait 300
+walk 01F8E962
 until 1800 fbmwChargen.ClassQuizStage >= 1
 wait 120
 button 1
-until 1800 GetStage fbmwChargen >= 10
+end
+
+# Stage 10's ShowClassMenu opens MorrowindRuntime's class menu; Socucius speaks (CensusStage 3), and CensusStage 4
+# sets stage 20, whose ShowBirthsignMenu opens the birthsign menu. A pick waits for its menu; an until would wait for
+# the menu to close.
+case mb_chargen_class
+pick Warrior
+pick The Warrior
+until 1800 fbmwChargen.CensusStage >= 6
+expect GetStage fbmwChargen >= 20
+end
+
+# The release papers on Socucius's desk (mwCGPapersREF): taking them sets GotPapers and unlocks the hall door
+# (AAMWChargenDoor1REF) to Sellus Gravius.
+case mb_chargen_papers
+walk mwCGPapersREF
+take mwCGPapersREF
+until 600 fbmwChargen.GotPapers == 1
+end
+
+# Sellus Gravius's "duties" (while fbmwMQ01 is below 1) hands over Caius's package and sets stage 30, which unlocks the
+# exit door.
+# His office is its own building across the courtyard: out through the hall's far door (0181D371), across to his
+# office door (0181BCE1), in, and on to him. His greeting takes the papers and adds "duties" when it ends.
+case mb_chargen_sellus
+walk 0181D371
+activate 0181D371
+wait 300
+walk 0181BCE1
+activate 0181BCE1
+wait 300
+walk SellusGraviusRef
+talk SellusGraviusRef
+hear 600 SellusGraviusRef some duties for you
+wait 120
+ask duties
+until 300 GetStage fbmwChargen >= 30
+bye
+end
+
+# The exit door asks to revise the character; "Finished - Exit" (button 3) sets gotoStage 100 and lets the player out.
+case mb_chargen_exit
+walk AAMWChargenDoor2REF
+activate AAMWChargenDoor2REF
+wait 60
+button 3
+until 1800 GetStage fbmwChargen >= 100
 end

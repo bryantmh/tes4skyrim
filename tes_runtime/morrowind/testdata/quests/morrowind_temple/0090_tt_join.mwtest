@@ -1,0 +1,18 @@
+# Morrowind Temple: joining. In the Ald'ruhn Temple Tuls Valen takes the player in ("join the Temple": "Join the
+# Temple" 1, PCRaiseRank).
+# PositionCell stands in for the travel. The chain starts from the authored Morrowind.esm + Tribunal + Bloodmoon
+# instance's last save.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_estate --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_join
+run
+player->PositionCell 3637 3900 14723 0 "Ald-ruhn, Temple"
+until 600 "tuls valen"->GetDistance player < 600
+wait 120
+talk tuls valen
+ask join the Temple
+choose 1
+expect player->GetPCRank Temple >= 0
+bye
+end

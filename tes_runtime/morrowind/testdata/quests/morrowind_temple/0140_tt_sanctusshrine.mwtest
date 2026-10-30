@@ -1,0 +1,35 @@
+# Morrowind Temple: Endryn Llethan's "Silent Pilgrimage" (TT_SanctusShrine). Endryn Llethan offers the vow of silence
+# ("Sanctus Shrine": 10, "Take vow of silence" 1: 20); the player speaks to no one until praying at the Sanctus
+# Shrine on its island west of Sheogorad (shrineSanctus: 50, the vow lifted). Endryn Llethan rewards the piety (100).
+# Position and PositionCell stand in for the travel. Ref FormIDs carry Morrowind.esm's slot 05: 05EE7716 the shrine.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_diseasecarrier_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_sanctusshrine_start
+talk endryn llethan
+ask duties
+ask Sanctus Shrine
+expect GetJournalIndex TT_SanctusShrine == 10
+choose 1
+expect GetJournalIndex TT_SanctusShrine == 20
+bye
+end
+
+case tt_sanctusshrine_shrine
+run
+player->Position 12342 173900 1900 0
+wait 300
+activate 05EE7716
+until 300 GetJournalIndex TT_SanctusShrine == 50
+end
+
+case tt_sanctusshrine_done
+run
+player->PositionCell -1031 -150 -616 0 "Vivec, High Fane"
+until 600 "endryn llethan"->GetDistance player < 600
+wait 120
+talk endryn llethan
+ask Sanctus Shrine
+expect GetJournalIndex TT_SanctusShrine == 100
+bye
+end

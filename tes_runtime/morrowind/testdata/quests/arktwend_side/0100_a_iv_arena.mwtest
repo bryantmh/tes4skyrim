@@ -1,0 +1,94 @@
+# Arktwend side quest: the Stormwend arena (A_IV_Arena). The doorman Joroka greets the player at the gate and asks
+# 800 coins to enter ("cost to enter" 1: 2). The trainer Hawk takes them on as a gladiator for 900 ("Gladiator" 1: 3),
+# sends them for a sword (4), then to the practice ground: two wolves at the marker (5, then 6 once both are dead),
+# two boars (7, Joroka set on the player), Joroka himself (8, ARENJorokaScript, resurrected), a rank (9), and the
+# first fight before a crowd against Hera (10, Arenavar 1; 11, ARENHeraScript), paid 2500 and ranked again (12).
+# Position stands in for the walks, the AddItem of gold for money the player earned, the console kills for the fights.
+# Ref FormIDs carry Arktwend's slot 05: 052F77C5 and 05AA4D7A the wolves, 05368256 and 053378EA the boars,
+# 057EB804 Joroka, 05E5721C Hera.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_storm_markus_reward --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case arena_enter
+run
+player->AddItem Gold_001 1700
+player->Position 3000 52357 483 90
+until 900 "ARENJoroka".State == 1
+wait 30
+ask cost to enter
+choose 1
+expect GetJournalIndex A_IV_Arena == 2
+end
+
+case arena_join
+run
+player->Position 3900 51543 433 90
+until 600 "ARENHawk"->GetDistance player < 600
+wait 60
+talk ARENHawk
+ask Gladiator
+choose 1
+expect GetJournalIndex A_IV_Arena == 3
+bye
+talk ARENHawk
+expect GetJournalIndex A_IV_Arena == 4
+talk ARENHawk
+expect GetJournalIndex A_IV_Arena == 5
+end
+
+case arena_wolves
+run
+player->Position 3588 52100 458 0
+wait 120
+console 052F77C5.kill
+console 05AA4D7A.kill
+until 300 GetDeadCount ARENWolf02 >= 1
+run
+player->Position 3900 51543 433 90
+wait 60
+talk ARENHawk
+expect GetJournalIndex A_IV_Arena == 6
+end
+
+case arena_boars
+run
+player->Position 3588 52100 458 0
+wait 120
+console 05368256.kill
+console 053378EA.kill
+until 300 GetDeadCount ARENWildschwein02 >= 1
+run
+player->Position 3900 51543 433 90
+wait 60
+talk ARENHawk
+expect GetJournalIndex A_IV_Arena == 7
+end
+
+case arena_joroka
+run
+wait 60
+console 057EB804.kill
+until 300 GetJournalIndex A_IV_Arena == 8
+run
+player->Position 3900 51543 433 90
+wait 60
+talk ARENHawk
+expect GetJournalIndex A_IV_Arena == 9
+bye
+talk ARENHawk
+expect GetJournalIndex A_IV_Arena == 10
+bye
+end
+
+case arena_hera
+run
+wait 120
+console 05E5721C.kill
+until 300 GetJournalIndex A_IV_Arena == 11
+run
+player->Position 3900 51543 433 90
+wait 60
+talk ARENHawk
+expect GetJournalIndex A_IV_Arena == 12
+bye
+end

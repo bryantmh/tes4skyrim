@@ -1,0 +1,38 @@
+# Morrowind Daedric quests: Mehrunes Dagon's Razor (DA_Mehrunes). Mehrunes Dagon's statue in Yasammidan speaks and
+# sets the quest (10), then asks whether the player will prove their worth: "I wish to prove my worth." (button 0)
+# sends them for the Razor in the Alas Ancestral Tomb (20). Carrying the rusty dagger back within 800 units of the
+# statue logs 30, and the statue reforges it as Mehrunes' Razor (40).
+# PositionCell stands in for the travel, removeallitems for Take All on Varner Hleras's corpse. FormIDs carry Morrowind.esm's
+# slot 05: 052B9EE2 Mehrunes Dagon's statue, 05CAF66F the corpse.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_da_molagbal_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case da_mehrunes_start
+run
+player->PositionCell -2064 3850 -1155 0 "Yasammidan, Shrine"
+wait 120
+activate 052B9EE2
+button 0
+until 300 GetJournalIndex DA_Mehrunes == 20
+end
+
+case da_mehrunes_razor
+run
+player->PositionCell 1018 850 86 0 "Alas Ancestral Tomb"
+until 600 "contain_dead_mehrunes00"->GetDistance player < 1000
+wait 60
+activate 05CAF66F
+wait 60
+close ContainerMenu
+console 05CAF66F.removeallitems player
+until 120 player->GetItemCount Rusty_Dagger_UNIQUE >= 1
+end
+
+case da_mehrunes_done
+run
+player->PositionCell -2064 3850 -1155 0 "Yasammidan, Shrine"
+until 300 GetJournalIndex DA_Mehrunes == 30
+activate 052B9EE2
+until 300 GetJournalIndex DA_Mehrunes == 40
+expect player->GetItemCount "mehrunes'_razor_unique" == 1
+end

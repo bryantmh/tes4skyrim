@@ -18,6 +18,7 @@
 #include "ids.h"
 #include "log.h"
 #include "main_thread.h"
+#include "object_script.h"
 #include "script_context.h"
 #include "ui_message.h"
 
@@ -108,11 +109,21 @@ using OpenBookFn = void (*)(const EngineString* text, void* extra, void* ref, vo
 
 OpenBookFn g_openBook = nullptr;
 
+// TESDescription::Get(out, parent, field): a form's description text.
+using DescriptionFn = void (*)(void* description, EngineString* out, void* parent,
+                               std::uint32_t field);
+
+DescriptionFn g_description = nullptr;
+
 // A Morrowind book's `%PCName`, `%PCRace` and `%PCClass` filled in as the book
 // opens, as OpenMW's `fixDefinesBook` does; every other book goes through as is.
 // See: docs/commentary/morrowind_runtime.md#book-text-defines
+// No ref means the book is read from an inventory, which TES3 treats as an equip.
 void OpenBookHook(const EngineString* text, void* extra, void* ref, void* book, const void* pos,
                   const void* rot, float scale, bool defaultPos) {
+    if (!ref && book && IsMorrowindForm(FormIdOf(book)) && !ReadCarriedBook(FormIdOf(book))) {
+        return;
+    }
     const bool ours = text && text->data && book && IsMorrowindForm(FormIdOf(book)) &&
                       std::strchr(text->data, '%');
     if (!ours) {
@@ -130,6 +141,8 @@ void OpenBookHook(const EngineString* text, void* extra, void* ref, void* book, 
 void InstallBookDefines() {
     const std::uintptr_t open = Resolve("BookMenu::OpenBookMenu", ids::kOpenBookMenu, nullptr);
     g_openBook = reinterpret_cast<OpenBookFn>(open);
+    g_description = reinterpret_cast<DescriptionFn>(
+        Resolve("TESDescription::Get", ids::kDescriptionGet, nullptr));
     const int patched = open ? PatchAllCalls(open, reinterpret_cast<void*>(&OpenBookHook),
                                              "BookMenu::OpenBookMenu")
                              : 0;
@@ -137,6 +150,18 @@ void InstallBookDefines() {
 }
 
 }  // namespace
+
+// The book's text from its description, opened with no ref as the inventory
+// opens it; the menu places the book itself (useDefaultPos).
+void ReadBookFromInventory(void* book) {
+    if (!g_openBook || !g_description || !book) return;
+    EngineString text{};
+    g_description(static_cast<char*>(book) + ids::kOffBookDescription, &text, nullptr,
+                  ids::kDescField);
+    const float pos[3] = {};
+    const float rot[9] = {1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+    OpenBookHook(&text, nullptr, nullptr, book, pos, rot, 1.0f, true);
+}
 
 // The click lands in `buttonPressed`, which `GetButtonPressed` hands out once.
 // TES3 scripts POLL for it rather than waiting, so the box does not block: the

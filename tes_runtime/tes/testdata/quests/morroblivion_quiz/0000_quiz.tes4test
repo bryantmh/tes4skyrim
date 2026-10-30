@@ -1,0 +1,66 @@
+# Morroblivion's census class quiz, the branch morroblivion_main skips: "Take Quiz" (button 0), ten questions, each
+# answered with its first choice (a combat answer), so the script's Player.SetClass names Warrior and the class menu
+# opens on it. Starts from morroblivion_main's save after the dock.
+# Socucius reads each question aloud (even ClassQuizStage), then its box shows (the odd stage after). The box holds
+# the game, so each answer hears the question, lets him finish, and clicks; a button step waits for its box.
+# Run: python -m tools.live.test_instance questtest --cases <this folder> --load mwtest_mb_chargen_dock --fast --checkpoints --stop-on-fail --timeout 3600
+# See docs/commentary/morrowind_runtime.md#a-script-names-the-class
+
+case mbq_offer
+walk 0181BCE5
+activate 0181BCE5
+wait 300
+walk 01F8E962
+until 1800 fbmwChargen.ClassQuizStage >= 1
+wait 120
+button 0
+end
+
+case mbq_questions_1_to_5
+hear 1800 mwSocuciusErgallaRef On a clear day
+wait 600
+button 0
+hear 1800 mwSocuciusErgallaRef One Summer afternoon
+wait 600
+button 0
+hear 1800 mwSocuciusErgallaRef Your cousin has given you
+wait 600
+button 0
+hear 1800 mwSocuciusErgallaRef heated discussion
+wait 600
+button 0
+hear 1800 mwSocuciusErgallaRef Your mother sends you to the market
+wait 600
+button 0
+expect fbmwChargen.quizScoreCombat == 5
+end
+
+case mbq_questions_6_to_10
+hear 1800 mwSocuciusErgallaRef While in the marketplace
+wait 600
+button 0
+hear 1800 mwSocuciusErgallaRef Your father sends you on a task
+wait 600
+button 0
+hear 1800 mwSocuciusErgallaRef fix the sto
+wait 600
+button 0
+hear 1800 mwSocuciusErgallaRef the baker gives you
+wait 600
+button 0
+hear 1800 mwSocuciusErgallaRef Entering town
+wait 600
+button 0
+expect fbmwChargen.quizScoreCombat == 10
+end
+
+# Player.SetClass Warrior opens the class menu on Warrior; the pick goes through ChooseClass. Then "Here are the
+# results of your class quiz..." waits for its OK. Stage 10's own ShowClassMenu is skipped (the player is no longer
+# CharactergenClass), and the birthsign menu follows.
+case mbq_class
+pick Warrior
+button 0
+pick The Warrior
+until 1800 fbmwChargen.CensusStage >= 6
+expect GetStage fbmwChargen >= 20
+end

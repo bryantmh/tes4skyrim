@@ -1,0 +1,87 @@
+# Morrowind Temple: Uvoo Llaren's three relics, each handed over with Choice 1 (100). "Lost Kogoruhn" (TT_HairShirt,
+# 10): the Hair Shirt of St. Aralor from Feril Salmyn outside Kogoruhn. "Cleaver of St. Felms" (TT_FelmsCleaver, 10):
+# from Mendel Eves's body in Tureynulal's Bladder of Clovis. "Crosier of St. Llothis" (TT_LlothisCrosier, 10): from
+# the Inner Tower of Dagoth Ur. Their 110 (the relic lent back) needs Patriarch, so this run stops at 100.
+# Position and PositionCell stand in for the travel, the console kill for the fight with Feril Salmyn, and
+# removeallitems for Take All on a body. Ref FormIDs carry Morrowind.esm's slot 05: 057A02D9 Feril Salmyn,
+# 05D23803 Mendel Eves, 052A5A3D the crosier.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_supply_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_hairshirt_start
+talk uvoo llaren
+ask duties
+ask Lost Kogoruhn
+expect GetJournalIndex TT_HairShirt == 10
+bye
+end
+
+case tt_hairshirt_take
+run
+player->Position 2628 118500 1418 0
+until 600 "feril salmyn"->GetDistance player < 1000
+wait 60
+console 057A02D9.kill
+until 300 "feril salmyn"->GetHealth <= 0
+console 057A02D9.removeallitems player
+until 120 player->GetItemCount Expensive_Shirt_Hair >= 1
+end
+
+case tt_hairshirt_done
+run
+player->PositionCell 71 303 -510 0 "Ghostgate, Temple"
+until 600 "uvoo llaren"->GetDistance player < 600
+wait 60
+talk uvoo llaren
+ask Lost Kogoruhn
+choose 1
+expect GetJournalIndex TT_HairShirt == 100
+ask duties
+ask Cleaver of St. Felms
+expect GetJournalIndex TT_FelmsCleaver == 10
+bye
+end
+
+case tt_cleaver_take
+run
+player->PositionCell 962 150 36 0 "Tureynulal, Bladder of Clovis"
+until 600 "mendel eves"->GetDistance player < 1000
+wait 60
+console 05D23803.removeallitems player
+until 120 player->GetItemCount CleaverStFelms >= 1
+end
+
+case tt_cleaver_done
+run
+player->PositionCell 71 303 -510 0 "Ghostgate, Temple"
+until 600 "uvoo llaren"->GetDistance player < 600
+wait 60
+talk uvoo llaren
+ask Cleaver of St. Felms
+choose 1
+expect GetJournalIndex TT_FelmsCleaver == 100
+ask duties
+ask Crosier of St. Llothis
+expect GetJournalIndex TT_LlothisCrosier == 10
+bye
+end
+
+case tt_crosier_take
+run
+player->PositionCell 3613 4150 13826 0 "Dagoth Ur, Inner Tower"
+wait 60
+take 052A5A3D
+until 120 player->GetItemCount CrosierStLlothis >= 1
+end
+
+case tt_crosier_done
+run
+player->PositionCell 71 303 -510 0 "Ghostgate, Temple"
+until 600 "uvoo llaren"->GetDistance player < 600
+wait 60
+talk uvoo llaren
+ask Crosier of St. Llothis
+choose 1
+expect GetJournalIndex TT_LlothisCrosier == 100
+bye
+end

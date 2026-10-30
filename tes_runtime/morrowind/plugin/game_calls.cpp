@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <set>
@@ -582,9 +583,11 @@ float DistanceBetween(void* from, void* to) {
     return g_distance(PapyrusVm(), 0, from, to);
 }
 
+// A reference Skyrim has not loaded stands in another cell, where OpenMW's
+// GetDistance answers FLT_MAX: 0 would pass every `GetDistance < x` test.
 float Distance(const std::string& from, const std::string& to) {
     const float apart = DistanceBetween(OwnerRef(from), OwnerRef(to));
-    return apart < 0.0f ? 0.0f : apart;
+    return apart < 0.0f ? std::numeric_limits<float>::max() : apart;
 }
 
 int Tes3GridIndex(float v) { return static_cast<int>(std::floor(v / kTes3CellSize)); }
@@ -729,9 +732,13 @@ void EquipItem(const std::string& actor, const std::string& item) {
     void* ref = OwnerRef(actor);
     void* form = ItemForm(item);
     if (!ref || !form || !g_equipItem) return;
-    const bool potion = At<std::uint8_t>(form, ids::kOffFormType) == ids::kFormTypePotion;
-    RunOnGameThread([ref, form, potion]() {
-        if (potion && g_drinkPotion) {
+    const std::uint8_t type = At<std::uint8_t>(form, ids::kOffFormType);
+    const bool potion = type == ids::kFormTypePotion;
+    const bool read = type == ids::kFormTypeBook && Lower(actor) == kPlayerId;
+    RunOnGameThread([ref, form, potion, read]() {
+        if (read) {
+            ReadBookFromInventory(form);
+        } else if (potion && g_drinkPotion) {
             const bool drank = g_drinkPotion(ref, form, nullptr);
             Log("item: %08X drinks %08X -> %s", FormIdOf(ref), FormIdOf(form), drank ? "ok" : "REFUSED");
         } else {
@@ -1023,6 +1030,20 @@ bool IsDeadRef(std::uint32_t runtimeFormId) {
     return IsDead(RefByRuntimeId(runtimeFormId));
 }
 
+// OpenMW's `CreatureStats::hasDied`, read and cleared: a scripted actor's own
+// instance holds it, any other actor's death waits in the engine-death set.
+bool TakeDeathOf(const std::string& id) {
+    void* ref = OwnerRef(id);
+    if (!ref) return false;
+    const std::uint32_t runtimeId = FormIdOf(ref);
+    ObjectScript* instance = InstanceForRef(runtimeId);
+    if (!instance) return TakeEngineDeath(runtimeId);
+    instance->PollDeath();
+    const bool died = instance->Events().died;
+    instance->Events().died = false;
+    return died;
+}
+
 // TES3's whole rule for when a local script runs: while its object is loaded.
 //
 // 🛑 The two halves mean DIFFERENT things and only one is an unload. `GetForm`
@@ -1263,6 +1284,7 @@ void InstallGameCalls() {
     hooks.showTrainingMenu = ShowTrainingMenu;
     hooks.showMessage = ShowMessage;
     hooks.isDead = IsDeadRef;
+    hooks.takeDeathOf = TakeDeathOf;
     hooks.is3DLoaded = Is3DLoadedRef;
     hooks.load3DState = Load3DStateRef;
     hooks.loadedRef = LoadedRef;

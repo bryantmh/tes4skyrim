@@ -17,6 +17,7 @@
 #include <components/compiler/opcodes.hpp>
 #include <components/interpreter/opcodes.hpp>
 
+#include "dialogue_state.h"
 #include "object_script.h"
 #include "object_tick.h"
 #include "script_ops.h"
@@ -61,6 +62,16 @@ class OpEventExplicit : public Interpreter::Opcode0 {
     }
 };
 
+// `"id"->OnDeath` asks the NAMED actor, which needs no script of its own: a
+// fork's script watches a scriptless netch. OpenMW reads and clears that
+// actor's `CreatureStats::hasDied`.
+class OpOnDeathExplicit : public Interpreter::Opcode0 {
+    void execute(Interpreter::Runtime& runtime) override {
+        const std::string target = PopString(runtime);
+        runtime.push(Hooks().takeDeathOf && Hooks().takeDeathOf(target) ? 1 : 0);
+    }
+};
+
 // 🛑 The TICK delta, never the frame's. Scripts integrate this into timers, so
 // answering a 144 fps frame time while ticking at 30 Hz runs every timer ~5x
 // slow -- silently, because nothing ever reports it.
@@ -82,7 +93,7 @@ void InstallEventOps(OpcodeInstaller& into) {
     into.Real<OpEventExplicit<&ObjectEvents::activated>>(
         M::opcodeOnActivateExplicit);
     into.Real<OpEvent<&ObjectEvents::died>>(S::opcodeOnDeath);
-    into.Real<OpEventExplicit<&ObjectEvents::died>>(S::opcodeOnDeathExplicit);
+    into.Real<OpOnDeathExplicit>(S::opcodeOnDeathExplicit);
     into.Real<OpEvent<&ObjectEvents::cellChanged>>(C::opcodeCellChanged);
 }
 

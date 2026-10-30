@@ -1,0 +1,43 @@
+# Morrowind Daedric quests: Mephala's sensitive matter (DA_Mephala). Taros Dral, in the Arena's hidden area, asks
+# for help ("sensitive matters": 10; "I would like to help." 1: 40, five treated bittergreen). In Balyn Omavel's
+# house in Balmora the poison goes into his pot ("Yes." button 0: 50, poisonfoodScript), unseen at his door (else
+# 55, balynScript). Taros Dral sends the player to Mephala's altar, which gives the Ring of Khajiit (60).
+# PositionCell stands in for the travel. FormIDs carry Morrowind.esm's slot 05: 0573FA5E Balyn's pot, 05CD869D
+# Mephala's altar.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_da_malacath_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case da_mephala_start
+run
+player->PositionCell -531 -450 -240 0 "Vivec, Arena Hidden Area"
+until 600 "taros dral"->GetDistance player < 600
+wait 60
+talk taros dral
+ask sensitive matters
+expect GetJournalIndex DA_Mephala == 10
+choose 1
+expect GetJournalIndex DA_Mephala == 40
+bye
+end
+
+case da_mephala_poison
+run
+player->PositionCell 125 -40 49 0 "Balmora, Balyn Omarel's House"
+wait 60
+activate 0573FA5E
+button 0
+until 300 GetJournalIndex DA_Mephala == 50
+end
+
+case da_mephala_done
+run
+player->PositionCell -531 -450 -240 0 "Vivec, Arena Hidden Area"
+until 600 "taros dral"->GetDistance player < 600
+wait 60
+talk taros dral
+ask sensitive matters
+bye
+activate 05CD869D
+until 300 GetJournalIndex DA_Mephala == 60
+expect player->GetItemCount ring_khajiit_unique == 1
+end

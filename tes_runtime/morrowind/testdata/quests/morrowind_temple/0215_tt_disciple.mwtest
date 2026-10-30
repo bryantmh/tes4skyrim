@@ -1,0 +1,19 @@
+# Morrowind Temple: promotion to Disciple (6), which Tuls Valen's "Hassour" needs. Disciple asks one favored skill at
+# 60, two at 20, Personality and Intelligence of 32 and reputation 60 (MorrowindRuntime's FACT table). SetRestoration,
+# SetMysticism and SetAlchemy stand in for the player's training, SetPersonality and SetIntelligence for level-up
+# choices; the reputation is the player's own from the duties before.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_galomdaeus_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_disciple
+run
+player->SetRestoration 60
+player->SetMysticism 20
+player->SetAlchemy 20
+player->SetPersonality 32
+player->SetIntelligence 32
+talk tharer rotheloth
+ask Advancement
+expect player->GetPCRank Temple >= 6
+bye
+end

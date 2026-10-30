@@ -1,0 +1,36 @@
+# Morrowind Daedric quests: Azura's wager (DA_Azura). Azura's statue at her shrine speaks three lines and sets the
+# quest (10), enabling Sheogorath's minions on the hermit Rayna Drolan's island north of Dagon Fel. Killing the golden
+# saint Staada logs 20 (staadaScript, OnDeath); with Sheogorath's Signet Ring from her body, the statue hands over
+# Azura's Star (30). Talking to Rayna Drolan would fail the quest (25), so the case never does.
+# PositionCell and Position stand in for the travel, the console kill for the fight, removeallitems for Take All on
+# Staada's body. Ref FormIDs carry Morrowind.esm's slot 05: 0580BFF2 Azura's statue, 0531D79F Staada.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_ebonymail_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case da_azura_start
+run
+player->PositionCell -635 4850 83 0 "Shrine of Azura"
+wait 120
+activate 0580BFF2
+until 300 GetJournalIndex DA_Azura == 10
+end
+
+case da_azura_staada
+run
+player->Position 29315 196800 598 0
+until 600 "golden saint_staada"->GetDistance player < 1500
+wait 60
+console 0531D79F.kill
+until 300 GetJournalIndex DA_Azura == 20
+console 0531D79F.removeallitems player
+until 120 player->GetItemCount "Sheogorath's Signet Ring" >= 1
+end
+
+case da_azura_done
+run
+player->PositionCell -635 4850 83 0 "Shrine of Azura"
+wait 120
+activate 0580BFF2
+until 300 GetJournalIndex DA_Azura == 30
+expect player->GetItemCount Misc_soulgem_Azura == 1
+end

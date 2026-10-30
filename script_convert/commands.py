@@ -30,7 +30,7 @@ from script_convert.command_rows import (
 )
 from script_convert.emit.commands import emit_row
 from script_convert.commands_falloutnv import FALLOUT_HANDLERS
-from script_convert.message_menus import PAGE_OPTIONS
+from script_convert.message_menus import PAGE_OPTIONS, parse_button_box, resolve_pipe_box
 from script_convert.poll_motion import axis_key, rate_scale
 from script_convert.emit import expr as _expr
 from script_convert.constants import typed_already
@@ -919,7 +919,7 @@ def message(ctx, call) -> str:
     sites, 16 SCPT + 70 INFO).
     """
     if call.name == 'messagebox':
-        shown = _button_box(ctx, call)
+        shown = _button_box(ctx, call, parse_button_box(call.src or ''))
         if shown is not None:
             return shown
     papyrus = _message_function(ctx, call.name)
@@ -967,7 +967,18 @@ def _box_values(ctx, call) -> list:
     return values
 
 
-def _button_box(ctx, call) -> str:
+@command('messageboxex')
+def message_box_ex(ctx, call) -> str:
+    """MessageBoxEX `"text|button|..."` as a MESG's Show(), or None.
+
+    See: docs/commentary/script_convert.md#messageboxex-buttons
+    """
+    line = getattr(call.args[0], 'line', 0) if call.args else 0
+    parsed = resolve_pipe_box(call.src or '', ctx.sc.source, line)
+    return _button_box(ctx, call, parsed, values='%z' not in call.source(0))
+
+
+def _button_box(ctx, call, parsed, values=True) -> str:
     """A MessageBox WITH buttons, as an authored MESG's Show().
 
     Show() parks this thread on the box and returns the clicked index, which
@@ -976,8 +987,6 @@ def _button_box(ctx, call) -> str:
     this property binds to).  Returns None when there is no planned MESG (a
     fragment context, or plan drift), so the text-only box is still shown.
     """
-    from script_convert.message_menus import parse_button_box
-    parsed = parse_button_box(call.src or '')
     if not parsed:
         return None
     mesg = ctx._mesg_for_box(*parsed)
@@ -985,7 +994,8 @@ def _button_box(ctx, call) -> str:
         return None
     ctx.sc.property_refs[mesg] = 'Message'
     ctx.sc.uses_msg_buttons = True
-    return f'TES4_MsgButton = TES4_ShowMsg({", ".join([mesg] + _box_values(ctx, call))})'
+    shown = [mesg] + (_box_values(ctx, call) if values else [])
+    return f'TES4_MsgButton = TES4_ShowMsg({", ".join(shown)})'
 
 
 @command('isactionref')
@@ -1385,7 +1395,24 @@ def chargen_menu(ctx, call) -> str:
     plan = (ctx.chargen_menus or {}).get(key)
     if not plan:
         return ctx.note(call.raw_name)
+    return _ask_menu(ctx, key, plan)
 
+
+@command('setclass')
+def set_class(ctx, call) -> str:
+    """Player.SetClass (OBSE): the class menu, opened on that class; None leaves the row's note.
+
+    See: docs/commentary/morrowind_runtime.md#a-script-names-the-class
+    """
+    plan = (ctx.chargen_menus or {}).get('class') or {}
+    index = plan.get('edid_to_index', {}).get(call.source(0).strip().lower()) if len(call) else None
+    if index is None or (call.ref or '').lower() not in PLAYER_TOKENS:
+        return None
+    return _ask_menu(ctx, 'class', plan, suggest=index)
+
+
+def _ask_menu(ctx, key: str, plan: dict, suggest=None) -> str:
+    """The `key` menu's ask-then-fallback sequence; `suggest` (a row) is written to the choice first."""
     ctx.sc.uses_chargen_menus = True
     ctx.sc.chargen_menu_seq += 1
     seq = ctx.sc.chargen_menu_seq
@@ -1402,12 +1429,13 @@ def chargen_menu(ctx, call) -> str:
     show += _chargen_pages(ctx, plan['pages'], var)
     show += _chargen_spells(ctx, plan['actions'], var)
     show += [f'If {var} >= 0', f'  {choice}.SetValue({var} + 1)', 'EndIf']
-    lines = [f'Actor {partner} = TES4Polyfill.DialogueSpeaker()'
-             '  ; the modal closes the dialogue TES4 kept open',
-             'TES4_ChargenMenuBusy = True',
-             f'Int {var} = TES4_Chargen.Ask({CHARGEN_REQUEST_GLOBAL}, '
-             f'{1 if key == "class" else 2}, {choice})',
-             f'If {var} == -1'] + ['  ' + line for line in show] + ['EndIf']
+    lines = [f'{choice}.SetValue({suggest + 1})'] if suggest is not None else []
+    lines += [f'Actor {partner} = TES4Polyfill.DialogueSpeaker()'
+              '  ; the modal closes the dialogue TES4 kept open',
+              'TES4_ChargenMenuBusy = True',
+              f'Int {var} = TES4_Chargen.Ask({CHARGEN_REQUEST_GLOBAL}, '
+              f'{1 if key == "class" else 2}, {choice})',
+              f'If {var} == -1'] + ['  ' + line for line in show] + ['EndIf']
     lines += ['TES4_ChargenMenuBusy = False',
               f'If {partner} != None',
               f'  {partner}.EvaluatePackage()'

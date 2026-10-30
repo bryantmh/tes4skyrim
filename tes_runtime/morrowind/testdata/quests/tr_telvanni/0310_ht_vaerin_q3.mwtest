@@ -1,0 +1,38 @@
+# TR House Telvanni: "Don't Mind Me" (TR_m2_HT_Vaerin_q3). Vaerin's "chores" adds "Scroll of Hitai" (10, adds
+# "Norem"): the scroll lies in the Sanctuary of the Velothi tower Norem. Asked again with it in hand ("Here you go."
+# 1), Vaerin takes it (100, his trousers, +5 reputation).
+# PositionCell stands in for the journey through Norem. The scroll's ref is 09D6F4D9 (TR_Mainland's slot 09).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_vaerin_q2_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_vaerin_q3_start
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask chores
+ask Scroll of Hitai
+expect GetJournalIndex TR_m2_HT_Vaerin_q3 == 10
+bye
+end
+
+case ht_vaerin_q3_scroll
+run
+player->PositionCell 4248 3950 15040 0 "Norem, Sanctuary"
+wait 150
+take 09D6F4D9
+until 300 player->GetItemCount "TR_m2_q_VaerinScroll" >= 1
+end
+
+case ht_vaerin_q3_done
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask Scroll of Hitai
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q3 == 100
+bye
+end

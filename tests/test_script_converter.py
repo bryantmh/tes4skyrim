@@ -876,7 +876,49 @@ End
                                            'DiaryScript')
         assert ('TES4_ShowMsg(TES4Msg_DiaryScript_01, (ep) as Float, (7) as Float)'
                 in out)
-        assert 'Return TES4_akMsg.Show(afArg1, afArg2, afArg3' in out
+        assert 'Int TES4_shown = TES4_akMsg.Show(afArg1, afArg2, afArg3' in out
+
+    def test_a_second_box_request_leaves_the_open_box_alone(self, converter):
+        """While this script's box is up, TES4_ShowMsg shows nothing and keeps the pressed state.
+
+        See: docs/commentary/script_convert.md#one-box-at-a-time
+        """
+        source = ('ScriptName QuizScript\nshort stage\n\nBegin GameMode\n'
+                  '  if stage == 1\n    MessageBox "Pick", "A", "B"\n  endif\nEnd\n')
+        converter.message_menus = build_message_plan(
+            [{'EditorID': 'QuizScript', 'SCTX': source}])
+        out = converter.convert_standalone('QuizScript', source, 'Quest', 'QuizScript')
+        helper = out.split('Int Function TES4_ShowMsg(', 1)[1].split('EndFunction', 1)[0]
+        assert helper.index('If TES4_MsgOpen\n    Return TES4_MsgButton') < helper.index(
+            'TES4_MsgButton = -1')
+        assert helper.index('TES4_MsgOpen = True') < helper.index('.Show(') < helper.index(
+            'TES4_MsgOpen = False')
+
+    def test_messageboxex_pipe_buttons_are_a_button_box(self, converter):
+        """MessageBoxEX's `text|button` box is a MESG numbered after the MessageBox sites.
+
+        See: docs/commentary/script_convert.md#messageboxex-buttons
+        """
+        source = ('ScriptName QuizScript\nshort b\nstring_var q\nstring_var a\n\nBegin GameMode\n'
+                  '  MessageBoxEX "Take the quiz?|Take Quiz|Skip Quiz"\n'
+                  '  MessageBoxEX "%z|Yes|No", q\n'
+                  '  set q to sv_Construct "Pick one."\n'
+                  '  set a to sv_Construct "The sword"\n'
+                  '  MessageBoxEX "%z%r|%z|None", q, a\n'
+                  '  MessageBox "Rest?", "Yes", "No"\n'
+                  '  set b to GetButtonPressed\nEnd\n')
+        plan = build_message_plan([{'EditorID': 'QuizScript', 'SCTX': source}])
+        assert plan['quizscript'] == [('TES4Msg_QuizScript_01', 'Rest?', ['Yes', 'No']),
+                                      ('TES4Msg_QuizScript_02', 'Take the quiz?',
+                                       ['Take Quiz', 'Skip Quiz']),
+                                      ('TES4Msg_QuizScript_03', 'Pick one.\n',
+                                       ['The sword', 'None'])]
+        converter.message_menus = plan
+        out = converter.convert_standalone('QuizScript', source, 'ObjectReference', 'QuizScript')
+        for n in ('01', '02', '03'):
+            assert f'TES4_ShowMsg(TES4Msg_QuizScript_{n})' in out
+        assert out.count('TES4_ShowMsg(TES4Msg_') == 3
+        assert 'b = TES4_TakeMsgButton()' in out
 
     def test_book_read_while_carried_runs_the_read_hook(self, converter):
         """A book's opening OnActivate also runs from OnRead for a carried
@@ -3567,6 +3609,21 @@ class TestChargenMenus:
         assert branch < out.index('AddSpell(SpellA') < out.index('TES4_ChargenMenuBusy = False')
         assert branch < out.index('.SetValue(TES4_menuPick1 + 1)')
         assert converter._property_refs['TES4ChargenRequest'] == 'GlobalVariable'
+
+    def test_player_set_class_opens_the_menu_on_that_class(self, converter):
+        """A quiz's `Player.SetClass Mage` writes Mage's row, then asks for the class menu.
+
+        See: docs/commentary/morrowind_runtime.md#a-script-names-the-class
+        """
+        pages = [('TES4Msg_ChargenClass_01', 'Title', ['Warrior', 'Mage'])]
+        converter.chargen_menus = {'class': {
+            'pages': pages, 'actions': [[], []], 'choice_global': 'TES4ChargenClassChoice',
+            'start': 'charactergenclass', 'edid_to_index': {'mage': 1}}}
+        out = conv_lines(converter, 'Player.SetClass Mage', 'Quest')
+        ask = 'TES4_Chargen.Ask(TES4ChargenRequest, 1, TES4ChargenClassChoice)'
+        assert out.index('TES4ChargenClassChoice.SetValue(2)') < out.index(ask)
+        assert 'Ask' not in conv_lines(converter, 'SomeNPC.SetClass Mage', 'Quest')
+        assert 'Ask' not in conv_lines(converter, 'Player.SetClass Unlisted', 'Quest')
 
     def test_menu_emission(self, converter):
         converter.chargen_menus = self.PLAN

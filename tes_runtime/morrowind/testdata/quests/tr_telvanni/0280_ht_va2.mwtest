@@ -1,0 +1,44 @@
+# TR House Telvanni: "Books of Faith" (TR_m1_HT_Va2). Norahin Darys's "chores" adds "shipment of Temple propaganda"
+# (10): the ship's captain Dunveri Rodran, on the Tel Ouada docks, is to dump a Temple book shipment. Paid 750 drakes
+# ("Fine, here is the gold you desire." 3) he agrees (20); Norahin, told it cost 750 (Choice 2), repays 800 (100,
+# +5 reputation).
+# Position and PositionCell stand in for the travel; the AddItem for the gold a player has by now.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_mi2_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_va2_start
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Norahin_Darys"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Norahin_Darys
+ask chores
+ask shipment of Temple propaganda
+expect GetJournalIndex TR_m1_HT_Va2 == 10
+bye
+end
+
+case ht_va2_dunveri
+run
+player->AddItem Gold_001 1000
+player->Position 202425 151850 130 0
+until 900 "TR_m1_Dunveri_Rodran"->GetDistance player < 600
+wait 120
+talk TR_m1_Dunveri_Rodran
+ask shipment of Temple propaganda
+choose 3
+expect GetJournalIndex TR_m1_HT_Va2 == 20
+bye
+end
+
+case ht_va2_done
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Norahin_Darys"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Norahin_Darys
+ask shipment of Temple propaganda
+choose 2
+expect GetJournalIndex TR_m1_HT_Va2 == 100
+bye
+end

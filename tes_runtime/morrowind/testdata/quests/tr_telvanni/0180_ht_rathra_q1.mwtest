@@ -1,0 +1,30 @@
+# TR House Telvanni: "On Elemental Daedra" (TR_m1_HT_Rathra_q1), Mistress Rathra's first chore, open once "Plague"
+# (TR_m1_HT_Ra2) is done. In her chambers in Tel Ouada, "chores" adds the book's topic; asking it ("Continue" 1)
+# warns of the feud with Mithras and logs 10 (TR_m1_HT_RathraVMithras 100); handing over the book ("I have it right
+# here." 2) pays out (100) and starts TR_m1_Q_HT_RathraVMithras_sc.
+# PositionCell stands in for the travel; the AddItem for the player buying the book from a bookseller.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_ra2_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_rathra_q1_start
+run
+player->PositionCell 4123 3980 14430 0 "Tel Ouada, Tower: Rathra's Chambers"
+until 600 "TR_m1_T_Rathra"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rathra
+ask chores
+ask On Elemental Daedra
+choose 1
+expect GetJournalIndex TR_m1_HT_Rathra_q1 == 10
+bye
+end
+
+case ht_rathra_q1_book
+run
+player->AddItem "T_Bk_ElementalDaedraTR" 1
+talk TR_m1_T_Rathra
+ask On Elemental Daedra
+choose 2
+expect GetJournalIndex TR_m1_HT_Rathra_q1 == 100
+bye
+end

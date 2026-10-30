@@ -1,0 +1,103 @@
+# TR Necrom: "Wake for the Waves" (TR_m2_Nm_Wake), the mercy ending. The old man Vanryth Adrano on a rock northeast
+# of Necrom sends the player away (greeting: 5). A Dark Elf commoner outside the Temple, Satheri Indaram, passes on the
+# rumor that he is a ghost ("Vanryth Adrano": 6); his next greeting denies it (20). The Sodden Ledger in the Corroded
+# Shipwreck names the Orphaned Dancer (TR_m2_q_Nm_Wake_logscript: 21). The harbormaster Ethaso Athones remembers it
+# (30) and, paid 100 gold ("I can offer you 100 gold for your time." 2), fetches the logs (40,
+# TR_m2_q_Nm_Wake_timer: 50 a day later). The logs name the survivor (Continue 1: 60), Travin Benelas at Romithren
+# Monastery, who knows Vanryth's name ("Do you know Vanryth Adrano?" 1: 70). Vanryth confesses (Continue 1: 80) and
+# is let go ("I will let you go free." 4: 85, a ring and Enchant); Travin, told, closes it (101).
+# Position and PositionCell stand in for the travel, sleep for the day's wait.
+# Refs carry TR_Mainland's slot 09: 096E2C8F the ledger.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_nm_drunk_shirt --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case nm_wake_start
+run
+player->Position 376114 -73490 1900 0
+until 900 "TR_m2_Vanryth Adrano"->GetDistance player < 600
+wait 120
+talk TR_m2_Vanryth Adrano
+until 120 GetJournalIndex TR_m2_Nm_Wake == 5
+bye
+run
+player->PositionCell 3808 3850 15707 0 "Necrom, Satheri Indaram's House"
+until 600 "TR_m2_Satheri Indaram"->GetDistance player < 600
+wait 120
+talk TR_m2_Satheri Indaram
+ask Vanryth Adrano
+expect GetJournalIndex TR_m2_Nm_Wake == 6
+bye
+run
+player->Position 376114 -73490 1900 0
+until 900 "TR_m2_Vanryth Adrano"->GetDistance player < 600
+wait 120
+talk TR_m2_Vanryth Adrano
+expect GetJournalIndex TR_m2_Nm_Wake == 20
+bye
+end
+
+case nm_wake_ledger
+run
+player->PositionCell 3818 4566 14421 0 "Corroded Shipwreck"
+wait 150
+activate 096E2C8F
+close Book Menu
+until 300 GetJournalIndex TR_m2_Nm_Wake == 21
+end
+
+case nm_wake_ethaso
+run
+player->PositionCell 6911 300 14990 0 "Necrom, Docks Administration"
+until 600 "TR_m2_Ethaso Athones"->GetDistance player < 600
+wait 120
+talk TR_m2_Ethaso Athones
+ask Orphaned Dancer
+expect GetJournalIndex TR_m2_Nm_Wake == 30
+choose 2
+expect GetJournalIndex TR_m2_Nm_Wake == 40
+run
+sleep 24
+until 600 GetJournalIndex TR_m2_Nm_Wake == 50
+talk TR_m2_Ethaso Athones
+ask Orphaned Dancer
+choose 1
+expect GetJournalIndex TR_m2_Nm_Wake == 60
+bye
+end
+
+case nm_wake_travin
+run
+player->PositionCell 4037 4150 15823 0 "Romithren Monastery, Scriptorium"
+until 600 "TR_m3_Travin Benelas"->GetDistance player < 600
+wait 120
+talk TR_m3_Travin Benelas
+ask Orphaned Dancer
+choose 1
+expect GetJournalIndex TR_m2_Nm_Wake == 70
+bye
+end
+
+case nm_wake_vanryth
+run
+player->Position 376114 -73490 1900 0
+until 900 "TR_m2_Vanryth Adrano"->GetDistance player < 600
+wait 120
+talk TR_m2_Vanryth Adrano
+ask Orphaned Dancer
+choose 1
+expect GetJournalIndex TR_m2_Nm_Wake == 80
+choose 4
+expect GetJournalIndex TR_m2_Nm_Wake == 85
+expect player->GetItemCount "ring of wildfire" == 1
+end
+
+case nm_wake_done
+run
+player->PositionCell 4037 4150 15823 0 "Romithren Monastery, Scriptorium"
+until 600 "TR_m3_Travin Benelas"->GetDistance player < 600
+wait 120
+talk TR_m3_Travin Benelas
+ask Orphaned Dancer
+expect GetJournalIndex TR_m2_Nm_Wake == 101
+bye
+end

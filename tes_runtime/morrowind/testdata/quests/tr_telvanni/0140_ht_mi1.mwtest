@@ -1,0 +1,67 @@
+# TR House Telvanni: "Census in Ranyon-ruhn" (TR_m1_HT_Mi1). Nevrile Omayn, a Mouth in the Chambers, sends the
+# player after Cartil Florius's overdue census through "chores" ("census": 10). Cartil, outdoors in Ranyon-ruhn,
+# is stuck on the miner Brelar Gildaren (30); a neighbor, Kobin Delas, knows Brelar's wage (41); Cartil, given it,
+# asks the player to carry the report ("Of course I'll take the report for you." 2: 50); Nevrile takes it (60,
+# +3 reputation) and asks what delayed Cartil (Choice 1).
+# PositionCell and Position stand in for the travel.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_el1_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_mi1_start
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Nevrile_Omayn"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Nevrile_Omayn
+ask chores
+ask census
+expect GetJournalIndex TR_m1_HT_Mi1 == 10
+bye
+end
+
+case ht_mi1_cartil
+run
+player->Position 226794 100700 3400 0
+until 900 "TR_m1_q_Cartil_Florius"->GetDistance player < 600
+wait 120
+talk TR_m1_q_Cartil_Florius
+ask census
+expect GetJournalIndex TR_m1_HT_Mi1 == 30
+bye
+end
+
+case ht_mi1_neighbor
+run
+player->Position 227650 101600 3380 0
+until 900 "TR_m1_Kobin_Delas"->GetDistance player < 600
+wait 120
+talk TR_m1_Kobin_Delas
+ask census
+expect GetJournalIndex TR_m1_HT_Mi1 == 41
+bye
+end
+
+case ht_mi1_report
+run
+player->Position 226794 100700 3400 0
+until 900 "TR_m1_q_Cartil_Florius"->GetDistance player < 600
+wait 120
+talk TR_m1_q_Cartil_Florius
+ask census
+choose 2
+expect GetJournalIndex TR_m1_HT_Mi1 == 50
+expect player->GetItemCount "TR_m1_q_RRCensus" == 1
+bye
+end
+
+case ht_mi1_done
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Nevrile_Omayn"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Nevrile_Omayn
+ask census
+choose 1
+expect GetJournalIndex TR_m1_HT_Mi1 == 60
+bye
+end

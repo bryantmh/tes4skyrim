@@ -1201,7 +1201,7 @@ def _emit_refs(refs, parent_cell: str, ctx: MorrowindContext,
             ctx.pending_teleports.append((form_id, lines, ref))
         elif signature != 'REFR':
             ctx.placements.setdefault(ref.record_id.lower(), []).append(
-                (form_id, parent_cell))
+                (form_id, parent_cell, ref.pos))
         out.append((signature, form_id, lines))
     return out
 

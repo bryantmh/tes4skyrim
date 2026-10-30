@@ -60,6 +60,11 @@ _QUOTED = re.compile(r'"([^"]*)"')
 # line, and a leading `;` comment never matches). Oblivion tolerates a comma
 # straight after the command name.
 _MSGBOX_LINE = re.compile(r'(?im)^[ \t]*messagebox\b(,?[^\n]*)')
+_MSGBOXEX_LINE = re.compile(r'(?im)^[ \t]*messageboxex\b(,?[^\n]*)')
+#: `set <var> to sv_Construct "<literal>"`: a string_var given a fixed text.
+_SV_SET = re.compile(r'(?im)^[ \t]*set[ \t]+([A-Za-z0-9_]+)[ \t]+to[ \t]+sv_construct[ \t,]+"([^"]*)"')
+#: An OBSE format specifier: flags, width, precision, then the letter (or `%%`).
+_SPEC = re.compile(r'%[-+ #0]*\d*(?:\.\d+)?([a-zA-Z%])')
 _SHOWMESSAGE_LINE = re.compile(r'(?im)^[ \t]*showmessage\b[ \t,]+([A-Za-z0-9_]+)')
 
 
@@ -78,6 +83,50 @@ def parse_button_box(args_str):
     if len(quoted) < 2:
         return None
     return quoted[0], quoted[1:1 + MAX_BUTTONS]
+
+
+def _string_literals(source: str, line: int) -> dict:
+    """{var_lower: literal, None if formatted} from the sv_Constructs above `line`."""
+    above = ''.join((source or '').splitlines(keepends=True)[:max(line - 1, 0)])
+    return {m.group(1).lower(): None if '%' in m.group(2) else m.group(2)
+            for m in _SV_SET.finditer(above)}
+
+
+def _fill_strings(fmt: str, names: list, literals: dict):
+    """`fmt` with each `%z` replaced by its variable's literal and `%r` by a newline, or None."""
+    names, out, at = iter(names), [], 0
+    for m in _SPEC.finditer(fmt):
+        out.append(fmt[at:m.start()])
+        kind, at = m.group(1), m.end()
+        if kind == 'z':
+            literal = literals.get(next(names, '').lower())
+            if literal is None:
+                return None
+            out.append(literal)
+        else:
+            out.append({'r': '\n', '%': '%'}.get(kind, m.group(0)))
+            if kind not in 'r%':
+                next(names, None)
+    return ''.join(out) + fmt[at:]
+
+
+def resolve_pipe_box(args_str: str, source: str = '', line: int = 0):
+    """(text, [buttons]) from OBSE MessageBoxEX's `"text|button|..."`, or None.
+
+    A `%z` takes the literal its string variable was last `sv_Construct`ed to
+    above `line` in `source`; a box still dynamic after that (a string from
+    anything else, a number in a button) is None, since a MESG's text is fixed.
+    See: docs/commentary/script_convert.md#messageboxex-buttons
+    """
+    quoted = _QUOTED.findall(args_str or '')
+    if not quoted:
+        return None
+    names = re.findall(r'[A-Za-z_][A-Za-z0-9_.]*', (args_str or '').split('"', 2)[-1])
+    filled = _fill_strings(quoted[0], names, _string_literals(source, line))
+    parts = filled.split('|') if filled is not None else []
+    if len(parts) < 2 or any('%' in b for b in parts[1:]):
+        return None
+    return parts[0], parts[1:1 + MAX_BUTTONS]
 
 
 def mesg_edid(script_edid: str, index: int) -> str:
@@ -102,11 +151,13 @@ def sites_for_source(script_edid: str, source: str, authored: dict = None) -> li
     """Ordered [(mesg_edid, text, buttons)] for one script source (real
     newlines, i.e. the SCTX value parse_export_file produces); `authored` is
     `button_messages`, whose MESGs the source shows enter with text None."""
+    source = source or ''
+    boxes = [parse_button_box(m.group(1)) for m in _MSGBOX_LINE.finditer(source)]
+    boxes += [resolve_pipe_box(m.group(1), source, source.count('\n', 0, m.start()) + 1)
+              for m in _MSGBOXEX_LINE.finditer(source)]
     sites = []
-    for m in _MSGBOX_LINE.finditer(source or ''):
-        parsed = parse_button_box(m.group(1))
-        if parsed:
-            sites.append((mesg_edid(script_edid, len(sites) + 1),) + parsed)
+    for parsed in filter(None, boxes):
+        sites.append((mesg_edid(script_edid, len(sites) + 1),) + parsed)
     for m in _SHOWMESSAGE_LINE.finditer(source or ''):
         hit = (authored or {}).get(m.group(1).lower())
         if hit and all(s[0] != hit[0] for s in sites):

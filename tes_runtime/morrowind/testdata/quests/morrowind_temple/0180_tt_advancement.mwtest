@@ -1,0 +1,25 @@
+# Morrowind Temple: advancement. After the Seven Graces and Tuls Valen's and Tharer Rotheloth's first duties, the
+# player asks Tharer Rotheloth for advancement once per rank ("Advancement": PCRaiseRank while the rank's reputation,
+# attribute and skill needs are met), up to Curate (5), which Uvoo Llaren's, Endryn Llethan's and Tuls Valen's later
+# duties need. Curate asks one favored skill at 50 and two at 15 (MorrowindRuntime's FACT table): SetRestoration,
+# SetMysticism and SetAlchemy stand in for the player's training, and SetPersonality and SetIntelligence 31 (from
+# 30) for level-up choices, since Curate also asks Personality and Intelligence of 31.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_mawia_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_advancement
+run
+player->SetRestoration 50
+player->SetMysticism 15
+player->SetAlchemy 15
+player->SetPersonality 31
+player->SetIntelligence 31
+talk tharer rotheloth
+ask Advancement
+ask Advancement
+ask Advancement
+ask Advancement
+ask Advancement
+expect player->GetPCRank Temple >= 5
+bye
+end

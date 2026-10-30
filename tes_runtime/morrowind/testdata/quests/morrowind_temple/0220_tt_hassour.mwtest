@@ -1,0 +1,41 @@
+# Morrowind Temple: Tuls Valen's "Dark Cult in Hassour" (TT_Hassour). Tuls Valen sends the player against Dagoth
+# Fovon in Hassour ("Hassour": 10); with him dead, Tuls Valen pays in cure blight scrolls and potions (100) and has no
+# more duties ("duties": TT_MaarGan 110).
+# PositionCell stands in for the travel, the kill for the fight. Ref FormIDs carry Morrowind.esm's slot 05:
+# 057FF42E Dagoth Fovon.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_disciple --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_hassour_start
+run
+player->PositionCell 3637 3900 14723 0 "Ald-ruhn, Temple"
+until 600 "tuls valen"->GetDistance player < 600
+wait 120
+talk tuls valen
+ask duties
+ask Hassour
+expect GetJournalIndex TT_Hassour == 10
+bye
+end
+
+case tt_hassour_fovon
+run
+player->PositionCell 4833 2850 12576 0 "Hassour, Shrine"
+until 600 "dagoth fovon"->GetDistance player < 1500
+wait 120
+console 057FF42E.kill
+until 600 GetDeadCount "dagoth fovon" >= 1
+end
+
+case tt_hassour_done
+run
+player->PositionCell 3637 3900 14723 0 "Ald-ruhn, Temple"
+until 600 "tuls valen"->GetDistance player < 600
+wait 120
+talk tuls valen
+ask Hassour
+expect GetJournalIndex TT_Hassour == 100
+ask duties
+expect GetJournalIndex TT_MaarGan == 110
+bye
+end

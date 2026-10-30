@@ -1,0 +1,45 @@
+# TR House Telvanni: "Knowledge from Beyond" (TR_m2_HT_Vaerin_q2). Vaerin's "chores" adds "capture a soul" (10,
+# adds "Sittali"): the wraith in the Sittali ruin near Vhul. With its soul in a gem, "I have his soul right here."
+# (Choice 1) logs 100 (RemoveSoulGem, Vaerin's hat, +5 reputation).
+# The AddItem stands in for buying an empty grand gem; the console cast of Skyrim's Soul Trap (0004DBA4) for the
+# player casting it, the kill for the fight. Sittali's ref is 09CA9951 (TR_Mainland's slot 09).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_vaerin_q1_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_vaerin_q2_start
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask chores
+ask capture a soul
+expect GetJournalIndex TR_m2_HT_Vaerin_q2 == 10
+bye
+end
+
+case ht_vaerin_q2_sittali
+run
+player->AddItem "Misc_SoulGem_Grand" 1
+player->PositionCell 4072 1100 13575 0 "Sittali"
+until 600 "TR_m3_AncG_Sittali"->GetDistance player < 1000
+wait 120
+console player.cast 0004DBA4 09CA9951 right
+wait 30
+console 09CA9951.kill
+until 600 player->HasSoulGem "TR_m3_AncG_Sittali" >= 1
+end
+
+case ht_vaerin_q2_done
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask capture a soul
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q2 == 100
+expect player->GetItemCount "TR_m2_q_VaerinHat" == 1
+expect player->HasSoulGem "TR_m3_AncG_Sittali" == 0
+bye
+end

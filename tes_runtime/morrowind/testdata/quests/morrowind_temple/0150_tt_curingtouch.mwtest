@@ -1,0 +1,44 @@
+# Morrowind Temple: Tharer Rotheloth's "Cure Lette" (TT_CuringTouch). In the Molag Mar Temple Tharer Rotheloth sends
+# the player to cure the Redguard Lette in Tel Mora of swamp fever ("Lette": 10). She lets the player try ("Swamp
+# Fever": "Yes. I'd like to try." 2, then "I offer you this potion." 4: RemoveSpell); BILL_TT_Lette logs 50 once
+# GetCommonDisease is 0. Tharer Rotheloth rewards the cure (100, a Restoration book).
+# PositionCell and Position stand in for the travel, AddItem for buying the cure common disease potion.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_sanctusshrine_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_curingtouch_start
+run
+player->PositionCell 378 -280 3 0 "Molag Mar, Temple"
+until 600 "tharer rotheloth"->GetDistance player < 600
+wait 120
+talk tharer rotheloth
+ask duties
+ask Lette
+expect GetJournalIndex TT_CuringTouch == 10
+bye
+end
+
+case tt_curingtouch_lette
+run
+player->AddItem "p_cure_common_s" 1
+player->Position 109901 121700 82 0
+until 900 "lette"->GetDistance player < 600
+wait 120
+talk lette
+ask Swamp Fever
+choose 2
+choose 4
+until 300 GetJournalIndex TT_CuringTouch == 50
+bye
+end
+
+case tt_curingtouch_done
+run
+player->PositionCell 378 -280 3 0 "Molag Mar, Temple"
+until 600 "tharer rotheloth"->GetDistance player < 600
+wait 120
+talk tharer rotheloth
+ask Lette
+expect GetJournalIndex TT_CuringTouch == 100
+bye
+end

@@ -1,0 +1,53 @@
+# TR House Telvanni: "It's Good to Be a Telvanni Lord" (TR_m2_HT_Vaerin_q1). After "Books of Faith", Master Vaerin in
+# Tel Vaerin has chores ("chores" adds "collect the tribute"; "Continue" 1 logs 10): Lord Dralothas Omothran of Tel
+# Mothrivra refuses (TR_m2_HT_Vaerin_q1_a 100) and Mistress Llevari Telsaran of Tel Muthada refuses (_b 100); Vaerin,
+# told, closes it (100, +5 reputation).
+# PositionCell stands in for the travel.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_va2_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_vaerin_q1_start
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask chores
+ask collect the tribute
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q1 == 10
+bye
+end
+
+case ht_vaerin_q1_dralothas
+run
+player->PositionCell 4154 3780 10670 0 "Tower of Tel Mothrivra, Manor"
+until 600 "TR_m2_DralothasOmothran"->GetDistance player < 800
+wait 120
+talk TR_m2_DralothasOmothran
+ask collect the tribute
+expect GetJournalIndex TR_m2_HT_Vaerin_q1_a == 100
+bye
+end
+
+case ht_vaerin_q1_llevari
+run
+player->PositionCell 45 90 10 0 "Tel Muthada, Upper Hall"
+until 600 "TR_m2_Llevari Telsaran"->GetDistance player < 800
+wait 120
+talk TR_m2_Llevari Telsaran
+ask collect the tribute
+expect GetJournalIndex TR_m2_HT_Vaerin_q1_b == 100
+bye
+end
+
+case ht_vaerin_q1_done
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask collect the tribute
+expect GetJournalIndex TR_m2_HT_Vaerin_q1 == 100
+bye
+end

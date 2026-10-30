@@ -1,0 +1,58 @@
+# Morrowind Temple: Tharer Rotheloth's "Pilgrimage to Mount Kand" (TT_MountKand). Tharer Rotheloth sends the player
+# to answer the three Daedra of Mount Kand ("Mount Kand": 10). The flame atronach's riddle ("Lead." 1: 25), the frost
+# atronach's ("You will slay me with your sword." 1: 50) and the storm atronach's ("The Orc." 1: 75) open the shrine,
+# whose blessing logs 100 (shrineMountKand). Tharer Rotheloth celebrates (110).
+# PositionCell stands in for the travel. Ref FormIDs carry Morrowind.esm's slot 05: 0564CA41 the shrine.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_curingtouch_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_mountkand_start
+talk tharer rotheloth
+ask duties
+ask Mount Kand
+expect GetJournalIndex TT_MountKand == 10
+bye
+end
+
+case tt_mountkand_riddles
+run
+player->PositionCell 3912 6000 13076 0 "Mount Kand, Cavern"
+until 600 "atronach_flame_ttmk"->GetDistance player < 600
+wait 120
+talk atronach_flame_ttmk
+ask riddle
+choose 1
+until 120 GetJournalIndex TT_MountKand == 25
+run
+player->PositionCell 4326 4770 12062 0 "Mount Kand, Cavern"
+until 600 "atronach_frost_ttmk"->GetDistance player < 600
+wait 60
+talk atronach_frost_ttmk
+ask riddle
+choose 1
+until 120 GetJournalIndex TT_MountKand == 50
+run
+player->PositionCell 6539 7500 11583 0 "Mount Kand, Cavern"
+until 600 "atronach_storm_ttmk"->GetDistance player < 600
+wait 60
+talk atronach_storm_ttmk
+ask riddle
+choose 1
+until 120 GetJournalIndex TT_MountKand == 75
+run
+player->PositionCell 3925 9650 12110 0 "Mount Kand, Cavern"
+wait 60
+activate 0564CA41
+until 300 GetJournalIndex TT_MountKand == 100
+end
+
+case tt_mountkand_done
+run
+player->PositionCell 378 -280 3 0 "Molag Mar, Temple"
+until 600 "tharer rotheloth"->GetDistance player < 600
+wait 120
+talk tharer rotheloth
+ask Mount Kand
+expect GetJournalIndex TT_MountKand == 110
+bye
+end

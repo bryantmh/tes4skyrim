@@ -164,7 +164,7 @@ COMMAND_ROWS = {
     'printtoconsole': Cmd('Debug.Trace({fmt})'),
     'printc': Cmd('Debug.Trace({fmt})'),
 
-    #: Button list is dropped. See: docs/commentary/script_convert.md#obse-constructs-no-shape-to-translate
+    #: The text-only fallback; a static `|` button box is a MESG. See: docs/commentary/script_convert.md#messageboxex-buttons
     'messageboxex': Cmd('Debug.MessageBox({fmt})'),
     'messageex': Cmd('Debug.MessageBox({fmt})'),
 

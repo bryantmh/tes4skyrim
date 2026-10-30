@@ -1,0 +1,59 @@
+# Morrowind Temple: Archcanon Tholer Saryoni's last duty, the Ebony Mail (TT_Assarnibibi). As Master (8), "duties"
+# asks for the Ebony Mail ("Ebony Mail": 10). Boethiah's shrine atop Mount Assarnibibi, once all four corners are
+# done, grants it (100, shrineAssarnibibi). Shown to Tholer Saryoni ("Yes, here it is." 1) it makes the player
+# Patriarch (110, PCRaiseRank).
+# Master asks one favored skill at 80, two at 30, Personality and Intelligence of 34 and reputation 100 (MorrowindRuntime's
+# FACT table): SetRestoration, SetMysticism and SetAlchemy stand in for training, SetPersonality and SetIntelligence for
+# level-up choices. Position stands in for the travel. FormIDs carry Morrowind.esm's slot 05: 05B2907B the shrine.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_fourcorners_alddaedroth --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_master
+run
+player->SetRestoration 80
+player->SetMysticism 30
+player->SetAlchemy 30
+player->SetPersonality 34
+player->SetIntelligence 34
+player->PositionCell 378 -280 3 0 "Molag Mar, Temple"
+until 600 "tharer rotheloth"->GetDistance player < 600
+wait 120
+talk tharer rotheloth
+ask Advancement
+expect player->GetPCRank Temple >= 8
+bye
+end
+
+case tt_ebonymail_start
+run
+player->PositionCell -1097 400 -622 0 "Vivec, High Fane"
+until 600 "tholer saryoni"->GetDistance player < 600
+wait 60
+talk tholer saryoni
+ask duties
+ask Ebony Mail
+expect GetJournalIndex TT_Assarnibibi == 10
+bye
+end
+
+case tt_ebonymail_shrine
+run
+player->Position 120194 -28450 4104 0
+wait 120
+activate 05B2907B
+until 300 GetJournalIndex TT_Assarnibibi == 100
+expect player->GetItemCount ebon_plate_cuirass_unique == 1
+end
+
+case tt_ebonymail_done
+run
+player->PositionCell -1097 400 -622 0 "Vivec, High Fane"
+until 600 "tholer saryoni"->GetDistance player < 600
+wait 60
+talk tholer saryoni
+ask Ebony Mail
+choose 1
+expect GetJournalIndex TT_Assarnibibi == 110
+expect player->GetPCRank Temple == 9
+bye
+end

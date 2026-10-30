@@ -1156,8 +1156,20 @@ whose conditions pass.
 | `AI_A` id | Find (0) | object id, which the importer turns into Activate |
 
 Coordinates are cell-local, and the package sits on the BASE actor, so a
-destination marker goes into the exterior grid the position falls in, else into
-the cell of the actor's first placement. A package whose marker cell or target
+destination marker goes into the interior the actor's first placement stands in;
+an actor placed outdoors (or not placed by this plugin) gets the exterior grid the
+position falls in, else its placement's cell. Morrowind never walks an AiTravel
+actor out of its cell (OpenMW `AiTravel::execute` paths within the current cell
+and stands still when the point is out of range), but a Skyrim Travel package
+crosses cells: picking the grid first sent Tanusea Veloth's Travel, authored at
+(29472, -82112, 3008) for the Vivec Arena Pit, to the Vivec exterior, and the
+engine moved her out of the Pit before the player ever arrived. Measured on
+Morrowind.esm: 148 of 177 package markers had landed in the wilderness grids
+round the origin (Ashlands X0Y0 alone took 42); all 148 now share their actor's
+cell. A Travel point more than 7168 units from the actor is ignored by Morrowind
+(OpenMW `isWithinMaxRange`, for both the walk and the fast-forward), so the
+actor stands where it is; its marker goes at the actor's own placement, since a
+Skyrim Travel to the far point would place the unloaded actor there. A package whose marker cell or target
 placement cannot be found is dropped and counted (`package:<kind>` in the
 unresolved tally). The schedule is "any time" with Morrowind's duration in
 hours, which the importer converts to minutes; the per-package idle chances have

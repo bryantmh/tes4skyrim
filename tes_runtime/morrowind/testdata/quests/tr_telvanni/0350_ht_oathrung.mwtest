@@ -1,0 +1,47 @@
+# TR House Telvanni: "Reclaiming Oathrung" (TR_m1_HT_Oathrung). Mistress Faruna's "chores" adds "Oathrung" (10): the
+# Dwemer staff in Ember Keep's vault in Firewatch. Her manservant Tirele Edri explains it (11). Holding the staff
+# logs 20 (TR_m1_Niv_JustASipDoor_Script on the vault door); Faruna takes it ("Yes, here it is." 1: 50).
+# PositionCell stands in for the travel and the way into the vault. The staff's ref is 093651DE (TR_Mainland's
+# slot 09).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_vaerin_q6_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_oathrung_start
+run
+player->PositionCell 7390 4300 16170 0 "Tel Oren, Tower"
+until 600 "TR_m1_T_Faruna"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Faruna
+ask chores
+ask Oathrung
+expect GetJournalIndex TR_m1_HT_Oathrung == 10
+bye
+run
+player->PositionCell 5844 4330 15360 0 "Tel Oren, Tower"
+until 600 "TR_m1_Tirele_Edri"->GetDistance player < 1500
+wait 60
+talk TR_m1_Tirele_Edri
+ask Oathrung
+expect GetJournalIndex TR_m1_HT_Oathrung == 11
+bye
+end
+
+case ht_oathrung_vault
+run
+player->PositionCell 3192 3860 3810 0 "Firewatch, Ember Keep: Treasure Chamber"
+wait 150
+take 093651DE
+until 600 GetJournalIndex TR_m1_HT_Oathrung >= 20
+end
+
+case ht_oathrung_done
+run
+player->PositionCell 7390 4300 16170 0 "Tel Oren, Tower"
+until 600 "TR_m1_T_Faruna"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Faruna
+ask Oathrung
+choose 1
+expect GetJournalIndex TR_m1_HT_Oathrung == 50
+bye
+end

@@ -1,0 +1,41 @@
+# TR House Telvanni: "The Book of Worms" (TR_m1_HT_Nu1). Nira Uldram in Tel Rivus's tower has a chore ("chores" adds
+# "Mysteries of the Worm"; "Yes, I can locate this book for you." 1: 10, two scrolls): a copy of Mysteries of the
+# Worm from the vaults beneath the Council House in Port Telvannis. Given the book ("[Give the book.]" 1), she pays
+# (100, an amulet, 350 drakes, +5 reputation).
+# PositionCell stands in for the travel and sneaking past the vault guards. The book's ref is 092A2CCD
+# (TR_Mainland's slot 09).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_oathrung_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_nu1_start
+run
+player->PositionCell 3008 3750 14725 0 "Tel Rivus, Tower"
+until 600 "TR_m1_Nira Uldram"->GetDistance player < 600
+wait 120
+talk TR_m1_Nira Uldram
+ask chores
+ask Mysteries of the Worm
+choose 1
+expect GetJournalIndex TR_m1_HT_Nu1 == 10
+bye
+end
+
+case ht_nu1_vault
+run
+player->PositionCell 11656 2730 24305 0 "Port Telvannis, Telvanni Council House: Vaults"
+wait 150
+take 092A2CCD
+until 300 player->GetItemCount "T_Bk_MysteriesOfTheWormTR" >= 1
+end
+
+case ht_nu1_done
+run
+player->PositionCell 3008 3750 14725 0 "Tel Rivus, Tower"
+until 600 "TR_m1_Nira Uldram"->GetDistance player < 600
+wait 120
+talk TR_m1_Nira Uldram
+ask Mysteries of the Worm
+choose 1
+expect GetJournalIndex TR_m1_HT_Nu1 == 100
+bye
+end

@@ -1,0 +1,35 @@
+# Morrowind Temple: promotion to Diviner (7), which Archcanon Tholer Saryoni's duties need. Diviner asks one favored
+# skill at 70, two at 25, Personality and Intelligence of 33 and reputation 80 (MorrowindRuntime's FACT table).
+# SetRestoration, SetMysticism and SetAlchemy stand in for the player's training, SetPersonality and SetIntelligence
+# for level-up choices; the reputation is the player's own from the duties before. As Diviner, Endryn Llethan's
+# "duties" sends the player to the Archcanon with the key to his rooms (TT_DagonFel 1).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_staralor_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_diviner
+run
+player->SetRestoration 70
+player->SetMysticism 25
+player->SetAlchemy 25
+player->SetPersonality 33
+player->SetIntelligence 33
+player->PositionCell 378 -280 3 0 "Molag Mar, Temple"
+until 600 "tharer rotheloth"->GetDistance player < 600
+wait 120
+talk tharer rotheloth
+ask Advancement
+expect player->GetPCRank Temple >= 7
+bye
+end
+
+case tt_diviner_key
+run
+player->PositionCell -1031 -150 -616 0 "Vivec, High Fane"
+until 600 "endryn llethan"->GetDistance player < 600
+wait 60
+talk endryn llethan
+ask duties
+expect GetJournalIndex TT_DagonFel == 1
+expect player->GetItemCount key_archcanon_private == 1
+bye
+end

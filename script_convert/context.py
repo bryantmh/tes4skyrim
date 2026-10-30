@@ -105,6 +105,8 @@ class ScriptContext:
     #: this script, and whether the helpers are due.
     msgbox_used: set = field(default_factory=set)
     uses_msg_buttons: bool = False
+    #: The script's source as parsed, so a MessageBoxEX resolves its `%z` strings the way the plan did.
+    source: str = ''
     #: A `Message` converted to TES4_Notify, so the helper is due.
     uses_notify: bool = False
     #: A StartConversation walk runs inside the poll, so the poll's overlap guard is due.

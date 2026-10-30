@@ -348,6 +348,8 @@ std::size_t EffectCount();
 // so this is what picks which filled gem to add.
 // See: docs/commentary/morrowind_runtime.md#soul-gems
 int CreatureSoul(const std::string& creature);
+// Every creature CREA_soul.txt gives a soul, with that soul.
+void ForEachCreatureSoul(const std::function<void(const std::string&, int)>& fn);
 
 // The staged id of `gem`'s FILLED variant for a soul of that size, or "" --
 // SLGM.txt keys them `<gem id>_Filled<n>`. An ID, not a FormRef: every soul

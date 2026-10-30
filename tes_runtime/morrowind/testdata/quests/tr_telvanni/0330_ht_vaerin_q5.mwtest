@@ -1,0 +1,39 @@
+# TR House Telvanni: "Plan B" (TR_m2_HT_Vaerin_q5). Vaerin's "chores" adds "Alumawia" ("Continue" 1: 10): a
+# staff hidden deep in the Daedric ruin of Alumawia near Meralag. Shown the staff ("It's yours." 1), Vaerin says it
+# is the player's to keep (100, +5 reputation).
+# PositionCell stands in for the journey through Alumawia. The staff's ref is 09C6F18B (TR_Mainland's slot 09).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_vaerin_q4_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_vaerin_q5_start
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask chores
+ask Alumawia
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q5 == 10
+bye
+end
+
+case ht_vaerin_q5_staff
+run
+player->PositionCell 5996 2820 13525 0 "Alumawia, Sepulcher"
+wait 150
+take 09C6F18B
+until 300 player->GetItemCount "TR_m3_q_TeleportStaff" >= 1
+end
+
+case ht_vaerin_q5_done
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask Alumawia
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q5 == 100
+bye
+end

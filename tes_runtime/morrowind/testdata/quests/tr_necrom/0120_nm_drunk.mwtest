@@ -1,0 +1,79 @@
+# TR Necrom: "Bad Spirits" (TR_m2_Nm_Drunk). Rilam Arelas, outdoors in Necrom, worries about Nedim Fareloth ("Is he in
+# danger?" 1, "Maybe I could help?" 2: 10, his door key). Nedim, drunk at home, sends the player off (20); Rilam
+# wants him taken to the Lovers' shrine on the causeway (30). Nedim won't go out without his shirt; found ("I found
+# it." 1) he follows (40). Within 650 of the shrine (TR_m2_q_A9_2_NedimScript) his greeting logs 50; Rilam pays (60,
+# "I'll take the hackle-lo." 10).
+# Position and PositionCell stand in for the player's travel, the escort's too: the Lovers' shrine stands on a navmesh
+# island the city's mesh does not reach, so `walk` finds no path. Nedim follows on his own. Refs carry TR_Mainland's
+# slot 09: 09EB0978 the shirt, 09DC6D19 the house door.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_nm_scout_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case nm_drunk_start
+run
+player->Position 356750 -86650 840 0
+until 900 "TR_m2_Rilam Arelas"->GetDistance player < 800
+wait 120
+talk TR_m2_Rilam Arelas
+ask Nedim Fareloth
+choose 1
+choose 2
+expect GetJournalIndex TR_m2_Nm_Drunk == 10
+bye
+run
+player->PositionCell 3962 6650 21375 0 "Necrom, Nedim Fareloth's House"
+until 600 "TR_m2_Nedim Fareloth"->GetDistance player < 800
+wait 120
+talk TR_m2_Nedim Fareloth
+ask Nedim Fareloth
+bye
+expect GetJournalIndex TR_m2_Nm_Drunk == 20
+run
+player->Position 356750 -86650 840 0
+until 900 "TR_m2_Rilam Arelas"->GetDistance player < 800
+wait 60
+talk TR_m2_Rilam Arelas
+ask Nedim Fareloth
+expect GetJournalIndex TR_m2_Nm_Drunk == 30
+bye
+end
+
+case nm_drunk_shirt
+run
+player->PositionCell 3962 6650 21375 0 "Necrom, Nedim Fareloth's House"
+until 600 "TR_m2_Nedim Fareloth"->GetDistance player < 800
+wait 120
+talk TR_m2_Nedim Fareloth
+ask Nedim Fareloth
+bye
+take 09EB0978
+until 300 player->GetItemCount "TR_m2_q_A9_2_NedimShirt" >= 1
+talk TR_m2_Nedim Fareloth
+choose 1
+expect GetJournalIndex TR_m2_Nm_Drunk == 40
+bye
+end
+
+case nm_drunk_shrine
+activate 09DC6D19
+until 600 GetPCCell "Necrom" == 1
+wait 120
+run
+player->Position 340564 -80300 1300 0
+until 3600 "TR_m2_Nedim Fareloth".controlQ == 10
+talk TR_m2_Nedim Fareloth
+expect GetJournalIndex TR_m2_Nm_Drunk == 50
+bye
+end
+
+case nm_drunk_done
+run
+player->Position 356750 -86650 840 0
+until 900 "TR_m2_Rilam Arelas"->GetDistance player < 800
+wait 120
+talk TR_m2_Rilam Arelas
+ask Nedim Fareloth
+choose 10
+expect GetJournalIndex TR_m2_Nm_Drunk == 60
+bye
+end

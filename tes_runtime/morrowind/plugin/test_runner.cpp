@@ -9,6 +9,7 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <string>
 #include <vector>
@@ -522,7 +523,7 @@ void KeepFollowing() {
     if (trail.empty() || Apart(trail.back(), at) >= kTrailStep) trail.push_back(at);
     while (trail.size() > kTrailPoints) trail.pop_front();
     const float gap = Hooks().distance("player", npc);
-    if (gap < 0.0f || gap <= kFollowSlack) return;
+    if (gap <= kFollowSlack || gap == std::numeric_limits<float>::max()) return;
     const Spot* spot = &trail.front();
     for (const Spot& point : trail) {
         if (Apart(point, at) >= kFollowBehind) spot = &point;

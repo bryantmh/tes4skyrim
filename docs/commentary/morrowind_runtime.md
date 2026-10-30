@@ -1709,8 +1709,27 @@ condition is `WearingOrdinatorUni == 1` never firing, because the armor's
 per tick for each of the 147 carried objects whose script declares the local.
 A hook would be needed only for `PCSkipEquip`, which lets a script REFUSE an
 equip (143 scripts set it) — that is checked at the inventory-USE layer, not
-inside `EquipObject`, and is still unimplemented. `kEquipObject` /
-`kUnequipObject` are recorded in `ids.h` for when it is built.
+inside `EquipObject`. For any item but a book it is still unimplemented.
+`kEquipObject` / `kUnequipObject` are recorded in `ids.h` for when it is
+built.
+
+🛑 **Reading a carried BOOK is OpenMW's useItem.** OpenMW sets a book's
+`PCSkipEquip` to 1 as the player reads it from the inventory. If the local is
+ALREADY 1, it sets `OnPCEquip` instead and the book stays shut. Scripted
+scrolls are written around that: TR's `TR_m2_q_VaerinScrollSummon_sc` reacts
+only through `if ( PCSkipEquip == 1 )`, so before this nothing happened when
+the player read Vaerin's summoning scroll ("We're Done When I Say So" never
+reached 20). `BookMenu::OpenBookMenu` is already hooked for book defines. A
+read from an inventory reaches it with NO reference (two of its three callers
+on 1.6.1170, 0x8fd817 and 0x92f798; the world-book path at 0x27a996 passes the
+ref), and `ReadCarriedBook` applies the rule there for a book the player
+carries.
+
+TES3's `Equip` of a book also READS it: OpenMW's `OpEquip` hands the player's
+item to the same `useItem`. Skyrim's `EquipItem` on a book opens nothing, so
+`EquipItem` on a player book builds the text the way the inventory does
+(`TESDescription::Get`, 'DESC', at book+0xa8) and opens the menu with no
+reference.
 
 🛑 **The id is a PARAMETER of the poll.** Locals belong to the SCRIPT, so one
 instance serves every item record sharing it — `OrdinatorUniform` is worn by
@@ -3533,11 +3552,45 @@ Two sidecar tables carry what that needs:
 that gem's `_Filled<n>` record, and adds it. The query and removal commands
 scan the actor's inventory for any filled gem whose `SOUL` equals that size.
 
+🛑 **A soul the PLAYER traps is per-item data, not a filled record.**
+Skyrim's Soul Trap keeps the ordinary empty gem and hangs an `ExtraSoul`
+(type 0x9C, size byte +0x10) on its inventory stack. So `HasSoulGem` and
+`RemoveSoulGem` also walk the actor's inventory changes and count, or remove,
+the stacks whose ExtraSoul matches. Removal names the stack's own
+ExtraDataList to `TESObjectREFR::RemoveItem` (vtable slot 86), so an empty gem
+of the same base is never taken by mistake. Every offset and id is in
+`ids.h` (`kExtraListSoulLevel` and its neighbors), read off 1.6.1170 from the
+engine's own `InventoryEntryData::GetSoulLevel`. None is in the pre-AE tables,
+so on 1.5.97 and VR only filled records count. `DropSoulGem` on a trapped gem
+removes it; no plugin in the TR, TD or Morroblivion corpora calls
+`DropSoulGem` at all (TR: 123 `HasSoulGem`, 64 `RemoveSoulGem`).
+
+🛑 **Skyrim sizes a trapped soul by LEVEL.** `Actor::GetSoulSize` (id 38817)
+gives 5 for a black soul and otherwise compares the actor's level with four
+thresholds. It ignores the plugin's soul value, so TR's Sittali wraith (level
+20, a grand soul in TES3) trapped as soul 3 and Vaerin's "Knowledge from
+Beyond" could never finish. All four direct calls of `GetSoulSize` are
+repointed: TrapSoul's gem match, TrapSoul's ExtraSoul write, the best-gem
+search, and SoulTrapEffect. A TES3 creature (its base form is in
+`CREA_soul.txt`) answers with its own soul; every other actor gets the
+engine's answer. A hook only inside TrapSoul's inline level-to-size call
+changed nothing: the size written to the gem comes from `GetSoulSize`.
+
 🛑 **A filled gem's id is an item too.** `FindItem` falls back to the
 `SLGM.txt` table, so `AddItem`, `GetItemCount` and `Drop` resolve
 `Misc_SoulGem_Petty_Filled1`. Without that fallback, `AddSoulGem` handed
 `AddItem` an id it could not resolve (`item 'misc_soulgem_petty_filled1' does
 not resolve`), and the headless tester's `HasSoulGem` read 0 straight after.
+
+🛑 **An EMPTY gem is an item too, and in Morroblivion mode it is an SLGM.**
+TES3's empty gems are MISC records, but the compatibility patch is a TES4
+plugin, so `Misc_SoulGem_Greater` and the other five empty gems are SLGM
+records there. The items table read only ALCH through WEAP, and `SLGM.txt`
+keeps filled gems only, so `AddItem "Misc_SoulGem_Greater" 5` logged "does not
+resolve in this load order" and added nothing (TR's "Dispatch to Eldale": Cerul
+Arnem's five gems never arrived). `SLGM.txt` is now one of the item exports:
+the patch's table gained 26 rows. TR names empty gems in 58 dialogue lines and
+6 scripts. Authored Morrowind.esm keeps its gems as MISC and is unaffected.
 
 Measured limit: `GetItemCount` does not see an `AddItem` made in the same frame.
 So a `DropSoulGem` or `RemoveSoulGem` in the same script as the `AddSoulGem`
@@ -4869,6 +4922,18 @@ pages, which would come first and move its class pages' fixed ids.
   (`commands._player_class_test`: a listed class is its row; the record's
   starting class is "no choice yet", 0), and `GetPlayerBirthsign` is the
   birthsign choice global, 0 until a pick.
+
+<a id="a-script-names-the-class"></a>**A script that names the class.**
+Morroblivion's census class quiz ends in OBSE `Player.SetClass <class>`, where
+Morrowind's engine shows the class its questions produced and lets the player
+accept it or choose another (OpenMW's `GenerateClassResultDialog`). The
+converted `SetClass` writes the class's row into the choice global and asks
+for the same class menu `ShowClassMenu` does (`commands.set_class`); the menu
+opens on the row an asking plugin's choice global names
+(`SuggestedClassIndex`), so the pick still goes through `ChooseClass`. Without
+the runtime the message pages open instead, and their pick overwrites the
+global. A `SetClass` on anyone but the player, or naming a class the menu does
+not list, keeps its `;NE:` note.
 
 **Spells.** The runtime grants a chosen sign's spells for every game and
 takes the last sign's back, as OpenMW rebuilds them. A row names each spell by

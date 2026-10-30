@@ -1,0 +1,46 @@
+# TR Necrom: "A Missing Scout" (TR_m2_Nm_Scout). Terlesi Othralas in the Hall of Contemplation asks after the Temple
+# scout Doril Indanyon ("gone missing": "I will help you." 1: 10). His body lies in Ashpibishal's Inner Shrine;
+# searching it logs 20 (TR_m2_q_A9_3_DorilScript). With the heretic Vendrin Silvasan dead, Terlesi pays at once (30,
+# 500 drakes).
+# PositionCell stands in for the travel, the kill for the fight. Refs carry TR_Mainland's slot 09: 09ADB385 Doril,
+# 09CEA1E9 Vendrin.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_nm_vorith_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case nm_scout_start
+run
+player->PositionCell 1146 -3620 1365 0 "Necrom, Hall of Contemplation"
+until 600 "TR_m2_Terlesi Othralas"->GetDistance player < 800
+wait 120
+talk TR_m2_Terlesi Othralas
+ask gone missing
+choose 1
+expect GetJournalIndex TR_m2_Nm_Scout == 10
+bye
+end
+
+case nm_scout_shrine
+run
+player->PositionCell 4029 3120 11660 0 "Ashpibishal, Inner Shrine"
+until 600 "TR_m2_Vendrin Silvasan"->GetDistance player < 1000
+wait 150
+console 09CEA1E9.kill
+until 600 GetDeadCount "TR_m2_Vendrin Silvasan" >= 1
+run
+player->PositionCell 5441 5720 10915 0 "Ashpibishal, Inner Shrine"
+wait 60
+activate 09ADB385
+close ContainerMenu
+until 300 GetJournalIndex TR_m2_Nm_Scout >= 20
+end
+
+case nm_scout_done
+run
+player->PositionCell 1146 -3620 1365 0 "Necrom, Hall of Contemplation"
+until 600 "TR_m2_Terlesi Othralas"->GetDistance player < 800
+wait 120
+talk TR_m2_Terlesi Othralas
+ask gone missing
+expect GetJournalIndex TR_m2_Nm_Scout == 30
+bye
+end

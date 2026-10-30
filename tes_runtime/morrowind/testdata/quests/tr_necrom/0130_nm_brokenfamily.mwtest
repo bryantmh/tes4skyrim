@@ -1,0 +1,59 @@
+# TR Necrom: "A Broken Family" (TR_m2_Nm_BrokenFamily), the peaceful ending. The vampire Velyn Alari in the Sadalvel
+# Ancestral Tomb asks the player to carry a letter to his brother ("Adren Alari": "Yes, I will deliver the message for
+# you." 2: 10). Adren in the Necrom Temple Library hears he is alive (1), gets the letter (2), Continue (4), refuses
+# to have him killed (6, then "You should not kill Velyn." 8: 30) and leaves for the tomb (TR_m2_Nm_BrokenFamilyScript
+# moves him on the next cell change). There he force-greets the player; speechcraft 50 or more (set as a stand-in by
+# the Tel Mora case) unlocks "talk to each other" (11: 50). Velyn, asked again, makes peace (Continue 8: 190).
+# PositionCell stands in for the travel.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_nm_drunk_shirt --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case nm_brokenfamily_start
+run
+player->PositionCell 5277 4800 14535 0 "Sadalvel Ancestral Tomb"
+until 600 "TR_m2_Velyn Alari"->GetDistance player < 600
+wait 120
+talk TR_m2_Velyn Alari
+ask Adren Alari
+choose 2
+expect GetJournalIndex TR_m2_Nm_BrokenFamily == 10
+expect player->GetItemCount "TR_m2_BrokenFamily_Message" == 1
+bye
+end
+
+case nm_brokenfamily_adren
+run
+player->PositionCell 3550 4400 14886 0 "Necrom, Temple Library"
+until 600 "TR_m2_Adren Alari"->GetDistance player < 600
+wait 120
+talk TR_m2_Adren Alari
+ask Velyn Alari
+choose 1
+choose 2
+choose 4
+choose 6
+choose 8
+expect GetJournalIndex TR_m2_Nm_BrokenFamily == 30
+bye
+end
+
+case nm_brokenfamily_tomb
+run
+player->PositionCell 5277 4500 14535 0 "Sadalvel Ancestral Tomb"
+until 600 "TR_m2_Adren Alari"->GetDistance player < 2000
+wait 60
+run
+player->PositionCell 5268 4700 14535 0 "Sadalvel Ancestral Tomb"
+until 600 "TR_m2_Adren Alari".sayGreeting == 1
+choose 11
+expect GetJournalIndex TR_m2_Nm_BrokenFamily == 50
+bye
+end
+
+case nm_brokenfamily_done
+talk TR_m2_Velyn Alari
+ask Adren Alari
+choose 8
+expect GetJournalIndex TR_m2_Nm_BrokenFamily == 190
+bye
+end

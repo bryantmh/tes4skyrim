@@ -57,6 +57,8 @@ bool StartQuest(void* form, bool* justStarted);
 bool SetStage(void* form, int stage, bool justStarted);
 // `spell` cast from `source` at `target`, posted. game_calls_spell.cpp.
 void CastForm(void* spell, void* source, void* target);
+// The player reads `book` from their pack, on the game thread. game_calls_message.cpp.
+void ReadBookFromInventory(void* book);
 // Puts `ref` at a position with a Z rotation in degrees. game_calls_move.cpp.
 void PlaceAt(void* ref, float x, float y, float z, float zRot);
 // Puts `ref` at a spot inside `place`, a CELL or a WORLDSPACE form, in ONE

@@ -1,0 +1,63 @@
+# Morrowind Temple: Endryn Llethan's last duties. "Shoes of St. Rilms" (TT_RilmsShoes, 10): the shoes lie in a chest
+# deep in Ald Sotha; handed over with Choice 1 (100). "Ihinipalit" (TT_StAralor, 10): Bjadmund, who leads the cult
+# under the St. Delyn Canton, dead, Endryn Llethan gives the Staff of the Ancestors (100). The key to Tholer
+# Saryoni's rooms waits for Diviner (0240).
+# PositionCell stands in for the travel, the console kill for the fight, removeallitems for picking the chest's lock and Take All.
+# Ref FormIDs carry Morrowind.esm's slot 05: 0552B792 the Ald Sotha chest, 059800FF Bjadmund.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_hassour_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_rilms_start
+run
+player->PositionCell -1031 -150 -616 0 "Vivec, High Fane"
+until 600 "endryn llethan"->GetDistance player < 600
+wait 120
+talk endryn llethan
+ask duties
+ask Shoes of St. Rilms
+expect GetJournalIndex TT_RilmsShoes == 10
+bye
+end
+
+case tt_rilms_take
+run
+player->PositionCell 4772 3900 13542 0 "Ald Sotha, Shrine"
+wait 60
+console 0552B792.removeallitems player
+until 120 player->GetItemCount "shoes of st. rilms" >= 1
+end
+
+case tt_rilms_done
+run
+player->PositionCell -1031 -150 -616 0 "Vivec, High Fane"
+until 600 "endryn llethan"->GetDistance player < 600
+wait 60
+talk endryn llethan
+ask Shoes of St. Rilms
+choose 1
+expect GetJournalIndex TT_RilmsShoes == 100
+ask duties
+ask Ihinipalit
+expect GetJournalIndex TT_StAralor == 10
+bye
+end
+
+case tt_staralor_bjadmund
+run
+player->PositionCell 54 300 -501 0 "Ihinipalit, Shrine"
+until 600 "bjadmund"->GetDistance player < 1500
+wait 30
+console 059800FF.kill
+until 300 GetDeadCount "bjadmund" >= 1
+end
+
+case tt_staralor_done
+run
+player->PositionCell -1031 -150 -616 0 "Vivec, High Fane"
+until 600 "endryn llethan"->GetDistance player < 600
+wait 60
+talk endryn llethan
+ask Ihinipalit
+expect GetJournalIndex TT_StAralor == 100
+bye
+end

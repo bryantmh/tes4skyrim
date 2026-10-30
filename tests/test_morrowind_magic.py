@@ -13,8 +13,9 @@ from tes5_import.generated.vanilla_mgef_data import VANILLA_MGEF_DATA
 from tes5_import.record_types import magic_art
 from tes5_import.record_types.equipment import attack_spell, convert_ENCH
 from tes5_import.record_types.magic import (MGEF_DATA_SIZE, O_CASTING_ART,
-                                            O_CASTING_LIGHT, O_HIT_SHADER, _fill_art,
-                                            code_to_fid, register_mgef_formids)
+                                            O_CASTING_LIGHT, O_HIT_SHADER, SUN_CONDITIONS,
+                                            _fill_art, code_to_fid, mgef_tail,
+                                            register_mgef_formids)
 from tes5_import.record_types.magic_art_morrowind import FIRE
 from tes5_import.record_types.magic_morrowind import mw_tes4_flags
 from tes5_import.record_types.magic_variants import owner_delivery
@@ -104,6 +105,19 @@ def test_engine_flags_make_damage_hostile():
     """
     assert mw_tes4_flags(_engine_flags(14)) & 0x5 == 0x5
     assert not _engine_flags(14) & 0x1C0
+
+
+def test_sun_damage_burns_only_outdoors_by_day():
+    """SUDG and Morrowind 135 carry vanilla's sun window; other damage does not.
+
+    See: docs/commentary/tes5_import_magic.md#sun-damage
+    """
+    oblivion = mgef_tail({'EditorID': 'SUDG'})
+    morrowind = mgef_tail({'EditorID': 'MW135SunDamage', 'MorrowindEffectIndex': '135'})
+    assert oblivion.endswith(SUN_CONDITIONS) and morrowind.endswith(SUN_CONDITIONS)
+    assert SUN_CONDITIONS not in mgef_tail({'EditorID': 'FIDG'})
+    windows = [struct.unpack_from('<B3xfH', SUN_CONDITIONS, 6 + 38 * i) for i in range(3)]
+    assert windows == [(0x00, 0.0, 300), (0x60, 5.0, 74), (0xA0, 19.0, 74)]
 
 
 def test_spell_flags_keep_the_authored_cost():

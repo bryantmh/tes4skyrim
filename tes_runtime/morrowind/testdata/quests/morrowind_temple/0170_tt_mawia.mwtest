@@ -1,0 +1,34 @@
+# Morrowind Temple: Tharer Rotheloth's "Necromancer in Mawia" (TT_Mawia). Tharer Rotheloth names the necromancer
+# Delvam Andarys ("Delvam Andarys": 10); with him dead, Tharer Rotheloth thanks the player (100).
+# PositionCell stands in for the travel, the kill for the fight. Ref FormIDs carry Morrowind.esm's slot 05:
+# 055B5A84 Delvam Andarys.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_mountkand_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_mawia_start
+talk tharer rotheloth
+ask duties
+ask Delvam Andarys
+expect GetJournalIndex TT_Mawia == 10
+bye
+end
+
+case tt_mawia_delvam
+run
+player->PositionCell 152 1250 -492 0 "Mawia"
+until 600 "delvam andarys"->GetDistance player < 1500
+wait 120
+console 055B5A84.kill
+until 600 GetDeadCount "delvam andarys" >= 1
+end
+
+case tt_mawia_done
+run
+player->PositionCell 378 -280 3 0 "Molag Mar, Temple"
+until 600 "tharer rotheloth"->GetDistance player < 600
+wait 120
+talk tharer rotheloth
+ask Delvam Andarys
+expect GetJournalIndex TT_Mawia == 100
+bye
+end

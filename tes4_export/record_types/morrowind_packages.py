@@ -9,6 +9,7 @@ as a marker in the cell the actor stands in.
 See: docs/commentary/tes4_export_morrowind.md#ai-packages
 """
 
+import math
 import struct
 
 from ..morrowind_ids import encode_editor_id
@@ -26,6 +27,9 @@ _TARGET_REFERENCE, _TARGET_OBJECT = 0, 1
 
 #: TES4's XMarker, the destination a travel package walks to.
 _XMARKER = '0000003B'
+
+#: AiTravel's reach: Morrowind ignores a point farther than this from the actor (OpenMW `isWithinMaxRange`).
+_TRAVEL_REACH = 7168.0
 
 #: Morrowind writes FLT_MAX for "no destination" on follow and escort.
 _NO_DESTINATION = 1.0e38
@@ -122,16 +126,17 @@ def _schedule(duration: int) -> list:
 def _marker(ctx, actor_id: str, pos: tuple, key: str, out: list) -> str:
     """Place an XMarker at `pos` in the actor's cell; its FormID, or '' when no cell.
 
-    An exterior destination names the grid it falls in; an interior one the
-    cell the actor is placed in, because Morrowind's coordinates are cell-local
-    and the package lives on the base actor.
+    Morrowind reads the position in the cell the actor stands in and never
+    leaves it, so an actor placed in an interior keeps the marker there; any
+    other names the exterior grid `pos` falls in.
+    See: docs/commentary/tes4_export_morrowind.md#ai-packages
     """
+    placed = ctx.placements.get(actor_id.lower(), ())
+    cell = placed[0][1] if placed else ''
     grid = cell_grid(pos[0], pos[1])
-    if grid in ctx.known_grids or ctx.index.lookup_exterior(grid):
+    outdoors = not cell or cell in ctx.exterior_cell_ids
+    if outdoors and (grid in ctx.known_grids or ctx.index.lookup_exterior(grid)):
         cell = ctx.exterior_cell_id(grid)
-    else:
-        placed = ctx.placements.get(actor_id.lower(), ())
-        cell = placed[0][1] if placed else ''
     if not cell:
         return ''
     form_id = ctx.derive(key)
@@ -140,6 +145,17 @@ def _marker(ctx, actor_id: str, pos: tuple, key: str, out: list) -> str:
                           'RotX=0.0', 'RotY=0.0', 'RotZ=0.0',
                           f'RecordFlags={_PERSISTENT}']))
     return form_id
+
+
+def _travel_point(ctx, actor_id: str, pos: tuple) -> tuple:
+    """Where a Travel walks: `pos`, or the actor's own spot when `pos` is beyond AiTravel's reach.
+
+    See: docs/commentary/tes4_export_morrowind.md#ai-packages
+    """
+    placed = ctx.placements.get(actor_id.lower(), ())
+    if placed and math.dist(pos, placed[0][2]) > _TRAVEL_REACH:
+        return placed[0][2]
+    return pos
 
 
 def _target_lines(ctx, target_id: str) -> list:
@@ -168,7 +184,8 @@ def _package_lines(ctx, actor_id: str, form_id: str, kind: str, fields: dict,
                   'MorrowindIdle=' + ','.join(str(c) for c in fields['idles'])]
         return lines + _schedule(fields['duration'])
     if kind == 'travel':
-        marker = _marker(ctx, actor_id, fields['pos'], 'xmarker:' + form_id, markers)
+        marker = _marker(ctx, actor_id, _travel_point(ctx, actor_id, fields['pos']),
+                         'xmarker:' + form_id, markers)
         if not marker:
             return None
         return lines + [f'PKDT.Type={_TRAVEL}'] + _location_lines(marker) + _schedule(0)

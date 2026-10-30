@@ -1,0 +1,45 @@
+# Morrowind Temple: Endryn Llethan's "Disease Carrier" (TT_DiseaseCarrier). In the High Fane Endryn Llethan asks the
+# player to talk the holy woman Tanusea Veloth out of Vivec ("leave Vivec City": 10). At disposition 80 she goes as a
+# favor ("Do this as a favor for me." 2: 50, TeleportTanusea moves her to Tel Fyr once the player is out of Vivec);
+# Endryn Llethan pays in cure blight potions (100).
+# PositionCell stands in for the travel; bribes, repeated until they land, raise Tanusea. The AddItem of gold stands
+# in for money the player earned on the way.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_maargan_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_diseasecarrier_start
+run
+player->PositionCell -1031 -150 -616 0 "Vivec, High Fane"
+until 600 "endryn llethan"->GetDistance player < 600
+wait 120
+talk endryn llethan
+ask duties
+ask leave Vivec City
+expect GetJournalIndex TT_DiseaseCarrier == 10
+bye
+end
+
+case tt_diseasecarrier_tanusea
+run
+player->AddItem Gold_001 2000
+player->PositionCell 731 850 -85 0 "Vivec, Arena Pit"
+until 600 "tanusea veloth"->GetDistance player < 600
+wait 120
+talk tanusea veloth
+persuade bribe100 until "tanusea veloth"->GetDisposition >= 80
+ask leave Vivec City
+choose 2
+expect GetJournalIndex TT_DiseaseCarrier == 50
+bye
+end
+
+case tt_diseasecarrier_done
+run
+player->PositionCell -1031 -150 -616 0 "Vivec, High Fane"
+until 600 "endryn llethan"->GetDistance player < 600
+wait 120
+talk endryn llethan
+ask leave Vivec City
+expect GetJournalIndex TT_DiseaseCarrier == 100
+bye
+end

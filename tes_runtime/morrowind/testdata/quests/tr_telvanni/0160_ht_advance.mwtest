@@ -1,0 +1,33 @@
+# TR House Telvanni: promotion to Lawman (rank 3), the rank Areth Morvayn's next chore (Ra2) and the Telvanni
+# patrons ask for. The rank-0 chores (Ra1, Fa1, Dr1, El1, Mi1, Va1) bring 28 reputation; Lawman needs 20, Intelligence
+# and Willpower 30, and 30 and 5 in Telvanni's favored skills. The Mouths promote one rank per "Advancement" ("Yes,
+# we find you worthy of %NextPCRank.", PCRaiseRank).
+# The Set lines stand in for the player training Mysticism and Alteration (and Intelligence, Willpower) to the bar.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_va1_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_advance_lawman
+run
+player->SetMysticism 30
+player->SetAlteration 30
+player->SetIllusion 30
+if ( player->GetIntelligence < 30 )
+player->SetIntelligence 30
+endif
+if ( player->GetWillpower < 30 )
+player->SetWillpower 30
+endif
+expect player->GetPCFacRep Telvanni >= 20
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Areth_Morvayn"->GetDistance player < 400
+wait 120
+talk TR_m1_T_Areth_Morvayn
+ask Advancement
+expect player->GetPCRank Telvanni == 1
+ask Advancement
+expect player->GetPCRank Telvanni == 2
+ask Advancement
+expect player->GetPCRank Telvanni == 3
+bye
+end

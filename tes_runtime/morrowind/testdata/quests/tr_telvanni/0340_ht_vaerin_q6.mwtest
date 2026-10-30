@@ -1,0 +1,68 @@
+# TR House Telvanni: "We're Done When I Say So" (TR_m2_HT_Vaerin_q6). Vaerin's "chores" adds "beware Vaerin's wrath":
+# a punavit potion and a summoning scroll ("Continue" 1), then a letter for Dralothas (10). In Tel Muthada, with the
+# potion's effect on, reading the scroll (TR_m2_q_VaerinScrollSummon_sc) logs 20 and summons a guardian that asks
+# where Llevari Telsaran is ("She's over there." 2) and kills her; her death after the ritual logs TR_m2_HT_Vaerin_q6_a 100 and puts her amulet on her body.
+# Dralothas, shown amulet and letter (Choice 1), logs 30; Vaerin ("Continue" 1) rewards the player (100).
+# PositionCell stands in for the travel; Equip for drinking the potion and reading the scroll from the inventory;
+# the RemoveItem/AddItem pair for looting Llevari's body.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_vaerin_q5_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_vaerin_q6_start
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask chores
+ask beware Vaerin's wrath
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q6 == 10
+expect player->GetItemCount "TR_m2_q_VaerinScrollSummon" == 1
+bye
+end
+
+case ht_vaerin_q6_ritual
+run
+player->PositionCell 45 90 10 0 "Tel Muthada, Upper Hall"
+until 600 "TR_m2_Llevari Telsaran"->GetDistance player < 800
+wait 120
+run
+player->Equip "TR_m2_q_VaerinPunavit"
+until 300 player->GetSpellEffects "TR_m2_q_VaerinPunavitEffect" == 1
+run
+player->Equip "TR_m2_q_VaerinScrollSummon"
+close Book Menu
+until 300 GetJournalIndex TR_m2_HT_Vaerin_q6 >= 20
+choose 2
+bye
+until 3600 GetJournalIndex TR_m2_HT_Vaerin_q6_a >= 100
+expect GetJournalIndex TR_m2_HT_Vaerin_q6_a == 100
+run
+"TR_m2_Llevari Telsaran"->RemoveItem "TR_m2_q_LlevariAmulet" 1
+player->AddItem "TR_m2_q_LlevariAmulet" 1
+end
+
+case ht_vaerin_q6_dralothas
+run
+player->PositionCell 4154 3780 10670 0 "Tower of Tel Mothrivra, Manor"
+until 600 "TR_m2_DralothasOmothran"->GetDistance player < 800
+wait 120
+talk TR_m2_DralothasOmothran
+ask beware Vaerin's wrath
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q6 == 30
+bye
+end
+
+case ht_vaerin_q6_done
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask beware Vaerin's wrath
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q6 == 100
+bye
+end

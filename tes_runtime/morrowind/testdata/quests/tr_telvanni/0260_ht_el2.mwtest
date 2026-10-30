@@ -1,0 +1,45 @@
+# TR House Telvanni: "Message to Bal Gernak" (TR_m1_HT_El2). Fervas Shulisa's "chores" adds "letter to Bal Gernak",
+# which hands over a letter (10). Bal Gernak in his Llothanis chambers takes the blank letter and starts
+# TR_M1_Q66_El2_Summon_G: a dremora appears and force-greets with Eldale's message (20), vanishes, and Bal Gernak
+# force-greets in turn. Fervas pays (100, +5 reputation).
+# PositionCell stands in for the travel.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_dr2_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_el2_start
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Fervas_Shulisa"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Fervas_Shulisa
+ask chores
+ask letter to Bal Gernak
+expect GetJournalIndex TR_m1_HT_El2 == 10
+expect player->GetItemCount "TR_M1_Q66_GHT_El2_Letter" == 1
+bye
+end
+
+case ht_el2_bal_gernak
+run
+player->PositionCell 3972 4880 12545 0 "Llothanis, Bal Gernak's Chambers"
+until 600 "TR_m1_Bal-Gernak"->GetDistance player < 1000
+wait 120
+talk TR_m1_Bal-Gernak
+ask letter to Bal Gernak
+bye
+until 600 GetJournalIndex TR_m1_HT_El2 >= 20
+bye
+wait 120
+bye
+end
+
+case ht_el2_done
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Fervas_Shulisa"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Fervas_Shulisa
+ask letter to Bal Gernak
+expect GetJournalIndex TR_m1_HT_El2 == 100
+bye
+end

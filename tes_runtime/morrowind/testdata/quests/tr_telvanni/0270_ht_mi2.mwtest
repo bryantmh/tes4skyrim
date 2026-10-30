@@ -1,0 +1,81 @@
+# TR House Telvanni: "Peacemaker" (TR_m1_HT_Mi2). Nevrile Omayn's "chores" adds "offense to the Temple" (10):
+# someone in Ranyon-ruhn spat at the Temple priest Ratagos. Ratagos, at disposition 80, names Dilnar Llenim (20);
+# Dilnar, reminded he dishonors Mithras (Choice 1), writes an apology and pays 100 drakes (30); Ratagos takes both
+# (Choice 1: 40); Nevrile rewards the player (50, +5 reputation).
+# PositionCell stands in for the travel.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_el2_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+# Nevrile has a chore only once TR_m1_q_HT_Mi_BreakTimer, started by the census payout, has counted two days; the
+# player waits them out in the Chambers.
+case ht_mi2_start
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Nevrile_Omayn"->GetDistance player < 2500
+wait 120
+run
+ShowRestMenu
+sleep 24
+wait 120
+run
+ShowRestMenu
+sleep 24
+until 600 "TR_m1_T_Nevrile_Omayn".daysPassed == 1
+talk TR_m1_T_Nevrile_Omayn
+ask chores
+ask offense to the Temple
+expect GetJournalIndex TR_m1_HT_Mi2 == 10
+bye
+end
+
+# Ratagos punishes a bribe while this quest is at 10 (his Bribe Success line: ModDisposition -40), so the player
+# flatters him; SetPersonality/SetSpeechcraft stand in for the potions or training a player would use first.
+case ht_mi2_ratagos
+run
+player->SetPersonality 100
+player->SetSpeechcraft 100
+player->PositionCell 3740 3650 15000 0 "Ranyon-ruhn, Temple"
+until 600 "TR_m1_Ratagos"->GetDistance player < 600
+wait 120
+talk TR_m1_Ratagos
+persuade admire until "TR_m1_Ratagos"->GetDisposition >= 80
+ask offense to the Temple
+expect GetJournalIndex TR_m1_HT_Mi2 == 20
+bye
+end
+
+case ht_mi2_dilnar
+run
+player->PositionCell 4211 2750 16010 0 "Ranyon-ruhn, Dilnar Llenim's House"
+until 600 "TR_m1_Dilnar_Llenim"->GetDistance player < 600
+wait 120
+talk TR_m1_Dilnar_Llenim
+ask offense to the Temple
+choose 1
+expect GetJournalIndex TR_m1_HT_Mi2 == 30
+expect player->GetItemCount "TR_m1_q_RRApology" == 1
+bye
+end
+
+case ht_mi2_apology
+run
+player->PositionCell 3740 3650 15000 0 "Ranyon-ruhn, Temple"
+until 600 "TR_m1_Ratagos"->GetDistance player < 600
+wait 120
+talk TR_m1_Ratagos
+ask offense to the Temple
+choose 1
+expect GetJournalIndex TR_m1_HT_Mi2 == 40
+bye
+end
+
+case ht_mi2_done
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Nevrile_Omayn"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Nevrile_Omayn
+ask offense to the Temple
+expect GetJournalIndex TR_m1_HT_Mi2 == 50
+bye
+end

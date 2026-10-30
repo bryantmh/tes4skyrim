@@ -272,6 +272,11 @@ ObjectScript* FindInstance(const std::string& plugin,
 ObjectScript* CarriedInstance(const std::string& baseId,
                               const std::string& script);
 
+// The player reads a book they carry: its script's PCSkipEquip, as OpenMW
+// sets it. False when the script refuses the read (PCSkipEquip already 1).
+// See: docs/commentary/morrowind_runtime.md#engine-written-locals
+bool ReadCarriedBook(std::uint32_t bookFormId);
+
 // Runs every global script `StartScript` left running, once each. A script
 // that stops itself, or starts another, takes effect on the NEXT tick.
 // `cellChanged` is this tick's answer to `CellChanged`, which OpenMW gives

@@ -1,0 +1,39 @@
+# Morrowind Temple: Tharer Rotheloth's "Galom Daeus" (TT_GalomDeus). Tharer Rotheloth gives the player the vampire
+# hunters' implements and sends them against the elder vampire Raxle Berne in Galom Daeus (10); with him dead, Tharer
+# Rotheloth rewards it (100) and has no more duties.
+# PositionCell stands in for the travel, the console kill for the fight. Ref FormIDs carry Morrowind.esm's slot 05:
+# 0537C5DE Raxle Berne.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_crosier_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_galomdaeus_start
+run
+player->PositionCell 378 -280 3 0 "Molag Mar, Temple"
+until 600 "tharer rotheloth"->GetDistance player < 600
+wait 120
+talk tharer rotheloth
+ask duties
+ask Galom Daeus
+expect GetJournalIndex TT_GalomDeus == 10
+bye
+end
+
+case tt_galomdaeus_raxle
+run
+player->PositionCell 5746 4300 12811 0 "Galom Daeus, Observatory"
+until 600 "raxle berne"->GetDistance player < 1500
+wait 60
+console 0537C5DE.kill
+until 600 GetDeadCount "raxle berne" >= 1
+end
+
+case tt_galomdaeus_done
+run
+player->PositionCell 378 -280 3 0 "Molag Mar, Temple"
+until 600 "tharer rotheloth"->GetDistance player < 600
+wait 120
+talk tharer rotheloth
+ask Galom Daeus
+expect GetJournalIndex TT_GalomDeus == 100
+bye
+end

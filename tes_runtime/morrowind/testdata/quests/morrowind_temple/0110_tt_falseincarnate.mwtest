@@ -1,0 +1,40 @@
+# Morrowind Temple: Tuls Valen's "False Incarnate" (TT_FalseIncarnate). Elvil Vidron in Suran claims to be the
+# Nerevarine ("False Incarnate": 10). Talked round at disposition 65 ("Yes. But you are not the one I envisioned." 2:
+# 50), he repents; Tuls Valen rewards the mercy (100, three healing potions).
+# "Show him the Moon-and-Star ring" (3) is not taken: its line writes TT_Compassion 55, not this journal.
+# PositionCell and Position stand in for the travel; bribes, repeated until they land, raise Elvil. The AddItem of
+# gold stands in for money the player earned on the way.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_compassion_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_falseincarnate_start
+talk tuls valen
+ask duties
+ask False Incarnate
+expect GetJournalIndex TT_FalseIncarnate == 10
+bye
+end
+
+case tt_falseincarnate_elvil
+run
+player->AddItem Gold_001 1000
+player->Position 53888 -50900 192 0
+until 900 "elvil vidron"->GetDistance player < 600
+wait 120
+talk elvil vidron
+persuade bribe100 until "elvil vidron"->GetDisposition >= 65
+ask False Incarnate
+choose 2
+expect GetJournalIndex TT_FalseIncarnate == 50
+end
+
+case tt_falseincarnate_done
+run
+player->PositionCell 3637 3900 14723 0 "Ald-ruhn, Temple"
+until 600 "tuls valen"->GetDistance player < 600
+wait 120
+talk tuls valen
+ask False Incarnate
+expect GetJournalIndex TT_FalseIncarnate == 100
+bye
+end

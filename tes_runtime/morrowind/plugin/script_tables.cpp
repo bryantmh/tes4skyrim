@@ -943,6 +943,10 @@ int CreatureSoul(const std::string& creature) {
     return soul ? *soul : 0;
 }
 
+void ForEachCreatureSoul(const std::function<void(const std::string&, int)>& fn) {
+    g_souls.ForEachVisible([&fn](const std::string& id, int soul, int) { fn(id, soul); });
+}
+
 // `<gem id>_Filled<n>`, the id the export staged the filled variant under.
 std::string FilledGemKey(const std::string& gem, int soul) {
     return Lower(gem) + kFilledSuffix + std::to_string(soul);

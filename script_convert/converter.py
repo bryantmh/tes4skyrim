@@ -433,20 +433,30 @@ class ScriptConverter:
         writes the clicked index here, and the converted GetButtonPressed
         reads it back through the consumer — once, then -1 again, which is
         TES4's own contract and what keeps every `if button == N` poll from
-        re-firing forever on a stale index."""
+        re-firing forever on a stale index.
+
+        See: docs/commentary/script_convert.md#one-box-at-a-time"""
         if not self.sc.uses_msg_buttons:
             return []
         return [
             '',
             'Int TES4_MsgButton = -1',
+            'Bool TES4_MsgOpen = False',
             '',
             '; Displaying a box resets the pressed state (TES4: GetButtonPressed',
             '; reads -1 from display until the click), then Show() parks this',
             '; thread on the box and its return lands in TES4_MsgButton.',
+            '; While this script\'s box is up, a second request leaves it alone.',
             'Int Function TES4_ShowMsg(Message TES4_akMsg, ' + ', '.join(
                 f'Float afArg{n} = 0.0' for n in range(1, 10)) + ')',
+            '  If TES4_MsgOpen',
+            '    Return TES4_MsgButton',
+            '  EndIf',
             '  TES4_MsgButton = -1',
-            '  Return TES4_akMsg.Show(' + ', '.join(f'afArg{n}' for n in range(1, 10)) + ')',
+            '  TES4_MsgOpen = True',
+            '  Int TES4_shown = TES4_akMsg.Show(' + ', '.join(f'afArg{n}' for n in range(1, 10)) + ')',
+            '  TES4_MsgOpen = False',
+            '  Return TES4_shown',
             'EndFunction',
             '',
             'Int Function TES4_TakeMsgButton()',
@@ -1323,6 +1333,7 @@ class ScriptConverter:
         The parser already owns the body, so it is handed over directly.
         """
         from script_convert.tes4.parser import Mode, parse
+        self.sc.source = source
         try:
             tree = parse(source, Mode.SCRIPT)
         except Exception:

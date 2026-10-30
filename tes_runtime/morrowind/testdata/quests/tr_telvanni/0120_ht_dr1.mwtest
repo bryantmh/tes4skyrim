@@ -1,0 +1,29 @@
+# TR House Telvanni: "Ingredients for Lord Dral" (TR_m1_HT_Dr1). Malvas Relvani, a Mouth in the Chambers, asks
+# through "chores" for scamp skin, daedra skin, void salts, fire salts and frost salts ("ingredients for Lord Dral":
+# 10); handing all five over pays out (20, +5 reputation).
+# The AddItem stands in for the player buying the five ingredients.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_fa1_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_dr1
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Malvas_Relvani"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Malvas_Relvani
+ask chores
+ask ingredients for Lord Dral
+expect GetJournalIndex TR_m1_HT_Dr1 == 10
+bye
+run
+player->AddItem "ingred_scamp_skin_01" 1
+player->AddItem "ingred_daedra_skin_01" 1
+player->AddItem "ingred_void_salts_01" 1
+player->AddItem "ingred_fire_salts_01" 1
+player->AddItem "ingred_frost_salts_01" 1
+talk TR_m1_T_Malvas_Relvani
+ask ingredients for Lord Dral
+expect GetJournalIndex TR_m1_HT_Dr1 == 20
+expect player->GetItemCount "ingred_void_salts_01" == 0
+bye
+end

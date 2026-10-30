@@ -1,0 +1,45 @@
+# TR House Telvanni: "It's Not Theft If They're Dead" (TR_m2_HT_Vaerin_q4). Vaerin's "chores" adds "punavit
+# apparati" ("Continue" 1: 10, adds "Tur Julan"): a punavit communal cup, kettle, samovar and a bottle of
+# punavit residue from the dead Indoril of Tur Julan. Handed over ("Here you go." 1), they log 100 (two books, +5
+# reputation).
+# PositionCell stands in for the journey through Tur Julan. Refs in the Statesmen's Hall carry TR_Mainland's slot
+# 09: 0926B6EF the samovar, 09B8A4F6 the kettle, 09A9E576 the cup, 095879A8 the residue.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_vaerin_q3_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_vaerin_q4_start
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask chores
+ask punavit apparati
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q4 == 10
+bye
+end
+
+case ht_vaerin_q4_tur_julan
+run
+player->PositionCell 3690 2350 14250 0 "Tur Julan, Statesmen's Hall"
+wait 150
+take 0926B6EF
+take 09B8A4F6
+take 09A9E576
+take 095879A8
+until 300 player->GetItemCount "T_De_Drink_PunavitResin_01" >= 1
+expect player->GetItemCount "T_De_PunavitSamovar_01" >= 1
+end
+
+case ht_vaerin_q4_done
+run
+player->PositionCell 5367 3780 17690 0 "Alt Bosara, Tel Vaerin"
+until 600 "TR_m2_Master_Vaerin"->GetDistance player < 800
+wait 120
+talk TR_m2_Master_Vaerin
+ask punavit apparati
+choose 1
+expect GetJournalIndex TR_m2_HT_Vaerin_q4 == 100
+bye
+end

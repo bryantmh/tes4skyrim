@@ -1,0 +1,58 @@
+# TR House Telvanni: "Plague" (TR_m1_HT_Ra2), Areth Morvayn's chore for a Lawman. Areth hands over a note and three
+# scrolls ("plague rat blood": 10); Rantela Irenam in her manor offers plague rat blood from her table, which the
+# player takes; Rathra's contact in Llothanis's Water's Shadow tavern takes all of it (his guard's state 6), the guard
+# kills him, walks back and force-greets the player (20); Areth, after the "Continue" pages (Choice 2), pays (100).
+# PositionCell stands in for the travel. Ref 09CA6167 is the blood on Rantela's table (TR_Mainland's slot 09).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_advance_lawman --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_ra2_start
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Areth_Morvayn"->GetDistance player < 400
+wait 120
+talk TR_m1_T_Areth_Morvayn
+ask chores
+ask plague rat blood
+expect GetJournalIndex TR_m1_HT_Ra2 == 10
+expect player->GetItemCount "TR_M1_Q66_GHT_Ra2_Scroll" == 3
+bye
+end
+
+case ht_ra2_blood
+run
+player->PositionCell 3867 3800 12740 0 "Port Telvannis, Irenam Manor"
+until 600 "TR_m1_Rantela_Irenam"->GetDistance player < 800
+wait 120
+talk TR_m1_Rantela_Irenam
+ask plague rat blood
+bye
+activate 09CA6167
+until 300 player->GetItemCount "TR_M1_Q66_Ra2_rat_blood" >= 1
+end
+
+case ht_ra2_contact
+run
+player->PositionCell 2951 3300 8150 0 "Llothanis, The Water's Shadow Tavern"
+until 600 "TR_M1_Q66_Ra2_Contact"->GetDistance player < 800
+wait 120
+talk TR_M1_Q66_Ra2_Contact
+ask plague rat blood
+bye
+until 3600 GetJournalIndex TR_m1_HT_Ra2 >= 20
+bye
+end
+
+case ht_ra2_done
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Areth_Morvayn"->GetDistance player < 400
+wait 120
+talk TR_m1_T_Areth_Morvayn
+ask plague rat blood
+choose 1
+choose 2
+until 60 GetJournalIndex TR_m1_HT_Ra2 >= 100
+expect GetJournalIndex TR_m1_HT_Ra2 == 100
+bye
+end

@@ -2503,6 +2503,55 @@ text and the first button are now passed, cast to `Float`, through
 Oblivion's button boxes are `%…f` (plus 9 copies of the authored typo
 `%4.O`), and none has more than 9 values.
 
+### <a id="messageboxex-buttons"></a>MessageBoxEX's `|` buttons are a button box too
+
+**Code:** `message_menus.resolve_pipe_box`, `commands.message_box_ex`.
+
+OBSE's `MessageBoxEX "Do you want to take the class quiz?|Take Quiz|Skip Quiz"`
+puts the buttons inside the one string, split on `|`. It used to become a
+buttonless `Debug.MessageBox`, and the script's `GetButtonPressed` the constant
+`-1`, so Morroblivion's census office waited forever for the answer that sets
+`ClassQuizStage` and opens the class menu. A static box now enters the MESG
+plan like a `MessageBox` with buttons. Its sites are numbered after the
+script's `MessageBox` sites, so no existing `TES4Msg_*` EditorID moves.
+
+A `%z` names a string variable. When the script gave that variable a fixed
+text with `set <var> to sv_Construct "<literal>"` above the box (the quiz
+question and its three answers), the literal is filled in and the box becomes
+a MESG too; `%r` is a line break and `%%` a percent sign. A `%z` with no such
+literal, or a `%` left in a button, keeps the box text-only. In Morrowind_ob
+1 static and 10 `%z` boxes become MESGs. Nehrim and Translation's
+`AAWaitMenuActorScript` box builds its time text at run time and stays
+text-only. Oblivion, Tamriel Rebuilt, Tamriel Data and the compatibility
+patch have none.
+
+### <a id="one-box-at-a-time"></a>One button box at a time per script
+
+**Code:** `ScriptConverter._emit_button_helpers` (`TES4_ShowMsg`).
+
+TES4's GameMode never runs while a box is up, so a script shows a box once
+and reads `GetButtonPressed` on a later frame. The converted poll can have
+more than one pass in flight: a pass parked in a latent call (`SayLine`
+waiting on its speaker) lets the 5-second insurance arm start another (see
+[the poll's three arms](#an-early-return-killed-the-onupdate-poll-2026-07-31)),
+and when the parked passes wake at the same stage, each reached the same
+`Show()`. Traced in Morroblivion's census quiz: question 3's box was shown
+three times in one second at `ClassQuizStage` 7, and each copy needed its
+own click. One click answered one copy and the next held the game.
+
+`TES4_ShowMsg` now keeps `TES4_MsgOpen` set while its `Show()` waits, and a
+second request in that time shows nothing and returns `TES4_MsgButton`
+unchanged, so the waiting box's answer still lands. A top-of-pass guard was
+tried first and never fired: the duplicate passes were already past it, and
+a box pauses Papyrus updates, so no new pass starts under it.
+
+Making the whole pass non-reentrant would also stop the overlap, but it
+changes timing for every poll that waits on a line: 63 of Oblivion.esm's
+1,361 polls, including chargen (`CharGenQuest`, `CGGlenroyScript`, ...) and
+the main quest (`MQ04Script` through `MQ15Script`). This fix touches only
+polls that show a box: 3 in Oblivion.esm (`DAClavicusStatueScript`,
+`Dark02CrateScript`, `DarkSanctuaryDoorScript`) and 42 in Morrowind_ob.
+
 ### A bare GameMode block also forces relocation (2026-08-02)
 
 The two triggers above still missed a whole class: an actor script that is

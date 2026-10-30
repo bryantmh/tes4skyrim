@@ -22,6 +22,7 @@ namespace {
 // TR_Mainland's 3,569 bodies declare one.
 // See: docs/plans/morrowind_object_scripts.md#events
 constexpr const char* kOnPcEquip = "onpcequip";
+constexpr const char* kPcSkipEquip = "pcskipequip";
 constexpr const char* kOnPcAdd = "onpcadd";
 constexpr const char* kOnPcDrop = "onpcdrop";
 constexpr const char* kOnPcHitMe = "onpchitme";
@@ -375,6 +376,30 @@ ObjectScript* CarriedInstance(const std::string& baseId,
         g_instances.emplace(key, ObjectScript(script, baseId)).first->second;
     made.SetLayer(CurrentLayer());
     return &made;
+}
+
+// OpenMW's InventoryWindow::useItem for a book: a script whose PCSkipEquip is
+// already 1 gets OnPCEquip instead and the book stays shut; otherwise
+// PCSkipEquip becomes 1 and the book opens.
+bool ReadCarriedBook(std::uint32_t bookFormId) {
+    if (!Hooks().itemFormId || !Hooks().itemCount) return true;
+    for (const EquipWatch& entry : EquipWatchList()) {
+        const LayerScope scope(entry.layer);
+        if (Hooks().itemFormId(entry.item) != bookFormId) continue;
+        const ScriptLocals* locals = CompiledLocals(entry.script);
+        ObjectScript* instance = Hooks().itemCount(kPlayerId, entry.item) > 0 && locals
+                                     ? CarriedInstance(entry.item, entry.script)
+                                     : nullptr;
+        if (!instance || locals->TypeOf(kPcSkipEquip) == ' ') return true;
+        if (State().Var(instance->Key(), kPcSkipEquip) == 1.0f) {
+            if (locals->TypeOf(kOnPcEquip) != ' ') State().SetVar(instance->Key(), kOnPcEquip, 1.0f);
+            return false;
+        }
+        State().SetVar(instance->Key(), kPcSkipEquip, 1.0f);
+        Log("object: %s PCSkipEquip = 1 (%s read)", entry.script.c_str(), entry.item.c_str());
+        return true;
+    }
+    return true;
 }
 
 ObjectScript* InstanceFor(const std::string& plugin,

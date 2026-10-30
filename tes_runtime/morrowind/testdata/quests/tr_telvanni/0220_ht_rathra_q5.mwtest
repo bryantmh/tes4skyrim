@@ -1,0 +1,38 @@
+# TR House Telvanni: "The Only Way Out" (TR_m1_HT_Rathra_q5). After "Accounting Error", Rathra's "chores" names the
+# Telvanni defector Selura (adds "Selura"; asking it logs 10). Selura is in the Wizard's Tower of Ember Keep in
+# Firewatch; once she is dead, "Selura" pays out (100, +5 reputation).
+# PositionCell stands in for the travel, the kill for the fight. Selura's ref is 09AB6295 (TR_Mainland's slot 09).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_rathra_q4_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_rathra_q5_start
+run
+player->PositionCell 4123 3980 14430 0 "Tel Ouada, Tower: Rathra's Chambers"
+until 600 "TR_m1_T_Rathra"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rathra
+ask chores
+ask Selura
+expect GetJournalIndex TR_m1_HT_Rathra_q5 == 10
+bye
+end
+
+case ht_rathra_q5_selura
+run
+player->PositionCell 4552 4650 3990 0 "Firewatch, Ember Keep: Wizard's Tower"
+until 600 "TR_m1_Selura"->GetDistance player < 800
+wait 150
+console 09AB6295.kill
+until 600 GetDeadCount "TR_m1_Selura" >= 1
+end
+
+case ht_rathra_q5_done
+run
+player->PositionCell 4123 3980 14430 0 "Tel Ouada, Tower: Rathra's Chambers"
+until 600 "TR_m1_T_Rathra"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rathra
+ask Selura
+expect GetJournalIndex TR_m1_HT_Rathra_q5 == 100
+bye
+end

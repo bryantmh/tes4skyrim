@@ -1,0 +1,85 @@
+# Morrowind Temple: Archcanon Tholer Saryoni's Pilgrimages of the Four Corners ("Four Corners", asked once per
+# corner). Malacath's shrine near Dagon Fel takes four daedra hearts (TT_DagonFel 10 -> 100, shrineDagonFel); Mehrunes
+# Dagon's in Ald Sotha (TT_AldSotha 10 -> 100, shrineAldSotha); Molag Bal's statue under Bal Ur (TT_BalUr 10 -> 100,
+# VampireMolag); and Sheogorath's in Ald Daedroth, carrying the Gambolpuddy from its antechamber ("Gambolpuddy":
+# TT_AldDaedroth 10 -> 100, shrineAldDaedroth).
+# Position and PositionCell stand in for the travel, the AddItem of daedra hearts for hearts the player cut from
+# daedra. FormIDs carry Morrowind.esm's slot 05: 0536E0C4 Malacath's shrine, 05701425 Mehrunes Dagon's, 05982084
+# Molag Bal's statue, 05DBEA02 Sheogorath's shrine, 0555EC62 the Gambolpuddy.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_diviner_key --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_fourcorners_start
+run
+player->PositionCell -1097 400 -622 0 "Vivec, High Fane"
+until 600 "tholer saryoni"->GetDistance player < 600
+wait 120
+talk tholer saryoni
+ask duties
+ask Four Corners
+expect GetJournalIndex TT_DagonFel == 10
+bye
+end
+
+case tt_fourcorners_dagonfel
+run
+player->AddItem ingred_daedras_heart_01 4
+player->Position 45507 178150 1678 0
+wait 120
+activate 0536E0C4
+until 300 GetJournalIndex TT_DagonFel == 100
+end
+
+case tt_fourcorners_aldsotha
+run
+player->PositionCell -1097 400 -622 0 "Vivec, High Fane"
+until 600 "tholer saryoni"->GetDistance player < 600
+wait 60
+talk tholer saryoni
+ask Four Corners
+expect GetJournalIndex TT_AldSotha == 10
+bye
+run
+player->PositionCell 4626 3900 13943 0 "Ald Sotha, Shrine"
+wait 60
+activate 05701425
+until 300 GetJournalIndex TT_AldSotha == 100
+end
+
+case tt_fourcorners_balur
+run
+player->PositionCell -1097 400 -622 0 "Vivec, High Fane"
+until 600 "tholer saryoni"->GetDistance player < 600
+wait 60
+talk tholer saryoni
+ask Four Corners
+expect GetJournalIndex TT_BalUr == 10
+bye
+run
+player->PositionCell 3528 -3750 0 0 "Bal Ur, Underground"
+wait 60
+activate 05982084
+until 300 GetJournalIndex TT_BalUr == 100
+end
+
+case tt_fourcorners_alddaedroth
+run
+player->PositionCell -1097 400 -622 0 "Vivec, High Fane"
+until 600 "tholer saryoni"->GetDistance player < 600
+wait 60
+talk tholer saryoni
+ask Four Corners
+ask Gambolpuddy
+expect GetJournalIndex TT_AldDaedroth == 10
+bye
+run
+player->PositionCell 608 -2200 1007 0 "Ald Daedroth, Antechamber"
+wait 60
+take 0555EC62
+until 120 player->GetItemCount extravagant_rt_art_wild >= 1
+run
+player->PositionCell 4414 3350 50 0 "Ald Daedroth, Inner Shrine"
+wait 60
+activate 05DBEA02
+until 300 GetJournalIndex TT_AldDaedroth == 100
+end

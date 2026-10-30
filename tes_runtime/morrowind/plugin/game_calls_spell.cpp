@@ -4,10 +4,15 @@
 
 #include "game_calls_internal.h"
 
+#include <cstdint>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
+#include "hook.h"
 #include "ids.h"
+#include "log.h"
 #include "main_thread.h"
 
 namespace tesruntime::mw {
@@ -176,10 +181,91 @@ void CastAt(const std::string& caster, const std::string& target,
 
 // --- soul gems -----------------------------------------------------------
 //
-// Each command names the CREATURE whose soul is trapped. Skyrim has no
-// per-instance soul on a stack, so the filled gem is its own base record and
-// the search is over the gems holding a soul of that size.
+// Each command names the CREATURE whose soul is trapped, and any gem holding
+// a soul of that size answers: a synthesized filled record (AddSoulGem, or a
+// plugin's placed loot), or an empty gem the player filled with Soul Trap,
+// whose soul rides on its inventory stack as ExtraSoul.
 // See: docs/commentary/morrowind_runtime.md#soul-gems
+
+using ExtraListFn = void* (*)(void* list);
+using ExtraListIntFn = std::int32_t (*)(void* list);
+using RemoveItemFn = void* (*)(void* ref, std::uint32_t* handle, void* item,
+                               std::int32_t count, std::int32_t reason,
+                               void* list, void* moveTo, const float* dropAt,
+                               const float* rotate);
+
+ExtraListFn    g_inventoryChanges = nullptr;
+ExtraListIntFn g_soulLevel = nullptr;
+ExtraListIntFn g_stackCount = nullptr;
+
+// One inventory stack holding a trapped soul: its gem and its ExtraDataList.
+struct TrappedStack {
+    void* gem = nullptr;
+    void* list = nullptr;
+    int count = 0;
+};
+
+// The ref's stacks whose ExtraSoul is `soul`; none on a build the ids miss.
+std::vector<TrappedStack> TrappedSouls(void* ref, int soul) {
+    std::vector<TrappedStack> out;
+    if (!ref || !g_inventoryChanges || !g_soulLevel || !g_stackCount) return out;
+    void* changes = g_inventoryChanges(static_cast<char*>(ref) + ids::kOffRefExtraList);
+    for (auto* node = changes ? At<void**>(changes, 0) : nullptr; node;
+         node = static_cast<void**>(node[1])) {
+        void* entry = node[0];
+        auto* lists = entry ? At<void**>(entry, ids::kOffEntryExtraLists) : nullptr;
+        for (; lists; lists = static_cast<void**>(lists[1])) {
+            if (lists[0] && g_soulLevel(lists[0]) == soul) {
+                out.push_back({At<void*>(entry, ids::kOffEntryObject), lists[0],
+                               g_stackCount(lists[0])});
+            }
+        }
+    }
+    return out;
+}
+
+using SoulSizeFn = std::uint32_t (*)(void* actor);
+
+SoulSizeFn g_soulSize = nullptr;
+
+// TES3 base form id -> its CREA_soul.txt soul, built on the first trap.
+const std::unordered_map<std::uint32_t, int>& SoulsByBase() {
+    static const std::unordered_map<std::uint32_t, int> souls = [] {
+        std::unordered_map<std::uint32_t, int> out;
+        ForEachCreatureSoul([&out](const std::string& id, int soul) {
+            if (void* base = Form(FindBase(id))) out[FormIdOf(base)] = soul;
+        });
+        Log("soul: %zu TES3 creatures size their own souls", out.size());
+        return out;
+    }();
+    return souls;
+}
+
+// Actor::GetSoulSize: a TES3 creature's CREA_soul.txt soul, else the engine's.
+std::uint32_t SoulSizeHook(void* actor) {
+    void* base = actor ? At<void*>(actor, ids::kOffRefBase) : nullptr;
+    const auto& souls = SoulsByBase();
+    const auto it = base ? souls.find(FormIdOf(base)) : souls.end();
+    return it != souls.end() ? static_cast<std::uint32_t>(it->second) : g_soulSize(actor);
+}
+
+// Repoints every direct call of Actor::GetSoulSize at SoulSizeHook.
+void InstallSoulTrap() {
+    const std::uintptr_t size = Resolve("Actor::GetSoulSize", ids::kActorGetSoulSize, nullptr);
+    if (!size) return;
+    g_soulSize = reinterpret_cast<SoulSizeFn>(size);
+    const int patched = PatchAllCalls(size, reinterpret_cast<void*>(&SoulSizeHook), "soul size");
+    Log("soul: %d calls of Actor::GetSoulSize size TES3 creatures by CREA_soul.txt", patched);
+}
+
+// Removes one gem of a trapped stack, the stack's own ExtraDataList named.
+void RemoveTrapped(void* ref, const TrappedStack& stack) {
+    RunOnGameThread([ref, stack]() {
+        std::uint32_t handle = 0;
+        VCall<RemoveItemFn>(ref, ids::kRefRemoveItemSlot)(
+            ref, &handle, stack.gem, 1, 0, stack.list, nullptr, nullptr, nullptr);
+    });
+}
 
 // `AddSoulGem creature gem`: the named gem's variant for that creature's soul.
 void AddSoulGemTo(const std::string& actor, const std::string& creature,
@@ -205,11 +291,14 @@ int SoulGemsHeld(const std::string& actor, const std::string& creature) {
     for (const std::string& id : FilledSoulGemIds(soul)) {
         held += Hooks().itemCount(actor, id);
     }
+    for (const TrappedStack& stack : TrappedSouls(OwnerRef(actor), soul)) {
+        held += stack.count;
+    }
     return held;
 }
 
-// `RemoveSoulGem` / `DropSoulGem`: ONE gem holding that soul, the first the
-// actor actually carries.
+// `RemoveSoulGem` / `DropSoulGem`: ONE gem holding that soul, a filled
+// record first, then a trapped stack, which is removed even by a drop.
 void TakeSoulGem(const std::string& actor, const std::string& creature,
                  bool drop) {
     const int soul = CreatureSoul(creature);
@@ -223,6 +312,9 @@ void TakeSoulGem(const std::string& actor, const std::string& creature,
         }
         return;
     }
+    void* ref = OwnerRef(actor);
+    const std::vector<TrappedStack> trapped = TrappedSouls(ref, soul);
+    if (!trapped.empty()) RemoveTrapped(ref, trapped.front());
 }
 
 }  // namespace
@@ -263,6 +355,13 @@ void InstallSpellCalls(GameHooks& hooks) {
     g_dispelSpell = Native<SpellQueryFn>("Actor.DispelSpell",
                                          ids::kActorDispelSpell);
     g_cast = Native<CastFn>("Spell.Cast", ids::kSpellCast);
+    g_inventoryChanges = reinterpret_cast<ExtraListFn>(Resolve(
+        "ExtraDataList::GetInventoryChanges", ids::kExtraListInventoryChanges, nullptr));
+    g_soulLevel = reinterpret_cast<ExtraListIntFn>(Resolve(
+        "ExtraDataList::GetSoulLevel", ids::kExtraListSoulLevel, nullptr));
+    g_stackCount = reinterpret_cast<ExtraListIntFn>(Resolve(
+        "ExtraDataList::GetCount", ids::kExtraListCount, nullptr));
+    InstallSoulTrap();
     hooks.addSpell = AddSpellTo;
     hooks.removeSpell = RemoveSpellFrom;
     hooks.hasSpell = KnowsSpell;

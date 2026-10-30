@@ -115,7 +115,42 @@ verified when the quest case that found it passed on the test instance after it.
 | TR_Blade | `AddTopic` teaches the topic at once, as OpenMW's `DialogueManager::addTopic` does | It only queued the topic, and the queue was read after a dialogue result and cleared when a conversation began. Torasa Aram's MuseumScript (an object script) set `daggerfang` and `dagsym` to 1 (probe) but its "Fang of Haynekhtnamet" and "Dagger of Symmachus" never appeared | `script_runner.cpp`, `conversation.cpp`, `dialogue_state.cpp/.h`; `script_test` | Runtime: `AddTopic` in object and global scripts: 19 Morrowind, 1 Tribunal, 20 Tamriel_Data and 91 TR_Mainland scripts |
 | TR_Blade | A short global's junk FLTV reads as OpenMW's `floatCast<int16_t>` reads it: 0, not INT32_MIN | `MuseumDonations` holds 7.6e+23 and was staged as -2,147,483,648, so after both donations Torasa's "compensation" still answered "Bring me a couple quality pieces" | `morrowind_sidecar.py` `_global_value`; `tests/test_morrowind_globals.py` | Converter: 12 short globals now start at 0 instead of INT32_MIN: Morrowind `RedoranMurdered`, `MT_WritDiscount`, `wearingHelmHHDA`, `TGglove`, `ratskilled`; Tribunal `gobchiefdead`, `ShrineCleanse`, `MournWeather`, `MuseumDonations`, `KarrodFightStart`, `KingHit`; Bloodmoon `ColonyService` (all 12 also in the compat patch). Each is a flag or counter compared with small numbers |
 
+### 2.7 Morroblivion chargen (`tes/testdata/quests/morroblivion_main/`, `morroblivion_quiz/`)
+
+| Quest | Fix | Why | Where | Blast radius |
+|---|---|---|---|---|
+| fbmwChargen | OBSE `MessageBoxEX "text\|button\|..."` becomes a MESG button box; a `%z` fills from the variable's `sv_Construct` literal above the box | The census office's "Take Quiz\|Skip Quiz" box became a buttonless text box, so `GetButtonPressed` read -1 forever and the quiz never started or was skipped; the ten questions are `%z` boxes | `message_menus.py` (`resolve_pipe_box`), `commands.py` (`message_box_ex`); `test_messageboxex_pipe_buttons_are_a_button_box` | Converter: Morrowind_ob 1 static and 10 `%z` boxes; Nehrim/Translation's wait-menu box stays text-only (run-time text); none in Oblivion, TR, TD or the compat patch. New MESG EditorIDs numbered after each script's MessageBox sites, so no existing id moves |
+| fbmwChargen | `Player.SetClass <class>` opens MorrowindRuntime's class menu preselected on that class, so the pick goes through `ChooseClass` | The quiz ends in `Player.SetClass`, which applied no specialization or favored attributes; the class menu is where the runtime applies them | `commands.py` (`set_class`, `_ask_menu`), `chargen_menu.cpp` (`SuggestedClassIndex`); `test_player_set_class_opens_the_menu_on_that_class` | Converter: player `SetClass` with a class in the chargen plan. Runtime: the class menu's starting row |
+| fbmwChargen | `TES4_ShowMsg` shows nothing while the same script's box is still up | Overlapping poll passes (one parked in `SayLine`, the 5 s insurance starting another) each reached the stage's `Show()`: question 3's box was shown three times in one second and each copy took a click, so the quiz stalled behind a duplicate | `converter.py` `_emit_button_helpers`; `test_a_second_box_request_leaves_the_open_box_alone` | Converter: polls that show a box, 3 in Oblivion.esm (`DAClavicusStatueScript`, `Dark02CrateScript`, `DarkSanctuaryDoorScript`) and 42 in Morrowind_ob. Verified: all ten questions, one box each |
+
+### 2.8 Tamriel Rebuilt House Telvanni (`testdata/quests/tr_telvanni/`)
+
+| Quest | Fix | Why | Where | Blast radius |
+|---|---|---|---|---|
+| TR_m1_HT_El1 | The Morrowind items table also resolves through SLGM records | In Morroblivion mode the empty soul gems are the compatibility patch's TES4 SLGM records, and the table read only ALCH through WEAP (filled gems had their own table), so Cerul Arnem's `player->additem "Misc_SoulGem_Greater" 5` logged "does not resolve in this load order" and added nothing | `morrowind_sidecar.py` `_ITEM_EXPORTS`; `test_morrowind_items_table.py` | Converter: the compat patch's items table gains 26 soul gem rows; TR names empty gems in 58 dialogue lines and 6 scripts. Authored Morrowind.esm (gems are MISC) unchanged |
+| TR_m2_HT_Vaerin_q2 | `HasSoulGem`/`RemoveSoulGem` also count and remove gems the player filled with Soul Trap (their `ExtraSoul`), and `Actor::GetSoulSize` answers a TES3 creature's own soul | Only synthesized `_Filled<n>` records counted, but Skyrim's Soul Trap keeps the empty gem and hangs the soul on its stack. Skyrim also sizes a soul by level, so the Sittali wraith (level 20, grand in TES3) trapped as soul 3. Vaerin's "I have his soul right here." never appeared | `game_calls_spell.cpp` (`TrappedSouls`, `SoulSizeHook`), `ids.h`; [soul-gems](../commentary/morrowind_runtime.md#soul-gems) | Runtime: every `HasSoulGem`/`RemoveSoulGem` (TR 123/64, compat patch 85/42) now sees trapped gems; every soul trapped from one of 1,249 TES3 creatures takes its TES3 size, which also sets enchanting charge. Skyrim's own creatures and NPCs unchanged. Verified: Soul Trap on Sittali fills a grand gem with soul 5 and Vaerin takes it |
+| TR_m2_HT_Vaerin_q6 | Reading a carried book sets its script's `PCSkipEquip` (OpenMW's useItem); `Equip` of a book on the player reads it | The summoning scroll's script acts only through `if ( PCSkipEquip == 1 )`, which nothing set, so reading it did nothing and the ritual never reached 20; TES3 `Equip` of a book opened no book at all | `object_script.cpp` (`ReadCarriedBook`), `game_calls_message.cpp` (`OpenBookHook`, `ReadBookFromInventory`), `game_calls.cpp` (`EquipItem`); [engine-written-locals](../commentary/morrowind_runtime.md#engine-written-locals) | Runtime: books read from an inventory whose script declares `PCSkipEquip` (169 scripts declare it across TR, TD and the compat patch; most are not books, and a non-book's PCSkipEquip stays unimplemented); `Equip` of a book by the player. World books and other items unchanged. Verified: the scroll logs 20 and the guardian kills Llevari |
+
 ---
+
+### 2.9 Tamriel Rebuilt Necrom (`testdata/quests/tr_necrom/`)
+
+| Quest | Fix | Why | Where | Blast radius |
+|---|---|---|---|---|
+| TR_m2_Nm_BrokenFamily | Sun Damage (Oblivion SUDG, Morrowind effect 135) carries Skyrim.esm's own sun window: `IsInInterior == 0`, `GameHour` 5 to 19 | It converted to a plain Health value modifier, which Skyrim applies every second on an ability, anywhere. The vampire Velyn Alari's script adds Morroblivion's `vampire sun damage`, and he died about 20 s after the tomb loaded, out of combat; removing that one spell by console stopped the drain | `tes5_import/record_types/magic.py` (`mgef_tail`, `SUN_CONDITIONS`); [sun-damage](../commentary/tes5_import_magic.md#sun-damage) | Import: Oblivion.esm, Nehrim.esm, Morrowind_ob.esm and Morrowind.esm rebuilt. Carriers: Oblivion's player vampirism abilities (`Vampirism50/75/100`), a test spell and `DBenAppHands`; 3 Nehrim item enchantments; Morrowind_ob's vampire spell and Mantle of Woe; Morrowind.esm's `vampire sun damage`. Each drained its owner nonstop before; now only outdoors by day |
+
+### 2.10 Morrowind Temple (`testdata/quests/morrowind_temple/`)
+
+| Quest | Fix | Why | Where | Blast radius |
+|---|---|---|---|---|
+| TT_DiseaseCarrier | **Exporter:** an AiTravel marker goes in the interior its actor is placed in; a point beyond AiTravel's 7168-unit reach is put on the actor itself | Morrowind reads AI coordinates in the actor's own cell and never leaves it (OpenMW `AiTravel::execute`), but the exporter put the marker in whatever exterior grid the coordinates fell in. Skyrim's Travel crosses cells, so Tanusea Veloth walked out of the Arena Pit to the Vivec exterior before the player ever came, and her ref was unknown to the console from every later save | `tes4_export/record_types/morrowind_packages.py` (`_marker`, `_travel_point`), `export_morrowind.py` (placement position); [ai-packages](../commentary/tes4_export_morrowind.md#ai-packages) | Morrowind.esm: 148 of 177 package markers sat in the wilderness grids around the origin (Ashlands X0Y0 alone 42); all 148 now share their actor's cell. TR_Mainland 13 of 22 likewise; Tamriel_Data 0; 1 Morrowind.esm and 8 TR markers beyond reach now sit on their actor. Rebuilt: Morrowind, Tribunal, Bloodmoon, Tamriel_Data, TR_Mainland. Verified: from a clean save Tanusea stands at her authored spot. **Saves from older builds keep the walked-off actors outdoors**: a 24-hour wait did not bring her back |
+| TT_DiseaseCarrier | `GetDistance` to a reference Skyrim has not loaded answers FLT_MAX | It answered 0, so every `GetDistance < x` passed for an absent actor; OpenMW answers FLT_MAX for a reference in another cell | `game_calls.cpp` `Distance`; the test runner's follow ignores it | Every `GetDistance` whose other end is unloaded. Verified: Tanusea absent reads 3.4e38 |
+
+### 2.11 Morrowind Daedric quests (`testdata/quests/morrowind_daedric/`)
+
+| Quest | Fix | Why | Where | Blast radius |
+|---|---|---|---|---|
+| DA_Sheogorath | `"id"->OnDeath` reads and clears the NAMED actor's own death, scripted or not (OpenMW `CreatureStats::hasDied`) | It answered only when the running script belonged to that actor. `da_forkScript` watches the scriptless giant bull netch, so killing it with the Fork equipped never logged 60 and the quest stuck at 50 | `script_ops_events.cpp` `OpOnDeathExplicit`, `game_calls.cpp` `TakeDeathOf`, `dialogue_state.h`; test in `script_test.cpp` | Explicit `OnDeath`: Morrowind 3 (fork, bull netch, `fallingScript`), Tribunal 2 (`Contract_Calvus`, `ScrollSales`), Bloodmoon 2 (`ColonyAssassin`), TR 76 in 52 scripts. Verified: the netch case passes |
 
 ## 3. Found, not fixed
 
@@ -155,7 +190,54 @@ verified when the quest case that found it passed on the test instance after it.
 - **`HurtStandingActor`, `GetStandingPC`, `GetStandingActor` are not ported.** Skyrim has no
   standing-on query. CommonLibSSE names `bhkCharacterController::supportBody` at +0x2B0, but no
   function of the controller reads or writes a pointer there on 1.5.97 or 1.6.1170, and +0x2B8
-  (CommonLib's float `bumpedForce`) is an integer counter in both. Not built on.
+  (CommonLib's float `bumpedForce`) is an integer counter in both. Not built on. In Tamriel
+  Rebuilt it is what Port Telvannis's floating platforms (`TR_m1_PTfloatPlatform`) cast
+  levitation from, so they never lift the player (1,280 calls logged in one Telvanni run); 10
+  TR_Mainland, 1 Tamriel_Data and 9 Morrowind.esm scripts use it.
+
+**Tamriel Rebuilt**
+
+- **The Lovers' shrine is a navmesh island** (TR_m2_Nm_Drunk, `tr_necrom` 0120 `nm_drunk_shrine`).
+  `reach.py` on TR_Mainland.esm: the shrine (`TR_m2_NEC_Shrine_Lovers`, 340565, -80164) sits
+  473 units from its nearest navmesh, a 127-triangle component with no links; the Necrom street
+  outside Nedim's door (cell 87,-22) reaches the rest of the city but not it. The player's `walk`
+  there never moves, and with the player placed beside the shrine Nedim never follows, so
+  `controlQ` never reaches 10 and the escort cannot finish.
+- **Vanryth Adrano dies as his cell loads** (TR_m2_Nm_Wake, `tr_necrom` 0140). Authored at
+  (376114, -73573, 1872) on a peak northeast of Necrom, with a distance-0 wander (DoNothing). Probed
+  200 ticks after the player arrives beside that spot: he stands at (375294, -73659, 822), 820 units
+  west and 1,050 lower, and the runtime logs his death the second he binds. The player placed at the
+  same spot stays on the peak (z 1816). No script moves him (`TR_m2_q_Nm_Wake_vanrythscr`,
+  `_vanrythdeath`), so he slides or falls off. Cause not found. The quest cannot start.
+- **In Morroblivion mode the player never learns the topics Morroblivion's chargen adds**
+  (TR_m2_Nm_BrokenFamily, `tr_necrom` 0130). Vanilla's chargen captain teaches `Background` by
+  naming it in his greeting; Morroblivion's Captain Gravius says the same and runs
+  `addtopic 1Background`, `1Morrowind`, `1duties` (Morrowind_ob INFO after 01000F49). That TES4
+  `AddTopic` converts only to a TES4 unlock global (`script_convert/commands.py` `add_topic`), and
+  `SeedChargenTopics` stands down because the chargen actor exists, so MorrowindRuntime's known
+  topics never get them. Velyn Alari offers only `my trade`; `Adren Alari` is named only in his
+  `Background` line, so the quest cannot start. Nothing converts a TES4 `AddTopic` into the
+  runtime's `LearnTopic` today: a design question.
+
+**Morrowind Temple**
+
+- **Actors the old exporter walked out of their interiors stay out in existing saves.** The
+  AiTravel marker fix (§2.10) puts each marker back in its actor's cell, but in a save made on an
+  older build Tanusea Veloth is still somewhere outdoors: 24 in-game hours of waiting in the Arena
+  Pit did not bring her home. 148 Morrowind.esm and 13 TR_Mainland actors had travel markers in the
+  wilderness; any of them a player's save already moved is affected. No relocation is built yet.
+
+**Morroblivion and Nehrim (TES4 scripts)**
+
+- **`IsModLoaded` floods the Papyrus log.** `TES4Polyfill.IsModLoaded` asks
+  `Game.GetFormFromFile(0, name)`, which logs "does not exist or is not currently loaded" for a
+  missing file. `mwMorroDefaultQuestScript` asks for the `AddActorValues` OBSE plugin every poll:
+  about 3 errors a second, 401 in 3 minutes of chargen. Harmless to play, but it buries real
+  errors.
+- **Nehrim's wait menu has no buttons** (`AAWaitMenuActorScript`, Nehrim.esm and Translation.esp).
+  Its `MessageBoxEX` text carries the current time through `%z` strings computed at runtime, so
+  it cannot become a fixed MESG the way Morroblivion's class quiz did, and it shows as a plain
+  box with OK; the wait choice never comes back.
 
 <a id="raven-rock-open"></a>**Bloodmoon and Raven Rock**
 

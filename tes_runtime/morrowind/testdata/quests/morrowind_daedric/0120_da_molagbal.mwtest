@@ -1,0 +1,34 @@
+# Morrowind Daedric quests: Molag Bal's Menta Na (DA_MolagBal). Molag Bal's statue in Yansirramus speaks his lines,
+# hands over Menta Na's key and enables the daedroth in Kora-Dur (10). Menta Na's death logs 20 (mentanaScript); the
+# statue gives the Mace of Molag Bal (30).
+# PositionCell stands in for the travel, the console kill for the fight. FormIDs carry Morrowind.esm's slot 05:
+# 053D6651 Molag Bal's statue, 052E655F Menta Na.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_da_sheogorath_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case da_molagbal_start
+run
+player->PositionCell -70 3100 -698 0 "Yansirramus, Shrine"
+wait 120
+activate 053D6651
+until 300 GetJournalIndex DA_MolagBal == 10
+expect player->GetItemCount key_menta_na == 1
+end
+
+case da_molagbal_mentana
+run
+player->PositionCell -4853 -11000 239 0 "Kora-Dur"
+until 600 "daedroth_menta_unique"->GetDistance player < 1500
+wait 30
+console 052E655F.kill
+until 300 GetJournalIndex DA_MolagBal == 20
+end
+
+case da_molagbal_done
+run
+player->PositionCell -70 3100 -698 0 "Yansirramus, Shrine"
+wait 120
+activate 053D6651
+until 300 GetJournalIndex DA_MolagBal == 30
+expect player->GetItemCount "mace of molag bal_unique" == 1
+end

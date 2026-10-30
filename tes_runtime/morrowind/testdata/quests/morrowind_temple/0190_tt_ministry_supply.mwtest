@@ -1,0 +1,67 @@
+# Morrowind Temple: Uvoo Llaren's first two duties at Ghostgate. "Ministry of Truth to the Heathen"
+# (TT_MinistryHeathen): "Assantus Hansar" (10, enables him outside Ghostgate). Curing his Droops trips his
+# assantusScript (GetCommonDisease == 0, 50), and Uvoo Llaren rewards it (100). "Supply the Monk" (TT_SupplyMonk):
+# "food and drink" (10, four kwama eggs and four Mazte). Sendus Sathis on Shuran Island takes them (Choice 1, 50),
+# and Uvoo Llaren thanks the player (100).
+# The console cast of Cure Common Disease on Other (0590EB09) stands in for the player casting it, Position and
+# PositionCell for the travel. Ref FormIDs carry Morrowind.esm's slot 05: 0529FF8B Assantus Hansar.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_advancement --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tt_ministry_start
+run
+player->PositionCell 71 303 -510 0 "Ghostgate, Temple"
+until 600 "uvoo llaren"->GetDistance player < 600
+wait 120
+talk uvoo llaren
+ask duties
+ask Assantus Hansar
+expect GetJournalIndex TT_MinistryHeathen == 10
+bye
+end
+
+case tt_ministry_cure
+run
+player->Position 21774 34800 1958 0
+until 600 "assantushansar"->GetDistance player < 600
+wait 60
+console player.cast 0590EB09 0529FF8B right
+until 300 GetJournalIndex TT_MinistryHeathen == 50
+end
+
+case tt_ministry_done
+run
+player->PositionCell 71 303 -510 0 "Ghostgate, Temple"
+until 600 "uvoo llaren"->GetDistance player < 600
+wait 60
+talk uvoo llaren
+ask Assantus Hansar
+expect GetJournalIndex TT_MinistryHeathen == 100
+ask duties
+ask food and drink
+expect GetJournalIndex TT_SupplyMonk == 10
+bye
+end
+
+case tt_supply_deliver
+run
+player->Position 39815 154250 929 0
+until 600 "sendus sathis"->GetDistance player < 600
+wait 60
+talk sendus sathis
+ask food and drink
+choose 1
+expect GetJournalIndex TT_SupplyMonk == 50
+bye
+end
+
+case tt_supply_done
+run
+player->PositionCell 71 303 -510 0 "Ghostgate, Temple"
+until 600 "uvoo llaren"->GetDistance player < 600
+wait 60
+talk uvoo llaren
+ask food and drink
+expect GetJournalIndex TT_SupplyMonk == 100
+bye
+end

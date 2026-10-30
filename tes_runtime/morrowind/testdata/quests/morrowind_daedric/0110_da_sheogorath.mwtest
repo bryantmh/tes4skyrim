@@ -1,0 +1,52 @@
+# Morrowind Daedric quests: Sheogorath's Fork of Horripilation (DA_Sheogorath). Sheogorath's statue in Ihinipalit
+# speaks three lines and sets the quest (10), enabling the giant bull netch. The mad hermit Big Head greets the
+# player (30), talks of the netch (40) and of the Fork (50), which lies in his shack. The netch slain while the Fork is
+# equipped logs 60 (da_forkScript); the statue trades the Fork for the Spear of Bitter Mercy (70).
+# PositionCell and Position stand in for the travel, EquipItem for the player equipping the Fork, the console kill
+# for the deathblow. FormIDs carry Morrowind.esm's slot 05: 0545CECC Sheogorath's statue, 05657C3A the Fork,
+# 0530BFEA its base, 05671DE0 the giant bull netch.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_da_azura_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case da_sheogorath_start
+run
+player->PositionCell 68 650 -484 0 "Ihinipalit, Shrine"
+wait 120
+activate 0545CECC
+until 300 GetJournalIndex DA_Sheogorath == 10
+end
+
+case da_sheogorath_hermit
+run
+player->PositionCell 0 -40 37 0 "Big Head's Shack"
+until 600 "big head"->GetDistance player < 600
+wait 60
+talk big head
+expect GetJournalIndex DA_Sheogorath == 30
+ask giant bull netch
+expect GetJournalIndex DA_Sheogorath == 40
+ask Fork of Horripilation
+expect GetJournalIndex DA_Sheogorath == 50
+bye
+take 05657C3A
+until 120 player->GetItemCount fork_horripilation_unique >= 1
+end
+
+case da_sheogorath_netch
+run
+console player.equipitem 0530BFEA
+player->Position 10621 200300 379 0
+until 600 "netch_giant_unique"->GetDistance player < 2000
+wait 30
+console 05671DE0.kill
+until 300 GetJournalIndex DA_Sheogorath == 60
+end
+
+case da_sheogorath_done
+run
+player->PositionCell 68 650 -484 0 "Ihinipalit, Shrine"
+wait 120
+activate 0545CECC
+until 300 GetJournalIndex DA_Sheogorath == 70
+expect player->GetItemCount spear_mercy_unique == 1
+end

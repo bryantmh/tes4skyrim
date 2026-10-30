@@ -1,0 +1,52 @@
+# TR House Telvanni: "The Blood of Gods and Men" (TR_m1_HT_Rathra_q6). After Selura, Rathra's "chores" adds "shut down
+# the mine" (10): the Ranyon-ruhn mine's guards and workers turn hostile (TR_m1_HT_RRMineNPC_sc SetFight 100), and
+# Miriaya appears. Each of the eight dying counts TR_m1_HT_Rathra_q6_MineDead; the eighth logs 20. Rathra pays out
+# ("shut down the mine": 100, her staff, +5 reputation).
+# PositionCell stands in for the travel, the kills for the fights. Refs carry TR_Mainland's slot 09: in the Mine
+# 0947088D, 095C2011, 09718CAF, 0953B7E6, 097A0F3A and Miriaya 09649C5A; in the Mine Office 09654604 and 09E7CA66.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_rathra_q5_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_rathra_q6_start
+run
+player->PositionCell 4123 3980 14430 0 "Tel Ouada, Tower: Rathra's Chambers"
+until 600 "TR_m1_T_Rathra"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rathra
+ask chores
+ask shut down the mine
+expect GetJournalIndex TR_m1_HT_Rathra_q6 == 10
+bye
+end
+
+case ht_rathra_q6_mine
+run
+player->PositionCell 4100 -1700 13980 0 "Ranyon-ruhn, Mine"
+until 600 "TR_m1_q_Miriaya"->GetDisabled == 0
+wait 150
+console 0947088D.kill
+console 095C2011.kill
+console 09718CAF.kill
+console 0953B7E6.kill
+console 097A0F3A.kill
+console 09649C5A.kill
+until 600 TR_m1_HT_Rathra_q6_MineDead >= 6
+run
+player->PositionCell 4450 4150 15630 0 "Ranyon-ruhn, Mine Office"
+wait 150
+console 09654604.kill
+console 09E7CA66.kill
+until 600 GetJournalIndex TR_m1_HT_Rathra_q6 >= 20
+end
+
+case ht_rathra_q6_done
+run
+player->PositionCell 4123 3980 14430 0 "Tel Ouada, Tower: Rathra's Chambers"
+until 600 "TR_m1_T_Rathra"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rathra
+ask shut down the mine
+expect GetJournalIndex TR_m1_HT_Rathra_q6 == 100
+expect player->GetItemCount "TR_m1_q_RathraStaff" == 1
+bye
+end

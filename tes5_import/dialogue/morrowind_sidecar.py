@@ -131,10 +131,10 @@ _TES5_HEADER = slice(24, None)
 #: The exports the actor index is built from.
 _ACTOR_EXPORTS = ('NPC_.txt', 'CREA.txt')
 
-#: The exports whose records can sit in an inventory.
+#: The exports whose records can sit in an inventory; SLGM is a TES4 master's soul gem (TES3's are MISC).
 _ITEM_EXPORTS = ('ALCH.txt', 'AMMO.txt', 'APPA.txt', 'ARMO.txt', 'BOOK.txt',
                  'CLOT.txt', 'INGR.txt', 'KEYM.txt', 'LIGH.txt', 'MISC.txt',
-                 'WEAP.txt')
+                 'SLGM.txt', 'WEAP.txt')
 #: The exports holding spells, which AddSpell and GetSpell name by TES3 id.
 _SPELL_EXPORTS = ('SPEL.txt',)
 

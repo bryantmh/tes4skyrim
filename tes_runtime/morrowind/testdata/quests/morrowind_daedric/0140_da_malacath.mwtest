@@ -1,0 +1,61 @@
+# Morrowind Daedric quests: Malacath's false hero (DA_Malacath). Malacath's statue in Assurdirapal sets the quest
+# (10) and enables Farvyn Oreyn's party near Gnaar Mok. In Vivec the player hears of Oreyn Bearclaw (20) and of
+# Farvyn Oreyn (30); in Gnaar Mok that Farvyn arrived a day ago (40). Farvyn owns up to the lie ("Kharag gro-Khar":
+# 50) and, told the player comes from Malacath (1), sets his guards on them; his death logs 60 (farvynScript), and the
+# statue gives the Helm of Oreyn Bearclaw (70).
+# PositionCell and Position stand in for the travel, the console kill for the fight. FormIDs carry Morrowind.esm's
+# slot 05: 05565296 Malacath's statue, 05477FCA Farvyn Oreyn.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_da_mehrunes_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case da_malacath_start
+run
+player->PositionCell 4344 4150 13893 0 "Assurdirapal, Inner Shrine"
+wait 120
+activate 05565296
+until 300 GetJournalIndex DA_Malacath == 10
+end
+
+case da_malacath_rumors
+run
+player->PositionCell -1031 -150 -616 0 "Vivec, High Fane"
+until 600 "endryn llethan"->GetDistance player < 600
+wait 60
+talk endryn llethan
+ask Oreyn Bearclaw
+expect GetJournalIndex DA_Malacath == 20
+ask Farvyn Oreyn
+expect GetJournalIndex DA_Malacath == 30
+bye
+run
+player->Position -60692 26800 303 0
+until 600 "nadene rotheran"->GetDistance player < 1000
+wait 60
+talk nadene rotheran
+ask Farvyn Oreyn
+expect GetJournalIndex DA_Malacath == 40
+bye
+end
+
+case da_malacath_farvyn
+run
+player->Position -65116 21500 117 0
+until 600 "farvyn oreyn"->GetDistance player < 1000
+wait 60
+talk farvyn oreyn
+ask Kharag gro-Khar
+expect GetJournalIndex DA_Malacath == 50
+choose 1
+bye
+console 05477FCA.kill
+until 300 GetJournalIndex DA_Malacath == 60
+end
+
+case da_malacath_done
+run
+player->PositionCell 4344 4150 13893 0 "Assurdirapal, Inner Shrine"
+wait 120
+activate 05565296
+until 300 GetJournalIndex DA_Malacath == 70
+expect player->GetItemCount helm_bearclaw_unique == 1
+end

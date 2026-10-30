@@ -1,0 +1,38 @@
+# TR House Telvanni: "The Daedric Septis" (TR_m1_HT_Rathra_q3). Rathra wants the Daedric Septis from the hidden
+# Daedric shrine of Rasdamassilu ("Daedric Septis": 10, adds "Rasdamassilu"); handing it over ("I did. I have it
+# here." 1) logs 100, and she lets the player keep it.
+# PositionCell stands in for the journey through the shrine; the book's ref is 09299D0B (TR_Mainland's slot 09).
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_rathra_q2_done --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_rathra_q3_start
+run
+player->PositionCell 4123 3980 14430 0 "Tel Ouada, Tower: Rathra's Chambers"
+until 600 "TR_m1_T_Rathra"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rathra
+ask chores
+ask Daedric Septis
+expect GetJournalIndex TR_m1_HT_Rathra_q3 == 10
+bye
+end
+
+case ht_rathra_q3_book
+run
+player->PositionCell 1499 9850 15890 0 "Rasdamassilu, Shrine"
+wait 150
+take 09299D0B
+until 300 player->GetItemCount "T_Bk_UNI_DeadricSeptisTR" >= 1
+end
+
+case ht_rathra_q3_done
+run
+player->PositionCell 4123 3980 14430 0 "Tel Ouada, Tower: Rathra's Chambers"
+until 600 "TR_m1_T_Rathra"->GetDistance player < 800
+wait 120
+talk TR_m1_T_Rathra
+ask Daedric Septis
+choose 1
+expect GetJournalIndex TR_m1_HT_Rathra_q3 == 100
+bye
+end

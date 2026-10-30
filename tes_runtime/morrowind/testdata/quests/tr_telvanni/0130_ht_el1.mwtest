@@ -1,0 +1,91 @@
+# TR House Telvanni: "Dispatch to Eldale" (TR_m1_HT_El1). Fervas Shulisa, a Mouth in the Chambers, hands over a
+# dispatch through "chores" ("dispatch to Mistress Eldale": 10); Cerul Arnem the enchanter gives the five greater
+# soul gems that go with it (20); Mistress Eldale in Tel Darys takes both and says to return in an hour (30, starts
+# TR_M1_Q66_El1_Timer). An hour on (her Hello set to 21), her greeting hands over orders (40); Fervas pays for them
+# (110, +5 reputation). Back after two hours would log 50 (late).
+# PositionCell stands in for the travel, ShowRestMenu for the player's Wait key.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_dr1 --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ht_el1_start
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Fervas_Shulisa"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Fervas_Shulisa
+ask chores
+ask dispatch to Mistress Eldale
+expect GetJournalIndex TR_m1_HT_El1 == 10
+bye
+end
+
+# Cerul cannot work for the noise of a cursed ring ("Noises Off", TR_m1_PT_NoisesOff): his greeting logs 10 and
+# says goodbye until the player learns the ring's secret from its maker, Turosi Salvel (bribed to disposition 80; a Warrior's Admire only angers him, and the AddItem stands in for
+# the gold a player has from selling loot by now;
+# "cacophony": 30); then Cerul, gestured to take the ring off (Choice 1), quiets down (40) and will talk.
+case ht_el1_noises_off
+run
+player->PositionCell 4247 3800 14210 0 "Port Telvannis, Cerul Arnem: Enchanter"
+until 600 "TR_m1_Cerul_Arnem"->GetDistance player < 600
+wait 120
+talk TR_m1_Cerul_Arnem
+until 300 GetJournalIndex TR_m1_PT_NoisesOff >= 10
+bye
+run
+player->AddItem Gold_001 1000
+player->PositionCell -115 -150 30 0 "Port Telvannis, Turosi Salvel: Enchanter"
+until 600 "TR_m1_Turosi_Salvel"->GetDistance player < 600
+wait 120
+talk TR_m1_Turosi_Salvel
+persuade bribe100 until "TR_m1_Turosi_Salvel"->GetDisposition >= 80
+ask cacophony
+expect GetJournalIndex TR_m1_PT_NoisesOff == 30
+bye
+end
+
+case ht_el1_soulgems
+run
+player->PositionCell 4247 3800 14210 0 "Port Telvannis, Cerul Arnem: Enchanter"
+until 600 "TR_m1_Cerul_Arnem"->GetDistance player < 600
+wait 120
+talk TR_m1_Cerul_Arnem
+choose 1
+expect GetJournalIndex TR_m1_PT_NoisesOff == 40
+ask dispatch to Mistress Eldale
+expect GetJournalIndex TR_m1_HT_El1 == 20
+expect player->GetItemCount "Misc_SoulGem_Greater" >= 5
+bye
+end
+
+case ht_el1_eldale
+run
+player->PositionCell 4551 2950 12350 0 "Gah Sadrith, Tel Darys: Upper Tower"
+until 600 "TR_m1_T_Eldale"->GetDistance player < 600
+wait 120
+talk TR_m1_T_Eldale
+ask dispatch to Mistress Eldale
+expect GetJournalIndex TR_m1_HT_El1 == 30
+bye
+end
+
+case ht_el1_orders
+run
+ShowRestMenu
+sleep 1
+until 3600 "TR_m1_T_Eldale"->GetHello == 21
+talk TR_m1_T_Eldale
+until 300 GetJournalIndex TR_m1_HT_El1 >= 40
+expect GetJournalIndex TR_m1_HT_El1 == 40
+bye
+end
+
+case ht_el1_done
+run
+player->PositionCell 275 6977 13830 0 "Port Telvannis, Telvanni Council House: Chambers"
+until 600 "TR_m1_T_Fervas_Shulisa"->GetDistance player < 2500
+wait 120
+talk TR_m1_T_Fervas_Shulisa
+ask dispatch to Mistress Eldale
+expect GetJournalIndex TR_m1_HT_El1 == 110
+bye
+end

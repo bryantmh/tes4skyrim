@@ -191,6 +191,14 @@ int TwoDead(const std::string& actor) {
     return actor == "some_bandit" ? 2 : 0;
 }
 
+// A scriptless netch that died once: its flag clears on the first read.
+bool g_netchDied = true;
+bool NetchDeath(const std::string& id) {
+    if (_stricmp(id.c_str(), "netch_giant_unique") != 0 || !g_netchDied) return false;
+    g_netchDied = false;
+    return true;
+}
+
 int g_appliedWhich = -1;
 int g_appliedValue = -1;
 void RecordApplied(const std::string&, int which, int value) {
@@ -224,6 +232,15 @@ void AiAndDeathCases(DialogueContext& context, const GameActor& actor) {
     Check(State().Global("TestGlobal") == 2.0f,
           "GetDeadCount answers with the engine's count");
     Hooks().deadCount = nullptr;
+
+    // 🛑 `"id"->OnDeath` asks the NAMED actor, scripted or not: da_forkScript
+    // watches the scriptless giant netch, and Sheogorath's quest stuck at 50.
+    Hooks().takeDeathOf = NetchDeath;
+    RunResultScript("set TestGlobal to \"netch_giant_unique\"->OnDeath", context);
+    Check(State().Global("TestGlobal") == 1.0f, "another actor's OnDeath reads its death");
+    RunResultScript("set TestGlobal to \"netch_giant_unique\"->OnDeath", context);
+    Check(State().Global("TestGlobal") == 0.0f, "and the read clears it, as OpenMW's hasDied");
+    Hooks().takeDeathOf = nullptr;
 
     const std::string saved = State().Serialize();
     State().Reset();

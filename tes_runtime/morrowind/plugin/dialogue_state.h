@@ -155,6 +155,8 @@ struct GameHooks {
     // has no staged placement at all, and it is exactly the spawned creature
     // whose death a quest turns on.
     bool (*isDead)(std::uint32_t runtimeFormId) = nullptr;
+    // `"id"->OnDeath`: the named actor's own died flag, cleared by the read.
+    bool (*takeDeathOf)(const std::string& id) = nullptr;
     // Whether that reference's 3D is LOADED, which is the whole of TES3's rule
     // for when a local script runs.
     bool (*is3DLoaded)(std::uint32_t runtimeFormId) = nullptr;
