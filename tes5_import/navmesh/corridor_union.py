@@ -645,11 +645,19 @@ def _bare_corner_clusters(t2, levels, tri_surfaces):
     """
     bare = {}
     for ti, (a, b, c) in enumerate(t2):
-        for z in tri_surfaces[ti]:
+        for z, shift in tri_surfaces[ti]:
             for k in (a, b, c):
                 if not levels[k]:
-                    bare.setdefault(k, []).append(z)
+                    bare.setdefault(k, []).append(z + shift[k])
     return {k: _storeys_of(sorted(zs)) for k, zs in bare.items()}
+
+
+def _framed_surfaces(t2, reps_all, shifts):
+    """Per triangle, every (z, shift) surface its corners share in one of the `shifts` frames."""
+    frames = [(shift, [[(lo - g, hi - g) for (lo, hi) in reps] for reps, g in zip(reps_all, shift)])
+              for shift in shifts]
+    return [[(z, shift) for shift, rel in frames for z in _triangle_surfaces(rel, tri)]
+            for tri in t2]
 
 
 def _slot_of(corner_bands, bare_clusters, k, z):
@@ -723,29 +731,27 @@ def _emit_surfaces(v2, t2, levels, land=None):
 
     Every 2D triangle is emitted once per surface beneath it; a triangle whose
     corners share no storey is not emitted at all.  Corners are compared in
-    heights ABOVE `land`, so a hillside is one surface.
+    absolute heights and, on land, also ABOVE `land`: a hillside is one
+    surface, and so is a flat bridge over a varying seabed.
     See: docs/commentary/tes5_import_navmesh.md#surface-emission
     """
-    ground = [land.z(p[0], p[1]) if land is not None else 0.0 for p in v2]
-    levels = [[z - g for z in lv] for lv, g in zip(levels, ground)]
+    shifts = [[0.0] * len(v2)]
+    if land is not None:
+        shifts.append([land.z(p[0], p[1]) for p in v2])
     corner_bands = [_storeys_of(sorted(lv)) for lv in levels]
     reps_all = [[(min(b), max(b)) for b in bands] for bands in corner_bands]
-    tri_surfaces = [_triangle_surfaces(reps_all, tri) for tri in t2]
+    tri_surfaces = _framed_surfaces(t2, reps_all, shifts)
     bare_clusters = _bare_corner_clusters(t2, levels, tri_surfaces)
 
     keyed = []
-    for ti, (a, b, c) in enumerate(t2):
-        for z in tri_surfaces[ti]:
-            keyed.append(((a, _slot_of(corner_bands, bare_clusters, a, z)),
-                          (b, _slot_of(corner_bands, bare_clusters, b, z)),
-                          (c, _slot_of(corner_bands, bare_clusters, c, z)), z))
+    for ti, tri in enumerate(t2):
+        for z, shift in tri_surfaces[ti]:
+            keyed.append(tuple((k, _slot_of(corner_bands, bare_clusters, k, z + shift[k]))
+                               for k in tri) + (z + shift[tri[0]],))
 
     state = {'v2': v2, 'corner_bands': corner_bands,
              'bare_clusters': bare_clusters, 'vid': {}, 'verts': []}
-    tris = _emit_triangles(state, keyed)
-    for v in state['verts']:
-        v[2] += land.z(v[0], v[1]) if land is not None else 0.0
-    return state['verts'], tris
+    return state['verts'], _emit_triangles(state, keyed)
 
 def _walked_line_index(strips, cellsz):
     """Bucket sampled points along every ribbon centerline by plan cell."""

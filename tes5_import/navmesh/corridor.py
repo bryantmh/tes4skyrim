@@ -1193,8 +1193,8 @@ def _tri_carries_door(verts, tri, door_xy):
     return False
 
 
-def _drop_attach_scraps(verts, tris, door_xy):
-    """Drop 1-2 triangle specks the door attach orphaned, keeping door ground.
+def _drop_attach_scraps(verts, tris, keep_xy):
+    """Drop 1-2 triangle specks the door attach orphaned, keeping ground under a `keep_xy` point.
 
     See: docs/commentary/tes5_import_navmesh.md#attach-era-scraps-are-dropped
     """
@@ -1206,7 +1206,7 @@ def _drop_attach_scraps(verts, tris, door_xy):
     for comp in comps:
         if len(comp) > 2:
             continue
-        if not any(_tri_carries_door(verts, tris[ti], door_xy)
+        if not any(_tri_carries_door(verts, tris[ti], keep_xy)
                    for ti in comp):
             drop.update(comp)
     if not drop:
@@ -1386,22 +1386,21 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
         return [], [], []
 
     door_xy = [(x, y, z) for (x, y, z, r, tp, w) in door_list]
+    spawn_pts = _spawn_samples(corridors, standing, kept, nodes, node_z)
     pin_xy = (list(door_xy) + door_pins
-              + _centerline_samples(nodes, edges, node_z)
-              + _spawn_samples(corridors, standing, kept, nodes, node_z))
+              + _centerline_samples(nodes, edges, node_z) + spawn_pts)
     verts, tris, ledge_marks = corridor_clean.finalize(
         verts, tris, cs=(params.CS_EXTERIOR if land_rec is not None
                          else params.CS),
         doors=door_xy, cell_bounds=cell_clip, pin_xy=pin_xy,
         door_pins=door_pins,
-        node_pins=[(nodes[i][0], nodes[i][1]) for i in range(len(nodes))
-                   if i not in lone or i in standing],
+        node_pins=[nodes[i] for i in range(len(nodes)) if i not in lone] + spawn_pts,
         ground_ok=_outline_ground_ok(blocking, walkable),
         ledge_reach=_ledge_reach(blocking, walkable), surface=sample)
 
     verts = [tuple(float(c) for c in v) for v in verts]
     tris = [tuple(int(i) for i in t) for t in tris]
-    tris = _drop_attach_scraps(verts, tris, door_xy)
+    tris = _drop_attach_scraps(verts, tris, door_xy + spawn_pts)
     tris = corridor_clean._drop_degenerate_guarded(verts, tris)
     tris = ccw_in_plan(verts, tris)
 
