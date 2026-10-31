@@ -41,6 +41,8 @@ import time
 import traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
+from output_layout import asset_cache_chain
+from tes5_import.base.mesh_bounds import load_mesh_bounds
 from tes5_import.base.obstacles import index_obstacles
 from tes5_import.navmesh import cache_audit, pool as navm_pool
 from tes5_import.navmesh import worker as navm_worker
@@ -100,6 +102,7 @@ def load_export(export_dir, offset):
     if n_lvl:
         print(f'  {n_lvl} leveled placements become ACHR (not carved)',
               flush=True)
+    load_mesh_bounds(asset_cache_chain(export_dir, 'mesh_bounds_cache.json'), quiet=True)
     register_tes3_locks(by_type, export_dir, master_export)
     door_fids = navm_pool.build_door_fid_set(by_type, master_export)
     index_obstacles(by_type, master_export)

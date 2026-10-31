@@ -50,6 +50,11 @@ _native = load_native('_navgrow_native')
 # Batched native march
 # ---------------------------------------------------------------------------
 
+def grow_cap(land):
+    """The grown half-width cap; an exterior (it has LAND) takes the wide one."""
+    return params.RIBBON_GROW_MAX_HALF if land is None else params.RIBBON_GROW_MAX_HALF_EXTERIOR
+
+
 def _native_params(land_from=None, land=None):
     """The tunables the native march needs, mirrored from params.py.
 
@@ -68,7 +73,7 @@ def _native_params(land_from=None, land=None):
         'agent_height': float(params.AGENT_HEIGHT),
         'max_climb': float(params.MAX_CLIMB),
         'ztol': float(params.SEED_Z_TOLERANCE),
-        'cap': float(params.RIBBON_GROW_MAX_HALF),
+        'cap': float(grow_cap(land)),
         'bisect': float(params.RIBBON_GROW_BISECT),
     }
 

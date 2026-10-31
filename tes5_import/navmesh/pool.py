@@ -12,6 +12,7 @@ from asset_convert.game_paths import current_namespace
 from output_layout import asset_cache_chain
 import glob
 import hashlib
+import math
 import operator
 import os
 import struct
@@ -35,6 +36,7 @@ from ..record_types.world import build_cell_xclw, cell_water_height
 from ..record_types.world_falloutnv import parent_use_flags
 from ..record_types.world_morrowind import is_tes3_source
 from ..base.master_export import records_of
+from ..base.mesh_bounds import get_mesh_obnd
 from ..base.obstacles import OBSTACLE_SIGS, is_obstacle
 from ..base.text_reader import (get_float, get_formid, get_formid_index_offset,
                            get_injected_formids, get_int, get_str)
@@ -198,19 +200,29 @@ def build_base_model_index(by_type: dict, master_export: dict = None) -> dict:
 
 
 def build_base_radius_index(by_type: dict, master_export: dict = None) -> dict:
-    """Map base FormID (index byte included) -> bounding radius (MODB).
+    """Map base FormID (index byte included) -> bounding radius.
 
-    Only bases that carve are indexed, and only those declaring a radius, so
-    the overhang index never widens a cell's gather for a marker or a light.
-    `master_export` is REQUIRED for a plugin with masters, exactly as for
-    `build_base_model_index`.
+    The radius is MODB, else the converted mesh's measured bounds (a TES3 base
+    has no MODB).  Only bases that carve are indexed, so the overhang index
+    never widens a cell's gather for a marker or a light.  `master_export` is
+    REQUIRED for a plugin with masters, exactly as for `build_base_model_index`.
+    See: docs/commentary/tes5_import_navmesh.md#refs-overhang-their-cell
     """
     index = {}
     for fid, rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
-        radius = get_float(rec, 'Model.MODB', 0.0)
+        radius = get_float(rec, 'Model.MODB', 0.0) or _bounds_radius(rec)
         if radius > 0.0:
             index[fid] = radius
     return index
+
+
+def _bounds_radius(rec: dict) -> float:
+    """Radius of the sphere about the model origin holding its mesh bounds, or 0.0."""
+    key = base_model_key(rec)
+    box = get_mesh_obnd(key) if key else None
+    if not box:
+        return 0.0
+    return math.sqrt(sum(max(abs(box[i]), abs(box[i + 3])) ** 2 for i in range(3)))
 
 
 def build_door_fid_set(by_type: dict, master_export: dict = None) -> dict:
