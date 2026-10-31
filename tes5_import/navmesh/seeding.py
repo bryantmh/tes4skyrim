@@ -140,19 +140,19 @@ def _seam_points(view, side, gx, gy):
     return out
 
 
-def seam_seeds(views: dict, empty) -> dict:
-    """{(wrld, gx, gy): sorted seed points} for every `empty` cell a view's seam reaches.
+def seam_seeds(views: dict, targets) -> dict:
+    """{(wrld, gx, gy): {neighbour square: seed points}} for every `targets` cell a view's seam reaches.
 
     `views` is {(wrld, gx, gy, fid): NavMeshView}.
     """
     out = {}
-    for (wrld, gx, gy, _fid) in sorted(views):
-        view = views[(wrld, gx, gy, _fid)]
+    for (wrld, gx, gy, fid) in sorted(views):
         for side in _SIDES:
             target = (wrld, gx + side[0], gy + side[1])
-            if target in empty:
-                out.setdefault(target, []).extend(_seam_points(view, side, gx, gy))
-    return {cell: sorted(set(points)) for cell, points in out.items() if points}
+            points = _seam_points(views[(wrld, gx, gy, fid)], side, gx, gy) if target in targets else ()
+            if points:
+                out.setdefault(target, {}).setdefault((wrld, gx, gy), []).extend(points)
+    return out
 
 
 def seeded_record(cell_rec: dict) -> dict:
@@ -195,36 +195,50 @@ def _sea_cells(square, job, sea, meshed) -> int:
     return 1 + min(near, default=0)
 
 
-def _wave_jobs(seeds, seedable, sea, meshed) -> list:
-    """This wave's jobs: every reached cell with land, and sea within MAX_SEA_CELLS of it."""
+def _wave_jobs(offers, seedable, sides, sea, meshed) -> list:
+    """This wave's (square, job)s: each cell a new neighbour offers seeds, if land or near it.
+
+    `sides` holds {square: {neighbour: seed points}} each cell has built from; a job seeds from all of them.
+    """
     jobs = []
-    for square in sorted(seeds):
+    for square in sorted(offers):
+        taken = sides.setdefault(square, {})
+        new = {src: points for src, points in offers[square].items() if src not in taken}
         depth = _sea_cells(square, seedable[square], sea, meshed)
-        if depth <= MAX_SEA_CELLS:
+        if new and depth <= MAX_SEA_CELLS:
+            taken.update(new)
             sea[square] = depth
-            jobs.append(dict(seedable.pop(square), seeds=seeds[square]))
+            seeds = sorted({p for points in taken.values() for p in points})
+            jobs.append((square, dict(seedable[square], seeds=seeds)))
     return jobs
 
 
 def grow_into_empty(cache, seedable, sources, derive_fid, run) -> list:
     """Build seeded cells wave by wave into `cache`; return the pathgrids that built a mesh.
 
-    `seedable` maps (wrld, gx, gy) to a job template and loses each cell it seeds; the first
-    wave seeds from `sources`, each later one from the wave before; `run(jobs)` builds jobs.
+    `seedable` maps (wrld, gx, gy) to a job template. The first wave seeds from `sources`, each
+    later one from the wave before; a cell rebuilds, from every seed it was offered, whenever a
+    neighbour it has not built from offers seeds, so at most once per side. `run(jobs)` builds jobs.
     See: docs/commentary/tes5_import_navmesh.md#seeded-cells
     """
-    built, sea = [], {}
+    built, sides, sea = {}, {}, {}
+    meshed = {key[:3] for key in sources}
     while True:
-        jobs = _wave_jobs(seam_seeds(sources, seedable), seedable, sea,
-                          {key[:3] for key in sources})
+        jobs = _wave_jobs(seam_seeds(sources, seedable), seedable, sides, sea, meshed)
         if not jobs:
-            return built
-        for job in jobs:
+            return list(built.values())
+        for _square, job in jobs:
             job['navm_fid'] = derive_fid(job['key'])
-        results = run(jobs)
+        results = run([job for _square, job in jobs])
         cache.update(results)
         sources = exterior_views(results)[0]
-        built += [job['pgrd_rec'] for job in jobs if (results.get(job['key']) or (None,))[0]]
+        for square, job in jobs:
+            if (results.get(job['key']) or (None,))[0]:
+                built.setdefault(square, job['pgrd_rec'])
+                meshed.add(square)
+            else:
+                built.pop(square, None)
+                meshed.discard(square)
         print(f"    Seeded {len(jobs)} cells with no pathgrid; "
               f"{sum(1 for v in results.values() if v[0])} built a navmesh")
 
