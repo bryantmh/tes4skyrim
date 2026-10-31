@@ -86,6 +86,7 @@ PyObject* py_set_params(PyObject*, PyObject*);           // params.cpp
 PyObject* py_union_mesh(PyObject*, PyObject*);           // union.cpp
 PyObject* py_corridor_cell(PyObject*, PyObject*);        // pycell.cpp
 PyObject* py_seed_graph(PyObject*, PyObject*);           // pycell.cpp
+PyObject* py_pack_nvnm(PyObject*, PyObject*);            // navm.cpp
 
 namespace {
 
@@ -470,7 +471,7 @@ std::vector<double> navgrow::grow_widths(const TriGrid& wall, const TriGrid* wal
     G.agent_height = N.AGENT_HEIGHT;
     G.max_climb = N.MAX_CLIMB;
     G.ztol = N.SEED_Z_TOLERANCE;
-    G.cap = grow_cap(land != nullptr);
+    G.cap = N.RIBBON_GROW_MAX_HALF;
     G.bisect = (int)N.RIBBON_GROW_BISECT;
     G.land_from = land_from;
     const Land none;
@@ -729,6 +730,8 @@ PyMethodDef methods[] = {
      "One cell's whole corridor build, collision gather included (build_corridors)."},
     {"seed_graph", py_seed_graph, METH_VARARGS,
      "A seeded cell's flooded pathgrid (seeding.seed_graph)."},
+    {"pack_nvnm", py_pack_nvnm, METH_VARARGS,
+     "A built cell's NVNM bytes, door triangles and center (convert_PGRD's tail)."},
     {"union_mesh", py_union_mesh, METH_VARARGS,
      "The corridor union stage (corridor_union.build_union_mesh)."},
     {nullptr, nullptr, 0, nullptr}

@@ -20,7 +20,10 @@ per cell: pathgrid graph, doors,  --->  corridor_cell: gather (world.cpp),
   spawns, obstacles, LAND grid,           obstacle bridge (bridge.cpp),
   placement rows (world.placements)       strips, doors, union, cleanup
 geometry-cache hit/miss, hashing  <---  verts, tris, ledges
-NVNM/NAVM packing, NAVI
+hand edits                        --->  pack_nvnm (navm.cpp): water flags,
+                                          adjacency, door triangles, ledge
+                                          links, lookup grid, NVNM, center
+EDID/ONAM, zlib NAVM record       <---  nvnm bytes, door triangles, center
 ```
 
 - `corridor_cell` (`pycell.cpp`) reads its inputs with the GIL held, then
@@ -30,8 +33,18 @@ NVNM/NAVM packing, NAVI
 - The collision soups are borrowed zero-copy from the process's one loaded
   collision cache (`world.placements` hands the float32 arrays over as
   buffers), so there is no separate native store and no copy per worker.
-- Python keeps record parsing, the geometry cache, hand edits and packing.
-- `seeding.seed_graph` is native too (`seed_graph`), over the same gather.
+- Python keeps reading the records into arrays, the geometry cache, hand
+  edits and the zlib record wrap (`zlib.compress` releases the GIL; Python's
+  own zlib keeps the compressed bytes identical). On 160 real Nehrim jobs this
+  Python held the GIL for 1.4 s of 44.3 s single-threaded (3%); at 31 threads
+  the same jobs take 4.0 s wall.
+- `seeding.seed_graph` is native too (`seed_graph`), over the same gather. A
+  seeded job hands its flooded graph straight to `convert_PGRD`
+  (`seeding.seeded_graph`, in the order a pathgrid record reads back) instead
+  of writing a PGRD dict for the build to parse again.
+- Per-plugin planning stays Python: job gathering (`pool.py`) and the
+  seeded-cell waves (`seeding.grow_into_empty`, seam seeds) run once in the
+  importing process, not per cell.
 
 ## <a id="one-process-many-threads"></a>One process, many threads
 
@@ -70,6 +83,7 @@ plugin's records alive, every container burst would trip a full traversal.
 | 5 | cell geometry | `world.gather_cell_geometry`, samplers, node Z snap, `standing_spawns` | **done** (`world.cpp`, `ccell.cpp`) |
 | 6 | pre-passes | `bridge_obstacles`/`cell_ground`, `seed_graph` | **done** (`bridge.cpp`) |
 | 7 | driver | thread pool, `pool.py` integration | **done** (`pool._pool`) |
+| 8 | NVNM packing | `_compute_water_flags`, `compute_adjacency`, `build_door_links`, `_resolve_ledge_links`, `pack_nvnm`, `lookup_grid`, NVMI center | **done** (`navm.cpp`, `from_pgrd.packed_nvnm`) |
 
 Verify with `tools/navmesh/native_ab.py` on the 8 Oblivion and 2 Nehrim
 reference cells (`--mode stress` adds obstacles, water and a split pathgrid;
