@@ -307,3 +307,44 @@ def test_samplers_match_python(python_path):
     want = _sampled(*build(), qs)
     native_loader.NATIVE = True
     assert _sampled(*build(), qs) == want
+
+
+def _box(x0, y0, z0, x1, y1, z1):
+    """A closed box as a flat soup: two floor/roof triangles per face."""
+    c = [(x, y, z) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
+    faces = ((0, 2, 6, 4), (1, 5, 7, 3), (0, 4, 5, 1), (2, 3, 7, 6), (0, 1, 3, 2), (4, 6, 7, 5))
+    return [v for a, b, k, d in faces for t in ((a, b, k), (a, k, d)) for i in t for v in c[i]]
+
+
+def _flood_job(rng):
+    """A seeded-cell job over tilted, scaled slabs, walls, a door panel, LAND and water."""
+    collision = {'slab': {'w': np.asarray(_box(-600, -600, -8, 600, 600, 0), np.float32),
+                          'b': np.zeros(0, np.float32)},
+                 'wall': {'w': [], 'b': _box(-20, -300, 0, 20, 300, 200)},
+                 'door': {'w': np.zeros(0, np.float32), 'b': np.asarray(_box(-5, -60, 0, 5, 60, 180),
+                                                                          np.float32)}}
+    models = {0x10: 'slab', 0x11: 'wall', 0x12: 'door'}
+    refs = [{'NAME': '%08X' % rng.choice(sorted(models)), 'PosX': rng.uniform(4096, 8192),
+             'PosY': rng.uniform(0, 4096), 'PosZ': rng.uniform(-40, 120),
+             'RotX': rng.uniform(-0.3, 0.3), 'RotY': rng.uniform(-0.3, 0.3),
+             'RotZ': rng.uniform(-3.2, 3.2), 'XSCL.Scale': rng.uniform(0.6, 1.8)} for _ in range(70)]
+    deltas = bytes((rng.randint(-3, 3) & 0xFF) for _ in range(33 * 33))
+    land = {'VHGT': (np.float32(-2.0).tobytes() + deltas + b'\0\0\0').hex()}
+    cell = {'FormID': '00000AAA', 'XCLC.X': '1', 'XCLC.Y': '0', 'DATA.Flags': '2',
+            'XCLW.WaterHeight': '30.0'}
+    seeds = sorted({(4100.0, rng.uniform(100, 3900), 0.0) for _ in range(5)})
+    job = {'cell_rec': cell, 'land_rec': land, 'refr_recs': refs, 'seeds': seeds,
+           'pgrd_rec': {'Signature': 'PGRD', 'FormID': '00000AAA'}}
+    return job, models, {0x12}, collision.get
+
+
+def test_seed_flood_matches_python(python_path):
+    """The native gather and seed flood rebuild seeding.seeded_pathgrid's record exactly."""
+    from tes5_import.navmesh.seeding import seeded_pathgrid
+    for seed in range(3):
+        job, models, doors, get_collision = _flood_job(random.Random(seed))
+        native_loader.NATIVE = False
+        want = seeded_pathgrid(job, models, doors, get_collision)
+        native_loader.NATIVE = True
+        assert seeded_pathgrid(job, models, doors, get_collision) == want
+        assert want and int(want['DATA.PointCount']) > 1

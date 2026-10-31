@@ -97,7 +97,6 @@ from ..base.navmesh_pins import (apply_hand_edits, cell_key, digest,
                                  hand_edits_for, plugin_of)
 from ..base.text_reader import get_int, get_float, get_str, get_formid
 from .lookup_grid import build_navmesh_grid
-from .obstacle_bridge import bridge_obstacles, cell_ground
 from .spawn_nodes import add_spawn_nodes
 from .world import base_fid, cell_water_z, open_water_z
 from ..base.writer import pack_subrecord, pack_string_subrecord
@@ -1081,9 +1080,6 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
 
     land = land_rec if is_exterior else None
     door_bases = set(door_fids.keys()) if isinstance(door_fids, dict) else set(door_fids or ())
-    bridge_obstacles(points, edges, obstacles, lambda: cell_ground(
-        refr_recs or [], base_model_by_fid or {}, get_collision, land,
-        origin_x, origin_y, door_bases, water_z), get_collision)
     verts3d, tris = navmesh_build.build_navmesh(
         refr_recs or [], base_model_by_fid or {}, get_collision,
         points, edges,
@@ -1092,7 +1088,7 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
         doors=[(x, y, z, r, tp, w) for (x, y, z, r, _f, tp, w) in doors],
         ledges_out=ledges,
         door_bases=door_bases,
-        lone=lone, water_z=water_z)
+        lone=lone, water_z=water_z, obstacles=obstacles)
     if verts3d:
         verts3d = [tuple(v) for v in
                    np.asarray(verts3d, dtype=np.float32).tolist()]

@@ -29,6 +29,9 @@ inline double py_floordiv(double a, double b) {
 // Windows this module links the STATIC C runtime, whose pow rounds differently
 // from the DLL runtime's that python3xx.dll uses.
 double crt_pow(double x, double y);
+// math.cos / math.sin: the same C library's, for the same reason.
+double crt_cos(double x);
+double crt_sin(double x);
 
 // `x ** 2`: CPython's pow, which differs from x*x in the last bit for ~0.05%
 // of doubles.
@@ -99,6 +102,19 @@ inline double py_dist(double px, double py, double qx, double qy) {
     return py_hypot(px - qx, py - qy);
 }
 
+// math.dist(p, q) for 3D points.
+inline double py_dist3(const double* p, const double* q) {
+    double v[3];
+    double mx = 0.0;
+    bool nan = false;
+    for (int k = 0; k < 3; ++k) {
+        v[k] = std::fabs(p[k] - q[k]);
+        nan = nan || std::isnan(v[k]);
+        if (v[k] > mx) mx = v[k];
+    }
+    return py_vector_norm(3, v, mx, nan);
+}
+
 // --------------------------------------------------------------------------
 // Builtin sum() over floats, starting from int 0: the first item is taken as
 // is, the rest are added with Neumaier compensation, and the compensation is
@@ -146,6 +162,38 @@ struct PyMixedSum {
         return total;
     }
 };
+
+// `round(x, 1)` on a Python float: the exact value rounded half-to-even at one
+// decimal (CPython rounds the exact binary value through dtoa), then n / 10.
+// -0.0 comes back as +0.0, which compares equal and hashes the same in Python.
+inline double py_round1(double x) {
+    const double p = x * 10.0;
+    const double e = std::fma(x, 10.0, -p);
+    double r = std::nearbyint(p);
+    const double f = p - r;
+    if (f == 0.5 && e > 0.0) r += 1.0;
+    else if (f == -0.5 && e < 0.0) r -= 1.0;
+    const double out = r / 10.0;
+    return out == 0.0 ? 0.0 : out;
+}
+
+// `round(x, 3)` on a Python float, as py_round1 at three decimals.
+inline double py_round3(double x) {
+    const double p = x * 1000.0;
+    const double e = std::fma(x, 1000.0, -p);
+    double r = std::nearbyint(p);
+    const double f = p - r;
+    if (f == 0.5 && e > 0.0) r += 1.0;
+    else if (f == -0.5 && e < 0.0) r -= 1.0;
+    const double out = r / 1000.0;
+    return out == 0.0 ? 0.0 : out;
+}
+
+// `round(x, 1)` on a numpy.float64: rint(x * 10) / 10.
+inline double np_round1(double x) {
+    const double out = std::nearbyint(x * 10.0) / 10.0;
+    return out == 0.0 ? 0.0 : out;
+}
 
 // clean_decimate._badness on plan coordinates: max(edge ratio / max_ratio,
 // aspect / max_aspect), 1e9 for a degenerate triangle.

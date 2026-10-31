@@ -17,10 +17,8 @@ from core.worker_budget import worker_count
 
 _WORKER_COUNT = worker_count()
 
-# Byte size of one parse job. Big files (LAND.txt is ~1.4 GB) are split into
-# ranges of this size so parsing spreads across every worker instead of one
-# worker owning one whole file.
-_PARSE_CHUNK_BYTES = 16 * 1024 * 1024
+#: Byte size of one parse job; small so a worker's pickled result never strains the pipe's kernel pool.
+_PARSE_CHUNK_BYTES = 4 * 1024 * 1024
 
 
 def unescape_value(value: str) -> str:

@@ -694,11 +694,10 @@ def _native_cull(verts, tris, pin, pin_xy, seam_bounds, budget):
     pinned = np.zeros(len(verts), dtype=np.uint8)
     pinned[list(pin)] = 1
     seam = None if seam_bounds is None else np.asarray(seam_bounds, dtype=np.float64)
-    keep = native_loader.load_native('_navgrow_native').cull_slivers(
+    keep = native_loader.native_core().cull_slivers(
         np.asarray(verts, dtype=np.float64).reshape(-1, 3), inexact,
         np.asarray(tris, dtype=np.int32).reshape(-1, 3), pinned, _sample_rows(pin_xy),
-        seam, budget, (params.MAX_CLIMB, params.MAX_EDGE_RATIO, params.MAX_TRI_ASPECT,
-                       params.CULL_SLIVER_MAX_AREA, params.MIN_TRI_AREA))
+        seam, budget)
     return [tris[i] for i in keep]
 
 

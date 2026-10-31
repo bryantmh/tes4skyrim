@@ -292,6 +292,59 @@ inline bool tri_height(const double* t, double x, double y, double* z) {
     return true;
 }
 
+// Heights of every triangle in the single bucket at (x, y), ascending index
+// order -- corridor._bucket_heights.
+inline void bucket_heights(const TriGrid& g, double x, double y,
+                           std::vector<double>& out) {
+    out.clear();
+    long long bx, by;
+    if (!g.bucket_of(x, y, &bx, &by)) return;
+    if (bx < 0 || bx >= g.nx || by < 0 || by >= g.ny) return;
+    const size_t b = (size_t)(by * g.nx + bx);
+    for (long long p = g.starts[b]; p < g.starts[b + 1]; ++p) {
+        double z;
+        if (tri_height(&g.vx[(size_t)g.items[(size_t)p] * 9], x, y, &z))
+            out.push_back(z);
+    }
+}
+
+// corridor._surface_sampler: the single-bucket height nearest near_z, first
+// wins on a tie; false when none covers (x, y).
+inline bool surface_nearest(const TriGrid& g, double x, double y, double near_z,
+                            double* out) {
+    long long bx, by;
+    if (!g.bucket_of(x, y, &bx, &by)) return false;
+    if (bx < 0 || bx >= g.nx || by < 0 || by >= g.ny) return false;
+    const size_t b = (size_t)(by * g.nx + bx);
+    bool have = false;
+    for (long long p = g.starts[b]; p < g.starts[b + 1]; ++p) {
+        double z;
+        if (!tri_height(&g.vx[(size_t)g.items[(size_t)p] * 9], x, y, &z)) continue;
+        if (!have || std::fabs(z - near_z) < std::fabs(*out - near_z)) {
+            *out = z;
+            have = true;
+        }
+    }
+    return have;
+}
+
+// corridor_grow.walkable_sampler: the 3x3-neighbourhood height nearest near_z
+// in the reference's candidate order, first wins on a tie.
+inline bool walk_nearest_py(const TriGrid& g, double x, double y, double near_z,
+                            std::vector<unsigned>& stamp, unsigned& epoch,
+                            double* out) {
+    bool have = false;
+    g.visit_py_order(x, y, stamp, epoch, [&](int i) {
+        double z;
+        if (!tri_height(&g.vx[(size_t)i * 9], x, y, &z)) return;
+        if (!have || std::fabs(z - near_z) < std::fabs(*out - near_z)) {
+            *out = z;
+            have = true;
+        }
+    });
+    return have;
+}
+
 // --------------------------------------------------------------------------
 // Thin oriented slab vs triangle (mirrors _tri_hits_slab).
 //

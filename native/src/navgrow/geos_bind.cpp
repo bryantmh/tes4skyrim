@@ -23,8 +23,21 @@ namespace {
 GeosApi g_api;
 bool g_bound = false;
 
+// One GEOS context per thread: GEOS contexts are not thread-safe, geometries
+// are, so build threads share nothing but the bound function pointers.  The
+// context is finished when its thread exits (a pool thread at shutdown).
+struct ThreadGeos {
+    GEOSContextHandle_t ctx = nullptr;
+    std::string last_error;
+    ~ThreadGeos() {
+        if (ctx && g_bound) g_api.finish(ctx);
+    }
+};
+
+thread_local ThreadGeos t_geos;
+
 void on_geos_error(const char* message, void* userdata) {
-    static_cast<GeosApi*>(userdata)->last_error = message ? message : "";
+    static_cast<ThreadGeos*>(userdata)->last_error = message ? message : "";
 }
 
 #ifdef _WIN32
@@ -108,10 +121,40 @@ bool resolve_all(void* mod, GeosApi& a) {
         resolve(mod, "GEOSGetNumInteriorRings_r", a.num_interior_rings) &&
         resolve(mod, "GEOSGeom_getCoordSeq_r", a.coord_seq) &&
         resolve(mod, "GEOSCoordSeq_getSize_r", a.seq_size) &&
-        resolve(mod, "GEOSCoordSeq_getXY_r", a.seq_get_xy);
+        resolve(mod, "GEOSCoordSeq_getXY_r", a.seq_get_xy) &&
+        resolve(mod, "GEOS_finish_r", a.finish) &&
+        resolve(mod, "GEOSUnaryUnion_r", a.unary_union) &&
+        resolve(mod, "GEOSDifference_r", a.difference) &&
+        resolve(mod, "GEOSMakeValid_r", a.make_valid) &&
+        resolve(mod, "GEOSBufferWithStyle_r", a.buffer_style) &&
+        resolve(mod, "GEOSGeom_createCollection_r", a.collection) &&
+        resolve(mod, "GEOSGeom_clone_r", a.clone) &&
+        resolve(mod, "GEOSGetNumGeometries_r", a.num_geometries) &&
+        resolve(mod, "GEOSGetGeometryN_r", a.geometry_n) &&
+        resolve(mod, "GEOSGetInteriorRingN_r", a.interior_ring_n) &&
+        resolve(mod, "GEOSBoundary_r", a.boundary) &&
+        resolve(mod, "GEOSDistance_r", a.distance) &&
+        resolve(mod, "GEOSContains_r", a.contains) &&
+        resolve(mod, "GEOSConstrainedDelaunayTriangulation_r", a.cdt) &&
+        resolve(mod, "GEOSLength_r", a.length) &&
+        resolve(mod, "GEOSInterpolateNormalized_r", a.interpolate_normalized) &&
+        resolve(mod, "GEOSGeom_createLineString_r", a.line_string) &&
+        resolve(mod, "GEOSPreparedContainsXY_r", a.prepared_contains_xy) &&
+        resolve(mod, "GEOSGeom_createEmptyCollection_r", a.empty_collection) &&
+        resolve(mod, "GEOSisSimple_r", a.is_simple);
 }
 
 }  // namespace
+
+GEOSContextHandle_t GeosApi::ctx() const {
+    if (!t_geos.ctx) {
+        t_geos.ctx = init_r();
+        if (t_geos.ctx) set_error_handler(t_geos.ctx, on_geos_error, &t_geos);
+    }
+    return t_geos.ctx;
+}
+
+const std::string& GeosApi::last_error() const { return t_geos.last_error; }
 
 GeosApi* geos() {
     if (!g_bound) {
@@ -123,28 +166,28 @@ GeosApi* geos() {
 }
 
 GEOSGeometry* make_polygon(GeosApi* G, const double* xy, unsigned n) {
-    GEOSCoordSequence* seq = G->seq_create(G->ctx, n + 1, 2);
+    GEOSCoordSequence* seq = G->seq_create(G->ctx(), n + 1, 2);
     if (!seq) return nullptr;
     for (unsigned k = 0; k <= n; ++k) {
         const unsigned s = k % n;
-        G->seq_set_xy(G->ctx, seq, k, xy[2 * s], xy[2 * s + 1]);
+        G->seq_set_xy(G->ctx(), seq, k, xy[2 * s], xy[2 * s + 1]);
     }
-    GEOSGeometry* ring = G->linear_ring(G->ctx, seq);
+    GEOSGeometry* ring = G->linear_ring(G->ctx(), seq);
     if (!ring) return nullptr;
-    return G->polygon(G->ctx, ring, nullptr, 0);
+    return G->polygon(G->ctx(), ring, nullptr, 0);
 }
 
 bool polygon_shell(GeosApi* G, const GEOSGeometry* g, std::vector<double>& xy) {
     xy.clear();
-    if (G->type_id(G->ctx, g) != 3 || G->num_interior_rings(G->ctx, g) != 0)
+    if (G->type_id(G->ctx(), g) != 3 || G->num_interior_rings(G->ctx(), g) != 0)
         return false;
-    const GEOSGeometry* shell = G->exterior_ring(G->ctx, g);
-    const GEOSCoordSequence* seq = shell ? G->coord_seq(G->ctx, shell) : nullptr;
+    const GEOSGeometry* shell = G->exterior_ring(G->ctx(), g);
+    const GEOSCoordSequence* seq = shell ? G->coord_seq(G->ctx(), shell) : nullptr;
     unsigned n = 0;
-    if (!seq || !G->seq_size(G->ctx, seq, &n) || n < 4) return false;
+    if (!seq || !G->seq_size(G->ctx(), seq, &n) || n < 4) return false;
     xy.resize(2 * (size_t)(n - 1));
     for (unsigned k = 0; k + 1 < n; ++k)
-        if (!G->seq_get_xy(G->ctx, seq, k, &xy[2 * k], &xy[2 * k + 1]))
+        if (!G->seq_get_xy(G->ctx(), seq, k, &xy[2 * k], &xy[2 * k + 1]))
             return false;
     return true;
 }
@@ -173,13 +216,11 @@ PyObject* py_bind_geos(PyObject*, PyObject*) {
     a.shapely_wrap = reinterpret_cast<PyObject* (*)(GEOSGeometry*,
                                                     GEOSContextHandle_t)>(
         capi[0]);
-    a.ctx = a.init_r();
-    if (!a.ctx) {
+    g_api = a;
+    if (!g_api.ctx()) {
         PyErr_SetString(PyExc_RuntimeError, "GEOS_init_r failed");
         return nullptr;
     }
-    g_api = a;
-    g_api.set_error_handler(g_api.ctx, on_geos_error, &g_api);
     g_bound = true;
     Py_RETURN_NONE;
 }

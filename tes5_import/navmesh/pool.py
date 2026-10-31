@@ -10,20 +10,22 @@ See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
 
 from asset_convert.game_paths import current_namespace
 from output_layout import asset_cache_chain
+import gc
 import glob
 import hashlib
+import math
 import operator
 import os
 import struct
 import sys
 import time
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
-from contextlib import nullcontext
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
 
 from core.navmesh_options import CORRIDOR, navmesh_generator
 from core.worker_budget import worker_count
-from . import cache_audit as navm_verify, worker as navm_worker
+from . import cache_audit as navm_verify, native_loader, worker as navm_worker
 from .edge_links import exterior_views
 from .seeding import drop_unplayable, grow_into_empty, master_views, seeded_record
 from .spawn_nodes import ACTOR_SIGS, is_airborne, spawn_point
@@ -35,6 +37,7 @@ from ..record_types.world import build_cell_xclw, cell_water_height
 from ..record_types.world_falloutnv import parent_use_flags
 from ..record_types.world_morrowind import is_tes3_source
 from ..base.master_export import records_of
+from ..base.mesh_bounds import get_mesh_obnd
 from ..base.obstacles import OBSTACLE_SIGS, is_obstacle
 from ..base.text_reader import (get_float, get_formid, get_formid_index_offset,
                            get_injected_formids, get_int, get_str)
@@ -198,19 +201,29 @@ def build_base_model_index(by_type: dict, master_export: dict = None) -> dict:
 
 
 def build_base_radius_index(by_type: dict, master_export: dict = None) -> dict:
-    """Map base FormID (index byte included) -> bounding radius (MODB).
+    """Map base FormID (index byte included) -> bounding radius.
 
-    Only bases that carve are indexed, and only those declaring a radius, so
-    the overhang index never widens a cell's gather for a marker or a light.
-    `master_export` is REQUIRED for a plugin with masters, exactly as for
-    `build_base_model_index`.
+    The radius is MODB, else the converted mesh's measured bounds (a TES3 base
+    has no MODB).  Only bases that carve are indexed, so the overhang index
+    never widens a cell's gather for a marker or a light.  `master_export` is
+    REQUIRED for a plugin with masters, exactly as for `build_base_model_index`.
+    See: docs/commentary/tes5_import_navmesh.md#refs-overhang-their-cell
     """
     index = {}
     for fid, rec in _records_of(by_type, master_export, _BLOCKING_BASE_TYPES):
-        radius = get_float(rec, 'Model.MODB', 0.0)
+        radius = get_float(rec, 'Model.MODB', 0.0) or _bounds_radius(rec)
         if radius > 0.0:
             index[fid] = radius
     return index
+
+
+def _bounds_radius(rec: dict) -> float:
+    """Radius of the sphere about the model origin holding its mesh bounds, or 0.0."""
+    key = base_model_key(rec)
+    box = get_mesh_obnd(key) if key else None
+    if not box:
+        return 0.0
+    return math.sqrt(sum(max(abs(box[i]), abs(box[i + 3])) ** 2 for i in range(3)))
 
 
 def build_door_fid_set(by_type: dict, master_export: dict = None) -> dict:
@@ -783,12 +796,29 @@ def _map_kwargs(n_jobs, n_workers) -> dict:
     return kwargs
 
 
-def _pool(initargs, n_workers) -> ProcessPoolExecutor:
-    """A run_job pool whose workers carry this plugin's context."""
-    return ProcessPoolExecutor(max_workers=n_workers,
-                               initializer=navm_worker.init_worker,
-                               initargs=initargs,
-                               max_tasks_per_child=_TASKS_PER_CHILD)
+@contextmanager
+def _pool(initargs, n_workers):
+    """A run_job pool: threads sharing this process's context when native, else worker processes.
+
+    The native build runs with the GIL released, so threads share one copy of
+    the collision; the collector pauses for the run, as it is off in a worker.
+    `init_context` MUST have run first.
+    See: docs/plans/navmesh_native_rewrite.md#one-process-many-threads
+    """
+    if not native_loader.NATIVE:
+        with ProcessPoolExecutor(max_workers=n_workers, initializer=navm_worker.init_worker,
+                                 initargs=initargs, max_tasks_per_child=_TASKS_PER_CHILD) as ex:
+            yield ex
+        return
+    native_loader.native_core()
+    collecting = gc.isenabled()
+    gc.disable()
+    try:
+        with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix='navmesh') as ex:
+            yield ex
+    finally:
+        if collecting:
+            gc.enable()
 
 
 def _run_jobs(jobs, ex, n_workers) -> dict:
@@ -804,6 +834,12 @@ def _run_jobs(jobs, ex, n_workers) -> dict:
         if done % every == 0 or done == total:
             _progress(done, total, t0)
     return cache
+
+
+def run_pooled(jobs, initargs, n_workers) -> dict:
+    """{key: result} for `jobs` on a pool of `n_workers`, as the import runs them."""
+    with _pool(initargs, n_workers) as ex:
+        return _run_jobs(jobs, ex, n_workers)
 
 
 def pooled_prover(initargs, n_workers):
@@ -935,7 +971,7 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
                 geom_cache, get_injected_formids(), True, door_centers, activator_fids)
     navm_verify.init_context(base_model_by_fid, door_fids, collision_cache,
                              formid_offset, geom_cache,
-                             get_injected_formids(), door_centers)
+                             get_injected_formids(), door_centers, activator_fids)
     navm_verify.prepare(jobs, geom_cache,
                         pooled_prover(initargs, n_workers))
 

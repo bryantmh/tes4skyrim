@@ -10,6 +10,7 @@
 
 #include "clip_area.h"
 #include "geos_api.h"
+#include "kernels.h"
 #include "pybuf.h"
 
 #include <algorithm>
@@ -41,7 +42,7 @@ struct Plan {
 
     ~Plan() {
         for (GEOSGeometry* g : poly)
-            if (g) G->destroy(G->ctx, g);
+            if (g) G->destroy(G->ctx(), g);
     }
 
     void xy(size_t i, double out[6]) const {
@@ -73,8 +74,8 @@ struct Plan {
         if (a < min_area - kValidMargin) return;
         double ga = 0.0;
         GEOSGeometry* g = geos_poly(i);
-        keep[i] = g && G->is_valid(G->ctx, g) == 1
-                  && G->area(G->ctx, g, &ga) == 1
+        keep[i] = g && G->is_valid(G->ctx(), g) == 1
+                  && G->area(G->ctx(), g, &ga) == 1
                   && (strict ? ga > min_area : !(ga < min_area));
     }
 
@@ -96,13 +97,13 @@ struct Plan {
         GEOSGeometry* pi = geos_poly(i);
         GEOSGeometry* pj = geos_poly(j);
         if (!pi || !pj) return false;
-        GeosOwned inter(G, G->intersection(G->ctx, pi, pj));
-        if (!inter.g || G->area(G->ctx, inter.g, area) != 1 || *area <= 4.0)
+        GeosOwned inter(G, G->intersection(G->ctx(), pi, pj));
+        if (!inter.g || G->area(G->ctx(), inter.g, area) != 1 || *area <= 4.0)
             return false;
-        GeosOwned c(G, G->centroid(G->ctx, inter.g));
+        GeosOwned c(G, G->centroid(G->ctx(), inter.g));
         double cx, cy;
-        if (!c.g || G->get_x(G->ctx, c.g, &cx) != 1
-            || G->get_y(G->ctx, c.g, &cy) != 1)
+        if (!c.g || G->get_x(G->ctx(), c.g, &cx) != 1
+            || G->get_y(G->ctx(), c.g, &cy) != 1)
             return false;
         return !(std::fabs(z_at(i, cx, cy) - z_at(j, cx, cy)) > 40.0);
     }
@@ -148,8 +149,8 @@ bool overlaps_existing(Plan& P, const int c[3], const std::vector<int>& cands,
     if (!(qa > 1.0 + kValidMargin)) {
         double ga = 0.0;
         own.g = cg = make_polygon(P.G, q, 3);
-        if (!cg || P.G->is_valid(P.G->ctx, cg) != 1
-            || P.G->area(P.G->ctx, cg, &ga) != 1 || ga <= 1.0)
+        if (!cg || P.G->is_valid(P.G->ctx(), cg) != 1
+            || P.G->area(P.G->ctx(), cg, &ga) != 1 || ga <= 1.0)
             return true;
     }
     const double x0 = std::min({q[0], q[2], q[4]}), x1 = std::max({q[0], q[2], q[4]});
@@ -175,9 +176,9 @@ bool overlaps_existing(Plan& P, const int c[3], const std::vector<int>& cands,
         if (!cg) own.g = cg = make_polygon(P.G, q, 3);
         GEOSGeometry* pj = P.geos_poly(j);
         if (!cg || !pj) return true;
-        GeosOwned inter(P.G, P.G->intersection(P.G->ctx, cg, pj));
+        GeosOwned inter(P.G, P.G->intersection(P.G->ctx(), cg, pj));
         double ia = 0.0;
-        if (!inter.g || P.G->area(P.G->ctx, inter.g, &ia) != 1 || ia > 4.0)
+        if (!inter.g || P.G->area(P.G->ctx(), inter.g, &ia) != 1 || ia > 4.0)
             return true;
     }
     return false;
@@ -246,6 +247,47 @@ std::vector<Stacked> stacked_pairs(Plan& P) {
 }
 
 }  // namespace
+
+std::vector<StackedPair> stacked_pairs_mesh(const std::vector<double>& v3,
+                                            const std::vector<Tri3>& tris,
+                                            double min_area,
+                                            std::unordered_map<int, double>& areas) {
+    Plan P(geos(), v3.data(), tris.empty() ? nullptr : tris[0].data(), tris.size(),
+           min_area);
+    std::vector<StackedPair> out;
+    for (const Stacked& s : stacked_pairs(P)) {
+        out.push_back({s.neg_area, s.ti, s.tj});
+        for (int ti : {s.ti, s.tj}) {
+            double a = 0.0;
+            GEOSGeometry* g = P.geos_poly((size_t)ti);
+            if (!g || P.G->area(P.G->ctx(), g, &a) != 1) a = 0.0;
+            areas[ti] = a;
+        }
+    }
+    return out;
+}
+
+std::vector<char> notch_overlaps_mesh(const std::vector<double>& v3,
+                                      const std::vector<Tri3>& tris,
+                                      const std::vector<Tri3>& cands, double zgap) {
+    Plan P(geos(), v3.data(), tris.empty() ? nullptr : tris[0].data(), tris.size(),
+           1.0);
+    const BoxGrid grid = admit_all(P, true);
+    std::vector<char> out(cands.size());
+    std::vector<int> near;
+    for (size_t i = 0; i < cands.size(); ++i) {
+        const int* ci = cands[i].data();
+        double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+        for (int q = 0; q < 3; ++q) {
+            const double* p = &P.v[3 * (size_t)ci[q]];
+            x0 = std::min(x0, p[0]); x1 = std::max(x1, p[0]);
+            y0 = std::min(y0, p[1]); y1 = std::max(y1, p[1]);
+        }
+        box_query(grid, x0, x1, y0, y1, -1, near);
+        out[i] = overlaps_existing(P, ci, near, zgap);
+    }
+    return out;
+}
 
 }  // namespace navgrow
 
@@ -326,7 +368,7 @@ PyObject* py_stacked_pairs(PyObject*, PyObject* args) {
         for (int ti : {s.ti, s.tj}) {
             double a = 0.0;
             GEOSGeometry* g = P.geos_poly((size_t)ti);
-            if (!g || G->area(G->ctx, g, &a) != 1) a = 0.0;
+            if (!g || G->area(G->ctx(), g, &a) != 1) a = 0.0;
             PyObject* key = PyLong_FromLong(ti);
             PyObject* val = PyFloat_FromDouble(a);
             if (!key || !val || PyDict_SetItem(areas, key, val) < 0) {

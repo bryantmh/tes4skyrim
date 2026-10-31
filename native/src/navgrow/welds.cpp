@@ -9,6 +9,7 @@
 
 #include "clip_area.h"
 #include "geos_api.h"
+#include "kernels.h"
 #include "pybuf.h"
 
 #include <algorithm>
@@ -62,7 +63,7 @@ struct Soup {
 
     ~Soup() {
         for (GEOSGeometry* g : poly)
-            if (g) G->destroy(G->ctx, g);
+            if (g) G->destroy(G->ctx(), g);
     }
 
     static long long cell(double x) { return (long long)std::floor(x / kCell); }
@@ -101,8 +102,8 @@ struct Soup {
             state[i] = 1;
         } else if (!(area[i] < 1e-6 - kValidMargin)) {
             GEOSGeometry* g = geos_poly(i);
-            if (g && G->is_valid(G->ctx, g) == 1
-                && G->area(G->ctx, g, &area[i]) == 1 && area[i] > 1e-6)
+            if (g && G->is_valid(G->ctx(), g) == 1
+                && G->area(G->ctx(), g, &area[i]) == 1 && area[i] > 1e-6)
                 state[i] = 1;
         }
         return state[i] == 1;
@@ -113,7 +114,7 @@ struct Soup {
         if (std::fabs(area[i] - thr) > kClipMargin) return area[i];
         double a = area[i];
         GEOSGeometry* g = geos_poly(i);
-        return g && G->area(G->ctx, g, &a) == 1 ? a : area[i];
+        return g && G->area(G->ctx(), g, &a) == 1 ? a : area[i];
     }
 
     bool overlaps_by_area(size_t i, size_t j) {
@@ -124,10 +125,10 @@ struct Soup {
         if (std::fabs(clip - 2.0) > kClipMargin) return clip > 2.0;
         GEOSGeometry* pi = geos_poly(i);
         GEOSGeometry* pj = geos_poly(j);
-        if (!pi || !pj || G->intersects(G->ctx, pi, pj) == 0) return false;
-        GeosOwned inter(G, G->intersection(G->ctx, pi, pj));
+        if (!pi || !pj || G->intersects(G->ctx(), pi, pj) == 0) return false;
+        GeosOwned inter(G, G->intersection(G->ctx(), pi, pj));
         double got = 0.0;
-        return inter.g && G->area(G->ctx, inter.g, &got) == 1 && got > 2.0;
+        return inter.g && G->area(G->ctx(), inter.g, &got) == 1 && got > 2.0;
     }
 
     // _overlap_probe's probe(ti).
@@ -163,6 +164,22 @@ struct Soup {
 };
 
 }  // namespace
+
+std::vector<int> bad_welds_mesh(const std::vector<double>& v3,
+                                const std::vector<Tri3>& tris,
+                                const std::vector<int>& reps,
+                                const std::vector<std::vector<int>>& rep_tris) {
+    Soup soup(geos(), v3.data(), tris.empty() ? nullptr : tris[0].data(),
+              tris.size());
+    std::vector<int> out;
+    for (size_t k = 0; k < reps.size(); ++k)
+        for (int ti : rep_tris[k])
+            if (soup.probe((size_t)ti)) {
+                out.push_back(reps[k]);
+                break;
+            }
+    return out;
+}
 
 }  // namespace navgrow
 

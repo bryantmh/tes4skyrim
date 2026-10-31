@@ -61,7 +61,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "params.h"
 #include "strip.h"
+#include "kernels.h"
 #include "trigrid.h"
 
 PyObject* py_bind_geos(PyObject*, PyObject*);   // geos_bind.cpp
@@ -80,6 +82,10 @@ PyObject* py_refine_steep(PyObject*, PyObject*);         // refine.cpp
 PyObject* py_land_z(PyObject*, PyObject*);               // refine.cpp
 PyObject* py_simplify(PyObject*, PyObject*);             // refine.cpp
 PyObject* py_cull_slivers(PyObject*, PyObject*);         // cull.cpp
+PyObject* py_set_params(PyObject*, PyObject*);           // params.cpp
+PyObject* py_union_mesh(PyObject*, PyObject*);           // union.cpp
+PyObject* py_corridor_cell(PyObject*, PyObject*);        // pycell.cpp
+PyObject* py_seed_graph(PyObject*, PyObject*);           // pycell.cpp
 
 namespace {
 
@@ -266,6 +272,34 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
     return grown;
 }
 
+// Every station's grown half-width into `out` (stations: (N, 9) rows of cx,
+// cy, cz, dirx, diry, tanx, tany, lo, edge_index; on_land per station or null).
+void grow_march(const TriGrid& wall, const TriGrid* walk, const double* nodesp,
+                size_t nnode, const int* edgesp, size_t nedge, const double* nzp,
+                const Land* land, const double* stp, size_t nst, const double* onlandp,
+                const Params& P, double* out) {
+    NeighbourField field;
+    if (nedge) field.build(nodesp, nnode, edgesp, nedge, nzp);
+    for (size_t s = 0; s < nst; ++s) {
+        const double* r = &stp[s * 9];
+        // Exclude the station's OWN centerline(s) from the crossing test.
+        // Column 9 is >= 0 for an edge station (an index into `edges`), and
+        // NEGATIVE for a node disc, encoding -1 - node_index: a disc's rays
+        // start where every edge at that node meets.
+        int ex_a = -1, ex_b = -1;
+        const long long ei = (long long)r[8];
+        if (ei >= 0 && (size_t)ei < nedge) {
+            ex_a = edgesp[(size_t)ei * 2];
+            ex_b = edgesp[(size_t)ei * 2 + 1];
+        } else if (ei < 0) {
+            ex_a = ex_b = (int)(-1 - ei);
+        }
+        out[s] = grow_half_width(wall, walk, field,
+                                 (onlandp && onlandp[s] > 0.0 && land->g) ? land : nullptr,
+                                 r[0], r[1], r[2], r[3], r[4], r[5], r[6], ex_a, ex_b, r[7], P);
+    }
+}
+
 // --------------------------------------------------------------------------
 // Python entry point
 // --------------------------------------------------------------------------
@@ -395,31 +429,8 @@ PyObject* py_grow_strips(PyObject*, PyObject* args) {
             walk.build(walkp, nwalk, 128.0);
             walk.build_walk_index();
         }
-
-        NeighbourField field;
-        if (nedge)
-            field.build(nodesp, nnode, edgesp, nedge, nzp);
-
-        for (size_t s = 0; s < nst; ++s) {
-            const double* r = &stp[s * 9];
-            // Exclude the station's OWN centerline(s) from the crossing test.
-            // Column 9 is >= 0 for an edge station (an index into `edges`), and
-            // NEGATIVE for a node disc, encoding -1 - node_index: a disc's rays
-            // start where every edge at that node meets.
-            int ex_a = -1, ex_b = -1;
-            const long long ei = (long long)r[8];
-            if (ei >= 0 && (size_t)ei < nedge) {
-                ex_a = edgesp[(size_t)ei * 2];
-                ex_b = edgesp[(size_t)ei * 2 + 1];
-            } else if (ei < 0) {
-                ex_a = ex_b = (int)(-1 - ei);
-            }
-            outp[s] = grow_half_width(wall, walkp ? &walk : nullptr, field,
-                                      (onlandp && onlandp[s] > 0.0) ? &land
-                                                                    : nullptr,
-                                      r[0], r[1], r[2], r[3], r[4], r[5], r[6],
-                                      ex_a, ex_b, r[7], P);
-        }
+        grow_march(wall, walkp ? &walk : nullptr, nodesp, nnode, edgesp, nedge, nzp,
+                   &land, stp, nst, onlandp, P, outp);
     } catch (const std::bad_alloc&) {
         err = "out of memory building the navmesh triangle index";
     } catch (const std::exception& e) {
@@ -439,6 +450,120 @@ PyObject* py_grow_strips(PyObject*, PyObject* args) {
     }
     return (PyObject*)out;
 }
+
+}  // namespace
+
+std::vector<double> navgrow::grow_widths(const TriGrid& wall, const TriGrid* walk,
+                                         const std::vector<double>& nodes_xy,
+                                         const std::vector<int>& edges,
+                                         const std::vector<double>& node_z, const Land* land,
+                                         const std::vector<double>& stations,
+                                         const std::vector<double>& on_land, int land_from) {
+    const NavParams& N = P();
+    Params G;
+    G.step = N.RIBBON_GROW_STEP;
+    G.min_half = N.RIBBON_GROW_MIN_HALF;
+    G.half_width = N.RIBBON_HALF_WIDTH;
+    G.slab_half_w = N.RIBBON_GROW_SLAB_HALF_WIDTH;
+    G.slab_depth = N.RIBBON_GROW_SLAB_DEPTH;
+    G.slab_z_bottom = N.RIBBON_GROW_SLAB_Z_BOTTOM;
+    G.agent_height = N.AGENT_HEIGHT;
+    G.max_climb = N.MAX_CLIMB;
+    G.ztol = N.SEED_Z_TOLERANCE;
+    G.cap = grow_cap(land != nullptr);
+    G.bisect = (int)N.RIBBON_GROW_BISECT;
+    G.land_from = land_from;
+    const Land none;
+    std::vector<double> out(stations.size() / 9);
+    grow_march(wall, walk, nodes_xy.data(), nodes_xy.size() / 2, edges.data(), edges.size() / 2,
+               node_z.data(), land ? land : &none, stations.data(), out.size(),
+               land ? on_land.data() : nullptr, G, out.data());
+    return out;
+}
+
+std::vector<std::vector<double>> navgrow::levels_at_points(
+    const std::vector<Strip>& strips, const double* pp, const double* fp,
+                                                  const Land& land, const double* qp,
+                                                  size_t nq, double same_z) {
+    const size_t ns = strips.size();
+    const double cell = 256.0;
+    double gx0 = 1e300, gy0 = 1e300;
+    for (const Strip& S : strips) {
+        gx0 = std::min(gx0, S.x0); gy0 = std::min(gy0, S.y0);
+    }
+    if (!ns) { gx0 = gy0 = 0.0; }
+    std::unordered_map<long long, std::vector<int>> grid;
+    for (size_t i = 0; i < ns; ++i) {
+        const Strip& S = strips[i];
+        const double spanx = (S.x1 - S.x0) / cell;
+        const double spany = (S.y1 - S.y0) / cell;
+        if (spanx < 0.0 || spany < 0.0 ||
+            spanx > (double)kMaxBuckets || spany > (double)kMaxBuckets ||
+            spanx * spany > (double)kMaxBuckets)
+            throw std::invalid_argument("strip XY extent too large");
+        const long long bx0 = (long long)std::floor((S.x0 - gx0) / cell);
+        const long long bx1 = (long long)std::floor((S.x1 - gx0) / cell);
+        const long long by0 = (long long)std::floor((S.y0 - gy0) / cell);
+        const long long by1 = (long long)std::floor((S.y1 - gy0) / cell);
+        for (long long bx = bx0; bx <= bx1; ++bx)
+            for (long long by = by0; by <= by1; ++by)
+                grid[(bx << 32) ^ (by & 0xffffffffLL)].push_back((int)i);
+    }
+    std::vector<std::vector<double>> out(nq);
+    std::vector<double> zs;
+    for (size_t n = 0; n < nq; ++n) {
+        const double px = qp[n * 2], py = qp[n * 2 + 1];
+        zs.clear();
+        const long long bx = (long long)std::floor((px - gx0) / cell);
+        const long long by = (long long)std::floor((py - gy0) / cell);
+        auto it = grid.find((bx << 32) ^ (by & 0xffffffffLL));
+        if (it != grid.end()) {
+            for (int si : it->second) {
+                const Strip& S = strips[(size_t)si];
+                if (px < S.x0 || px > S.x1 || py < S.y0 || py > S.y1) continue;
+                bool hit;
+                if (S.poly_n > 0) {
+                    const double* poly = &pp[(size_t)S.poly_off * 2];
+                    hit = point_in_poly(poly, S.poly_n, px, py);
+                    if (!hit) {
+                        double best = 1e300;
+                        for (int k = 0; k < S.poly_n; ++k) {
+                            const int k2 = (k + 1) % S.poly_n;
+                            best = std::min(best, seg_dist(
+                                px, py, poly[k * 2], poly[k * 2 + 1],
+                                poly[k2 * 2], poly[k2 * 2 + 1]));
+                        }
+                        hit = best <= 1e-6;
+                    }
+                } else {
+                    hit = seg_dist(px, py, S.ax, S.ay, S.bx, S.by)
+                          <= S.half + 1e-6;
+                }
+                if (!hit) continue;
+                zs.push_back(strip_height<false>(S, fp, land, px, py));
+            }
+        }
+        if (zs.empty()) continue;
+        std::sort(zs.begin(), zs.end());
+        std::vector<double>& res = out[n];
+        double acc = zs[0];
+        int cnt = 1;
+        double last = zs[0];
+        for (size_t k = 1; k < zs.size(); ++k) {
+            if (zs[k] - last <= same_z) {
+                acc += zs[k]; ++cnt;
+            } else {
+                res.push_back(acc / cnt);
+                acc = zs[k]; cnt = 1;
+            }
+            last = zs[k];
+        }
+        res.push_back(acc / cnt);
+    }
+    return out;
+}
+
+namespace {
 
 // --------------------------------------------------------------------------
 // Surface levels at a batch of points (corridor_union._levels_at).
@@ -526,107 +651,15 @@ PyObject* py_levels_at(PyObject*, PyObject* args) {
     }
 
     const std::vector<Strip> strips = load_strips(sp, ns, pp, nf, land.g);
-
-    // Bucket strips by bounds so a point tests only plausible ones.
-    const double cell = 256.0;
-    double gx0 = 1e300, gy0 = 1e300;
-    for (const Strip& S : strips) {
-        gx0 = std::min(gx0, S.x0); gy0 = std::min(gy0, S.y0);
-    }
-    if (!ns) { gx0 = gy0 = 0.0; }
-    std::unordered_map<long long, std::vector<int>> grid;
-    for (size_t i = 0; i < ns; ++i) {
-        const Strip& S = strips[i];
-        // A single wildly-oversized strip would otherwise insert billions of
-        // buckets here (the map is sparse, so there is no dense allocation to
-        // trip first -- it just grows until memory runs out). Bound the span
-        // per strip; kMaxBuckets is orders of magnitude above any real ribbon.
-        const double spanx = (S.x1 - S.x0) / cell;
-        const double spany = (S.y1 - S.y0) / cell;
-        if (spanx < 0.0 || spany < 0.0 ||
-            spanx > (double)kMaxBuckets || spany > (double)kMaxBuckets ||
-            spanx * spany > (double)kMaxBuckets) {
-            Py_DECREF(a_s); Py_DECREF(a_p); Py_DECREF(a_q); Py_XDECREF(a_f);
-            Py_XDECREF(a_l);
-            PyErr_SetString(PyExc_ValueError, "strip XY extent too large");
-            return nullptr;
-        }
-        const long long bx0 = (long long)std::floor((S.x0 - gx0) / cell);
-        const long long bx1 = (long long)std::floor((S.x1 - gx0) / cell);
-        const long long by0 = (long long)std::floor((S.y0 - gy0) / cell);
-        const long long by1 = (long long)std::floor((S.y1 - gy0) / cell);
-        for (long long bx = bx0; bx <= bx1; ++bx)
-            for (long long by = by0; by <= by1; ++by)
-                grid[(bx << 32) ^ (by & 0xffffffffLL)].push_back((int)i);
-    }
-
-    // Results are gathered natively then converted to Python once at the end.
-    std::vector<std::vector<double>> out(nq);
-    // Wrapped for the same reason as grow_strips: a throw with the GIL released
-    // and no handler reaches std::terminate() and aborts the whole worker.
+    std::vector<std::vector<double>> out;
     std::string err;
     Py_BEGIN_ALLOW_THREADS
     try {
-    std::vector<double> zs;
-    for (size_t n = 0; n < nq; ++n) {
-        const double px = qp[n * 2], py = qp[n * 2 + 1];
-        zs.clear();
-        const long long bx = (long long)std::floor((px - gx0) / cell);
-        const long long by = (long long)std::floor((py - gy0) / cell);
-        auto it = grid.find((bx << 32) ^ (by & 0xffffffffLL));
-        if (it != grid.end()) {
-            for (int si : it->second) {
-                const Strip& S = strips[(size_t)si];
-                if (px < S.x0 || px > S.x1 || py < S.y0 || py > S.y1) continue;
-                bool hit;
-                if (S.poly_n > 0) {
-                    // A poly strip owns exactly its outline: inside == distance
-                    // 0.  Using `half` as a radius would claim ground far
-                    // outside a grown ribbon and inject phantom levels.
-                    const double* poly = &pp[(size_t)S.poly_off * 2];
-                    hit = point_in_poly(poly, S.poly_n, px, py);
-                    if (!hit) {
-                        double best = 1e300;
-                        for (int k = 0; k < S.poly_n; ++k) {
-                            const int k2 = (k + 1) % S.poly_n;
-                            best = std::min(best, seg_dist(
-                                px, py, poly[k * 2], poly[k * 2 + 1],
-                                poly[k2 * 2], poly[k2 * 2 + 1]));
-                        }
-                        hit = best <= 1e-6;
-                    }
-                } else {
-                    hit = seg_dist(px, py, S.ax, S.ay, S.bx, S.by)
-                          <= S.half + 1e-6;
-                }
-                if (!hit) continue;
-                zs.push_back(strip_height<false>(S, fp, land, px, py));
-            }
-        }
-        if (zs.empty()) continue;
-        std::sort(zs.begin(), zs.end());
-        // Cluster: a gap wider than same_z starts a new surface.
-        std::vector<double>& res = out[n];
-        double acc = zs[0];
-        int cnt = 1;
-        double last = zs[0];
-        for (size_t k = 1; k < zs.size(); ++k) {
-            if (zs[k] - last <= same_z) {
-                acc += zs[k]; ++cnt;
-            } else {
-                res.push_back(acc / cnt);
-                acc = zs[k]; cnt = 1;
-            }
-            last = zs[k];
-        }
-        res.push_back(acc / cnt);
-    }
+        out = levels_at_points(strips, pp, fp, land, qp, nq, same_z);
     } catch (const std::bad_alloc&) {
         err = "out of memory in levels_at";
     } catch (const std::exception& e) {
         err = e.what();
-    } catch (...) {
-        err = "unknown error in levels_at";
     }
     Py_END_ALLOW_THREADS
 
@@ -690,6 +723,14 @@ PyMethodDef methods[] = {
      "Douglas-Peucker kept indices (corridor._simplify)."},
     {"cull_slivers", py_cull_slivers, METH_VARARGS,
      "Surviving triangle indices (corridor_clean.cull_boundary_slivers)."},
+    {"set_params", py_set_params, METH_O,
+     "Set the tunables every native stage reads."},
+    {"corridor_cell", py_corridor_cell, METH_VARARGS,
+     "One cell's whole corridor build, collision gather included (build_corridors)."},
+    {"seed_graph", py_seed_graph, METH_VARARGS,
+     "A seeded cell's flooded pathgrid (seeding.seed_graph)."},
+    {"union_mesh", py_union_mesh, METH_VARARGS,
+     "The corridor union stage (corridor_union.build_union_mesh)."},
     {nullptr, nullptr, 0, nullptr}
 };
 

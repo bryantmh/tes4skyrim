@@ -7,12 +7,14 @@
 // py_floordiv, distances through py_square / py_hypot, edges visited in sorted
 // key order -- so the output matches the reference exactly.
 
+#include "kernels.h"
 #include "pybuf.h"
 #include "pymath.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -179,7 +181,8 @@ int containing(const Pts& p, const std::vector<Tri>& T,
 // _hex_refine after the lattice is known: inserts into `p` and returns the
 // live triangles, flipped.
 std::vector<Tri> hex_refine(Pts& p, std::vector<Tri> T, const double* cand,
-                            size_t ncand, double spacing) {
+                            size_t ncand, double spacing,
+                            const std::function<int(double, double)>& pid) {
     std::vector<char> alive(T.size(), 1);
     Grid grid{p, T, spacing, {}, {}};
     for (size_t ti = 0; ti < T.size(); ++ti) grid.add_tri((int)ti);
@@ -199,9 +202,7 @@ std::vector<Tri> hex_refine(Pts& p, std::vector<Tri> T, const double* cand,
                                    it == grid.tri_at.end() ? none : it->second,
                                    px, py);
         if (hit < 0) continue;
-        const int pi = (int)(p.size() / 2);
-        p.push_back(px);
-        p.push_back(py);
+        const int pi = pid(px, py);
         grid.add_vert(pi);
         const Tri t = T[(size_t)hit];
         alive[(size_t)hit] = 0;
@@ -254,6 +255,18 @@ PyObject* tri_list(const std::vector<Tri>& tris) {
 
 }  // namespace
 
+void flip2d_mesh(const std::vector<double>& xy, std::vector<Tri3>& tris,
+                 int rounds) {
+    flip2d(xy, tris, rounds);
+}
+
+std::vector<Tri3> hex_refine_mesh(std::vector<double>& xy, std::vector<Tri3> tris,
+                                  const std::vector<double>& cand, double spacing,
+                                  const std::function<int(double, double)>& pid) {
+    return hex_refine(xy, std::move(tris), cand.data(), cand.size() / 2, spacing,
+                      pid);
+}
+
 }  // namespace navgrow
 
 using namespace navgrow;
@@ -286,9 +299,13 @@ PyObject* py_hex_refine(PyObject*, PyObject* args) {
     BufView cv(o_cand, 'd', 8);
     if (!cv.ok) return nullptr;
     const size_t base = p.size() / 2;
-    const std::vector<Tri> out = hex_refine(p, std::move(tris),
-                                            cv.data<double>(), cv.count() / 2,
-                                            spacing);
+    const std::vector<Tri> out = hex_refine(
+        p, std::move(tris), cv.data<double>(), cv.count() / 2, spacing,
+        [&p](double x, double y) {
+            p.push_back(x);
+            p.push_back(y);
+            return (int)(p.size() / 2) - 1;
+        });
     const size_t nnew = p.size() / 2 - base;
     PyObject* added = PyList_New((Py_ssize_t)nnew);
     if (!added) return nullptr;

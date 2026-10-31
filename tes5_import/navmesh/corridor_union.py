@@ -472,18 +472,63 @@ def _finish_union(verts, tris, strips, node_pts, node_half, stitch_nodes,
     return verts, _drop_point_attached(tris)
 
 
+def _union_records(strips):
+    """(rows (S, 22), poly (P, 2), prof (F, 3)) strip records for the native union."""
+    rows, poly, prof = [], [], []
+    for s in strips:
+        p, pr = s.get('poly'), s.get('prof')
+        po, pn = (len(poly), len(p)) if p is not None else (0, 0)
+        fo, fn = (len(prof), len(pr)) if pr and len(pr) >= 2 else (0, 0)
+        poly.extend(p if pn else ())
+        prof.extend(pr if fn else ())
+        i, j = s.get('edge', (-1, -1))
+        rows.append((i, j, *s['na'], *s['nb'], *s['a'], *s['b'], *s['w'], float(s['half']),
+                     float(s.get('land') is not None), po, pn, fo, fn))
+    return (np.asarray(rows, dtype=np.float64).reshape(-1, 22),
+            np.asarray(poly, dtype=np.float64).reshape(-1, 2),
+            np.asarray(prof, dtype=np.float64).reshape(-1, 3))
+
+
+def _door_records(door_edges):
+    """(D, 8) door rows: b0, b1, apex, has_apex, z (NaN for none)."""
+    rows = []
+    for e in door_edges:
+        apex = e[2] if len(e) > 2 and e[2] is not None else None
+        z = e[3] if len(e) > 3 and e[3] is not None else math.nan
+        rows.append((e[0][0], e[0][1], e[1][0], e[1][1],
+                     *(apex if apex is not None else (0.0, 0.0)), float(apex is not None), z))
+    return np.asarray(rows, dtype=np.float64).reshape(-1, 8)
+
+
+def _native_union(strips, extra, door_edges, cell_bounds, probe_only, slit_soup):
+    """build_union_mesh natively; `slit_soup` is the wall soup the land-slit test probes, or None.
+
+    See: docs/plans/navmesh_native_rewrite.md#stages
+    """
+    every = list(strips) + list(extra or ())
+    land = _land_of(every)
+    return native_loader.native_core().union_mesh(
+        *_union_records(every), len(strips), _door_records(door_edges or ()), cell_bounds,
+        probe_only, None if land is None else land.grid, 0.0 if land is None else land.ox,
+        0.0 if land is None else land.oy, slit_soup)
+
+
 def build_union_mesh(strips, extra_strips=None, door_edges=None,
                      cell_bounds=None, wall_cut=None, probe_only=False,
-                     slit_ok=None):
+                     slit_ok=None, slit_soup=None):
     """Union the corridor ribbons per storey and retriangulate.
 
     Returns (verts, tris) with 3D vertices.  Coverage is the exact union of the
     ribbons and the triangles do not overlap, both by construction.
     `extra_strips` are door footprint strips joining as ordinary ground,
     `door_edges` the door base lines forced to be triangle edges, `cell_bounds`
-    the exterior rectangle the coverage is clipped to.
+    the exterior rectangle the coverage is clipped to.  The native build reads
+    `slit_soup` (the wall soup behind `slit_ok`) instead of `slit_ok`.
     See: docs/commentary/tes5_import_navmesh.md#union-mesh-driver
     """
+    if native_loader.NATIVE and wall_cut is None:
+        return _native_union(strips, extra_strips, door_edges, cell_bounds, probe_only,
+                             slit_soup if slit_ok is not None else None)
     _ribbon_cache_clear()
     if not strips:
         return [], []

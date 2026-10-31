@@ -77,3 +77,48 @@ def native_geos():
     m = load_native(_MOD)
     m.bind_geos()
     return m
+
+
+#: Module-level constants of the corridor modules the native stages read, beside params.py's.
+_MODULE_PARAMS = (('clean_decimate', ('CONCAVE_CUT_FRAC',)),
+                  ('corridor', ('LIP_MARCH_STEP', 'DISC_RAY_TRIM', 'DISC_LEVEL_TOL',
+                                'FAR_WIDTH_WINDOW')),
+                  ('corridor_doors', ('DOOR_BRIDGE_RADIUS', 'DOOR_LINE_HALF',
+                                      'DOOR_LINE_HALF_MAX', 'DOOR_TRI_MIN_DEPTH',
+                                      'DOOR_SELF_CLEARANCE', 'DOOR_MIN_DEPTH', 'DOOR_OVERLAP')),
+                  ('door_routes', ('ROUTE_STEP', 'ROUTE_REACH')),
+                  ('clean_validate', ('LIP_STANDOFF',)),
+                  ('union_geom', ('FLAP_EDGE_DROP', 'SAME_SURFACE_Z', 'STOREY_GAP_Z',
+                                  'REACH_TOL', 'WALL_SLOPE_COS')),
+                  ('union_cdt', ('DOOR_SNAP_PERP', 'RIBBON_SEED_STEP', 'STEEP_REFINE_EDGE',
+                                 'LAND_RELIEF_TOL', 'LAND_MIN_EDGE')),
+                  ('corridor_union', ('DOOR_CLAIM_MIN_FRAC', 'LAND_MAX_EDGE_RATIO',
+                                      'LAND_SLIT_HALF', 'NOTCH_MAX_MOUTH',
+                                      'NOTCH_MIN_DEPTH_RATIO', 'NOTCH_NEAR_LINE')),
+                  ('union_mesh', ('TSPLIT_TOL', 'TSPLIT_CRACK_TOL', 'TSPLIT_Z_TOL', 'WELD_R',
+                                  'SAME_PART_WELD_XY', 'PG_CELL')),
+                  ('seeding', ('WALK_STEP', 'LATTICE_SPACING')))
+
+
+def native_params():
+    """{name: float} of every tunable the native stages read.
+
+    Imports the corridor modules inside the call: they import this module, so
+    a module-scope import here would be a cycle.
+    """
+    from . import params
+    out = {k: float(v) for k, v in vars(params).items()
+           if k.isupper() and isinstance(v, (int, float))}
+    for mod, names in _MODULE_PARAMS:
+        module = importlib.import_module('.' + mod, __package__)
+        out.update((name, float(getattr(module, name))) for name in names)
+    return out
+
+
+def native_core():
+    """The navgrow extension with GEOS bound and the tunables set (once per process)."""
+    m = native_geos()
+    if not _cached.get('params'):
+        m.set_params(native_params())
+        _cached['params'] = True
+    return m

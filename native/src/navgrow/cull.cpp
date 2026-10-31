@@ -17,6 +17,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "clean.h"
+#include "params.h"
 #include "pybuf.h"
 #include "pymath.h"
 
@@ -24,17 +26,12 @@ namespace navgrow {
 
 namespace {
 
-using Tri = std::array<int, 3>;
-
 constexpr double kPCell = 128.0;
 constexpr double kTCell = 128.0;
 
 struct CullParams {
     double max_climb, max_ratio, max_aspect, sliver_max_area, min_tri_area;
 };
-
-// A walked-line sample: z and the direction are NaN where the reference holds None.
-struct Sample { double x, y, z, ux, uy; };
 
 inline long long cell_of(double v, double cell) {
     return (long long)py_floordiv(v, cell);
@@ -44,17 +41,14 @@ inline uint64_t cell_key(long long gx, long long gy) {
     return ((uint64_t)(uint32_t)gx << 32) | (uint32_t)gy;
 }
 
-inline uint64_t edge_key(int a, int b) {
-    if (a > b) std::swap(a, b);
-    return ((uint64_t)(uint32_t)a << 32) | (uint32_t)b;
-}
+inline uint64_t edge_key(int a, int b) { return key64(a, b); }
 
 using Grid = std::unordered_map<uint64_t, std::vector<int>>;
 
 struct Mesh {
     const double* V;             // (N, 3)
     const uint8_t* inexact;      // per vertex: bit k set = coordinate k is not an exact float
-    const uint8_t* pin;
+    const char* pin;
     const double* seam;          // minx, miny, maxx, maxy, or nullptr
     const std::vector<Sample>& samples;
     const Grid& pgrid;           // _bucket_pathgrid: sample indices per plan cell
@@ -344,25 +338,65 @@ bool cull_round(const Mesh& M, std::vector<Tri>& tris, std::vector<int>& ids,
     return changed;
 }
 
+Grid bucket_samples(const std::vector<Sample>& samples) {
+    Grid pgrid;
+    for (int i = 0; i < (int)samples.size(); ++i)
+        pgrid[cell_key(cell_of(samples[(size_t)i].x, kPCell),
+                       cell_of(samples[(size_t)i].y, kPCell))].push_back(i);
+    return pgrid;
+}
+
+CullParams cull_params() {
+    const NavParams& N = P();
+    return {N.MAX_CLIMB, N.MAX_EDGE_RATIO, N.MAX_TRI_ASPECT, N.CULL_SLIVER_MAX_AREA,
+            N.MIN_TRI_AREA};
+}
+
+// The three rounds over a flat (N, 3) vertex array with per-coordinate flags.
+std::vector<int> cull_flat(const double* V, const uint8_t* inexact, const char* pin,
+                           std::vector<Tri> tris, const std::vector<Sample>& samples,
+                           const double* seam, double budget) {
+    const Grid pgrid = bucket_samples(samples);
+    std::vector<int> ids(tris.size());
+    for (size_t i = 0; i < ids.size(); ++i) ids[i] = (int)i;
+    const Mesh M{V, inexact, pin, seam, samples, pgrid, cull_params()};
+    double removed = 0.0;
+    for (int round = 0; round < 3; ++round)
+        if (!cull_round(M, tris, ids, removed, budget)) break;
+    return ids;
+}
+
 }  // namespace
+
+std::vector<int> cull_slivers_mesh(const std::vector<Vert>& V, const std::vector<Tri>& T,
+                                   const std::vector<char>& pin,
+                                   const std::vector<Sample>& samples,
+                                   const double* seam, double budget) {
+    std::vector<double> flat(V.size() * 3);
+    std::vector<uint8_t> inexact(V.size());
+    for (size_t i = 0; i < V.size(); ++i) {
+        flat[i * 3] = V[i].x;
+        flat[i * 3 + 1] = V[i].y;
+        flat[i * 3 + 2] = V[i].z;
+        inexact[i] = V[i].znp ? 4 : 0;
+    }
+    return cull_flat(flat.data(), inexact.data(), pin.data(), T, samples, seam, budget);
+}
 
 }  // namespace navgrow
 
 using namespace navgrow;
 
-// cull_slivers(verts, inexact, tris, pin, samples, seam, budget, params) -> [kept tri index]
+// cull_slivers(verts, inexact, tris, pin, samples, seam, budget) -> [kept tri index]
 //
 // verts (N, 3) float64; inexact (N,) uint8, bit k set where coordinate k is a
 // numpy scalar in the reference; tris (M, 3) int32; pin (N,) uint8; samples
 // (K, 5) float64 rows x, y, z, ux, uy with NaN for None; seam a 4-array or
-// None; params (max_climb, max_ratio, max_aspect, sliver_max_area, min_tri_area).
+// None.  Needs set_params.
 PyObject* py_cull_slivers(PyObject*, PyObject* args) {
     PyObject *o_v, *o_f, *o_t, *o_pin, *o_s, *o_seam;
     double budget;
-    CullParams P;
-    if (!PyArg_ParseTuple(args, "OOOOOOd(ddddd)", &o_v, &o_f, &o_t, &o_pin, &o_s,
-                          &o_seam, &budget, &P.max_climb, &P.max_ratio,
-                          &P.max_aspect, &P.sliver_max_area, &P.min_tri_area))
+    if (!PyArg_ParseTuple(args, "OOOOOOd", &o_v, &o_f, &o_t, &o_pin, &o_s, &o_seam, &budget))
         return nullptr;
     BufView bv(o_v, 'd', 8), bf(o_f, 'B', 1), bt(o_t, 'i', 4), bp(o_pin, 'B', 1),
         bs(o_s, 'd', 8), bseam(o_seam, 'd', 8);
@@ -374,16 +408,10 @@ PyObject* py_cull_slivers(PyObject*, PyObject* args) {
     }
     std::vector<Sample> samples(bs.count() / 5);
     std::copy_n(bs.data<double>(), samples.size() * 5, (double*)samples.data());
-    Grid pgrid;
-    for (int i = 0; i < (int)samples.size(); ++i)
-        pgrid[cell_key(cell_of(samples[(size_t)i].x, kPCell),
-                       cell_of(samples[(size_t)i].y, kPCell))].push_back(i);
     std::vector<Tri> tris(bt.count() / 3);
-    std::vector<int> ids(tris.size());
     const int* tp = bt.data<int>();
     for (size_t i = 0; i < tris.size(); ++i) {
         tris[i] = {tp[3 * i], tp[3 * i + 1], tp[3 * i + 2]};
-        ids[i] = (int)i;
         for (int k = 0; k < 3; ++k) {
             if (tris[i][k] < 0 || (size_t)tris[i][k] >= nv) {
                 PyErr_SetString(PyExc_IndexError, "cull_slivers: vertex index out of range");
@@ -391,12 +419,11 @@ PyObject* py_cull_slivers(PyObject*, PyObject* args) {
             }
         }
     }
-    const Mesh M{bv.data<double>(), bf.data<uint8_t>(), bp.data<uint8_t>(),
-                 o_seam != Py_None ? bseam.data<double>() : nullptr, samples, pgrid, P};
-    double removed = 0.0;
+    std::vector<int> ids;
     try {
-        for (int round = 0; round < 3; ++round)
-            if (!cull_round(M, tris, ids, removed, budget)) break;
+        ids = cull_flat(bv.data<double>(), bf.data<uint8_t>(), (const char*)bp.data<uint8_t>(),
+                        tris, samples, o_seam != Py_None ? bseam.data<double>() : nullptr,
+                        budget);
     } catch (const std::bad_alloc&) {
         return PyErr_NoMemory();
     }

@@ -11,22 +11,6 @@ import math
 
 from . import native_loader, params
 
-def _native_params():
-    """The tunables native decimate reads, mirrored from params.py."""
-    return {
-        'min_edge': float(params.DECIMATE_MIN_EDGE),
-        'max_ratio': float(params.MAX_EDGE_RATIO),
-        'max_aspect': float(params.MAX_TRI_ASPECT),
-        'outline_tol': float(params.DECIMATE_OUTLINE_TOL),
-        'sawtooth': float(params.DECIMATE_SAWTOOTH_DEV),
-        'area_loss': float(params.DECIMATE_MAX_AREA_LOSS),
-        'pin_radius': float(params.DECIMATE_PIN_RADIUS),
-        'half_width': float(params.RIBBON_HALF_WIDTH),
-        'max_climb': float(params.MAX_CLIMB),
-        'concave_frac': float(CONCAVE_CUT_FRAC),
-    }
-
-
 def _badness(verts, t):
     """Normalized shape badness; 1.0 = exactly at the contract boundary.
 
@@ -451,10 +435,10 @@ def decimate(verts, tris, pinned_xy=None, seam_bounds=None, rounds=None,
     See: docs/commentary/tes5_import_navmesh.md#decimation
     """
     if native_loader.NATIVE:
-        return native_loader.load_native('_navgrow_native').decimate(
+        return native_loader.native_core().decimate(
             verts, tris, pinned_xy, seam_bounds,
             params.DECIMATE_ROUNDS if rounds is None else rounds,
-            allow_split, ground_ok, surface, _native_params())
+            allow_split, ground_ok, surface)
     tris = [tuple(int(i) for i in t) for t in tris]
     verts = [list(map(float, v)) for v in verts]
     min_edge = params.DECIMATE_MIN_EDGE

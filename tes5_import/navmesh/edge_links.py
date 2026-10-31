@@ -168,7 +168,7 @@ def _prune_links(view: NavMeshView, live_fids: set) -> None:
 
 
 def border_edges(view: NavMeshView, axis: int, coord: float):
-    """[(tri_index, edge_slot, midpoint, z)] for border edges lying on a seam.
+    """[(tri_index, edge_slot, midpoint, z, half length)] for border edges lying on a seam.
 
     A border edge is one whose neighbour field is -1 (nothing local adjoins it).
     It must run ALONG the seam: a stub crossing the band is not one.
@@ -210,16 +210,14 @@ def border_edges(view: NavMeshView, axis: int, coord: float):
         ti = idx[keep]
         mid_other = (a[keep, 1 - axis] + b[keep, 1 - axis]) * 0.5
         mid_z = (a[keep, 2] + b[keep, 2]) * 0.5
-        rows.append((ti, np.full(ti.shape, slot), mid_other, mid_z))
+        half = np.abs(a[keep, 1 - axis] - b[keep, 1 - axis]) * 0.5
+        rows.append((ti, np.full(ti.shape, slot), mid_other, mid_z, half))
 
     if not rows:
         return []
-    ti = np.concatenate([r[0] for r in rows])
-    sl = np.concatenate([r[1] for r in rows])
-    mo = np.concatenate([r[2] for r in rows])
-    mz = np.concatenate([r[3] for r in rows])
-    order = np.lexsort((sl, ti))            # triangle index, then slot
-    return [(int(ti[i]), int(sl[i]), float(mo[i]), float(mz[i]))
+    ti, sl, mo, mz, hl = (np.concatenate([r[k] for r in rows]) for k in range(5))
+    order = np.lexsort((sl, ti))
+    return [(int(ti[i]), int(sl[i]), float(mo[i]), float(mz[i]), float(hl[i]))
             for i in order]
 
 
@@ -227,9 +225,16 @@ def _seam_sort_key(e):
     return (e[2], e[3], e[0], e[1])
 
 
+def _shared(ea, eb):
+    """Length of seam two border edges both cover (negative when apart)."""
+    return min(ea[2] + ea[4], eb[2] + eb[4]) - max(ea[2] - ea[4], eb[2] - eb[4])
+
+
 def match_seam(edges_a, edges_b):
     """Greedy nearest-neighbour pairing of border edges across one seam.
 
+    Two edges pair when their midpoints lie within SEAM_TOLERANCE or they share at
+    least that much of the seam, as edges split differently by the two meshes do.
     Deterministic: both sides are sorted once up front and each edge on side B
     is consumed at most once, so the pairing depends only on geometry — never on
     dict or iteration order (the ESM must stay byte-reproducible).
@@ -245,7 +250,7 @@ def match_seam(edges_a, edges_b):
             if j in used_b:
                 continue
             d_along = abs(ea[2] - eb[2])
-            if d_along > SEAM_TOLERANCE:
+            if d_along > SEAM_TOLERANCE and _shared(ea, eb) < SEAM_TOLERANCE:
                 continue
             if abs(ea[3] - eb[3]) > SEAM_Z_TOLERANCE:
                 continue
@@ -428,8 +433,8 @@ def _stitch_seams(views: dict) -> int:
             edges_a = _seam_edges(cells[(wrld, gx, gy)], axis, coord)
             edges_b = _seam_edges(other, axis, coord)
             for ea, eb in match_seam(edges_a, edges_b):
-                ea[4].add_link(ea[0], ea[1], eb[4].fid, eb[0])
-                eb[4].add_link(eb[0], eb[1], ea[4].fid, ea[0])
+                ea[5].add_link(ea[0], ea[1], eb[5].fid, eb[0])
+                eb[5].add_link(eb[0], eb[1], ea[5].fid, ea[0])
                 made += 2
     return made
 

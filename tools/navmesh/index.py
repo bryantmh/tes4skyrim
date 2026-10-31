@@ -102,24 +102,26 @@ class CellCtx(object):
     def has_pathgrid(self):
         return bool(self.nodes)
 
-    def build(self, ledges_out=None, lattice=False):
+    def build(self, ledges_out=None, lattice=False, obstacles=(), water_z=None, edges=None):
         """Regenerate this cell's RAW navmesh exactly as the pipeline's generator would.
 
         `ledges_out` collects `(upper_tri, lower_tri, drop)` drop-down links,
         which production returns out-of-band so `(verts, tris)` stays intact.
         Hand corrections apply after this (`navmesh_pins.apply_hand_edits`).
         `lattice` picks the lattice generator, else the corridor one, whatever
-        the pipeline's setting.
+        the pipeline's setting.  `obstacles` (placement, model key) pairs are
+        bridged across on a copy of `edges` (default: the pathgrid's).
         """
         if lattice:
             return self._build_lattice(ledges_out)
         verts, tris, ledges = corridor.build_corridors(
             self.refrs, self.index.base_model, ce.get_collision,
-            self.nodes, self.edges, land_rec=self.land,
+            self.nodes, list(self.edges if edges is None else edges), land_rec=self.land,
             origin_x=self.origin_x, origin_y=self.origin_y,
             doors=[(x, y, z, r, tp, w)
                    for (x, y, z, r, _f, tp, w) in self.doors],
-            door_bases=set(self.index.door_fids.keys()))
+            door_bases=set(self.index.door_fids.keys()),
+            obstacles=obstacles, water_z=water_z)
         if ledges_out is not None:
             ledges_out.extend(ledges)
         return verts, [tuple(int(i) for i in tri[:3]) for tri in tris]

@@ -44,22 +44,6 @@ bool doubles(PyObject* const* args, Py_ssize_t nargs, Py_ssize_t n,
     return true;
 }
 
-// Heights of every triangle in the single bucket at (x, y), ascending index
-// order -- corridor._bucket_heights.
-void bucket_heights(const TriGrid& g, double x, double y,
-                    std::vector<double>& out) {
-    out.clear();
-    long long bx, by;
-    if (!g.bucket_of(x, y, &bx, &by)) return;
-    if (bx < 0 || bx >= g.nx || by < 0 || by >= g.ny) return;
-    const size_t b = (size_t)(by * g.nx + bx);
-    for (long long p = g.starts[b]; p < g.starts[b + 1]; ++p) {
-        double z;
-        if (tri_height(&g.vx[(size_t)g.items[(size_t)p] * 9], x, y, &z))
-            out.push_back(z);
-    }
-}
-
 // numpy.float64, which the Python samplers return (their heights come out of
 // numpy arithmetic).  Matching the type matters downstream: Python's sum()
 // compensates only exact floats, so a float and a float64 sum differently.
@@ -80,18 +64,10 @@ PyObject* nearest_or_none(bool have, double z) {
 
 // surface(x, y, near_z) -> the single-bucket height nearest near_z, or None.
 PyObject* ti_surface(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
-    double a[3];
+    double a[3], z = 0.0;
     if (!doubles(args, nargs, 3, a, "surface")) return nullptr;
-    std::vector<double> zs;
-    bucket_heights(*((TriIndexObject*)self)->grid, a[0], a[1], zs);
-    bool have = false;
-    double best = 0.0;
-    for (double z : zs) {
-        if (!have || std::fabs(z - a[2]) < std::fabs(best - a[2])) {
-            best = z; have = true;
-        }
-    }
-    return nearest_or_none(have, best);
+    const bool have = surface_nearest(*((TriIndexObject*)self)->grid, a[0], a[1], a[2], &z);
+    return nearest_or_none(have, z);
 }
 
 // layers(x, y) -> every distinct single-bucket height, ascending, 2u dedupe.
@@ -117,19 +93,11 @@ PyObject* ti_layers(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
 // walk(x, y, near_z) -> the 3x3-neighbourhood height nearest near_z, or None
 // (corridor_grow.walkable_sampler, Python candidate order).
 PyObject* ti_walk(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
-    double a[3];
+    double a[3], z = 0.0;
     if (!doubles(args, nargs, 3, a, "walk")) return nullptr;
     TriIndexObject* o = (TriIndexObject*)self;
-    bool have = false;
-    double best = 0.0;
-    o->grid->visit_py_order(a[0], a[1], *o->stamp, o->epoch, [&](int i) {
-        double z;
-        if (!tri_height(&o->grid->vx[(size_t)i * 9], a[0], a[1], &z)) return;
-        if (!have || std::fabs(z - a[2]) < std::fabs(best - a[2])) {
-            best = z; have = true;
-        }
-    });
-    return nearest_or_none(have, best);
+    const bool have = walk_nearest_py(*o->grid, a[0], a[1], a[2], *o->stamp, o->epoch, &z);
+    return nearest_or_none(have, z);
 }
 
 // wall(cx, cy, ux, uy, tx, ty, z_lo, z_hi, depth, half_w) -> bool

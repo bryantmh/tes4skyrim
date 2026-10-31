@@ -47,6 +47,7 @@ import shapely
 
 from . import native_loader, corridor_grow, params, world
 from .door_routes import route_doors
+from .obstacle_bridge import bridge_obstacles, cell_ground
 from .spawn_nodes import drop_covered_discs, standing_spawns
 
 # Trim node-disc rays at stair nodes so the FLAT disc never rides out over a
@@ -325,12 +326,11 @@ def _eroded(w, win, wrap):
         pad, 2 * win + 1).min(axis=1)
 
 
-def _erode_far_widths(widths, plan):
+def _erode_far_widths(widths, plan, cap):
     """Past the cap, hold each rail and disc ray to its shortest neighbour.
 
     See: docs/commentary/tes5_import_navmesh.md#far-widths-are-eroded
     """
-    cap = params.RIBBON_GROW_MAX_HALF
     nrays = params.RIBBON_GROW_DISC_RAYS
     for entry in plan:
         base = entry[-1]
@@ -805,7 +805,7 @@ def _build_corridor_strips(nodes, edges, node_z, wall_hit=None,
                                           nodes, edges, node_z, land_from,
                                           land, on_land)
         _bridge_blocked_stations(widths, plan)
-        _erode_far_widths(widths, plan)
+        _erode_far_widths(widths, plan, corridor_grow.grow_cap(land))
     grown_edges = {p[1]: p for p in plan if p[0] == 'edge'}
 
     strips = []
@@ -1359,17 +1359,55 @@ def _ledge_reach(blocking, walkable):
 LIP_MARCH_STEP = 4.0
 
 
+def _soup(tris):
+    """A triangle soup as a C-contiguous float64 (N, 3, 3) array."""
+    return np.ascontiguousarray(tris, dtype=np.float64).reshape(-1, 3, 3)
+
+
+def _native_corridor_cell(cell, nodes, edges, lone, doors, obstacles):
+    """build_corridors natively, collision gather and obstacle bridge included.
+
+    `cell` is (refr_recs, base_model_by_fid, get_collision, land_rec, origin_x,
+    origin_y, door_bases, water_z).
+    See: docs/plans/navmesh_native_rewrite.md#stages
+    """
+    refr_recs, base_model, get_collision, land_rec, origin_x, origin_y, door_bases, water_z = cell
+    land = world.land_field(land_rec, origin_x, origin_y)
+    clip = (None if land_rec is None
+            else (origin_x, origin_y, origin_x + 4096.0, origin_y + 4096.0))
+    door_rows = [(x, y, z, r, float(bool(tp)), float(w or 0.0))
+                 for (x, y, z, r, tp, w) in (doors or ())]
+    obstacle_models = {world.base_fid(r): key for r, key in obstacles or ()}
+    return native_loader.native_core().corridor_cell(
+        np.asarray([tuple(map(float, n[:3])) for n in nodes], dtype=np.float64).reshape(-1, 3),
+        np.asarray(edges, dtype=np.int32).reshape(-1, 2), sorted(lone),
+        np.asarray(door_rows, dtype=np.float64).reshape(-1, 6),
+        None if land is None else land.grid, 0.0 if land is None else land.ox,
+        0.0 if land is None else land.oy, clip,
+        *world.placements(refr_recs, base_model or {}, get_collision, door_bases or ()),
+        *world.placements([r for r, _k in obstacles or ()], obstacle_models, get_collision),
+        water_z)
+
+
 def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
                     land_rec=None, origin_x=0.0, origin_y=0.0, doors=None,
-                    door_bases=None, lone=(), water_z=None):
+                    door_bases=None, lone=(), water_z=None, obstacles=()):
     """Phase-1 corridor navmesh for one cell: (verts, tris, ledges) lists.
 
     doors: [(x, y, z, rot_z, is_teleport, width), ...] pivot-corrected door
     centers.  door_bases: low-24 DOOR base FormIDs contributing no collision.
     lone: edgeless nodes that still get a disc (spawn_nodes).  water_z: or None.
+    obstacles: (placement, model key) pairs `edges` is bridged across first.
     ledges: [(upper_tri, lower_tri, drop), ...] for NVNM Ledge Up/Down links.
     See: docs/commentary/tes5_import_navmesh.md#ribbon-construction
     """
+    cell = (refr_recs, base_model_by_fid, get_collision, land_rec, origin_x, origin_y,
+            door_bases, water_z)
+    if native_loader.NATIVE and nodes:
+        return _native_corridor_cell(cell, nodes, edges, lone, doors, obstacles)
+    bridge_obstacles(nodes, edges, obstacles, lambda: cell_ground(
+        refr_recs or [], base_model_by_fid or {}, get_collision, land_rec,
+        origin_x, origin_y, door_bases, water_z), get_collision)
     if not nodes or not edges:
         return [], [], []
     from . import corridor_clean, corridor_union
@@ -1398,7 +1436,7 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
         corridors, extra_strips=door_strips, door_edges=door_edges,
         cell_bounds=cell_clip, wall_cut=None,
         slit_ok=_land_slit_ok(blocking, world.land_field(
-            land_rec, origin_x, origin_y)))
+            land_rec, origin_x, origin_y)), slit_soup=_soup(blocking))
     if not tris:
         return [], [], []
 
@@ -1406,12 +1444,13 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
     spawn_pts = _spawn_samples(corridors, standing, kept, nodes, node_z)
     pin_xy = (list(door_xy) + door_pins
               + _centerline_samples(nodes, edges, node_z) + spawn_pts)
+    node_pins = [nodes[i] for i in range(len(nodes)) if i not in lone] + spawn_pts
     verts, tris, ledge_marks = corridor_clean.finalize(
         verts, tris, cs=(params.CS_EXTERIOR if land_rec is not None
                          else params.CS),
         doors=door_xy, cell_bounds=cell_clip, pin_xy=pin_xy,
         door_pins=door_pins,
-        node_pins=[nodes[i] for i in range(len(nodes)) if i not in lone] + spawn_pts,
+        node_pins=node_pins,
         ground_ok=_outline_ground_ok(blocking, walkable),
         ledge_reach=_ledge_reach(blocking, walkable), surface=sample)
 

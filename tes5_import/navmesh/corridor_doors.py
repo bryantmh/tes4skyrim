@@ -150,7 +150,7 @@ def _door_half_width(door_w):
 
 
 def _door_candidates(verts, edges, dx, dy, dz, rz, w_half, ztol):
-    """Corridor edges this door could bridge to, nearest first.
+    """Corridor edges this door could bridge to, nearest first, ties by edge.
 
     Gated on storey height, DOOR_BRIDGE_RADIUS and the frontal strip.
     See: docs/commentary/tes5_import_navmesh.md#door-candidate-edge-gating
@@ -159,7 +159,7 @@ def _door_candidates(verts, edges, dx, dy, dz, rz, w_half, ztol):
     strip_half = w_half + params.RIBBON_HALF_WIDTH
     br2 = DOOR_BRIDGE_RADIUS ** 2
     cands = []
-    for (a, b) in edges:
+    for (a, b) in sorted(edges):
         va, vb = verts[a], verts[b]
         if abs(0.5 * (va[2] + vb[2]) - dz) > ztol:
             continue

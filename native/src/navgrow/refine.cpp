@@ -6,6 +6,7 @@
 // visited in list order, midpoints appended in the order the Python appends
 // them, and _fan_split's ring order.  The output matches exactly.
 
+#include "kernels.h"
 #include "pybuf.h"
 #include "pymath.h"
 #include "strip.h"
@@ -176,6 +177,32 @@ void refine_steep(Mesh& M, const Seeds& S, double max_e2,
     }
 }
 
+}  // namespace
+
+void refine_land_mesh(std::vector<double>& xy, std::vector<Tri3>& tris,
+                      const Land& land, double max_e2, double min_e2, double tol,
+                      const EdgeSet& protect) {
+    Mesh M{std::move(xy), std::move(tris)};
+    refine_land(M, land, LandRefine{max_e2, min_e2, tol}, protect);
+    xy = std::move(M.v);
+    tris = std::move(M.t);
+}
+
+void refine_steep_mesh(std::vector<double>& xy, std::vector<Tri3>& tris,
+                       const std::vector<double>& seeds, double cell,
+                       double max_e2, const EdgeSet& protect) {
+    Seeds S{cell, {}};
+    for (size_t i = 0; i + 1 < seeds.size(); i += 2)
+        S.at[Seeds::key(S.cell_of(seeds[i]), S.cell_of(seeds[i + 1]))].push_back(
+            {seeds[i], seeds[i + 1]});
+    Mesh M{std::move(xy), std::move(tris)};
+    refine_steep(M, S, max_e2, protect);
+    xy = std::move(M.v);
+    tris = std::move(M.t);
+}
+
+namespace {
+
 bool read_mesh(PyObject* o_v, PyObject* o_t, Mesh& M) {
     BufView vv(o_v, 'd', 8), tv(o_t, 'i', 4);
     if (!vv.ok || !tv.ok) return false;
@@ -229,6 +256,42 @@ bool read_land(const BufView& gv, double ox, double oy, Land& land) {
 }
 
 }  // namespace
+
+std::vector<char> simplify_keep(const std::vector<double>& p, double tol) {
+    const size_t n = p.size() / 2;
+    std::vector<char> keep(n, 0);
+    if (n > 0) keep[0] = keep[n - 1] = 1;
+    std::vector<std::pair<size_t, size_t>> stack{{0, n ? n - 1 : 0}};
+    while (!stack.empty()) {
+        const auto [i0, i1] = stack.back();
+        stack.pop_back();
+        if (i1 <= i0 + 1) continue;
+        const double ax = p[2 * i0], ay = p[2 * i0 + 1];
+        const double dx = p[2 * i1] - ax, dy = p[2 * i1 + 1] - ay;
+        const double d2 = dx * dx + dy * dy;
+        double worst = -1.0;
+        size_t wi = 0;
+        for (size_t m = i0 + 1; m < i1; ++m) {
+            const double px = p[2 * m], py = p[2 * m + 1];
+            double d;
+            if (d2 < 1e-12) {
+                d = py_hypot(px - ax, py - ay);
+            } else {
+                double t = ((px - ax) * dx + (py - ay) * dy) / d2;
+                t = t < 1.0 ? t : 1.0;
+                t = t > 0.0 ? t : 0.0;
+                d = py_hypot(px - (ax + dx * t), py - (ay + dy * t));
+            }
+            if (d > worst) { worst = d; wi = m; }
+        }
+        if (worst > tol) {
+            keep[wi] = 1;
+            stack.push_back({i0, wi});
+            stack.push_back({wi, i1});
+        }
+    }
+    return keep;
+}
 
 }  // namespace navgrow
 
@@ -302,37 +365,7 @@ PyObject* py_simplify(PyObject*, PyObject* args) {
     }
     Py_DECREF(seq);
     if (PyErr_Occurred()) return nullptr;
-    std::vector<char> keep((size_t)n, 0);
-    if (n > 0) keep[0] = keep[(size_t)n - 1] = 1;
-    std::vector<std::pair<Py_ssize_t, Py_ssize_t>> stack{{0, n - 1}};
-    while (!stack.empty()) {
-        const auto [i0, i1] = stack.back();
-        stack.pop_back();
-        if (i1 <= i0 + 1) continue;
-        const double ax = p[2 * i0], ay = p[2 * i0 + 1];
-        const double dx = p[2 * i1] - ax, dy = p[2 * i1 + 1] - ay;
-        const double d2 = dx * dx + dy * dy;
-        double worst = -1.0;
-        Py_ssize_t wi = -1;
-        for (Py_ssize_t m = i0 + 1; m < i1; ++m) {
-            const double px = p[2 * m], py = p[2 * m + 1];
-            double d;
-            if (d2 < 1e-12) {
-                d = py_hypot(px - ax, py - ay);
-            } else {
-                double t = ((px - ax) * dx + (py - ay) * dy) / d2;
-                t = t < 1.0 ? t : 1.0;
-                t = t > 0.0 ? t : 0.0;
-                d = py_hypot(px - (ax + dx * t), py - (ay + dy * t));
-            }
-            if (d > worst) { worst = d; wi = m; }
-        }
-        if (worst > tol) {
-            keep[(size_t)wi] = 1;
-            stack.push_back({i0, wi});
-            stack.push_back({wi, i1});
-        }
-    }
+    const std::vector<char> keep = simplify_keep(p, tol);
     PyObject* out = PyList_New(0);
     if (!out) return nullptr;
     for (Py_ssize_t i = 0; i < n; ++i) {

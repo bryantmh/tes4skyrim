@@ -5209,6 +5209,40 @@ treated as unpinned and keeps its pinned geometry through an adopt.
 `geos_bind.cpp`, `trigrid.h`, `clip_area.h`, `pymath.h`), `native_loader.NATIVE`,
 `tools/navmesh/native_ab.py`, `tests/test_navmesh_native.py`.
 
+**Status: the whole per-cell corridor build is now native** -- one
+`corridor_cell` call from the collision gather to the cleaned mesh, plus
+`seed_graph` for seeded cells -- and under `NATIVE` the pool runs cells on
+threads in the importing process
+([plan](../plans/navmesh_native_rewrite.md#one-process-many-threads)). The
+kernel table below is the history of how it got there. Verified exact:
+
+- `native_ab.py`: the 8 Oblivion cells **23.7s -> 2.2s (10.9x)**, all MATCH;
+  `--mode stress` (40 obstacles, water 200u above the lowest node, every third
+  pathgrid edge dropped so bridging rejoins 2-11 edges per cell) and
+  `--mode flood` (50- and 58-node flooded graphs) MATCH too.
+- `job_trace.py --ab` on 15 real Nehrim jobs drawn across the whole job list:
+  packed NAVM bytes identical on all 15, **109.5s -> 8.0s (13.7x)** serial.
+- Throughput on 80 real Nehrim jobs, cold cache (`job_trace.py --sample 80
+  --no-cache --workers 12`): the Python reference on 12 worker processes
+  **1.33 jobs/s**; native on one thread 2.70 jobs/s, on **12 threads in one
+  process 13.07 jobs/s (9.8x the old pool)**. Of a native job's time, 7%
+  (about 26 ms) still holds the GIL -- record reads, the placement rows, the
+  lookup grid and packing -- which caps threads at roughly 14x one thread.
+- Memory: the 12 Python workers held 218-277 MB each, about 2.75 GB on top of
+  the parent; the threaded run starts no processes, and its parent peaked
+  0.8 GB over its resting size (3.1 -> 3.9 GB, parsed export included).
+
+**A dense cell is bound by GEOS overlays, not by the port.** Nehrim
+`00230BF2` took 16.7s natively against 52.7s in Python: stage timers on a
+scratch build put 13.8s in `_sheet_coverage`, all of it in
+`_same_surface_pieces`' 4,048 `(pa & pb) & shared` overlays (about 4 ms each,
+because `shared` is a large polygon every overlay re-nodes). 1,925 of those
+pair overlaps are disjoint from `shared`, so their overlay is empty and
+dropped; a prepared `intersects` test now skips them (fail-open: a GEOS error
+still runs the overlay). The cell is 8.6s, MATCH. The remaining 2,123
+overlays produce the pieces the result is built from and cannot be changed
+without changing the bits.
+
 The generator is moving into C++ one kernel at a time. Every kernel keeps its
 Python original as the REFERENCE: `TES_NAVMESH_IMPL=python` (or flipping
 `native_loader.NATIVE`) runs the Python path, and `native_ab.py` builds a cell
@@ -5257,7 +5291,8 @@ build adds 5-18 MB. A pool worker's commit charge is the BLAS thread buffers
 (1,605 MB -> 126 MB, see [performance.md](performance.md)), then the
 collision cache (~80 MB resident) and the imports (~100 MB). A native rewrite
 saves memory only if it runs every cell in ONE process on threads, sharing the
-collision cache instead of loading it once per worker.
+collision cache instead of loading it once per worker -- which the native
+pool now does (numbers above).
 
 **Python float arithmetic is not C arithmetic.** These were each found by the
 fuzz tests in `test_navmesh_native.py`, which hold `pymath.h` against the

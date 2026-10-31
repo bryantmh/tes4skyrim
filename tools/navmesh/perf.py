@@ -49,7 +49,7 @@ _ACC = {}
 _NESTED = set()
 
 
-def _rss_note():
+def rss_note():
     """' rss=N.NGB' when the platform can tell us, else ''.
 
     Cheap Windows-native query so this works without psutil (not installed).
@@ -211,7 +211,7 @@ def _load_cells(ap, export, names):
             ap.error('cell %s not found' % n)
         print('cell %s (%s) exterior=%s refrs=%d nodes=%d%s'
               % (ctx.fid, ctx.name, ctx.exterior, len(ctx.refrs),
-                 len(ctx.nodes), _rss_note()))
+                 len(ctx.nodes), rss_note()))
         ctxs.append(ctx)
     return ctxs
 

@@ -2,9 +2,10 @@
 //
 // Mirrors clean_decimate.py operation for operation: the same candidate order,
 // the same Python-exact float helpers (pymath.h), the same tie-breaks.  The
-// two callbacks it needs -- ground_ok (a concave notch may be cut) and surface
-// (the height a needle split sits on) -- stay Python callables, called exactly
-// where the Python reference calls them.
+// two collision oracles it needs -- ground_ok (a concave notch may be cut) and
+// surface (the height a needle split sits on) -- come in as an Oracles, which
+// the native cleanup stage answers from its own samplers and the Python
+// binding answers with the reference's callables.
 //
 // A vertex's Z keeps its Python TYPE as well as its value: the reference stores
 // numpy.float64 where a sampler produced the height (and anything averaged from
@@ -22,31 +23,31 @@
 #include <utility>
 #include <vector>
 
+#include "clean.h"
+#include "params.h"
+#include "pyconv.h"
 #include "pymath.h"
 
 namespace navgrow {
 
 namespace {
 
-// A Python exception is pending; unwind to the entry point.
-struct PyErrorSet {};
-
-struct Vert {
-    double x, y, z;
-    bool znp;                    // Z is a numpy.float64 in the reference
-};
-using Tri = std::array<int, 3>;
-using Key = std::pair<int, int>;
-
 struct Params {
     double min_edge, max_ratio, max_aspect, outline_tol, sawtooth, area_loss;
     double pin_radius, half_width, max_climb, concave_frac;
 };
 
-inline Key edge_key(int a, int b) { return a < b ? Key(a, b) : Key(b, a); }
+// clean_decimate's tunables, from the shared parameter set.
+Params decimate_params() {
+    const NavParams& N = P();
+    return {N.DECIMATE_MIN_EDGE, N.MAX_EDGE_RATIO, N.MAX_TRI_ASPECT,
+            N.DECIMATE_OUTLINE_TOL, N.DECIMATE_SAWTOOTH_DEV,
+            N.DECIMATE_MAX_AREA_LOSS, N.DECIMATE_PIN_RADIUS,
+            N.RIBBON_HALF_WIDTH, N.MAX_CLIMB, N.CONCAVE_CUT_FRAC};
+}
 
 inline double area2(const Vert& p, const Vert& q, const Vert& r) {
-    return (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    return plan_area2(p, q, r);
 }
 
 inline double area2(const std::vector<Vert>& V, const Tri& t) {
@@ -64,63 +65,12 @@ inline double badness(const std::vector<Vert>& V, const Tri& t,
     return badness(V[t[0]], V[t[1]], V[t[2]], P);
 }
 
-// _mesh_area over a triangle list.
 double mesh_area(const std::vector<Vert>& V, const std::vector<Tri>& tris) {
-    PySum s;
-    for (const Tri& t : tris) s.add(std::fabs(area2(V, t)));
-    return s.value() * 0.5;
-}
-
-inline bool distinct(const Tri& t) {
-    return t[0] != t[1] && t[1] != t[2] && t[0] != t[2];
-}
-
-inline bool has(const Tri& t, int v) {
-    return t[0] == v || t[1] == v || t[2] == v;
+    return mesh_plan_area(V, tris);
 }
 
 inline bool flagged(const std::vector<char>& set, int v) {
     return v >= 0 && (size_t)v < set.size() && set[(size_t)v];
-}
-
-// --------------------------------------------------------------------------
-// Pins (_pin_verts)
-// --------------------------------------------------------------------------
-struct Pin { double x, y, r; };
-
-std::vector<char> pin_verts(const std::vector<Vert>& V,
-                            const std::vector<Pin>& pins, const Params& P) {
-    std::vector<char> out(V.size(), 0);
-    if (pins.empty()) return out;
-    double rmax = pins[0].r;
-    for (const Pin& p : pins) if (p.r > rmax) rmax = p.r;
-    const double cell = std::max(rmax, 1.0);
-    std::map<std::pair<long long, long long>, std::vector<size_t>> buckets;
-    for (size_t i = 0; i < pins.size(); ++i)
-        buckets[{(long long)py_floordiv(pins[i].x, cell),
-                 (long long)py_floordiv(pins[i].y, cell)}].push_back(i);
-    for (size_t vi = 0; vi < V.size(); ++vi) {
-        const long long gx = (long long)py_floordiv(V[vi].x, cell);
-        const long long gy = (long long)py_floordiv(V[vi].y, cell);
-        bool near = false;
-        for (long long dx = -1; dx <= 1 && !near; ++dx) {
-            for (long long dy = -1; dy <= 1 && !near; ++dy) {
-                auto it = buckets.find({gx + dx, gy + dy});
-                if (it == buckets.end()) continue;
-                for (size_t pi : it->second) {
-                    const Pin& p = pins[pi];
-                    if (py_square(V[vi].x - p.x) + py_square(V[vi].y - p.y)
-                            <= p.r * p.r) {
-                        near = true;
-                        break;
-                    }
-                }
-            }
-        }
-        out[vi] = near;
-    }
-    (void)P;
-    return out;
 }
 
 // --------------------------------------------------------------------------
@@ -182,8 +132,7 @@ struct Ctx {
     std::vector<Vert>& V;
     const std::vector<char>& pin;
     const double* seam;          // minx, miny, maxx, maxy, or nullptr
-    PyObject* ground_ok;         // callable or nullptr
-    PyObject* surface;           // callable or nullptr
+    const Oracles& O;
     const Params& P;
 
     bool on_seam(int vi) const {
@@ -194,10 +143,6 @@ struct Ctx {
     }
     bool pinned(int v) const { return flagged(pin, v); }
 };
-
-PyObject* vert_list(const Vert& v) {
-    return Py_BuildValue("[ddd]", v.x, v.y, v.z);
-}
 
 struct Collapse {
     Ctx& C;
@@ -267,20 +212,9 @@ struct Collapse {
     }
 
     bool notch_is_open_ground(int vi, double err) const {
-        if (!C.ground_ok || err > C.P.sawtooth) return false;
+        if (!C.O.ground_ok || err > C.P.sawtooth) return false;
         const std::vector<int>& ns = O.nbr[(size_t)vi];
-        PyObject* a = vert_list(C.V[(size_t)ns[0]]);
-        PyObject* v = vert_list(C.V[(size_t)vi]);
-        PyObject* b = vert_list(C.V[(size_t)ns[1]]);
-        PyObject* r = (a && v && b)
-            ? PyObject_CallFunctionObjArgs(C.ground_ok, a, v, b, nullptr)
-            : nullptr;
-        Py_XDECREF(a); Py_XDECREF(v); Py_XDECREF(b);
-        if (!r) throw PyErrorSet{};
-        const int truth = PyObject_IsTrue(r);
-        Py_DECREF(r);
-        if (truth < 0) throw PyErrorSet{};
-        return truth != 0;
+        return C.O.ground_ok(C.V[(size_t)ns[0]], C.V[(size_t)vi], C.V[(size_t)ns[1]]);
     }
 
     bool outline_move_ok(int vi, bool budget_left) const {
@@ -581,19 +515,14 @@ Vert apex_split_point(const Ctx& C, int a, int b, const Vert& apex, double d) {
     tproj = std::max(tlo, std::min(1.0 - tlo, tproj));
     Vert m{va.x + dx * tproj, va.y + dy * tproj,
            va.z + (vb.z - va.z) * tproj, va.znp || vb.znp};
-    if (!C.surface) return m;
+    if (!C.O.surface) return m;
     const double near = tproj <= 0.5 ? va.z : vb.z;
-    PyObject* got = PyObject_CallFunction(C.surface, "ddd", m.x, m.y, near);
-    if (!got) throw PyErrorSet{};
-    if (got != Py_None) {
-        const double z = PyFloat_AsDouble(got);
-        if (z == -1.0 && PyErr_Occurred()) { Py_DECREF(got); throw PyErrorSet{}; }
-        if (std::fabs(z - m.z) <= C.P.max_climb) {
-            m.z = z;
-            m.znp = !PyFloat_CheckExact(got);
-        }
+    double z;
+    bool znp;
+    if (C.O.surface(m.x, m.y, near, &z, &znp) && std::fabs(z - m.z) <= C.P.max_climb) {
+        m.z = z;
+        m.znp = znp;
     }
-    Py_DECREF(got);
     return m;
 }
 
@@ -741,195 +670,124 @@ void run_decimate(Ctx& C, std::vector<Tri>& tris, int rounds, bool allow_split) 
     }
 }
 
+}  // namespace
+
 // --------------------------------------------------------------------------
-// Python boundary
+// Pins (_pin_verts)
 // --------------------------------------------------------------------------
-bool read_triple(PyObject* seq, double* out) {
-    PyObject* f = PySequence_Fast(seq, "expected a 3-sequence");
-    if (!f) return false;
-    bool ok = PySequence_Fast_GET_SIZE(f) >= 3;
-    for (int k = 0; ok && k < 3; ++k) {
-        out[k] = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(f, k));
-        ok = !(out[k] == -1.0 && PyErr_Occurred());
-    }
-    if (!ok && !PyErr_Occurred())
-        PyErr_SetString(PyExc_ValueError, "expected a 3-sequence");
-    Py_DECREF(f);
-    return ok;
-}
-
-bool read_verts(PyObject* o, std::vector<Vert>& V) {
-    PyObject* f = PySequence_Fast(o, "verts must be a sequence");
-    if (!f) return false;
-    const Py_ssize_t n = PySequence_Fast_GET_SIZE(f);
-    V.resize((size_t)n);
-    for (Py_ssize_t i = 0; i < n; ++i) {
-        double c[3];
-        if (!read_triple(PySequence_Fast_GET_ITEM(f, i), c)) {
-            Py_DECREF(f);
-            return false;
+std::vector<char> pin_verts(const std::vector<Vert>& V,
+                            const std::vector<Pin>& pins) {
+    std::vector<char> out(V.size(), 0);
+    if (pins.empty()) return out;
+    double rmax = pins[0].r;
+    for (const Pin& p : pins) if (p.r > rmax) rmax = p.r;
+    const double cell = std::max(rmax, 1.0);
+    std::map<std::pair<long long, long long>, std::vector<size_t>> buckets;
+    for (size_t i = 0; i < pins.size(); ++i)
+        buckets[{(long long)py_floordiv(pins[i].x, cell),
+                 (long long)py_floordiv(pins[i].y, cell)}].push_back(i);
+    for (size_t vi = 0; vi < V.size(); ++vi) {
+        const long long gx = (long long)py_floordiv(V[vi].x, cell);
+        const long long gy = (long long)py_floordiv(V[vi].y, cell);
+        bool near = false;
+        for (long long dx = -1; dx <= 1 && !near; ++dx) {
+            for (long long dy = -1; dy <= 1 && !near; ++dy) {
+                auto it = buckets.find({gx + dx, gy + dy});
+                if (it == buckets.end()) continue;
+                for (size_t pi : it->second) {
+                    const Pin& p = pins[pi];
+                    if (py_square(V[vi].x - p.x) + py_square(V[vi].y - p.y)
+                            <= p.r * p.r) {
+                        near = true;
+                        break;
+                    }
+                }
+            }
         }
-        V[(size_t)i] = {c[0], c[1], c[2], false};
+        out[vi] = near;
     }
-    Py_DECREF(f);
-    return true;
-}
-
-bool read_tris(PyObject* o, size_t nverts, std::vector<Tri>& T) {
-    PyObject* f = PySequence_Fast(o, "tris must be a sequence");
-    if (!f) return false;
-    const Py_ssize_t n = PySequence_Fast_GET_SIZE(f);
-    T.resize((size_t)n);
-    bool ok = true;
-    for (Py_ssize_t i = 0; ok && i < n; ++i) {
-        PyObject* t = PySequence_Fast(PySequence_Fast_GET_ITEM(f, i),
-                                      "a triangle must be a sequence");
-        ok = t && PySequence_Fast_GET_SIZE(t) >= 3;
-        for (int k = 0; ok && k < 3; ++k) {
-            const long v = PyLong_AsLong(PySequence_Fast_GET_ITEM(t, k));
-            ok = !(v == -1 && PyErr_Occurred()) && v >= 0 && (size_t)v < nverts;
-            T[(size_t)i][k] = (int)v;
-        }
-        Py_XDECREF(t);
-    }
-    Py_DECREF(f);
-    if (!ok && !PyErr_Occurred())
-        PyErr_SetString(PyExc_ValueError, "bad triangle");
-    return ok;
-}
-
-bool read_pins(PyObject* o, double default_r, std::vector<Pin>& pins) {
-    if (o == Py_None) return true;
-    PyObject* f = PySequence_Fast(o, "pins must be a sequence");
-    if (!f) return false;
-    bool ok = true;
-    for (Py_ssize_t i = 0; ok && i < PySequence_Fast_GET_SIZE(f); ++i) {
-        PyObject* p = PySequence_Fast(PySequence_Fast_GET_ITEM(f, i),
-                                      "a pin must be a sequence");
-        ok = p && PySequence_Fast_GET_SIZE(p) >= 2;
-        Pin pin{0.0, 0.0, default_r};
-        for (Py_ssize_t k = 0; ok && k < std::min<Py_ssize_t>(
-                 3, PySequence_Fast_GET_SIZE(p)); ++k) {
-            const double v = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(p, k));
-            ok = !(v == -1.0 && PyErr_Occurred());
-            (k == 0 ? pin.x : k == 1 ? pin.y : pin.r) = v;
-        }
-        if (ok) pins.push_back(pin);
-        Py_XDECREF(p);
-    }
-    Py_DECREF(f);
-    return ok;
-}
-
-bool read_params(PyObject* d, Params& P) {
-    struct Item { const char* key; double* slot; };
-    const Item items[] = {
-        {"min_edge", &P.min_edge}, {"max_ratio", &P.max_ratio},
-        {"max_aspect", &P.max_aspect}, {"outline_tol", &P.outline_tol},
-        {"sawtooth", &P.sawtooth}, {"area_loss", &P.area_loss},
-        {"pin_radius", &P.pin_radius}, {"half_width", &P.half_width},
-        {"max_climb", &P.max_climb}, {"concave_frac", &P.concave_frac},
-    };
-    for (const Item& it : items) {
-        PyObject* v = PyDict_GetItemString(d, it.key);
-        if (!v) {
-            PyErr_Format(PyExc_KeyError, "decimate param %s", it.key);
-            return false;
-        }
-        *it.slot = PyFloat_AsDouble(v);
-        if (*it.slot == -1.0 && PyErr_Occurred()) return false;
-    }
-    return true;
-}
-
-PyObject* z_object(const Vert& v, PyObject* float64) {
-    PyObject* f = PyFloat_FromDouble(v.z);
-    if (!f || !v.znp) return f;
-    PyObject* out = PyObject_CallOneArg(float64, f);
-    Py_DECREF(f);
     return out;
 }
 
-PyObject* to_python(const std::vector<Vert>& V, const std::vector<Tri>& T) {
-    PyObject* np = PyImport_ImportModule("numpy");
-    PyObject* f64 = np ? PyObject_GetAttrString(np, "float64") : nullptr;
-    Py_XDECREF(np);
-    if (!f64) return nullptr;
-    PyObject* pv = PyList_New((Py_ssize_t)V.size());
-    PyObject* pt = PyList_New((Py_ssize_t)T.size());
-    bool ok = pv && pt;
-    for (size_t i = 0; ok && i < V.size(); ++i) {
-        PyObject* z = z_object(V[i], f64);
-        PyObject* row = z ? Py_BuildValue("[ddN]", V[i].x, V[i].y, z) : nullptr;
-        ok = row != nullptr;
-        if (ok) PyList_SET_ITEM(pv, (Py_ssize_t)i, row);
-    }
-    for (size_t i = 0; ok && i < T.size(); ++i) {
-        PyObject* row = Py_BuildValue("(iii)", T[i][0], T[i][1], T[i][2]);
-        ok = row != nullptr;
-        if (ok) PyList_SET_ITEM(pt, (Py_ssize_t)i, row);
-    }
-    Py_DECREF(f64);
-    if (!ok) { Py_XDECREF(pv); Py_XDECREF(pt); return nullptr; }
-    return Py_BuildValue("(NN)", pv, pt);
+void decimate_mesh(std::vector<Vert>& V, std::vector<Tri>& T,
+                   const std::vector<Pin>& pins, const double* seam, int rounds,
+                   bool allow_split, const Oracles& O) {
+    const Params Pd = decimate_params();
+    const std::vector<char> pin = pin_verts(V, pins);
+    Ctx C{V, pin, seam, O, Pd};
+    run_decimate(C, T, rounds, allow_split);
 }
-
-}  // namespace
 
 }  // namespace navgrow
 
 using namespace navgrow;
 
+namespace {
+
+// Oracles answered by the reference's Python callables (None for either).
+Oracles python_oracles(PyObject* ground_ok, PyObject* surface) {
+    Oracles O;
+    if (ground_ok != Py_None) {
+        O.ground_ok = [ground_ok](const Vert& a, const Vert& v, const Vert& b) {
+            PyObject* r = PyObject_CallFunction(ground_ok, "[ddd][ddd][ddd]", a.x, a.y, a.z,
+                                                v.x, v.y, v.z, b.x, b.y, b.z);
+            if (!r) throw PyErrorSet{};
+            const int truth = PyObject_IsTrue(r);
+            Py_DECREF(r);
+            if (truth < 0) throw PyErrorSet{};
+            return truth != 0;
+        };
+    }
+    if (surface != Py_None) {
+        O.surface = [surface](double x, double y, double near, double* z, bool* znp) {
+            PyObject* got = PyObject_CallFunction(surface, "ddd", x, y, near);
+            if (!got) throw PyErrorSet{};
+            const bool have = got != Py_None;
+            if (have) {
+                *z = PyFloat_AsDouble(got);
+                *znp = !PyFloat_CheckExact(got);
+            }
+            Py_DECREF(got);
+            if (have && *z == -1.0 && PyErr_Occurred()) throw PyErrorSet{};
+            return have;
+        };
+    }
+    return O;
+}
+
+}  // namespace
+
 // decimate(verts, tris, pins, seam_bounds, rounds, allow_split, ground_ok,
-//          surface, params) -> (verts, tris)
+//          surface) -> (verts, tris)
 //
 // clean_decimate.decimate's contract: verts come back as [x, y, z] lists
 // (split vertices appended), tris as (a, b, c) tuples.  pins is the
 // (x, y[, radius]) list or None, seam_bounds (minx, miny, maxx, maxy) or None,
-// ground_ok / surface callables or None, params the tunables dict.
+// ground_ok / surface callables or None.  Needs set_params.
 PyObject* py_decimate(PyObject*, PyObject* args) {
-    PyObject *o_verts, *o_tris, *o_pins, *o_seam, *o_ground, *o_surface, *o_par;
+    PyObject *o_verts, *o_tris, *o_pins, *o_seam, *o_ground, *o_surface;
     int rounds, allow_split;
-    if (!PyArg_ParseTuple(args, "OOOOipOOO!", &o_verts, &o_tris, &o_pins,
-                          &o_seam, &rounds, &allow_split, &o_ground, &o_surface,
-                          &PyDict_Type, &o_par))
+    if (!PyArg_ParseTuple(args, "OOOOipOO", &o_verts, &o_tris, &o_pins,
+                          &o_seam, &rounds, &allow_split, &o_ground, &o_surface))
         return nullptr;
-    Params P;
     std::vector<Vert> V;
     std::vector<Tri> T;
     std::vector<Pin> pins;
     double seam[4];
-    if (!read_params(o_par, P) || !read_verts(o_verts, V) ||
-        !read_tris(o_tris, V.size(), T) ||
-        !read_pins(o_pins, P.pin_radius, pins))
+    bool has_seam;
+    if (!read_verts(o_verts, V, false) || !read_tris(o_tris, V.size(), T) ||
+        !read_pins(o_pins, P().DECIMATE_PIN_RADIUS, pins) ||
+        !read_bounds(o_seam, seam, &has_seam))
         return nullptr;
-    if (o_seam != Py_None) {
-        PyObject* f = PySequence_Fast(o_seam, "seam_bounds must be a 4-sequence");
-        if (!f) return nullptr;
-        bool ok = PySequence_Fast_GET_SIZE(f) == 4;
-        for (int k = 0; ok && k < 4; ++k) {
-            seam[k] = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(f, k));
-            ok = !(seam[k] == -1.0 && PyErr_Occurred());
-        }
-        Py_DECREF(f);
-        if (!ok) {
-            if (!PyErr_Occurred())
-                PyErr_SetString(PyExc_ValueError, "seam_bounds needs 4 values");
-            return nullptr;
-        }
-    }
-    const std::vector<char> pin = pin_verts(V, pins, P);
-    Ctx C{V, pin, o_seam != Py_None ? seam : nullptr,
-          o_ground != Py_None ? o_ground : nullptr,
-          o_surface != Py_None ? o_surface : nullptr, P};
     try {
-        run_decimate(C, T, rounds, allow_split != 0);
+        decimate_mesh(V, T, pins, has_seam ? seam : nullptr, rounds, allow_split != 0,
+                      python_oracles(o_ground, o_surface));
     } catch (const PyErrorSet&) {
         return nullptr;
     } catch (const std::bad_alloc&) {
         return PyErr_NoMemory();
     }
-    return to_python(V, T);
+    return Py_BuildValue("(NN)", verts_to_python(V), tris_to_python(T));
 }
 
 // pymath(op, values) -> list: the pymath.h helper `op` applied to `values`,

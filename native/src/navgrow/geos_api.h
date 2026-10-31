@@ -25,8 +25,10 @@ typedef struct GEOSPrepGeom_t GEOSPreparedGeometry;
 typedef void (*GEOSMessageHandler_r)(const char* message, void* userdata);
 
 struct GeosApi {
-    GEOSContextHandle_t ctx = nullptr;
-    std::string last_error;
+    // This thread's GEOS context (each build thread gets its own on first use)
+    // and the last error GEOS reported on it.
+    GEOSContextHandle_t ctx() const;
+    const std::string& last_error() const;
 
     GEOSContextHandle_t (*init_r)();
     GEOSMessageHandler_r (*set_error_handler)(GEOSContextHandle_t,
@@ -68,6 +70,35 @@ struct GeosApi {
     int (*seq_size)(GEOSContextHandle_t, const GEOSCoordSequence*, unsigned*);
     int (*seq_get_xy)(GEOSContextHandle_t, const GEOSCoordSequence*, unsigned,
                       double*, double*);
+    void (*finish)(GEOSContextHandle_t);
+    GEOSGeometry* (*unary_union)(GEOSContextHandle_t, const GEOSGeometry*);
+    GEOSGeometry* (*difference)(GEOSContextHandle_t, const GEOSGeometry*,
+                                const GEOSGeometry*);
+    GEOSGeometry* (*make_valid)(GEOSContextHandle_t, const GEOSGeometry*);
+    GEOSGeometry* (*buffer_style)(GEOSContextHandle_t, const GEOSGeometry*,
+                                  double, int, int, int, double);
+    GEOSGeometry* (*collection)(GEOSContextHandle_t, int, GEOSGeometry**,
+                                unsigned);
+    GEOSGeometry* (*clone)(GEOSContextHandle_t, const GEOSGeometry*);
+    int (*num_geometries)(GEOSContextHandle_t, const GEOSGeometry*);
+    const GEOSGeometry* (*geometry_n)(GEOSContextHandle_t, const GEOSGeometry*,
+                                      int);
+    const GEOSGeometry* (*interior_ring_n)(GEOSContextHandle_t,
+                                           const GEOSGeometry*, int);
+    GEOSGeometry* (*boundary)(GEOSContextHandle_t, const GEOSGeometry*);
+    int (*distance)(GEOSContextHandle_t, const GEOSGeometry*,
+                    const GEOSGeometry*, double*);
+    char (*contains)(GEOSContextHandle_t, const GEOSGeometry*,
+                     const GEOSGeometry*);
+    GEOSGeometry* (*cdt)(GEOSContextHandle_t, const GEOSGeometry*);
+    int (*length)(GEOSContextHandle_t, const GEOSGeometry*, double*);
+    GEOSGeometry* (*interpolate_normalized)(GEOSContextHandle_t,
+                                            const GEOSGeometry*, double);
+    GEOSGeometry* (*line_string)(GEOSContextHandle_t, GEOSCoordSequence*);
+    char (*prepared_contains_xy)(GEOSContextHandle_t,
+                                 const GEOSPreparedGeometry*, double, double);
+    GEOSGeometry* (*empty_collection)(GEOSContextHandle_t, int);
+    char (*is_simple)(GEOSContextHandle_t, const GEOSGeometry*);
     // shapely.lib C API: PyGEOS_GetGEOSGeometry, and PyGEOS_CreateGeometry,
     // which takes ownership of the geometry it wraps.
     char (*shapely_geom)(PyObject*, GEOSGeometry**);
@@ -92,7 +123,7 @@ struct GeosOwned {
     GeosApi* api;
     GEOSGeometry* g;
     GeosOwned(GeosApi* a, GEOSGeometry* p) : api(a), g(p) {}
-    ~GeosOwned() { if (g) api->destroy(api->ctx, g); }
+    ~GeosOwned() { if (g) api->destroy(api->ctx(), g); }
     GeosOwned(const GeosOwned&) = delete;
     GeosOwned& operator=(const GeosOwned&) = delete;
 };
