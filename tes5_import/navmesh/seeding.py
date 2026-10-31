@@ -67,19 +67,25 @@ def _border_polygons(regions) -> dict:
     return out
 
 
-def _inside(x, y, poly) -> bool:
-    """Even-odd test: (x, y) lies inside the polygon."""
-    hit = False
-    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
-        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
-            hit = not hit
-    return hit
+def inside_any(px, py, polys):
+    """Even-odd test of every point (px[i], py[i]) against each polygon; True where any holds it."""
+    out = np.zeros(px.shape, dtype=bool)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        for poly in polys:
+            hit = np.zeros(px.shape, dtype=bool)
+            for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+                hit ^= ((y1 > py) != (y2 > py)) & (px < x1 + (py - y1) * (x2 - x1) / (y2 - y1))
+            out |= hit
+    return out
 
 
-def _within(polys, gx, gy) -> bool:
-    """True when a corner, edge midpoint or centre of cell (gx, gy) is in a polygon."""
-    return any(_inside((gx + a) * CELL_SIZE, (gy + b) * CELL_SIZE, poly)
-               for a in (0, 0.5, 1) for b in (0, 0.5, 1) for poly in polys)
+def _within(polys, squares):
+    """Per (wrld, gx, gy) square: whether a corner, edge midpoint or centre of the cell is in a polygon."""
+    grid = np.asarray([s[1:] for s in squares], dtype=np.float64).reshape(-1, 2)
+    steps = np.array([0.0, 0.5, 1.0])
+    px = np.repeat((grid[:, :1] + steps) * CELL_SIZE, 3, axis=1)
+    py = np.tile((grid[:, 1:] + steps) * CELL_SIZE, 3)
+    return inside_any(px, py, polys).any(axis=1)
 
 
 def drop_unplayable(seedable: dict, worlds, regions) -> None:
@@ -90,11 +96,14 @@ def drop_unplayable(seedable: dict, worlds, regions) -> None:
     See: docs/commentary/tes5_import_navmesh.md#seeded-cells
     """
     small = {get_formid(w, 'FormID') for w in worlds if get_int(w, 'DATA.Flags') & _SMALL_WORLD}
-    borders = _border_polygons(regions)
-    for square in list(seedable):
-        polys = borders.get(square[0])
-        if square[0] in small or (polys and not _within(polys, square[1], square[2])):
-            del seedable[square]
+    for square in [s for s in seedable if s[0] in small]:
+        del seedable[square]
+    for wrld, polys in _border_polygons(regions).items():
+        squares = [s for s in seedable if s[0] == wrld]
+        if polys and squares:
+            for square, keep in zip(squares, _within(polys, squares)):
+                if not keep:
+                    del seedable[square]
 
 
 # ----------------------------------------------------------------------------

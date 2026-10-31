@@ -37,8 +37,11 @@ mesh's links are appended in sorted order, so the output stays byte-reproducible
 
 import struct
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+
+from core.worker_budget import worker_count
 
 # NVNM layout constants (see module docstring).
 EDGE_LINK_SIZE = 10
@@ -451,6 +454,7 @@ def _repack(views, holders, masters, navm_cache, relinked) -> int:
     from .from_pgrd import pack_navm_record
     from ..base.writer import pack_subrecord
     rewritten = 0
+    pending = []
     for cell, view in views.items():
         if cell in masters:
             if not view.dirty:
@@ -472,13 +476,13 @@ def _repack(views, holders, masters, navm_cache, relinked) -> int:
         # NVMI omits).  Stored on the meta so navi_builder can mirror it.
         meta['edge_link_fids'] = sorted(
             {lk[1] for lk in view.links if lk[1] != view.fid})
-        if not view.dirty:
-            continue
-        new_nvnm = pack_subrecord('NVNM', view.pack())
-        subs = prefix + new_nvnm + suffix
-        navm_cache[key] = (pack_navm_record(meta['fid'], subs), meta)
-        rewritten += 1
-    return rewritten
+        if view.dirty:
+            pending.append((key, meta, prefix + pack_subrecord('NVNM', view.pack()) + suffix))
+    with ThreadPoolExecutor(max_workers=worker_count()) as ex:
+        records = list(ex.map(lambda p: pack_navm_record(p[1]['fid'], p[2]), pending))
+    for (key, meta, _subs), record in zip(pending, records):
+        navm_cache[key] = (record, meta)
+    return rewritten + len(pending)
 
 
 def extract_nvnm(navm_bytes: bytes):
