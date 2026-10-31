@@ -10,8 +10,9 @@ See: docs/commentary/tes5_import_navmesh.md#sheet-stitching-runs-to-convergence
 import math
 from itertools import product
 
+import numpy as np
 
-from . import params
+from . import native_loader, params
 from .union_geom import (
     STOREY_GAP_Z, WALL_SLOPE_COS, _height_on, _land_of, _tri_area,
     _tri_components, _tri_edges, _tri_span,
@@ -125,6 +126,22 @@ def _adjacency_probe(tris, alive):
     return removable
 
 
+def _stacked_with_areas(verts, tris):
+    """(stacked pairs, {ti: plan area}) for `_destack`, natively when enabled.
+
+    See: docs/commentary/tes5_import_navmesh.md#native-port-ab
+    """
+    if native_loader.NATIVE:
+        return native_loader.native_geos().stacked_pairs(
+            np.asarray(verts, dtype=np.float64).reshape(-1, 3),
+            np.asarray(tris, dtype=np.int32).reshape(-1, 3), 4.0)
+    polys, geoms, gmap = _plan_polys(verts, tris, 4.0)
+    if not geoms:
+        return [], {}
+    pairs = _stacked_pairs(verts, tris, polys, geoms, gmap)
+    return pairs, {ti: polys[ti].area for (_na, a, b) in pairs for ti in (a, b)}
+
+
 def _destack(verts, tris):
     """Drop the lower of two triangles stacked on the SAME surface.
 
@@ -136,10 +153,7 @@ def _destack(verts, tris):
     if len(tris) < 2:
         return tris
     tris = [tuple(t) for t in tris]
-    polys, geoms, gmap = _plan_polys(verts, tris, 4.0)
-    if not geoms:
-        return tris
-    pairs = _stacked_pairs(verts, tris, polys, geoms, gmap)
+    pairs, area = _stacked_with_areas(verts, tris)
     if not pairs:
         return tris
     alive = [True] * len(tris)
@@ -148,8 +162,7 @@ def _destack(verts, tris):
     for (_na, ti, tj) in pairs:
         if not alive[ti] or not alive[tj]:
             continue
-        small, big = ((ti, tj) if polys[ti].area <= polys[tj].area
-                      else (tj, ti))
+        small, big = ((ti, tj) if area[ti] <= area[tj] else (tj, ti))
         for victim in (small, big):
             if removable(victim):
                 alive[victim] = False
@@ -817,6 +830,24 @@ def _overlap_probe(out, welded, provisional):
     return probe
 
 
+def _native_bad_welds(out, welded, provisional, vtris):
+    """The provisional reps whose triangles overlap other mesh, by the native probe.
+
+    See: docs/commentary/tes5_import_navmesh.md#native-port-ab
+    """
+    reps = sorted(provisional)
+    starts, flat = [0], []
+    for rep in reps:
+        flat.extend(vtris.get(rep, ()))
+        starts.append(len(flat))
+    i32 = np.int32
+    return native_loader.native_geos().bad_welds(
+        np.asarray(out, dtype=np.float64).reshape(-1, 3),
+        np.asarray(welded, dtype=i32).reshape(-1, 3),
+        np.asarray(reps, dtype=i32), np.asarray(starts, dtype=i32),
+        np.asarray(flat, dtype=i32))
+
+
 def _revert_bad_welds(verts, out, remap, welded, provisional):
     """Undo any provisional weld whose triangles now overlap; True if reverted."""
     vtris = {}
@@ -824,13 +855,16 @@ def _revert_bad_welds(verts, out, remap, welded, provisional):
         for k in t:
             if k in provisional:
                 vtris.setdefault(k, []).append(ti)
-    probe = _overlap_probe(out, welded, provisional)
-    bad = set()
-    for rep in sorted(provisional):
-        for ti in vtris.get(rep, ()):
-            if probe(ti):
-                bad.add(rep)
-                break
+    if native_loader.NATIVE:
+        bad = _native_bad_welds(out, welded, provisional, vtris)
+    else:
+        probe = _overlap_probe(out, welded, provisional)
+        bad = set()
+        for rep in sorted(provisional):
+            for ti in vtris.get(rep, ()):
+                if probe(ti):
+                    bad.add(rep)
+                    break
     if not bad:
         return False
     for rep in sorted(bad):

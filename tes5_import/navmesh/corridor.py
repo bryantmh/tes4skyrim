@@ -43,8 +43,9 @@ disconnects everything around it under _compute_adjacency.
 import math
 
 import numpy as np
+import shapely
 
-from . import corridor_grow, params, world
+from . import native_loader, corridor_grow, params, world
 from .door_routes import route_doors
 from .spawn_nodes import drop_covered_discs, standing_spawns
 
@@ -100,6 +101,8 @@ def _surface_sampler(walkable):
     The returned callable carries a `.layers(x, y)` attribute listing every
     distinct walkable height there, ascending, deduped at 2u.
     """
+    if native_loader.NATIVE:
+        return _native_surface_sampler(walkable)
     cell = 128.0
     W, grid, minx, miny = _height_grid(walkable, cell)
     if W is None:
@@ -122,6 +125,21 @@ def _surface_sampler(walkable):
         return out
 
     sample.layers = layers
+    return sample
+
+
+def _native_surface_sampler(walkable):
+    """_surface_sampler answered by the native TriIndex, or None for no soup."""
+    if not len(walkable):
+        return None
+    index = corridor_grow.native_index(walkable)
+    surface = index.surface
+
+    def sample(x, y, near_z):
+        """The walkable height at (x, y) closest to near_z, or None."""
+        return surface(x, y, near_z)
+
+    sample.layers = index.layers
     return sample
 
 
@@ -392,8 +410,7 @@ def _plan_stations(nodes, edges, node_z, degree, grow, profiles, land=None,
         end = plan[at + 1][-1] if at + 1 < len(plan) else len(st)
         if _stands_on_land(land, nodes, node_z, i, j):
             on_land[entry[-1]:end] = 1.0
-            for row in st[entry[-1]:end]:
-                row[2] = land.z(row[0], row[1])
+            st[entry[-1]:end, 2] = land.z_many(st[entry[-1]:end, :2])
     return st, plan, on_land
 
 
@@ -843,17 +860,15 @@ def _anchor_stations(mask, ap, ax, ay, dx, dy, n):
 
     See: docs/commentary/tes5_import_navmesh.md#flat-polys-are-clipped-off-level
     """
-    from shapely.geometry import Point
-    anchored = set()
-    for k in range(n + 1):
-        if mask[k]:
-            continue
-        try:
-            if ap.contains(Point(ax + dx * (k / n), ay + dy * (k / n))):
-                anchored.add(k)
-        except Exception:
-            pass
-    return anchored
+    ks = [k for k in range(n + 1) if not mask[k]]
+    if not ks:
+        return set()
+    try:
+        inside = shapely.contains_xy(ap, [ax + dx * (k / n) for k in ks],
+                                     [ay + dy * (k / n) for k in ks])
+    except Exception:
+        return set()
+    return {k for k, hit in zip(ks, inside.tolist()) if hit}
 
 
 def _cut_quads(strip, mask, anchored, frame, half, n):
@@ -965,6 +980,8 @@ def _simplify(pts, tol):
     """Douglas-Peucker on a polyline, keeping both endpoints."""
     if tol <= 0.0 or len(pts) < 3:
         return pts
+    if native_loader.NATIVE:
+        return [pts[i] for i in native_loader.load_native().simplify(pts, tol)]
     keep = [False] * len(pts)
     keep[0] = keep[-1] = True
     stack = [(0, len(pts) - 1)]

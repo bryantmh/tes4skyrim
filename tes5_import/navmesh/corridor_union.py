@@ -87,14 +87,12 @@ and reconstructed — each ribbon already knows its Z everywhere along itself.
 import math
 
 import numpy as np
+import shapely
 from shapely.errors import GEOSException
 from shapely.ops import unary_union
 from shapely.validation import make_valid
-# Bound once at module scope: `_overlap_height_gap` is called ~30k times on a
-# large cell, and re-running `import shapely` per call is pure interpreter
-# overhead on an already-loaded module.
 
-from . import params
+from . import native_loader, params
 
 from .union_mesh import (
     _destack as _destack,
@@ -135,6 +133,8 @@ from .union_geom import (
     _RIBBON_CACHE as _RIBBON_CACHE,
     _clip_strip_near as _clip_strip_near,
     _distance_to as _distance_to,
+    valid_ribbons,
+    flat_strips as flat_strips,
     _has_edge as _has_edge,
     _height_on as _height_on,
     _land_of as _land_of,
@@ -246,8 +246,7 @@ def _sheet_coverage(group, gi, ctx):
     See: docs/commentary/tes5_import_navmesh.md#sheets-claim-ground-exclusively
     """
     from shapely.geometry import box
-    gpolys = [p for p in (_ribbon_polygon(s) for s in group)
-              if p.is_valid and not p.is_empty]
+    gpolys = [p for (_s, p) in valid_ribbons(group)]
     gpolys.extend(ctx['junction_extra'].get(gi, ()))
     if not gpolys:
         return None
@@ -433,32 +432,25 @@ def _mesh_sheets(sheets, ctx, door_edges):
     return verts, tris, vert_src
 
 
-def _merged_coverage(strips, cell_bounds, wall_cut):
-    """The flattened union of every ribbon, clipped and wall-cut, or None.
+def _has_coverage(strips, cell_bounds):
+    """True when the union of every valid ribbon is non-empty inside `cell_bounds`.
 
+    A ribbon whose box lies strictly inside the bounds answers yes, every box
+    strictly outside answers no; only the rest needs the union.
     See: docs/commentary/tes5_import_navmesh.md#union-inputs-and-clipping
     """
     from shapely.geometry import box
-    polys = [p for p in (_ribbon_polygon(s) for s in strips)
-             if p.is_valid and not p.is_empty]
-    if not polys:
-        return None
-    merged = unary_union(polys)
-    if merged.is_empty:
-        return None
-    if cell_bounds is not None:
-        minx, miny, maxx, maxy = cell_bounds
-        merged = merged.intersection(box(minx, miny, maxx, maxy))
-        if merged.is_empty:
-            return None
-    if wall_cut is not None:
-        try:
-            cut = merged.difference(wall_cut)
-            if not cut.is_empty:
-                merged = cut
-        except Exception:
-            pass
-    return merged
+    polys = [p for (_s, p) in valid_ribbons(strips)]
+    if not polys or cell_bounds is None:
+        return bool(polys)
+    minx, miny, maxx, maxy = cell_bounds
+    b = shapely.bounds(polys)
+    if ((b[:, 0] > minx) & (b[:, 2] < maxx) & (b[:, 1] > miny) & (b[:, 3] < maxy)).any():
+        return True
+    if ((b[:, 2] < minx) | (b[:, 0] > maxx) | (b[:, 3] < miny) | (b[:, 1] > maxy)).all():
+        return False
+    return not unary_union(polys).intersection(
+        box(minx, miny, maxx, maxy)).is_empty
 
 
 def _finish_union(verts, tris, strips, node_pts, node_half, stitch_nodes,
@@ -496,7 +488,7 @@ def build_union_mesh(strips, extra_strips=None, door_edges=None,
     if not strips:
         return [], []
     strips = list(strips) + list(extra_strips or ())
-    if _merged_coverage(strips, cell_bounds, wall_cut) is None:
+    if not _has_coverage(strips, cell_bounds):
         return [], []
 
     sheets = _split_plan_overlaps(_storey_groups(strips))
@@ -867,16 +859,38 @@ def _notch_triangle(verts, counts, apex, ends, lines, cellsz):
     return (apex, p, q) if cross > 0 else (apex, q, p)
 
 
+def _stacking_fills(verts, tris, cands):
+    """{fill triangle: True if it would stack on ground already meshed}.
+
+    See: docs/commentary/tes5_import_navmesh.md#native-port-ab
+    """
+    if native_loader.NATIVE:
+        i32 = np.int32
+        got = native_loader.native_geos().notch_overlaps(
+            np.asarray(verts, dtype=np.float64).reshape(-1, 3),
+            np.asarray(tris, dtype=i32).reshape(-1, 3),
+            np.asarray(cands, dtype=i32).reshape(-1, 3), STOREY_GAP_Z)
+        return dict(zip(cands, got))
+    index = _plan_index(verts, tris)
+    return {tri: _overlaps_existing(verts, tris, tri, index) for tri in cands}
+
+
 def _notch_round(verts, tris, lines, cellsz):
-    """One pass of notch filling; returns the triangles it added."""
+    """One pass of notch filling; returns the triangles it added.
+
+    A fill accepted earlier in the round only ever vetoes a later one, so every
+    apex's fill is judged for stacking up front, in one batch.
+    """
     counts, border = _border_edge_counts(tris)
     if not border:
         return []
-    index = _plan_index(verts, tris)
     at = {}
     for (a, b) in border:
         at.setdefault(a, []).append(b)
         at.setdefault(b, []).append(a)
+    first = (_notch_triangle(verts, counts, apex, ends, lines, cellsz)
+             for apex, ends in at.items() if len(ends) == 2)
+    stacks = _stacking_fills(verts, tris, [t for t in first if t is not None])
     added, used = [], set()
     for apex, ends in at.items():
         if len(ends) != 2 or apex in used:
@@ -884,7 +898,7 @@ def _notch_round(verts, tris, lines, cellsz):
         if ends[0] in used or ends[1] in used:
             continue
         tri = _notch_triangle(verts, counts, apex, ends, lines, cellsz)
-        if tri is None or _overlaps_existing(verts, tris, tri, index):
+        if tri is None or stacks[tri]:
             continue
         added.append(tri)
         used.update(tri)
@@ -960,35 +974,8 @@ def _levels_batch(strips, points):
 
     See: docs/commentary/tes5_import_navmesh.md#levels-are-batched
     """
-    from ._native_loader import load_native
-    native = load_native('_navgrow_native')
-
-    rows = []
-    poly = []
-    prof = []
-    land = _land_of(strips)
-    for s_ in strips:
-        p = s_.get('poly')
-        off, n = 0, 0
-        if p is not None:
-            off, n = len(poly), len(p)
-            poly.extend(p)
-        pr = s_.get('prof')
-        proff, prn = 0, 0
-        if pr is not None and len(pr) >= 2:
-            proff, prn = len(prof), len(pr)
-            prof.extend(pr)
-        a_, b_ = s_['a'], s_['b']
-        rows.append((a_[0], a_[1], a_[2], b_[0], b_[1], b_[2],
-                     float(s_['half']), float(off), float(n),
-                     float(proff), float(prn),
-                     float(s_.get('land') is not None)))
-    sarr = (np.asarray(rows, dtype=np.float64) if rows
-            else np.zeros((0, 12), dtype=np.float64))
-    parr = (np.asarray(poly, dtype=np.float64).reshape(-1, 2) if poly
-            else np.zeros((0, 2), dtype=np.float64))
-    farr = (np.asarray(prof, dtype=np.float64).reshape(-1, 3) if prof
-            else np.zeros((0, 3), dtype=np.float64))
+    native = native_loader.load_native()
+    sarr, parr, farr, land = flat_strips(strips)
     qarr = (np.asarray(points, dtype=np.float64).reshape(-1, 2) if len(points)
             else np.zeros((0, 2), dtype=np.float64))
     if land is None:

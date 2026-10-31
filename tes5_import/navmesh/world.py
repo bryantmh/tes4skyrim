@@ -20,7 +20,7 @@ import numpy as np
 
 from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..record_types.world import shifted_position
-from . import params
+from . import native_loader, params
 
 _CELL_SIZE = 4096.0
 _LAND_VERTS = 33
@@ -150,6 +150,14 @@ class LandField:
         if tx >= ty:
             return float(z00 + (z10 - z00) * tx + (z11 - z10) * ty)
         return float(z00 + (z11 - z01) * tx + (z01 - z00) * ty)
+
+    def z_many(self, xy):
+        """`z` at every row of the (N, 2) array `xy`, as a list."""
+        if native_loader.NATIVE:
+            return native_loader.load_native().land_z(
+                self.grid, self.ox, self.oy,
+                np.ascontiguousarray(xy, dtype=np.float64).reshape(-1, 2))
+        return [self.z(x, y) for (x, y) in xy]
 
 
 def land_field(land_rec, origin_x, origin_y):

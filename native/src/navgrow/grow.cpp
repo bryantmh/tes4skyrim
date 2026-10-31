@@ -61,257 +61,29 @@
 #include <unordered_map>
 #include <vector>
 
-// Hard ceiling on the dense bucket grid a TriGrid may allocate.
-//
-// TriGrid indexes buckets DENSELY (counts/starts are nx*ny entries), so the
-// allocation is driven by the soup's XY *extent*, not its triangle count. A
-// single garbage vertex is therefore unbounded-allocation-shaped: Nehrim's
-// interior cell 011E4FEC ships refs with PosY = 8.936e17 (a real, exported
-// value), which put the extent at 8.9e17 units -> 5.4e14 buckets -> a 4-billion-
-// GB request. std::bad_alloc from inside Py_BEGIN_ALLOW_THREADS with no handler
-// anywhere in the extension called std::terminate(), so the pool worker died by
-// abort() with no Python traceback -- surfacing in the parent only as an opaque
-// BrokenProcessPool (see docs/performance_notes.md).
-//
-// 16M buckets is ~128 MB across counts+starts, and is orders of magnitude above
-// anything real: at the 128-unit bucket size a whole 4096-unit exterior cell is
-// 33x33 = 1,089 buckets, and 16M would be a soup ~512,000 units across -- more
-// than twice the width of the entire Tamriel worldspace. Exceeding it means the
-// input is corrupt, so the call raises ValueError rather than clamping: a
-// silently reduced grid would emit a wrong navmesh instead of a diagnosable
-// failure.
-static const long long kMaxBuckets = 16LL * 1024 * 1024;
+#include "strip.h"
+#include "trigrid.h"
+
+PyObject* py_bind_geos(PyObject*, PyObject*);   // geos_bind.cpp
+PyObject* py_pair_gaps(PyObject*, PyObject*);   // sheets.cpp
+PyObject* py_decimate(PyObject*, PyObject*);    // decimate.cpp
+PyObject* py_pymath(PyObject*, PyObject*);      // decimate.cpp
+PyObject* py_flip2d(PyObject*, PyObject*);      // meshflip.cpp
+PyObject* py_hex_refine(PyObject*, PyObject*);  // meshflip.cpp
+PyObject* py_bad_welds(PyObject*, PyObject*);   // welds.cpp
+PyObject* py_same_surface_pieces(PyObject*, PyObject*);  // sheets.cpp
+PyObject* py_stacked_pairs(PyObject*, PyObject*);        // stack.cpp
+PyObject* py_notch_overlaps(PyObject*, PyObject*);       // stack.cpp
+PyObject* py_candidate_pairs(PyObject*, PyObject*);      // sheets.cpp
+PyObject* py_refine_land(PyObject*, PyObject*);          // refine.cpp
+PyObject* py_refine_steep(PyObject*, PyObject*);         // refine.cpp
+PyObject* py_land_z(PyObject*, PyObject*);               // refine.cpp
+PyObject* py_simplify(PyObject*, PyObject*);             // refine.cpp
+PyObject* py_cull_slivers(PyObject*, PyObject*);         // cull.cpp
 
 namespace {
 
-// --------------------------------------------------------------------------
-// Uniform XY bucket grid over a triangle soup.
-//
-// Mirrors corridor_grow._TriGrid: buckets of `cell` units, queried over the
-// 3x3 neighbourhood so a triangle near a bucket boundary is never missed (a
-// miss on the wall soup means growth walks straight through a wall).
-// --------------------------------------------------------------------------
-struct TriGrid {
-    std::vector<double> vx;      // 9 doubles per triangle (3 verts x xyz)
-    std::vector<double> x0, x1, y0, y1, z0, z1;
-    double minx = 0.0, miny = 0.0, cell = 128.0;
-    long long nx = 0, ny = 0;    // grid dimensions
-    // CSR-style bucket index: starts[b]..starts[b+1] into `items`.
-    // `starts` is 64-bit because total bucket membership (one triangle spans
-    // many buckets) overflowed a 32-bit accumulator; `items` holds triangle
-    // indices, which are bounded by the triangle count, so int is fine.
-    std::vector<long long> starts;
-    std::vector<int> items;
-    size_t ntri = 0;
-
-    void build(const double* tris, size_t n, double cellsize) {
-        ntri = n;
-        cell = cellsize;
-        vx.assign(tris, tris + n * 9);
-        if (!n) return;
-        x0.resize(n); x1.resize(n); y0.resize(n);
-        y1.resize(n); z0.resize(n); z1.resize(n);
-        double gminx = 1e300, gminy = 1e300, gmaxx = -1e300, gmaxy = -1e300;
-        // NaN/Inf must be rejected before the extent maths: they propagate
-        // through min/max, make (gmaxx-gminx)/cell non-finite, and the cast to
-        // long long is then undefined behaviour (observed as a garbage nx*ny
-        // that allocates until bad_alloc).
-        for (size_t i = 0; i < n * 9; ++i) {
-            if (!std::isfinite(vx[i]))
-                throw std::invalid_argument(
-                    "non-finite coordinate in triangle soup");
-        }
-        for (size_t i = 0; i < n; ++i) {
-            const double* t = &vx[i * 9];
-            x0[i] = std::min(std::min(t[0], t[3]), t[6]);
-            x1[i] = std::max(std::max(t[0], t[3]), t[6]);
-            y0[i] = std::min(std::min(t[1], t[4]), t[7]);
-            y1[i] = std::max(std::max(t[1], t[4]), t[7]);
-            z0[i] = std::min(std::min(t[2], t[5]), t[8]);
-            z1[i] = std::max(std::max(t[2], t[5]), t[8]);
-            gminx = std::min(gminx, x0[i]); gmaxx = std::max(gmaxx, x1[i]);
-            gminy = std::min(gminy, y0[i]); gmaxy = std::max(gmaxy, y1[i]);
-        }
-        minx = gminx; miny = gminy;
-        const double spanx = (gmaxx - gminx) / cell;
-        const double spany = (gmaxy - gminy) / cell;
-        // Check the span in DOUBLE before casting: a span beyond long long's
-        // range makes the cast undefined behaviour, so the guard cannot be
-        // written on nx/ny after the fact.
-        if (spanx > (double)kMaxBuckets || spany > (double)kMaxBuckets ||
-            spanx * spany > (double)kMaxBuckets)
-            throw std::invalid_argument("triangle soup XY extent too large");
-        nx = (long long)spanx + 1;
-        ny = (long long)spany + 1;
-        if (nx < 1) nx = 1;
-        if (ny < 1) ny = 1;
-        if (nx * ny > kMaxBuckets)
-            throw std::invalid_argument("triangle soup XY extent too large");
-
-        // Two-pass CSR build: count per bucket, prefix-sum, then fill.  A
-        // dense array beats the Python dict-of-lists and keeps each bucket's
-        // indices ASCENDING, which is what makes the visit order deterministic.
-        std::vector<long long> counts((size_t)(nx * ny) + 1, 0);
-        auto span = [&](size_t i, long long& a, long long& b,
-                        long long& c, long long& d) {
-            a = (long long)std::floor((x0[i] - minx) / cell);
-            b = (long long)std::floor((x1[i] - minx) / cell);
-            c = (long long)std::floor((y0[i] - miny) / cell);
-            d = (long long)std::floor((y1[i] - miny) / cell);
-            a = std::max(0LL, std::min(a, nx - 1));
-            b = std::max(0LL, std::min(b, nx - 1));
-            c = std::max(0LL, std::min(c, ny - 1));
-            d = std::max(0LL, std::min(d, ny - 1));
-        };
-        for (size_t i = 0; i < n; ++i) {
-            long long a, b, c, d; span(i, a, b, c, d);
-            for (long long gx = a; gx <= b; ++gx)
-                for (long long gy = c; gy <= d; ++gy)
-                    counts[(size_t)(gy * nx + gx)]++;
-        }
-        // `acc` is the total bucket-membership count: one triangle spanning a
-        // wide XY box lands in many buckets, so this is >> n and was an `int`
-        // -- it overflowed to negative on a large soup, and the following
-        // (size_t)acc turned that into a huge allocation and an out-of-bounds
-        // fill. 64-bit throughout, with an explicit check before the cast.
-        starts.assign((size_t)(nx * ny) + 1, 0);
-        long long acc = 0;
-        for (size_t b = 0; b < (size_t)(nx * ny); ++b) {
-            starts[b] = acc; acc += counts[b];
-        }
-        starts[(size_t)(nx * ny)] = acc;
-        if (acc < 0)
-            throw std::invalid_argument("bucket membership count overflow");
-        items.assign((size_t)acc, 0);
-        std::vector<long long> cur(starts.begin(), starts.end() - 1);
-        for (size_t i = 0; i < n; ++i) {
-            long long a, b, c, d; span(i, a, b, c, d);
-            for (long long gx = a; gx <= b; ++gx)
-                for (long long gy = c; gy <= d; ++gy)
-                    items[(size_t)cur[(size_t)(gy * nx + gx)]++] = (int)i;
-        }
-    }
-};
-
-// --------------------------------------------------------------------------
-// Thin oriented slab vs triangle (mirrors _tri_hits_slab).
-//
-// The slab is centered at (cx,cy): half_w along the edge tangent (~actor
-// width), `depth` along the march direction (thin), Z span [z_lo, z_hi].
-// Tested by projecting into the slab's own 2D frame and running SAT against
-// the axis-aligned rectangle, gated by Z overlap.
-// --------------------------------------------------------------------------
-inline bool tri_hits_slab(const double* t, double cx, double cy,
-                          double ux, double uy, double half_w,
-                          double tx, double ty, double depth,
-                          double z_lo, double z_hi) {
-    const double tz0 = t[2], tz1 = t[5], tz2 = t[8];
-    if (std::max(std::max(tz0, tz1), tz2) < z_lo) return false;
-    if (std::min(std::min(tz0, tz1), tz2) > z_hi) return false;
-
-    double px[3], py[3];
-    for (int k = 0; k < 3; ++k) {
-        const double ox = t[k * 3 + 0] - cx, oy = t[k * 3 + 1] - cy;
-        px[k] = ox * tx + oy * ty;      // along tangent
-        py[k] = ox * ux + oy * uy;      // along march
-    }
-    const double pxmin = std::min(std::min(px[0], px[1]), px[2]);
-    const double pxmax = std::max(std::max(px[0], px[1]), px[2]);
-    if (pxmin > half_w || pxmax < -half_w) return false;
-    const double pymin = std::min(std::min(py[0], py[1]), py[2]);
-    const double pymax = std::max(std::max(py[0], py[1]), py[2]);
-    if (pymin > depth || pymax < -depth) return false;
-
-    // SAT on the triangle's three edge normals vs the rectangle corners.
-    const double rx[4] = {-half_w, half_w, half_w, -half_w};
-    const double ry[4] = {-depth, -depth, depth, depth};
-    for (int k = 0; k < 3; ++k) {
-        const int k2 = (k + 1) % 3;
-        const double nx = -(py[k2] - py[k]);
-        const double ny = (px[k2] - px[k]);
-        double tmin = 1e300, tmax = -1e300, rmin = 1e300, rmax = -1e300;
-        for (int m = 0; m < 3; ++m) {
-            const double p = nx * px[m] + ny * py[m];
-            tmin = std::min(tmin, p); tmax = std::max(tmax, p);
-        }
-        for (int m = 0; m < 4; ++m) {
-            const double p = nx * rx[m] + ny * ry[m];
-            rmin = std::min(rmin, p); rmax = std::max(rmax, p);
-        }
-        if (tmin > rmax || tmax < rmin) return false;
-    }
-    return true;
-}
-
-// Wall test over the 3x3 bucket neighbourhood.
-inline bool wall_hit(const TriGrid& g, double cx, double cy,
-                     double ux, double uy, double tx, double ty,
-                     double z_lo, double z_hi, double depth, double half_w) {
-    if (!g.ntri || g.items.empty()) return false;
-    const long long gx = (long long)std::floor((cx - g.minx) / g.cell);
-    const long long gy = (long long)std::floor((cy - g.miny) / g.cell);
-    for (long long dy = -1; dy <= 1; ++dy) {
-        const long long by = gy + dy;
-        if (by < 0 || by >= g.ny) continue;
-        for (long long dx = -1; dx <= 1; ++dx) {
-            const long long bx = gx + dx;
-            if (bx < 0 || bx >= g.nx) continue;
-            const size_t b = (size_t)(by * g.nx + bx);
-            for (long long p = g.starts[b]; p < g.starts[b + 1]; ++p) {
-                const int i = g.items[(size_t)p];
-                if (g.z1[(size_t)i] < z_lo || g.z0[(size_t)i] > z_hi) continue;
-                if (tri_hits_slab(&g.vx[(size_t)i * 9], cx, cy, ux, uy,
-                                  half_w, tx, ty, depth, z_lo, z_hi))
-                    return true;
-            }
-        }
-    }
-    return false;
-}
-
-// Walkable Z nearest `near_z` at (x,y); returns false when no surface covers
-// the point (mirrors walkable_sampler's None).
-inline bool walk_sample(const TriGrid& g, double x, double y, double near_z,
-                        double* out, int* tri = nullptr) {
-    if (!g.ntri || g.items.empty()) return false;
-    const long long gx = (long long)std::floor((x - g.minx) / g.cell);
-    const long long gy = (long long)std::floor((y - g.miny) / g.cell);
-    bool have = false;
-    double best = 0.0;
-    int best_i = -1;
-    for (long long dy = -1; dy <= 1; ++dy) {
-        const long long by = gy + dy;
-        if (by < 0 || by >= g.ny) continue;
-        for (long long dx = -1; dx <= 1; ++dx) {
-            const long long bx = gx + dx;
-            if (bx < 0 || bx >= g.nx) continue;
-            const size_t b = (size_t)(by * g.nx + bx);
-            for (long long p = g.starts[b]; p < g.starts[b + 1]; ++p) {
-                const int i = g.items[(size_t)p];
-                const double* t = &g.vx[(size_t)i * 9];
-                const double ax = t[0], ay = t[1], az = t[2];
-                const double bx2 = t[3], by2 = t[4], bz = t[5];
-                const double cx2 = t[6], cy2 = t[7], cz = t[8];
-                const double d = (by2 - cy2) * (ax - cx2) +
-                                 (cx2 - bx2) * (ay - cy2);
-                if (std::fabs(d) < 1e-6) continue;
-                const double l0 = ((by2 - cy2) * (x - cx2) +
-                                   (cx2 - bx2) * (y - cy2)) / d;
-                const double l1 = ((cy2 - ay) * (x - cx2) +
-                                   (ax - cx2) * (y - cy2)) / d;
-                const double l2 = 1.0 - l0 - l1;
-                if (l0 < -0.02 || l1 < -0.02 || l2 < -0.02) continue;
-                const double z = l0 * az + l1 * bz + l2 * cz;
-                if (!have || std::fabs(z - near_z) < std::fabs(best - near_z)) {
-                    best = z; best_i = i; have = true;
-                }
-            }
-        }
-    }
-    if (have) *out = best;
-    if (have && tri) *tri = best_i;
-    return have;
-}
+using namespace navgrow;
 
 // --------------------------------------------------------------------------
 // Neighbour field: other pathgrid edge centerlines, bucketed in plan.
@@ -405,28 +177,6 @@ struct NeighbourField {
             if (best < 0.0 || t < best) best = t;
         }
         return best;
-    }
-};
-
-// A cell's LAND heights (33x33, row = y, 128u spacing), interpolated on the
-// diagonal world._land_tris cuts.  MUST mirror world.LandField.z.
-struct Land {
-    const double* g = nullptr;
-    double ox = 0.0, oy = 0.0;
-    // True inside this cell's own 4096u LAND square.
-    bool covers(double x, double y) const {
-        return x >= ox && x <= ox + 4096.0 && y >= oy && y <= oy + 4096.0;
-    }
-    double z(double x, double y) const {
-        const double fx = std::min(32.0, std::max(0.0, (x - ox) / 128.0));
-        const double fy = std::min(32.0, std::max(0.0, (y - oy) / 128.0));
-        const int ix = std::min(31, (int)fx), iy = std::min(31, (int)fy);
-        const double tx = fx - ix, ty = fy - iy;
-        const double z00 = g[iy * 33 + ix], z10 = g[iy * 33 + ix + 1];
-        const double z01 = g[(iy + 1) * 33 + ix];
-        const double z11 = g[(iy + 1) * 33 + ix + 1];
-        if (tx >= ty) return z00 + (z10 - z00) * tx + (z11 - z10) * ty;
-        return z00 + (z11 - z01) * tx + (z01 - z00) * ty;
     }
 };
 
@@ -641,7 +391,10 @@ PyObject* py_grow_strips(PyObject*, PyObject* args) {
     try {
         TriGrid wall, walk;
         wall.build(blockp, nblock, 128.0);
-        if (walkp) walk.build(walkp, nwalk, 128.0);
+        if (walkp) {
+            walk.build(walkp, nwalk, 128.0);
+            walk.build_walk_index();
+        }
 
         NeighbourField field;
         if (nedge)
@@ -701,41 +454,6 @@ PyObject* py_grow_strips(PyObject*, PyObject* args) {
 // Strips are flattened once into arrays and bucketed by their XY bounds, so a
 // point only tests strips whose bounding box actually contains it.
 // --------------------------------------------------------------------------
-struct Strip {
-    // Centerline (a -> b), carrying the strip's own slope.
-    double ax, ay, az, bx, by, bz;
-    double half;                 // admission radius for a rectangle strip
-    int poly_off, poly_n;        // outline vertices in `poly` (0 = rectangle)
-    int prof_off, prof_n;        // height profile points (0 = straight chord)
-    bool on_land = false;        // height follows the LAND sideways
-    double x0, x1, y0, y1;       // XY bounds, for bucket rejection
-};
-
-inline bool point_in_poly(const double* p, int n, double px, double py) {
-    bool inside = false;
-    for (int i = 0; i < n; ++i) {
-        const int j = (i + 1) % n;
-        const double x1 = p[i * 2], y1 = p[i * 2 + 1];
-        const double x2 = p[j * 2], y2 = p[j * 2 + 1];
-        if ((y1 > py) != (y2 > py)) {
-            double dy = y2 - y1;
-            if (dy == 0.0) dy = 1e-12;
-            const double xin = x1 + (py - y1) * (x2 - x1) / dy;
-            if (px < xin) inside = !inside;
-        }
-    }
-    return inside;
-}
-
-inline double seg_dist(double px, double py, double ax, double ay,
-                       double bx, double by) {
-    const double dx = bx - ax, dy = by - ay;
-    const double d2 = dx * dx + dy * dy;
-    double t = (d2 < 1e-9) ? 0.0
-                           : ((px - ax) * dx + (py - ay) * dy) / d2;
-    t = std::max(0.0, std::min(1.0, t));
-    return std::hypot(px - (ax + dx * t), py - (ay + dy * t));
-}
 
 // levels_at(strips_flat, poly_flat, points, same_surface_z[, prof_flat,
 //           land, land_ox, land_oy])
@@ -807,40 +525,7 @@ PyObject* py_levels_at(PyObject*, PyObject* args) {
         }
     }
 
-    std::vector<Strip> strips(ns);
-    for (size_t i = 0; i < ns; ++i) {
-        const double* r = &sp[i * 12];
-        Strip& S = strips[i];
-        S.ax = r[0]; S.ay = r[1]; S.az = r[2];
-        S.bx = r[3]; S.by = r[4]; S.bz = r[5];
-        S.half = r[6];
-        S.poly_off = (int)r[7];
-        S.poly_n = (int)r[8];
-        S.prof_off = (int)r[9];
-        S.prof_n = (int)r[10];
-        S.on_land = land.g && r[11] > 0.0;
-        // A profile that indexes past the prof array is a caller bug; treat it
-        // as "no profile" rather than reading out of bounds.
-        if (S.prof_n < 2 ||
-            (size_t)(S.prof_off + S.prof_n) > nf) {
-            S.prof_off = 0; S.prof_n = 0;
-        }
-        if (S.poly_n > 0) {
-            double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
-            for (int k = 0; k < S.poly_n; ++k) {
-                const double x = pp[(size_t)(S.poly_off + k) * 2];
-                const double y = pp[(size_t)(S.poly_off + k) * 2 + 1];
-                x0 = std::min(x0, x); x1 = std::max(x1, x);
-                y0 = std::min(y0, y); y1 = std::max(y1, y);
-            }
-            S.x0 = x0; S.x1 = x1; S.y0 = y0; S.y1 = y1;
-        } else {
-            S.x0 = std::min(S.ax, S.bx) - S.half;
-            S.x1 = std::max(S.ax, S.bx) + S.half;
-            S.y0 = std::min(S.ay, S.by) - S.half;
-            S.y1 = std::max(S.ay, S.by) + S.half;
-        }
-    }
+    const std::vector<Strip> strips = load_strips(sp, ns, pp, nf, land.g);
 
     // Bucket strips by bounds so a point tests only plausible ones.
     const double cell = 256.0;
@@ -915,47 +600,7 @@ PyObject* py_levels_at(PyObject*, PyObject* args) {
                           <= S.half + 1e-6;
                 }
                 if (!hit) continue;
-                if (S.prof_n >= 2) {
-                    // Tread-following profile: height at the closest
-                    // projection onto the polyline.  Mirror of the prof
-                    // branch in corridor_union._height_on -- same iteration
-                    // order, same strictly-less comparison, so the scalar
-                    // Python path and this batch agree bit-for-bit.
-                    const double* f = &fp[(size_t)S.prof_off * 3];
-                    double best_d2 = -1.0;
-                    double best_z = f[2];
-                    for (int k = 0; k < S.prof_n - 1; ++k) {
-                        const double qax = f[k * 3],     qay = f[k * 3 + 1];
-                        const double qaz = f[k * 3 + 2];
-                        const double qbx = f[k * 3 + 3], qby = f[k * 3 + 4];
-                        const double qbz = f[k * 3 + 5];
-                        const double dx = qbx - qax, dy = qby - qay;
-                        const double d2 = dx * dx + dy * dy;
-                        double t = (d2 < 1e-9) ? 0.0
-                            : ((px - qax) * dx + (py - qay) * dy) / d2;
-                        t = std::max(0.0, std::min(1.0, t));
-                        const double cx = qax + dx * t, cy = qay + dy * t;
-                        const double dd = (px - cx) * (px - cx)
-                                        + (py - cy) * (py - cy);
-                        if (best_d2 < 0.0 || dd < best_d2) {
-                            best_d2 = dd;
-                            best_z = qaz + (qbz - qaz) * t;
-                        }
-                    }
-                    zs.push_back(best_z);
-                    continue;
-                }
-                // Height on this strip's own slope at (px, py).
-                const double dx = S.bx - S.ax, dy = S.by - S.ay;
-                const double d2 = dx * dx + dy * dy;
-                double t = (d2 < 1e-9) ? 0.0
-                    : ((px - S.ax) * dx + (py - S.ay) * dy) / d2;
-                t = std::max(0.0, std::min(1.0, t));
-                if (S.on_land) {
-                    zs.push_back(land.z(px, py));
-                    continue;
-                }
-                zs.push_back(S.az + (S.bz - S.az) * t);
+                zs.push_back(strip_height<false>(S, fp, land, px, py));
             }
         }
         if (zs.empty()) continue;
@@ -1013,6 +658,38 @@ PyMethodDef methods[] = {
      "Grown half-widths for a batch of corridor march stations."},
     {"levels_at", py_levels_at, METH_VARARGS,
      "Surface heights at a batch of points, one list per point."},
+    {"bind_geos", py_bind_geos, METH_NOARGS,
+     "Bind GEOS from shapely's loaded library (idempotent)."},
+    {"pair_gaps", py_pair_gaps, METH_VARARGS,
+     "Height disagreement over each overlapping ribbon pair."},
+    {"decimate", py_decimate, METH_VARARGS,
+     "Collapse, flip and split a corridor mesh (clean_decimate.decimate)."},
+    {"pymath", py_pymath, METH_VARARGS,
+     "Apply a Python-exact float helper, for tests."},
+    {"flip2d", py_flip2d, METH_VARARGS,
+     "Ratio-improving diagonal flips (union_cdt._flip2d)."},
+    {"hex_refine", py_hex_refine, METH_VARARGS,
+     "Hex-lattice interior refine, then flips (union_cdt._hex_refine)."},
+    {"bad_welds", py_bad_welds, METH_VARARGS,
+     "Provisional welds whose triangles overlap other mesh."},
+    {"same_surface_pieces", py_same_surface_pieces, METH_VARARGS,
+     "Shared ground two sheets mesh at the same height."},
+    {"stacked_pairs", py_stacked_pairs, METH_VARARGS,
+     "Triangle pairs stacked on the same surface (union_mesh._destack)."},
+    {"notch_overlaps", py_notch_overlaps, METH_VARARGS,
+     "Which notch fills would stack on meshed ground (_overlaps_existing)."},
+    {"candidate_pairs", py_candidate_pairs, METH_VARARGS,
+     "Index pairs of intersecting polygons (union_sheets._candidate_pairs)."},
+    {"refine_land", py_refine_land, METH_VARARGS,
+     "Bisect a terrain sheet's triangles (union_cdt._refine_land)."},
+    {"refine_steep", py_refine_steep, METH_VARARGS,
+     "Bisect stair triangles carrying seeds (union_cdt._refine_steep)."},
+    {"land_z", py_land_z, METH_VARARGS,
+     "LandField.z at a batch of points."},
+    {"simplify", py_simplify, METH_VARARGS,
+     "Douglas-Peucker kept indices (corridor._simplify)."},
+    {"cull_slivers", py_cull_slivers, METH_VARARGS,
+     "Surviving triangle indices (corridor_clean.cull_boundary_slivers)."},
     {nullptr, nullptr, 0, nullptr}
 };
 
@@ -1024,7 +701,14 @@ PyModuleDef moddef = {
 
 }  // namespace
 
+int register_sampler(PyObject* module);  // sampler.cpp
+
 PyMODINIT_FUNC PyInit__navgrow_native(void) {
     import_array();
-    return PyModule_Create(&moddef);
+    PyObject* m = PyModule_Create(&moddef);
+    if (m && register_sampler(m) < 0) {
+        Py_DECREF(m);
+        return nullptr;
+    }
+    return m;
 }

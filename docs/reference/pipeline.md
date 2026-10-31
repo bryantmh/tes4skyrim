@@ -327,7 +327,7 @@ either way.
 
 3. **The compiled navmesh extension** (`native/dist/_navgrow_native*`) is a
    `.pyd` on Windows and a `.so` elsewhere, selected automatically by Python's
-   own `EXT_SUFFIX` (`tes5_import/navmesh/_native_loader.py` already handles
+   own `EXT_SUFFIX` (`tes5_import/navmesh/native_loader.py` already handles
    this — no code differs). Only the Windows `.pyd` ships in the repo; build
    the local one with:
 

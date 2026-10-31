@@ -12,6 +12,7 @@ import math
 
 import numpy as np
 
+from . import native_loader
 from .union_geom import (
     STOREY_GAP_Z, _has_edge, _segment_cuts, _split_triangle,
 )
@@ -412,6 +413,10 @@ def _hex_refine(part, pts, pid, tris, spacing):
     cand = _lattice_points(part, spacing)
     if not cand:
         return _flip2d(pts, tris)
+    if native_loader.NATIVE:
+        got = _native_hex_refine(pts, pid, tris, cand, spacing)
+        if got is not None:
+            return got
 
     T = [tuple(t) for t in tris]
     alive = [True] * len(T)
@@ -434,6 +439,35 @@ def _hex_refine(part, pts, pid, tris, spacing):
             alive.append(True)
             grid.add_tri(len(T) - 1)
     return _flip2d(pts, [T[ti] for ti in range(len(T)) if alive[ti]])
+
+
+def _native_mesh(pts, tris):
+    """`pts`, `tris` as the (N,2) f64 / (M,3) i32 arrays native kernels read."""
+    return (np.asarray(pts, dtype=np.float64).reshape(-1, 2),
+            np.asarray(tris, dtype=np.int32).reshape(-1, 3))
+
+
+def _edge_array(edges):
+    """An edge-key collection as the (E, 2) int32 array the native refiners read."""
+    return np.asarray(sorted(edges), dtype=np.int32).reshape(-1, 2)
+
+
+def _native_hex_refine(pts, pid, tris, cand, spacing):
+    """Native `_hex_refine`, or None when an inserted point would dedupe onto another.
+
+    The native refine numbers its points len(pts), len(pts)+1, ...; `pid` would
+    merge two at the same millimetre key, so then the Python path runs instead.
+    See: docs/commentary/tes5_import_navmesh.md#native-port-ab
+    """
+    added, out = native_loader.load_native().hex_refine(
+        *_native_mesh(pts, tris), np.asarray(cand, dtype=np.float64), spacing)
+    keys = [(round(x, 3), round(y, 3)) for (x, y) in added]
+    if len(set(keys)) != len(keys) or not {
+            (round(x, 3), round(y, 3)) for (x, y) in pts}.isdisjoint(keys):
+        return None
+    for (x, y) in added:
+        pid(x, y)
+    return out
 
 
 def _flip_gain(pts, t1, t2, key, edge_tris, new_edges):
@@ -483,6 +517,9 @@ def _flip2d(pts, tris, rounds=4):
     Boundary and constraint edges have one owner and are structurally
     unflippable, so the outline, the holes and the door base lines are safe.
     """
+    if native_loader.NATIVE:
+        return native_loader.load_native().flip2d(*_native_mesh(pts, tris),
+                                                  rounds)
     tris = [tuple(t) for t in tris]
     for _ in range(rounds):
         edge_tris = {}
@@ -606,6 +643,10 @@ def _refine_steep(verts, tris, steep_pts, protected=()):
         return verts, tris
     max_e2 = STEEP_REFINE_EDGE * STEEP_REFINE_EDGE
     cell = STEEP_REFINE_EDGE * 2.0
+    if native_loader.NATIVE:
+        return native_loader.load_native().refine_steep(
+            *_native_mesh(verts, tris), np.asarray(steep_pts, dtype=np.float64),
+            cell, max_e2, _edge_array(protected))
     grid = _seed_grid(steep_pts, cell)
     for _round in range(6):
         split_edges = {}
@@ -650,6 +691,10 @@ def _refine_land(verts, tris, land, max_edge, protected=()):
     verts = [tuple(v) for v in verts]
     tris = [tuple(t) for t in tris]
     max_e2, min_e2 = max_edge * max_edge, LAND_MIN_EDGE * LAND_MIN_EDGE
+    if native_loader.NATIVE:
+        return native_loader.load_native().refine_land(
+            *_native_mesh(verts, tris), land.grid, land.ox, land.oy, max_e2,
+            min_e2, LAND_RELIEF_TOL, _edge_array(protected))
     for _round in range(6):
         split_edges = {}
         for t in tris:

@@ -137,7 +137,7 @@ def _has_imported_mods() -> bool:
 def _have_native(mod: str) -> bool:
     """True if the compiled navmesh extension for THIS interpreter is present.
 
-    Mirrors ``tes5_import/navmesh/_native_loader.py``: the ABI tag is in the
+    Mirrors ``tes5_import/navmesh/native_loader.py``: the ABI tag is in the
     filename, so a .pyd built for another Python version does not count.
     """
     suffix = sysconfig.get_config_var('EXT_SUFFIX') or '.pyd'

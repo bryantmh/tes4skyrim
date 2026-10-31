@@ -17,7 +17,7 @@ by construction), no stitching, no island cull (there are no stray scraps).
 
 import numpy as np
 
-from . import params
+from . import native_loader, params
 from .clean_decimate import (
     _badness,
     _flip_pass as _flip_pass,
@@ -155,12 +155,13 @@ def _make_manifold(verts, tris, pin_xy=None):
     See: docs/commentary/tes5_import_navmesh.md#a-walked-line-outranks-size
     """
     tris = [tuple(map(int, t)) for t in tris]
-    walked = _walked_lookup(pin_xy)
+    walked = None
     for _ in range(6):
         owners = _edge_owners(tris)
-        drop = _overshare_drops(verts, tris, owners, walked)
-        if not drop:
+        if all(len(ent) <= 2 for ent in owners.values()):
             break
+        walked = _walked_lookup(pin_xy) if walked is None else walked
+        drop = _overshare_drops(verts, tris, owners, walked)
         kept = [t for i, t in enumerate(tris) if i not in drop]
         if len(components(kept)) <= len(components(tris)):
             tris = kept
@@ -676,6 +677,31 @@ def _cull_round(verts, tris, pin, pgrid, on_seam, removed_area, budget):
     return st.survivors(), removed_area, changed
 
 
+def _sample_rows(pin_xy):
+    """Walked samples as (x, y, z, ux, uy) float64 rows, NaN where absent."""
+    nan = float('nan')
+    rows = [(p[0], p[1], nan if len(p) < 3 or p[2] is None else p[2],
+             p[3] if len(p) > 4 else nan, p[4] if len(p) > 4 else nan)
+            for p in (pin_xy or ())]
+    return np.asarray(rows, dtype=np.float64).reshape(-1, 5)
+
+
+def _native_cull(verts, tris, pin, pin_xy, seam_bounds, budget):
+    """cull_boundary_slivers' three rounds in the native module."""
+    inexact = np.fromiter(((type(v[0]) is not float) | (type(v[1]) is not float) << 1
+                           | (type(v[2]) is not float) << 2 for v in verts),
+                          dtype=np.uint8, count=len(verts))
+    pinned = np.zeros(len(verts), dtype=np.uint8)
+    pinned[list(pin)] = 1
+    seam = None if seam_bounds is None else np.asarray(seam_bounds, dtype=np.float64)
+    keep = native_loader.load_native('_navgrow_native').cull_slivers(
+        np.asarray(verts, dtype=np.float64).reshape(-1, 3), inexact,
+        np.asarray(tris, dtype=np.int32).reshape(-1, 3), pinned, _sample_rows(pin_xy),
+        seam, budget, (params.MAX_CLIMB, params.MAX_EDGE_RATIO, params.MAX_TRI_ASPECT,
+                       params.CULL_SLIVER_MAX_AREA, params.MIN_TRI_AREA))
+    return [tris[i] for i in keep]
+
+
 def cull_boundary_slivers(verts, tris, pinned_xy=None, pin_xy=None,
                           seam_bounds=None, budget_frac=None):
     """Remove small, badly-shaped triangles on the OUTLINE.
@@ -691,6 +717,8 @@ def cull_boundary_slivers(verts, tris, pinned_xy=None, pin_xy=None,
     budget = ((budget_frac if budget_frac is not None
                else params.CULL_SLIVER_AREA_FRAC) * _mesh_area(verts, tris))
     pin = _pin_verts(verts, pinned_xy)
+    if native_loader.NATIVE:
+        return _native_cull(verts, tris, pin, pin_xy, seam_bounds, budget)
     pgrid = _bucket_pathgrid(pin_xy, _Cull.PCELL)
 
     def on_seam(vi):

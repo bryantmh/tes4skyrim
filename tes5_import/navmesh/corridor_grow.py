@@ -40,8 +40,8 @@ import math
 
 import numpy as np
 
-from . import params
-from ._native_loader import load_native
+from . import native_loader, params
+from .native_loader import load_native
 
 _native = load_native('_navgrow_native')
 
@@ -49,6 +49,12 @@ _native = load_native('_navgrow_native')
 # ---------------------------------------------------------------------------
 # Batched native march
 # ---------------------------------------------------------------------------
+
+def native_index(tris):
+    """A native TriIndex over a triangle soup, 9 floats per triangle."""
+    soup = np.ascontiguousarray(tris, dtype=np.float64).reshape(-1, 9)
+    return _native.TriIndex(soup)
+
 
 def _native_params(land_from=None, land=None):
     """The tunables the native march needs, mirrored from params.py.
@@ -168,6 +174,8 @@ class _TriGrid:
 
 def walkable_sampler(walkable):
     """f(x, y, near_z) -> walkable Z at (x,y) nearest near_z, or None."""
+    if native_loader.NATIVE:
+        return native_index(walkable).walk
     tg = _TriGrid(walkable)
     B = tg.B
 
@@ -239,6 +247,8 @@ def wall_slab_sampler(blocking):
     `depth` is the half-extent along the march direction.
     See: docs/commentary/tes5_import_navmesh.md#wall-probe-sweeps-the-interval
     """
+    if native_loader.NATIVE:
+        return _native_wall_sampler(blocking)
     tg = _TriGrid(blocking)
     B = tg.B
 
@@ -258,5 +268,19 @@ def wall_slab_sampler(blocking):
                               depth, z_lo, z_hi):
                 return True
         return False
+
+    return hit
+
+
+def _native_wall_sampler(blocking):
+    """wall_slab_sampler answered by the native TriIndex."""
+    wall = native_index(blocking).wall
+
+    def hit(cx, cy, ux, uy, tx, ty, z_lo, z_hi, depth=None, half_w=None):
+        """True if any blocking triangle reaches into the slab."""
+        return wall(cx, cy, ux, uy, tx, ty, z_lo, z_hi,
+                    params.RIBBON_GROW_SLAB_DEPTH if depth is None else depth,
+                    params.RIBBON_GROW_SLAB_HALF_WIDTH if half_w is None
+                    else half_w)
 
     return hit

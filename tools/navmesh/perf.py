@@ -16,7 +16,10 @@ worker runs this same code.  Use a small cell subset.
 
     python tools/navmesh/perf.py --cell Wendir02
     python tools/navmesh/perf.py --cells Wendir02,ICMarketDistrict --stages
-    python tools/navmesh/perf.py --cell grid:12:-8 --top 25
+    python tools/navmesh/perf.py --cell 0000A1B2 --top 25
+
+Cells load through the lazy per-cell index (`NavIndex`), so a run costs one
+cell's records rather than the multi-GB export pickle.
 """
 
 import argparse
@@ -28,12 +31,11 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from asset_convert.collision import collision_extract as ce
 from tes5_import.navmesh import (
-    build, corridor, corridor_clean, corridor_doors, corridor_grow,
+    corridor, corridor_clean, corridor_doors, corridor_grow,
     corridor_union, world,
 )
-from tools.navmesh.probe import load_cell
+from tools.navmesh.index import NavIndex
 
 
 # ---------------------------------------------------------------------------
@@ -70,10 +72,14 @@ def _rss_note():
 
         pmc = _PMC()
         pmc.cb = ctypes.sizeof(_PMC)
-        if ctypes.windll.psapi.GetProcessMemoryInfo(
-                ctypes.windll.kernel32.GetCurrentProcess(),
-                ctypes.byref(pmc), pmc.cb):
-            return '  rss=%.1fGB' % (pmc.WorkingSetSize / 2 ** 30)
+        k32, ps = ctypes.WinDLL('kernel32'), ctypes.WinDLL('psapi')
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        ps.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(_PMC), wintypes.DWORD]
+        if ps.GetProcessMemoryInfo(k32.GetCurrentProcess(),
+                                   ctypes.byref(pmc), pmc.cb):
+            return '  rss=%.1fGB peak=%.1fGB' % (
+                pmc.WorkingSetSize / 2 ** 30, pmc.PeakWorkingSetSize / 2 ** 30)
     except Exception:
         pass
     return ''
@@ -121,7 +127,11 @@ def install_stage_timers():
     _wrap(corridor_union, 'build_union_mesh', 'corridor_union.build_union_mesh')
     for fn in ('_split_plan_overlaps', '_merge_at_pathgrid_nodes',
                'stitch_shared_nodes', 'split_t_junctions', '_weld_sheets',
-               '_triangulate', '_emit_surfaces'):
+               '_triangulate', '_emit_surfaces', '_has_coverage',
+               '_sheet_coverage', '_close_land_slits', '_sheet_parts',
+               '_junction_transfers', '_levels_batch', '_destack',
+               '_drop_walls', '_fill_boundary_notches', '_drop_point_attached',
+               '_claim_door_edges'):
         label = 'corridor_union.' + fn
         _NESTED.add(label)
         _wrap(corridor_union, fn, label)
@@ -165,89 +175,86 @@ def stage_report(total_wall):
                   % (lbl, total_wall / newt))
 
 
-def main():
+def _args():
+    """(parser, parsed args, cell names), the names validated against --max-cells."""
     ap = argparse.ArgumentParser()
     ap.add_argument('--export', default='export/Oblivion.esm')
-    ap.add_argument('--cell', help='single cell (EditorID, FormID, grid:X:Y)')
+    ap.add_argument('--cell', help='single cell (EditorID or FormID)')
     ap.add_argument('--cells', help='comma-separated list of the same')
     ap.add_argument('--stages', action='store_true',
                     help='stage timing only; skip cProfile (truer wall-clock)')
     ap.add_argument('--top', type=int, default=20)
     ap.add_argument('--callers', help='also print callers of this function')
-    ap.add_argument('--max-cells', type=int, default=6,
+    ap.add_argument('--sort', default='tottime', choices=('tottime', 'cumulative'),
+                    help='cProfile ranking key')
+    ap.add_argument('--max-cells', type=int, default=12,
                     help='refuse to profile more than this many cells at once')
     a = ap.parse_args()
-
-    names = []
-    if a.cells:
-        names += [c.strip() for c in a.cells.split(',') if c.strip()]
+    names = [c.strip() for c in (a.cells or '').split(',') if c.strip()]
     if a.cell:
         names.append(a.cell)
     if not names:
         ap.error('need --cell or --cells')
     if len(names) > a.max_cells:
-        ap.error('%d cells requested but --max-cells is %d.  The export index '
-                 'is ~2 GB unpickled; profile SMALL subsets.'
-                 % (len(names), a.max_cells))
+        ap.error('%d cells requested but --max-cells is %d; profile SMALL '
+                 'subsets.' % (len(names), a.max_cells))
+    return ap, a, names
 
-    # The index pickle expands to several GB of live objects.  load_by_type now
-    # memoises it per process, so these N calls share ONE graph -- but report
-    # RSS anyway, because this tool wedged a 32 GB machine into swap once.
-    idx = os.path.join(a.export, 'navmesh_index.pkl')
-    if not os.path.exists(idx):
-        ap.error('missing %s -- run a navmesh tool that builds it first; '
-                 'this profiler must not trigger the multi-GB reindex.' % idx)
 
+def _load_cells(ap, export, names):
+    """One loaded CellCtx per name, each announced with the process RSS."""
+    index = NavIndex(export)
     ctxs = []
     for n in names:
-        ctx = load_cell(a.export, n)
+        ctx = index.cell(n)
+        if ctx is None:
+            ap.error('cell %s not found' % n)
         print('cell %s (%s) exterior=%s refrs=%d nodes=%d%s'
-              % (ctx['cell_fid'], ctx['cell'].get('EditorID'),
-                 ctx['is_exterior'], len(ctx['refrs']), len(ctx['nodes']),
-                 _rss_note()))
+              % (ctx.fid, ctx.name, ctx.exterior, len(ctx.refrs),
+                 len(ctx.nodes), _rss_note()))
         ctxs.append(ctx)
+    return ctxs
 
+
+def _run_all(ctxs):
+    """Build every loaded cell once: [(name, verts, tris, seconds)]."""
+    out = []
+    for ctx in ctxs:
+        t0 = time.perf_counter()
+        verts, tris = ctx.build()
+        out.append((ctx.name or ctx.fid, len(verts), len(tris),
+                    time.perf_counter() - t0))
+    return out
+
+
+def _print_profile(pr, a):
+    """The cProfile ranking: absolute times are inflated, so rank only (--stages for real shares)."""
+    print('\n=== cProfile -- ranking only, absolute times inflated ===')
+    st = pstats.Stats(pr)
+    st.sort_stats(a.sort).print_stats(a.top)
+    if a.callers:
+        st.print_callers(a.callers)
+
+
+def main():
+    """Profile the named cells' navmesh builds by stage, and by function unless --stages."""
+    ap, a, names = _args()
+    ctxs = _load_cells(ap, a.export, names)
     install_stage_timers()
-
-    def run_all():
-        out = []
-        for ctx in ctxs:
-            t0 = time.perf_counter()
-            verts, tris = build.build_navmesh(
-                ctx['refrs'], ctx['base_model'], ce.get_collision,
-                ctx['nodes'], ctx['edges'],
-                land_rec=ctx['land'] if ctx['is_exterior'] else None,
-                origin_x=ctx['grid_x'] * 4096.0,
-                origin_y=ctx['grid_y'] * 4096.0,
-                doors=ctx.get('doors'))
-            out.append((ctx['cell'].get('EditorID') or ctx['cell_fid'],
-                        len(verts), len(tris), time.perf_counter() - t0))
-        return out
-
-    pr = None
-    if not a.stages:
-        pr = cProfile.Profile()
+    pr = None if a.stages else cProfile.Profile()
+    if pr is not None:
         pr.enable()
     t0 = time.perf_counter()
-    per_cell = run_all()
+    per_cell = _run_all(ctxs)
     total = time.perf_counter() - t0
     if pr is not None:
         pr.disable()
-
     print('\n%-36s %8s %8s %8s' % ('CELL', 'VERTS', 'TRIS', 'SEC'))
     for (name, nv, nt, dt) in per_cell:
         print('%-36s %8d %8d %8.2f' % (name[:36], nv, nt, dt))
-
     stage_report(total)
-
     if pr is not None:
-        # cProfile inflates absolute times; the RANKING is what it is for.
-        # Re-run with --stages for uninflated stage shares.
-        print('\n=== cProfile -- ranking only, absolute times inflated ===')
-        st = pstats.Stats(pr)
-        st.sort_stats('tottime').print_stats(a.top)
-        if a.callers:
-            st.print_callers(a.callers)
+        _print_profile(pr, a)
 
 
 if __name__ == '__main__':

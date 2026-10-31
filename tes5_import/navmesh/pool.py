@@ -616,12 +616,12 @@ _TAG_EXCLUDE = frozenset({
     'worker.py', '__init__.py', 'lookup_grid.py', 'seeding.py',
 })
 
-#: Native SOURCES deciding cell geometry; hashed with the Python, never the .pyd.
-_TAG_NATIVE = ('navgrow/grow.cpp',)
+#: Native source directory deciding cell geometry; its .cpp/.h are hashed with the Python, never the .pyd.
+_TAG_NATIVE = 'navgrow'
 
 
 def _native_tag_sources() -> list:
-    """Each `_TAG_NATIVE` file's bytes, newline-normalized; missing ones drop.
+    """Each `_TAG_NATIVE` .cpp/.h file's bytes, by name, newline-normalized.
 
     Anchored on the REPO, not on this module's `__file__`: the tag tests copy
     the navmesh package to a temp dir, and a path derived from the copy would
@@ -629,12 +629,13 @@ def _native_tag_sources() -> list:
 
     See: docs/commentary/tes5_import_navmesh.md#the-tag-covers-the-native-march
     """
-    root = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))))
+    src = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), 'native', 'src', _TAG_NATIVE)
+    names = (sorted(f for f in os.listdir(src) if f.endswith(('.cpp', '.h')))
+             if os.path.isdir(src) else [])
     out = []
-    for name in _TAG_NATIVE:
-        path = os.path.join(root, 'native', 'src',
-                            name.replace('/', os.sep))
+    for name in names:
+        path = os.path.join(src, name)
         try:
             with open(path, 'rb') as fh:
                 out.append(fh.read().replace(b'\r\n', b'\n'))

@@ -2203,9 +2203,10 @@ The tag globbed `tes5_import/navmesh/*.py` only, but the width-grow march that
 decides a cell's geometry lives in `native/src/navgrow/grow.cpp`. Editing it
 changed every exterior mesh while leaving the tag — and therefore every cached
 entry — untouched: the cache stayed *valid* and became *wrong*, which is worse
-than a miss because nothing reports it. `_TAG_NATIVE` names the native sources
-that decide geometry, and `NAVMESH_PATHS` in `navmesh_cache_hook.py` carries the
-same path so a push republishes.
+than a miss because nothing reports it. `_TAG_NATIVE` names the native source
+DIRECTORY (`navgrow/`): every `.cpp` and `.h` in it is hashed by name, so a new
+kernel or a shared header cannot slip past the tag. `NAVMESH_PATHS` in
+`navmesh_cache_hook.py` carries the same directory so a push republishes.
 
 It hashes the **`.cpp`, never the built `.pyd`**: a different compiler or flag
 gives identical source a different binary, so hashing the artifact would miss
@@ -5200,3 +5201,98 @@ grows with the pin count, not the cache size, and unchanged pins stay adopted.
 
 Gap: a cell UNPINNED since the cache was built has an empty digest now, so it is
 treated as unpinned and keeps its pinned geometry through an adopt.
+
+## <a id="native-port-ab"></a>Porting the generator to C++: exact parity, switchable
+
+**Code:** `native/src/navgrow/` (`sampler.cpp`, `sheets.cpp`, `decimate.cpp`,
+`cull.cpp`, `refine.cpp`, `meshflip.cpp`, `welds.cpp`, `stack.cpp`,
+`geos_bind.cpp`, `trigrid.h`, `clip_area.h`, `pymath.h`), `native_loader.NATIVE`,
+`tools/navmesh/native_ab.py`, `tests/test_navmesh_native.py`.
+
+The generator is moving into C++ one kernel at a time. Every kernel keeps its
+Python original as the REFERENCE: `TES_NAVMESH_IMPL=python` (or flipping
+`native_loader.NATIVE`) runs the Python path, and `native_ab.py` builds a cell
+both ways in one process and demands identical verts, tris and ledges. "Close"
+is a failure: the output is byte-reproducible and cached, so a kernel either
+matches bit for bit or it is wrong.
+
+Ported so far, each matching on 8 Oblivion + 2 Nehrim reference cells:
+
+| kernel | Python original | how it stays exact |
+|---|---|---|
+| `TriIndex.surface/layers/walk/wall` | `corridor._surface_sampler`, `corridor_grow.walkable_sampler` / `wall_slab_sampler` | same buckets (`py_floordiv`), same candidate ORDER (`visit_py_order`), returns `numpy.float64` like the original |
+| `pair_gaps` | `union_sheets._overlap_height_gap` loop in `_partition_by_agreement` | calls shapely's OWN loaded GEOS on shapely's own geometries |
+| `decimate` | `clean_decimate.decimate` | operation-for-operation port; Z keeps its Python type |
+| `cull_slivers` | `corridor_clean.cull_boundary_slivers` | same bucket order and first-wins ties; centroid sums use `PyMixedSum` over per-coordinate exactness flags |
+| `flip2d`, `hex_refine`, `refine_land`, `refine_steep`, `land_z`, `simplify` | `union_cdt._flip2d` / `_hex_refine` / `_refine_land` / `_refine_steep`, `LandField.z`, `corridor._simplify` | operation-for-operation |
+| `bad_welds`, `stacked_pairs`, `notch_overlaps` | `union_mesh._revert_bad_welds` / `_stacked_pairs`, `corridor_union._overlaps_existing` | threshold fast paths, GEOS near the threshold |
+| `candidate_pairs`, `same_surface_pieces` | `union_sheets._candidate_pairs` / `_same_surface_pieces` | as above; pieces come back as shapely geometries |
+
+Measured with `native_ab.py` (Python s -> native s, `TESCONV_WORKERS=2`): the 8
+Oblivion cells **20.5s -> 4.2s (4.9x)**; Nehrim `DaromithtempelGruftPart01` +
+`GiliadHaus06` **4.45s -> 0.72s (6.2x)**. After that, no single Python
+function in a cell build is above ~6% of it.
+
+**A threshold test may skip GEOS, but only with a margin.** `clip_area.h`
+computes an overlap AREA by clipping (Sutherland-Hodgman keeps a simple ring's
+winding number inside a convex window, and a second ring is a signed fan of
+triangles); it is trusted only when it clears the caller's threshold by
+`kClipMargin = 1e-4`, and GEOS answers the rest. `rings_intersect` does the same
+for GEOS `intersects`: a clear edge crossing says yes, boundaries more than
+`kSepMargin = 1e-5` apart say no (or yes when one ring holds the other), and
+anything nearer goes to GEOS. A convex-only fast path was tried and dropped:
+89% of the ribbons are not convex.
+
+**An index may change, the visit order may not.** `walk_sample` in the grow
+march now reads a 32-unit fine index instead of scanning the 3x3 window of
+128-unit buckets, and breaks a distance tie by the (first window bucket,
+triangle index) the window scan would have met first. The grow kernel runs on
+BOTH paths, so a change to it is checked with `native_ab.py --baseline`
+against builds saved before the change, not against the Python path.
+
+**Memory: the navmesh code is not where a worker's memory goes.** One cell
+build adds 5-18 MB. A pool worker's commit charge is the BLAS thread buffers
+(numpy +750 MB, scipy +820 MB at 32 cores), which
+`configure_multiprocessing()` already removes with `OPENBLAS_NUM_THREADS=1`
+(1,605 MB -> 126 MB, see [performance.md](performance.md)), then the
+collision cache (~80 MB resident) and the imports (~100 MB). A native rewrite
+saves memory only if it runs every cell in ONE process on threads, sharing the
+collision cache instead of loading it once per worker.
+
+**Python float arithmetic is not C arithmetic.** These were each found by the
+fuzz tests in `test_navmesh_native.py`, which hold `pymath.h` against the
+interpreter:
+
+- `a // b` is not `floor(a / b)` (`1 // 0.1 == 9.0`); `py_floordiv` copies
+  CPython's `_float_div_mod`.
+- `x ** 2` is the C library `pow`, which differs from `x * x` for **~0.05%** of
+  doubles (52 of 100,000 random values). And on Windows it must be the DLL
+  runtime's pow (`ucrtbase.dll`, what python3xx.dll links): this module links
+  the STATIC runtime, whose pow rounded differently on 1 of the first 4,006
+  test values. `crt_pow` resolves the interpreter's.
+- `math.hypot` / `math.dist` are CPython's `vector_norm` (lossless scaling,
+  FMA products, one Newton correction), not the C library hypot.
+- `sum()` of floats is Neumaier-compensated (3.12+), but ONLY over exact
+  floats: a `numpy.float64` item drops the rest of the sum to plain addition.
+  That is why the native samplers return `numpy.float64` -- the Python ones do,
+  and node heights flow from them into sums downstream -- and why decimation
+  tracks which vertex Z values are numpy.
+
+**Set iteration order was made deterministic first.** `clean_decimate` summed
+plan areas (`cut_area`) and centroids (`is_convex`) while walking a Python
+`set` of triangle indices, so the last bit followed CPython's hash-table layout,
+which C++ cannot reproduce. Both now walk the indices in ascending order
+(`_Collapse.incident`); `native_ab.py --baseline` showed the 10 reference cells
+unchanged by that.
+
+**Known non-parity, kept as shipped:** the older `levels_at` kernel squares
+profile distances with `x * x` where `union_geom._height_on` uses `** 2`, so the
+two can pick different stair segments on an exact tie. `strip.h`'s
+`strip_height<PyExact>` keeps both behaviors explicitly rather than silently
+changing what production ships.
+
+**The GEOS binding** (`geos_bind.cpp`) finds `geos_c` among the process's
+LOADED modules after importing shapely's C API capsule (`shapely.lib._C_API`),
+so it can only ever bind the library shapely itself uses; a second GEOS copy
+would round its overlays differently. What remains of `pair_gaps`' time is
+GEOS's own overlay, not wrapper cost.
