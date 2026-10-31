@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from asset_convert.collision import collision_extract as ce
 from tes5_import.base.text_reader import get_formid
 from tes5_import.navmesh import native_loader
-from tes5_import.navmesh.seeding import seeded_pathgrid, seeded_record
+from tes5_import.navmesh.seeding import seeded_graph, seeded_record
 from tes5_import.navmesh.world import base_fid
 from tools.navmesh.index import DEFAULT_EXPORT, NavIndex
 
@@ -67,20 +67,20 @@ def build_with(ctx, native, extra=None):
 
 
 def flood_with(ctx, native):
-    """`(points, seconds)`: seeding.seeded_pathgrid's record from the cell's first nodes as seeds."""
+    """`(graph, seconds)`: seeding.seeded_graph from the cell's first nodes as seeds."""
     native_loader.NATIVE = native
     job = {'cell_rec': ctx.rec, 'land_rec': ctx.land, 'refr_recs': ctx.refrs,
            'pgrd_rec': seeded_record(ctx.rec), 'seeds': sorted(set(ctx.nodes[:3]))}
     t0 = time.perf_counter()
-    rec = seeded_pathgrid(job, ctx.index.base_model, ctx.index.door_fids, ce.get_collision)
-    return rec, time.perf_counter() - t0
+    graph = seeded_graph(job, ctx.index.base_model, ctx.index.door_fids, ce.get_collision)
+    return graph, time.perf_counter() - t0
 
 
 def compare_flood(ctx):
     """`(python_s, native_s, difference)` of the seed flood on both paths."""
     py, t_py = flood_with(ctx, False)
     nat, t_nat = flood_with(ctx, True)
-    return t_py, t_nat, '' if py == nat else 'flood records differ'
+    return t_py, t_nat, '' if py == nat else 'flood graphs differ'
 
 
 def first_difference(a, b):

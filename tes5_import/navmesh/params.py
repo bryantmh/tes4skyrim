@@ -320,5 +320,3 @@ DECIMATE_PIN_NODE_RADIUS = 24.0
 RIBBON_GROW_MIN_HALF = 16.0
 #: Grown half-width cap: over BUILT floor always, over LAND only past another centerline.
 RIBBON_GROW_MAX_HALF = 160.0
-#: The cap on an exterior: wider than any cell, so only walls and floor edges stop the grow.
-RIBBON_GROW_MAX_HALF_EXTERIOR = 8192.0

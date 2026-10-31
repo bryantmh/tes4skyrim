@@ -339,11 +339,11 @@ void bridge_blocked_stations(Grow& G) {
 }
 
 // One run of _erode_far_widths: indices `idx` into the widths.
-void erode_run(std::vector<double>& w, const std::vector<size_t>& idx, long long win, bool wrap,
-               double cap) {
+void erode_run(std::vector<double>& w, const std::vector<size_t>& idx, long long win, bool wrap) {
     const long long n = (long long)idx.size();
     std::vector<double> src(idx.size());
     for (size_t k = 0; k < idx.size(); ++k) src[k] = w[idx[k]];
+    const double cap = P().RIBBON_GROW_MAX_HALF;
     for (long long k = 0; k < n; ++k) {
         double m = kInf;
         for (long long d = -win; d <= win; ++d) {
@@ -356,20 +356,20 @@ void erode_run(std::vector<double>& w, const std::vector<size_t>& idx, long long
     }
 }
 
-void erode_far_widths(Grow& G, double cap) {
+void erode_far_widths(Grow& G) {
     const size_t nrays = (size_t)P().RIBBON_GROW_DISC_RAYS;
     for (const PlanEntry& pe : G.plan) {
         if (pe.disc) {
             std::vector<size_t> idx;
             for (size_t k = 0; k < nrays; ++k) idx.push_back(pe.base + k);
-            erode_run(G.widths, idx, 1, true, cap);
+            erode_run(G.widths, idx, 1, true);
             continue;
         }
         const size_t end = pe.base + 2 * (size_t)(pe.k + 1);
         for (size_t side = 0; side < 2; ++side) {
             std::vector<size_t> idx;
             for (size_t r = pe.base + side; r < end; r += 2) idx.push_back(r);
-            erode_run(G.widths, idx, (long long)P().FAR_WIDTH_WINDOW, false, cap);
+            erode_run(G.widths, idx, (long long)P().FAR_WIDTH_WINDOW, false);
         }
     }
 }
@@ -685,7 +685,7 @@ Group build_corridor_strips(CellCtx& C) {
                                C.edges.empty() ? std::vector<double>() : nodes_xy, eg, nz, C.land,
                                G.rows, G.on_land, C.land_from);
         bridge_blocked_stations(G);
-        erode_far_widths(G, grow_cap(C.land != nullptr));
+        erode_far_widths(G);
     }
     std::map<Edge2, const PlanEntry*> grown;
     for (const PlanEntry& pe : G.plan)

@@ -10,6 +10,8 @@ import numpy as np
 import pytest
 
 from tes5_import.navmesh import native_loader, corridor, corridor_grow
+from tes5_import.navmesh.from_pgrd import packed_nvnm, record_graph
+from tes5_import.navmesh.seeding import pathgrid_order, seeded_graph
 from tes5_import.navmesh.native_loader import load_native
 
 _native = load_native('_navgrow_native')
@@ -339,12 +341,79 @@ def _flood_job(rng):
 
 
 def test_seed_flood_matches_python(python_path):
-    """The native gather and seed flood rebuild seeding.seeded_pathgrid's record exactly."""
-    from tes5_import.navmesh.seeding import seeded_pathgrid
+    """The native gather and seed flood rebuild seeding.seeded_graph's graph exactly."""
     for seed in range(3):
         job, models, doors, get_collision = _flood_job(random.Random(seed))
         native_loader.NATIVE = False
-        want = seeded_pathgrid(job, models, doors, get_collision)
+        want = seeded_graph(job, models, doors, get_collision)
         native_loader.NATIVE = True
-        assert seeded_pathgrid(job, models, doors, get_collision) == want
-        assert want and int(want['DATA.PointCount']) > 1
+        assert seeded_graph(job, models, doors, get_collision) == want
+        assert want and len(want[0]) > 1
+
+
+def _as_pathgrid_record(points, edges):
+    """The flooded graph written out in the exported PGRD text layout."""
+    nbrs = [[] for _ in points]
+    for a, b in edges:
+        nbrs[a].append(b)
+        nbrs[b].append(a)
+    rec = {'DATA.PointCount': str(len(points))}
+    for i, (x, y, z) in enumerate(points):
+        rec.update({'Point[%d].X' % i: repr(float(x)), 'Point[%d].Y' % i: repr(float(y)),
+                    'Point[%d].Z' % i: repr(float(z)), 'Point[%d].Connections' % i: str(len(nbrs[i]))})
+        rec.update(('Point[%d].Edge[%d]' % (i, n), str(t)) for n, t in enumerate(sorted(nbrs[i])))
+    return rec
+
+
+def test_seeded_graph_reads_as_its_pathgrid_record():
+    """A seeded graph handed over directly equals the same graph written to a PGRD and read back.
+
+    Node 0 always has an edge, as in seed_graph (a seed is placed only once it links).
+    """
+    rng = random.Random(7)
+    for _ in range(20):
+        n = rng.randint(2, 30)
+        points = [tuple(np.float64(rng.uniform(-5e3, 5e3)) for _ in range(3)) for _ in range(n)]
+        edges = [(0, rng.randrange(1, n))]
+        edges += [(rng.randrange(n), rng.randrange(n)) for _ in range(rng.randint(0, 3 * n))]
+        assert pathgrid_order(points, edges) == record_graph(_as_pathgrid_record(points, edges))
+
+
+def _jittered_mesh(rng, n=12):
+    """A jittered n x n grid of float32-valued verts, two triangles per square."""
+    verts = [tuple(float(np.float32(c)) for c in (x * 97.0 + rng.uniform(-30, 30),
+                                                  y * 97.0 + rng.uniform(-30, 30),
+                                                  rng.uniform(-40, 60)))
+             for y in range(n) for x in range(n)]
+    tris = []
+    for a in (y * n + x for y in range(n - 1) for x in range(n - 1)):
+        tris += [(a, a + 1, a + n + 1), (a, a + n + 1, a + n)]
+    return verts, tris
+
+
+def _packing_case(rng):
+    """(geometry, doors) for packed_nvnm: contained, lifted, outside and id-less doors, and ledges."""
+    verts, tris = _jittered_mesh(rng)
+    doors = []
+    for i in range(8):
+        x, y, z = verts[rng.randrange(len(verts))]
+        lift = 400.0 if i % 3 == 0 else 0.0
+        doors.append((x + rng.uniform(-5, 5), y + rng.uniform(-5, 5), z + lift,
+                      rng.uniform(-3.2, 3.2), 0x1000 + i, i % 2 == 0, 80.0))
+    doors += [(-90.0, -60.0, 0.0, 0.4, 0x2000, True, 0.0), (500.0, 500.0, 0.0, 0.0, 0, False, 0.0)]
+    ledges = [(rng.randrange(len(tris) + 2) - 1, rng.randrange(len(tris)), rng.uniform(60, 200))
+              for _ in range(40)]
+    return (verts, tris, ledges), doors
+
+
+def test_packed_nvnm_matches_python(python_path):
+    """The native NVNM packer gives the Python reference's bytes, door triangles and center."""
+    for seed in range(6):
+        geometry, doors = _packing_case(random.Random(seed))
+        water = None if seed % 2 else 10.0
+        frame = (0x3C, 0x3D, seed - 3, 2 - seed, seed % 3 != 0)
+        native_loader.NATIVE = False
+        want = packed_nvnm(geometry, doors, water, frame, 0xABC)
+        native_loader.NATIVE = True
+        assert packed_nvnm(geometry, doors, water, frame, 0xABC) == want
+        assert want[1] and b'\x02\x00\x00\x00' in want[0]

@@ -326,11 +326,12 @@ def _eroded(w, win, wrap):
         pad, 2 * win + 1).min(axis=1)
 
 
-def _erode_far_widths(widths, plan, cap):
+def _erode_far_widths(widths, plan):
     """Past the cap, hold each rail and disc ray to its shortest neighbour.
 
     See: docs/commentary/tes5_import_navmesh.md#far-widths-are-eroded
     """
+    cap = params.RIBBON_GROW_MAX_HALF
     nrays = params.RIBBON_GROW_DISC_RAYS
     for entry in plan:
         base = entry[-1]
@@ -805,7 +806,7 @@ def _build_corridor_strips(nodes, edges, node_z, wall_hit=None,
                                           nodes, edges, node_z, land_from,
                                           land, on_land)
         _bridge_blocked_stations(widths, plan)
-        _erode_far_widths(widths, plan, corridor_grow.grow_cap(land))
+        _erode_far_widths(widths, plan)
     grown_edges = {p[1]: p for p in plan if p[0] == 'edge'}
 
     strips = []

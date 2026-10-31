@@ -5210,7 +5210,8 @@ treated as unpinned and keeps its pinned geometry through an adopt.
 `tools/navmesh/native_ab.py`, `tests/test_navmesh_native.py`.
 
 **Status: the whole per-cell corridor build is now native** -- one
-`corridor_cell` call from the collision gather to the cleaned mesh, plus
+`corridor_cell` call from the collision gather to the cleaned mesh,
+`pack_nvnm` (`navm.cpp`) from the built mesh to the NVNM bytes, plus
 `seed_graph` for seeded cells -- and under `NATIVE` the pool runs cells on
 threads in the importing process
 ([plan](../plans/navmesh_native_rewrite.md#one-process-many-threads)). The
@@ -5225,9 +5226,13 @@ kernel table below is the history of how it got there. Verified exact:
 - Throughput on 80 real Nehrim jobs, cold cache (`job_trace.py --sample 80
   --no-cache --workers 12`): the Python reference on 12 worker processes
   **1.33 jobs/s**; native on one thread 2.70 jobs/s, on **12 threads in one
-  process 13.07 jobs/s (9.8x the old pool)**. Of a native job's time, 7%
-  (about 26 ms) still holds the GIL -- record reads, the placement rows, the
-  lookup grid and packing -- which caps threads at roughly 14x one thread.
+  process 13.07 jobs/s (9.8x the old pool)**.
+- At the pipeline's real worker count (31 on a 16-core, 32-thread Ryzen
+  7950X3D), 160 real Nehrim jobs, no cache: the Python reference on 31
+  processes **46.6s (3.43 jobs/s)**, native on 31 threads **4.0s (39.85
+  jobs/s, 11.6x)**. With `pack_nvnm` native, the Python left per job (record
+  reads into arrays, the geometry cache, the zlib wrap) holds the GIL for
+  1.4s of 44.3s single-threaded (3%).
 - Memory: the 12 Python workers held 218-277 MB each, about 2.75 GB on top of
   the parent; the threaded run starts no processes, and its parent peaked
   0.8 GB over its resting size (3.1 -> 3.9 GB, parsed export included).
@@ -5242,6 +5247,15 @@ dropped; a prepared `intersects` test now skips them (fail-open: a GEOS error
 still runs the overlay). The cell is 8.6s, MATCH. The remaining 2,123
 overlays produce the pieces the result is built from and cannot be changed
 without changing the bits.
+
+<a id="exterior-grow-cap-reverted"></a>**A wide exterior grow cap was tried and
+reverted.** Raising the exterior cap from `RIBBON_GROW_MAX_HALF` (160) to 8192
+so only walls and floor edges stopped the grow made exterior cells 1.5-5x
+slower to build (`01000BC1` 0.89s -> 4.85s) and the worst ones far worse:
+Nehrim `010024D9` went from 2.1s to 57s natively (161s in Python), and
+`010024DD` grew past NVNM's 16-bit triangle indices, so packing failed and the
+cell got no navmesh at all (1,014 triangles at the 160 cap). The 160 job
+sample went from 44s to 764s single-threaded.
 
 The generator is moving into C++ one kernel at a time. Every kernel keeps its
 Python original as the REFERENCE: `TES_NAVMESH_IMPL=python` (or flipping

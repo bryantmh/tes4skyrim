@@ -96,6 +96,7 @@ import logging
 from ..base.navmesh_pins import (apply_hand_edits, cell_key, digest,
                                  hand_edits_for, plugin_of)
 from ..base.text_reader import get_int, get_float, get_str, get_formid
+from . import native_loader
 from .lookup_grid import build_navmesh_grid
 from .spawn_nodes import add_spawn_nodes
 from .world import base_fid, cell_water_z, open_water_z
@@ -903,23 +904,31 @@ def _nearest_edges(points, n, degrees, edges, seen):
                 edges.append(key)
 
 
-def _cell_graph(rec, cell_rec):
+def record_graph(rec):
+    """(points, edges) the PGRD record stores, or (None, None) when it has no usable graph."""
+    points, degrees = _pathgrid_nodes(rec)
+    if points is None:
+        return None, None
+    edges, seen = [], set()
+    if rec.get('Point[0].Edge[0]') is not None:
+        _explicit_edges(rec, len(points), degrees, edges, seen)
+    else:
+        _nearest_edges(points, len(points), degrees, edges, seen)
+    return points, edges
+
+
+def _cell_graph(rec, cell_rec, graph=None):
     """(points, edges, origin_x, origin_y, is_exterior) for one PGRD.
 
     The pathgrid graph exactly as convert_PGRD derives it, including the
-    synthetic PGRI exit nodes.  Both callers MUST share this: the value feeds
-    the cache hash, so any divergence silently invalidates every entry.
+    synthetic PGRI exit nodes; `graph` is a seeded cell's flooded (points,
+    edges), in place of the record's own.  Both callers MUST share this: the
+    value feeds the cache hash, so any divergence silently invalidates every entry.
     """
-    points, degrees = _pathgrid_nodes(rec)
+    points, edges = (list(graph[0]), list(graph[1])) if graph else record_graph(rec)
     if points is None:
         return None, None, 0.0, 0.0, False
-    n = len(points)
-    edges, seen = [], set()
-    if rec.get('Point[0].Edge[0]') is not None:
-        _explicit_edges(rec, n, degrees, edges, seen)
-    else:
-        _nearest_edges(points, n, degrees, edges, seen)
-
+    seen = set(edges)
     is_exterior = get_formid(rec, 'ParentWRLD') != 0
     origin_x = origin_y = 0.0
     if is_exterior:
@@ -1112,13 +1121,15 @@ def convert_PGRD(rec: dict, writer=None,
                  geom_cache: tuple = None,
                  extra_door_refrs: list = None,
                  spawns: list = None,
-                 obstacles: list = None) -> tuple:
+                 obstacles: list = None,
+                 graph: tuple = None) -> tuple:
     """Convert one TES4 PGRD to a TES5 NAVM record.
 
     Returns (navm_bytes, meta), or (None, None) when the pathgrid is too sparse
     to form a ribbon or the build yields under 3 verts.  `spawns` are actor
     spawn points (spawn_nodes) the pathgrid must reach; `obstacles` are the
-    (placement, model key) pairs it is bridged across (obstacle_bridge).
+    (placement, model key) pairs it is bridged across (obstacle_bridge);
+    `graph` is a seeded cell's (points, edges) (seeding.seeded_graph).
 
     See: docs/commentary/tes5_import_navmesh.md#convert-pgrd-arguments
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
@@ -1126,7 +1137,7 @@ def convert_PGRD(rec: dict, writer=None,
     if writer is None and navm_fid is None:
         return None, None
 
-    points, edges, origin_x, origin_y, is_exterior = _cell_graph(rec, cell_rec)
+    points, edges, origin_x, origin_y, is_exterior = _cell_graph(rec, cell_rec, graph)
     if points is None:
         return None, None
     lone = add_spawn_nodes(points, edges, spawns)
@@ -1148,29 +1159,14 @@ def convert_PGRD(rec: dict, writer=None,
     if verts3d is None or len(verts3d) < 3 or not tris:
         return None, None
 
-    tri_flags = (_compute_water_flags(verts3d, tris, water_z)
-                 if water_z is not None else [0] * len(tris))
-    adj = compute_adjacency(tris)
-
-    door_tris = build_door_links(verts3d, tris, doors)
-
-    # The ledge links name THIS navmesh, so its FormID must exist first.
     if navm_fid is None:
-        # Same key as the bulk pre-pass (_precompute_navmeshes) so the serial
-        # fallback and the parallel path agree on a cell's navmesh id.
         navm_fid = writer.derive_formid(
             'NAVM', (cell_fid, get_formid(rec, 'FormID')))
-
-    nvnm = pack_nvnm(verts3d, tris, adj, tri_flags,
-                      wrld_fid, cell_fid, grid_x, grid_y, is_exterior,
-                      door_tris=door_tris, ledges=ledges, navm_fid=navm_fid)
+    nvnm, door_tris, (cx, cy, cz) = packed_nvnm(
+        (verts3d, tris, ledges), doors, water_z,
+        (cell_fid, wrld_fid, grid_x, grid_y, is_exterior), navm_fid)
     navm_bytes = pack_navm_record(navm_fid,
                                   _navm_subrecords(rec, nvnm, base_objects))
-
-    # Centroid for the NAVI NVMI entry.
-    cx = sum(v[0] for v in verts3d) / len(verts3d)
-    cy = sum(v[1] for v in verts3d) / len(verts3d)
-    cz = sum(v[2] for v in verts3d) / len(verts3d)
 
     meta = {
         'fid': navm_fid,
@@ -1197,6 +1193,30 @@ def convert_PGRD(rec: dict, writer=None,
         'door_xndp': {fid: (navm_fid, ti) for (ti, fid) in door_tris},
     }
     return navm_bytes, meta
+
+
+def packed_nvnm(geometry, doors, water_z, frame, navm_fid):
+    """(nvnm, door_tris, center) for a built cell, natively or by the Python reference.
+
+    geometry is (verts, tris, ledges); doors are collect_doors rows; water_z is
+    cell_water_z or None; frame is (cell_fid, wrld_fid, grid_x, grid_y,
+    is_exterior).  door_tris are (triangle, door ref) pairs, center the vertex mean.
+    See: docs/plans/navmesh_native_rewrite.md#stages
+    """
+    verts, tris, ledges = geometry
+    cell_fid, wrld_fid, grid_x, grid_y, is_exterior = frame
+    if native_loader.NATIVE:
+        return native_loader.native_core().pack_nvnm(
+            verts, tris, ledges, doors, water_z, wrld_fid, cell_fid,
+            grid_x, grid_y, is_exterior, navm_fid)
+    tri_flags = (_compute_water_flags(verts, tris, water_z)
+                 if water_z is not None else [0] * len(tris))
+    door_tris = build_door_links(verts, tris, doors)
+    nvnm = pack_nvnm(verts, tris, compute_adjacency(tris), tri_flags,
+                     wrld_fid, cell_fid, grid_x, grid_y, is_exterior,
+                     door_tris=door_tris, ledges=ledges, navm_fid=navm_fid)
+    center = tuple(sum(v[k] for v in verts) / len(verts) for k in range(3))
+    return nvnm, door_tris, center
 
 
 def _navm_subrecords(rec, nvnm: bytes, base_objects: list) -> bytes:

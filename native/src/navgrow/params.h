@@ -30,8 +30,7 @@ namespace navgrow {
     X(DECIMATE_MAX_AREA_LOSS) X(CULL_SLIVER_MAX_AREA) X(MIN_TRI_AREA)        \
     X(CULL_SLIVER_AREA_FRAC) X(DECIMATE_PIN_RADIUS)                          \
     X(DECIMATE_PIN_CENTER_RADIUS) X(DECIMATE_PIN_NODE_RADIUS)                \
-    X(RIBBON_GROW_MIN_HALF) X(RIBBON_GROW_MAX_HALF)                          \
-    X(RIBBON_GROW_MAX_HALF_EXTERIOR) X(CS) X(CS_EXTERIOR)                    \
+    X(RIBBON_GROW_MIN_HALF) X(RIBBON_GROW_MAX_HALF) X(CS) X(CS_EXTERIOR)     \
     X(CONCAVE_CUT_FRAC) X(FLAP_EDGE_DROP) X(LIP_MARCH_STEP)                  \
     X(LIP_STANDOFF) X(SAME_SURFACE_Z) X(STOREY_GAP_Z) X(REACH_TOL)          \
     X(WALL_SLOPE_COS) X(DOOR_SNAP_PERP) X(RIBBON_SEED_STEP)                  \
@@ -60,11 +59,5 @@ bool set_params(PyObject* dict);
 
 // True once set_params has succeeded.
 bool params_ready();
-
-// corridor_grow.grow_cap: the grown half-width cap, the wide one on an exterior
-// (a cell with LAND).
-inline double grow_cap(bool exterior) {
-    return exterior ? P().RIBBON_GROW_MAX_HALF_EXTERIOR : P().RIBBON_GROW_MAX_HALF;
-}
 
 }  // namespace navgrow

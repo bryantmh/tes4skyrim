@@ -342,24 +342,24 @@ def seed_graph(seeds, walkable, blocking, land, ox, oy):
     return (points, edges) if edges else ([], [])
 
 
-def _write_points(rec, points, edges):
-    """Store the graph on the record in the exported PGRD text layout."""
+def pathgrid_order(points, edges):
+    """(points, edges) as a pathgrid record reads back: float points, edges by node then neighbour."""
     nbrs = [[] for _ in points]
     for a, b in edges:
         nbrs[a].append(b)
         nbrs[b].append(a)
-    rec['DATA.PointCount'] = str(len(points))
-    for i, (x, y, z) in enumerate(points):
-        rec['Point[%d].X' % i] = repr(float(x))
-        rec['Point[%d].Y' % i] = repr(float(y))
-        rec['Point[%d].Z' % i] = repr(float(z))
-        rec['Point[%d].Connections' % i] = str(len(nbrs[i]))
-        for n, t in enumerate(sorted(nbrs[i])):
-            rec['Point[%d].Edge[%d]' % (i, n)] = str(t)
+    ordered, seen = [], set()
+    for i in range(len(points)):
+        for t in sorted(nbrs[i]):
+            key = (min(i, t), max(i, t))
+            if t != i and key not in seen:
+                seen.add(key)
+                ordered.append(key)
+    return [tuple(float(c) for c in p) for p in points], ordered
 
 
-def seeded_pathgrid(job, base_model_by_fid, door_fids, get_collision):
-    """The job's synthetic pathgrid filled with its flooded graph, or None when nothing walks in.
+def seeded_graph(job, base_model_by_fid, door_fids, get_collision):
+    """The job's flooded (points, edges) in pathgrid order, or None when nothing walks in.
 
     Door panels are left out of the blocking soup, as the corridor build leaves them out.
     """
@@ -380,8 +380,4 @@ def seeded_pathgrid(job, base_model_by_fid, door_fids, get_collision):
                                                   water_z=open_water_z(cell, True))
         points, edges = seed_graph(job['seeds'], np.asarray(walkable), np.asarray(blocking),
                                    land, ox, oy)
-    if not edges:
-        return None
-    rec = dict(job['pgrd_rec'])
-    _write_points(rec, points, edges)
-    return rec
+    return pathgrid_order(points, edges) if edges else None
