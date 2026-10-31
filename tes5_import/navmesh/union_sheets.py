@@ -7,10 +7,13 @@ overlap in plan at different heights.
 See: docs/commentary/tes5_import_navmesh.md#plan-overlap-split-uses-bonded-pairs
 """
 
+import numpy as np
 from shapely import intersects as _sh_intersects, points as _sh_points
 
+from . import native_loader
 from .union_geom import (
-    SAME_SURFACE_Z, STOREY_GAP_Z, _height_on, _ribbon_polygon,
+    SAME_SURFACE_Z, STOREY_GAP_Z, _height_on, _ribbon_polygon, flat_strips,
+    valid_ribbons,
 )
 
 
@@ -80,15 +83,27 @@ def _same_surface_region(group_a, group_b, shared):
     containing a staircase spans many heights and a single test would either
     surrender a whole floor or nothing.
     """
-    from shapely import STRtree
     from shapely.ops import unary_union as _uu
-    dup = []
     b_strips = list(group_b)
-    b_polys = [_ribbon_polygon(sb) for sb in b_strips]
     if not b_strips:
         return None
+    b_polys = [_ribbon_polygon(sb) for sb in b_strips]
+    find = _native_same_surface if native_loader.NATIVE else _same_surface_pieces
+    dup = find(list(group_a), b_strips, b_polys, shared)
+    if not dup:
+        return None
+    try:
+        return _uu(dup)
+    except Exception:
+        return None
+
+
+def _same_surface_pieces(a_strips, b_strips, b_polys, shared):
+    """Each A x B ribbon overlap within `shared` (over 1 unit^2) that agrees in height."""
+    from shapely import STRtree
+    dup = []
     b_tree = STRtree(b_polys)
-    for sa in group_a:
+    for sa in a_strips:
         pa = _ribbon_polygon(sa)
         if pa.is_empty or not pa.intersects(shared):
             continue
@@ -105,12 +120,20 @@ def _same_surface_region(group_a, group_b, shared):
                 continue
             if _overlap_height_gap(sa, sb, piece) <= SAME_SURFACE_Z:
                 dup.append(piece)
-    if not dup:
-        return None
-    try:
-        return _uu(dup)
-    except Exception:
-        return None
+    return dup
+
+
+def _native_same_surface(a_strips, b_strips, b_polys, shared):
+    """Native `_same_surface_pieces`.
+
+    See: docs/commentary/tes5_import_navmesh.md#native-port-ab
+    """
+    rows, poly, prof, land = flat_strips(a_strips + b_strips)
+    return native_loader.native_geos().same_surface_pieces(
+        [_ribbon_polygon(sa) for sa in a_strips], b_polys, shared, rows, poly,
+        prof, None if land is None else land.grid,
+        0.0 if land is None else land.ox, 0.0 if land is None else land.oy,
+        SAME_SURFACE_Z)
 
 def _bonded_pairs(items):
     """Index pairs meeting at a pathgrid node where their heights agree.
@@ -143,6 +166,8 @@ def _candidate_pairs(polys):
     """
     if len(polys) < 2:
         return []
+    if native_loader.NATIVE:
+        return native_loader.native_geos().candidate_pairs(polys)
     from shapely import STRtree
     qa, qb = STRtree(polys).query(polys, predicate='intersects')
     return sorted((a, b) for a, b in zip(qa.tolist(), qb.tolist()) if a < b)
@@ -162,10 +187,37 @@ def _z_ranges(items):
             out.append((za, zb) if za <= zb else (zb, za))
     return out
 
+def _pair_gaps(items, pairs):
+    """`_overlap_height_gap` per pair, None where the two share no ground (< 1 unit^2).
+
+    A native gap may differ, but never across STOREY_GAP_Z, the only test made of it.
+    See: docs/commentary/tes5_import_navmesh.md#native-port-ab
+    """
+    if native_loader.NATIVE:
+        rows, poly, prof, land = flat_strips([s for (s, _p) in items])
+        return native_loader.native_geos().pair_gaps(
+            [p for (_s, p) in items], rows, poly, prof,
+            np.asarray(pairs, dtype=np.float64).reshape(-1, 2),
+            None if land is None else land.grid,
+            0.0 if land is None else land.ox, 0.0 if land is None else land.oy,
+            STOREY_GAP_Z)
+    out = []
+    for (a, b) in pairs:
+        sa, pa = items[a]
+        sb, pb = items[b]
+        inter = pa.intersection(pb)
+        if inter.is_empty or inter.area < 1.0:
+            out.append(None)
+        else:
+            out.append(_overlap_height_gap(sa, sb, inter))
+    return out
+
+
 def _partition_by_agreement(items, bonded, parent, find):
     """Union agreeing overlaps into `parent`; returns the conflicting pairs."""
     conflicts = set()
     zrange = _z_ranges(items)
+    measured = []
     for (a, b) in _candidate_pairs([p for (_s, p) in items]):
         if (a, b) not in bonded:
             alo, ahi = zrange[a]
@@ -174,13 +226,11 @@ def _partition_by_agreement(items, bonded, parent, find):
             if sep > STOREY_GAP_Z:
                 conflicts.add((a, b))
                 continue
-        sa, pa = items[a]
-        sb, pb = items[b]
-        inter = pa.intersection(pb)
-        if inter.is_empty or inter.area < 1.0:
+        measured.append((a, b))
+    for (a, b), gap in zip(measured, _pair_gaps(items, measured)):
+        if gap is None:
             continue
-        if _overlap_height_gap(sa, sb, inter) > STOREY_GAP_Z \
-                and (a, b) not in bonded:
+        if gap > STOREY_GAP_Z and (a, b) not in bonded:
             conflicts.add((a, b))
         else:
             ra, rb = find(a), find(b)
@@ -265,11 +315,7 @@ def _conflict_adjacency(members, conflicts, bonded):
 
 def _split_one_group(group, out):
     """Split one connectivity group into sheets, appending to `out`."""
-    items = []
-    for s in group:
-        poly = _ribbon_polygon(s)
-        if poly.is_valid and not poly.is_empty:
-            items.append((s, poly))
+    items = valid_ribbons(group)
     if not items:
         return
     n = len(items)

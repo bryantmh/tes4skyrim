@@ -44,13 +44,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from output_layout import asset_cache_chain
 from tes5_import.base.mesh_bounds import load_mesh_bounds
 from tes5_import.base.obstacles import index_obstacles
-from tes5_import.navmesh import cache_audit, pool as navm_pool
+from tes5_import.navmesh import cache_audit, native_loader, pool as navm_pool
 from tes5_import.navmesh import worker as navm_worker
 from tes5_import.record_types.world_morrowind import register_tes3_locks
+from tools.navmesh.perf import rss_note
 
 
 def init_worker_for(export_dir, im, door_fids, base_model_by_fid, offset):
-    """Initialise the in-process navmesh worker as the import does; geom_cache.
+    """Initialise the in-process navmesh worker as the import does; (geom_cache, pool initargs).
 
     Collision and door centers load as the MASTERS-FIRST chain: with only the
     plugin's own file, master-owned meshes have no collision and a child
@@ -60,11 +61,49 @@ def init_worker_for(export_dir, im, door_fids, base_model_by_fid, offset):
     """
     collision = navm_pool.collision_cache_chain(export_dir)
     geom_cache = navm_pool.navmesh_geom_cache(collision[-1])
-    navm_worker.init_worker(
-        base_model_by_fid, door_fids, collision, offset, geom_cache,
-        im.get_injected_formids(), disable_gc=False,
-        door_centers_cache=cache_audit.door_centers_cache_path(collision))
-    return geom_cache
+    door_centers = cache_audit.door_centers_cache_path(collision)
+    cache_audit.init_context(base_model_by_fid, door_fids, collision, offset, geom_cache,
+                             im.get_injected_formids(), door_centers)
+    initargs = (base_model_by_fid, door_fids, collision, offset, geom_cache,
+                im.get_injected_formids(), True, door_centers, None)
+    return geom_cache, initargs
+
+
+def run_on_pool(sel, initargs, workers, no_cache):
+    """Run the selected jobs on the import's own pool; print wall-clock and throughput.
+
+    Native builds run on threads in this process, Python ones on worker processes.
+    """
+    jobs = [dict(job, prove=no_cache) for _i, job in sel]
+    t0 = time.time()
+    results = navm_pool.run_pooled(jobs, initargs, workers)
+    dt = time.time() - t0
+    failed = sum(1 for _nb, meta in results.values() if (meta or {}).get('error'))
+    built = sum(1 for nb, _meta in results.values() if nb)
+    print(f'\n{len(jobs)} jobs on {workers} {"threads" if native_loader.NATIVE else "processes"}: '
+          f'{dt:.1f}s ({len(jobs) / max(dt, 1e-9):.2f} jobs/s), {built} built, {failed} failed',
+          flush=True)
+    print(f'this process:{rss_note()} (worker processes not included)', flush=True)
+    return 1 if failed else 0
+
+
+def compare_paths(sel, base_model_by_fid, door_fids):
+    """Build each job with the Python reference and natively; count byte-level mismatches."""
+    bad = 0
+    for i, job in sel:
+        out = []
+        for native in (False, True):
+            native_loader.NATIVE = native
+            t0 = time.time()
+            out.append((navm_worker.convert_job(job, base_model_by_fid, door_fids, None),
+                        time.time() - t0))
+        same = out[0][0][0] == out[1][0][0]
+        bad += not same
+        print(f'  job[{i}] cell {job["key"][0]:08X}  py {out[0][1]:.2f}s  nat {out[1][1]:.2f}s  '
+              f'{"MATCH" if same else "DIFF"}', flush=True)
+    native_loader.NATIVE = True
+    print(f'\n{len(sel) - bad}/{len(sel)} jobs byte-identical', flush=True)
+    return 1 if bad else 0
 
 
 def load_export(export_dir, offset):
@@ -116,7 +155,8 @@ def load_export(export_dir, offset):
     return im, by_type, door_fids, base_model_by_fid, jobs
 
 
-def main():
+def parse_args():
+    """The command line, with `export_dir` resolved."""
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--plugin', default='Oblivion.esm',
@@ -144,113 +184,130 @@ def main():
                     help='project the measured mean onto a full run')
     ap.add_argument('--offset', type=int, default=1,
                     help='load-order FormID index offset (default 1)')
+    ap.add_argument('--workers', type=int, metavar='N',
+                    help="run the selection on the import's own pool of N workers "
+                         '(threads when native, processes with TES_NAVMESH_IMPL=python)')
+    ap.add_argument('--ab', action='store_true',
+                    help='build each selected job with the Python reference and '
+                         'natively, and require identical NAVM bytes')
     args = ap.parse_args()
-
     if not (args.cell or args.all or args.uncached or args.sample):
         ap.error('pass --cell, --all, --uncached or --sample')
+    args.export_dir = args.export or os.path.join('export', args.plugin)
+    if not os.path.isdir(args.export_dir):
+        ap.error(f'no such export dir: {args.export_dir}')
+    return args
 
-    export_dir = args.export or os.path.join('export', args.plugin)
-    if not os.path.isdir(export_dir):
-        ap.error(f'no such export dir: {export_dir}')
 
-    faulthandler.enable()
-    im, _by_type, door_fids, base_model_by_fid, jobs = load_export(
-        export_dir, args.offset)
-    print(f'  {len(jobs)} navmesh jobs', flush=True)
+def uncached(sel, geom_cache):
+    """The selected jobs with no geometry-cache entry."""
+    if not geom_cache:
+        raise SystemExit('--uncached needs a geometry cache (missing collision_cache.bin?)')
+    have = set(os.listdir(geom_cache[0]))
+    sel = [(i, j) for i, j in sel if '%08X_%08X.pkl' % j['key'] not in have]
+    print(f'  {len(sel)} jobs have no geometry-cache entry', flush=True)
+    return sel
 
-    geom_cache = init_worker_for(export_dir, im, door_fids, base_model_by_fid,
-                                 args.offset)
 
-    # Select the jobs to run.
+def select_jobs(args, jobs, geom_cache):
+    """[(index, job)] the command line picks.
+
+    --sample takes an even stride, not the head: jobs are dispatched grouped
+    by worldspace, so the first N are one region (often all interiors).
+    """
     if args.cell:
         want = {int(c, 16) for c in args.cell}
         sel = [(i, j) for i, j in enumerate(jobs) if j['key'][0] in want]
-        missing = want - {j['key'][0] for _i, j in sel}
-        for m in sorted(missing):
+        for m in sorted(want - {j['key'][0] for _i, j in sel}):
             print(f'  (no navmesh job for cell {m:08X})', flush=True)
-    else:
-        sel = list(enumerate(jobs))
-        if args.uncached:
-            if not geom_cache:
-                ap.error('--uncached needs a geometry cache '
-                         '(missing collision_cache.bin?)')
-            cache_dir, _tag = geom_cache
-            have = set(os.listdir(cache_dir))
-            sel = [(i, j) for i, j in sel
-                   if '%08X_%08X.pkl' % j['key'] not in have]
-            print(f'  {len(sel)} jobs have no geometry-cache entry', flush=True)
-        if args.sample:
-            # EVENLY SPACED, not the head and not random: jobs are dispatched
-            # grouped by worldspace, so the first N are all one region (and
-            # often all interiors).  A fixed stride covers the whole
-            # population and is reproducible run to run.
-            step = max(1, len(sel) // args.sample)
-            sel = sel[::step][:args.sample]
-        else:
-            sel = sel[args.start:args.start + args.max]
+        return sel
+    sel = list(enumerate(jobs))
+    if args.uncached:
+        sel = uncached(sel, geom_cache)
+    if args.sample:
+        return sel[::max(1, len(sel) // args.sample)][:args.sample]
+    return sel[args.start:args.start + args.max]
 
+
+def describe(nb, meta, dt):
+    """One job's result line."""
+    if nb is None:
+        return f'      -> no navmesh (no usable geometry) [{dt:.2f}s]'
+    m = meta or {}
+    extra = ((['geometry from cache'] if m.get('geom_cached') else [])
+             + ([f'{len(m["door_refs"])} door links'] if m.get('door_refs') else []))
+    return (f'      -> {len(nb)} bytes' + (f' ({", ".join(extra)})' if extra else '')
+            + f' [{dt:.2f}s]')
+
+
+def run_one(i, job, base_model_by_fid, door_fids, geom_cache):
+    """Seconds one job took, or None when it raised (traceback printed).
+
+    The job's identity is flushed BEFORE the call, so a native abort leaves
+    the culprit as the last line printed.
+    """
+    cell, pgrd = job['key']
+    t0 = time.time()
+    print(f'  job[{i}] cell {cell:08X} pgrd {pgrd:08X} '
+          f'refrs={len(job["refr_recs"])} '
+          f'land={"Y" if job["land_rec"] is not None else "N"}', flush=True)
+    try:
+        nb, meta = navm_worker.convert_job(job, base_model_by_fid, door_fids, geom_cache)
+    except Exception:
+        traceback.print_exc()
+        sys.stdout.flush()
+        return None
+    dt = time.time() - t0
+    print(describe(nb, meta, dt), flush=True)
+    return dt
+
+
+def report_times(times, extrapolate):
+    """Print the per-job summary and, given (jobs, workers), the projected full run.
+
+    The projection is mean * jobs / workers: it ignores the scheduling tail
+    and worker startup.
+    """
+    ts = sorted(times)
+    n, total = len(ts), sum(ts)
+    print('\nPER-JOB SECONDS  n=%d  total=%.1fs  mean=%.2f  p50=%.2f  p90=%.2f  max=%.2f'
+          % (n, total, total / n, ts[n // 2], ts[min(n - 1, int(n * .9))], ts[-1]))
+    if extrapolate:
+        jobs_n, workers = extrapolate
+        print('  extrapolated: %d jobs / %d workers -> %.1f min'
+              % (jobs_n, workers, (total / n) * jobs_n / max(1, workers) / 60.0))
+
+
+def run_serial(sel, base_model_by_fid, door_fids, geom_cache, extrapolate):
+    """Run each selected job in turn; 1 when any raised."""
+    print(f'\nrunning {len(sel)} job(s) in-process...', flush=True)
+    times = [run_one(i, job, base_model_by_fid, door_fids, geom_cache) for i, job in sel]
+    ok = [t for t in times if t is not None]
+    print(f'\n{len(ok)}/{len(sel)} ran without raising', flush=True)
+    if ok:
+        report_times(ok, extrapolate)
+    return 0 if len(ok) == len(sel) else 1
+
+
+def main():
+    """Load the export, pick the jobs and run them as the command line asks; the exit code."""
+    args = parse_args()
+    faulthandler.enable()
+    im, _by_type, door_fids, base_model_by_fid, jobs = load_export(args.export_dir, args.offset)
+    print(f'  {len(jobs)} navmesh jobs', flush=True)
+    geom_cache, initargs = init_worker_for(args.export_dir, im, door_fids, base_model_by_fid,
+                                           args.offset)
+    sel = select_jobs(args, jobs, geom_cache)
     if args.no_cache:
-        # COLD-CACHE timing: the geometry cache turns a real build into a
-        # pickle load, so any run that hits it measures I/O, not generation.
-        # Disabling it is the only way to time what an unprimed machine (or a
-        # navmesh code change, which the input-keyed hash cannot see) pays.
         geom_cache = None
         print('  geometry cache DISABLED (cold-cache timing)', flush=True)
-
-    print(f'\nrunning {len(sel)} job(s) in-process...', flush=True)
-    failed = 0
-    times = []
-    for i, job in sel:
-        cell, pgrd = job['key']
-        _t0 = time.time()
-        # Flushed BEFORE the call on purpose: if the native code aborts the
-        # process, this is the line that names the culprit.
-        print(f'  job[{i}] cell {cell:08X} pgrd {pgrd:08X} '
-              f'refrs={len(job["refr_recs"])} '
-              f'land={"Y" if job["land_rec"] is not None else "N"}', flush=True)
-        try:
-            nb, meta = navm_worker.convert_job(job, base_model_by_fid,
-                                               door_fids, geom_cache)
-        except Exception:
-            failed += 1
-            traceback.print_exc()
-            sys.stdout.flush()
-            continue
-        _dt = time.time() - _t0
-        times.append(_dt)
-        if nb is None:
-            print(f'      -> no navmesh (no usable geometry) [{_dt:.2f}s]',
-                  flush=True)
-        else:
-            m = meta or {}
-            extra = []
-            if m.get('geom_cached'):
-                extra.append('geometry from cache')
-            if m.get('door_refs'):
-                extra.append(f'{len(m["door_refs"])} door links')
-            print(f'      -> {len(nb)} bytes'
-                  + (f' ({", ".join(extra)})' if extra else '')
-                  + f' [{_dt:.2f}s]', flush=True)
-
-    print(f'\n{len(sel) - failed}/{len(sel)} ran without raising', flush=True)
-    if times:
-        ts = sorted(times)
-        n = len(ts)
-        total = sum(ts)
-        print('\nPER-JOB SECONDS  n=%d  total=%.1fs  mean=%.2f  '
-              'p50=%.2f  p90=%.2f  max=%.2f'
-              % (n, total, total / n, ts[n // 2], ts[min(n - 1, int(n * .9))],
-                 ts[-1]))
-        # Extrapolate to the whole plugin: the pool runs `workers` jobs at a
-        # time, so wall-clock is (mean * jobs) / workers -- an ESTIMATE that
-        # ignores scheduling tail and per-worker startup.
-        if args.extrapolate:
-            jobs_n, workers = args.extrapolate
-            est = (total / n) * jobs_n / max(1, workers)
-            print('  extrapolated: %d jobs / %d workers -> %.1f min'
-                  % (jobs_n, workers, est / 60.0))
-    return 1 if failed else 0
+    if args.ab:
+        return compare_paths(sel, base_model_by_fid, door_fids)
+    if args.workers:
+        return run_on_pool(sel, initargs, args.workers, args.no_cache)
+    return run_serial(sel, base_model_by_fid, door_fids, geom_cache, args.extrapolate)
 
 
 if __name__ == '__main__':
     raise SystemExit(main())
+

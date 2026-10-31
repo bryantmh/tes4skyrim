@@ -10,6 +10,8 @@ See: docs/commentary/tes5_import_navmesh.md#union-geometry-constants
 
 import math
 
+import numpy as np
+
 from . import params
 
 #: Heights within this at one point are ONE walkable surface.
@@ -44,6 +46,15 @@ def _ribbon_polygon(s):
     p = _ribbon_polygon_uncached(s)
     _RIBBON_CACHE[id(s)] = (s, p)
     return p
+
+def valid_ribbons(strips):
+    """(strip, ribbon polygon) for every strip whose polygon is valid and non-empty."""
+    import shapely
+    polys = [_ribbon_polygon(s) for s in strips]
+    if not polys:
+        return []
+    ok = shapely.is_valid(polys) & ~shapely.is_empty(polys)
+    return [(s, p) for s, p, keep in zip(strips, polys, ok) if keep]
 
 def _ribbon_cache_clear():
     """Drop the memo; call once per build."""
@@ -163,12 +174,41 @@ def _land_of(strips):
     return next((s['land'] for s in strips if s.get('land') is not None), None)
 
 
+def flat_strips(strips):
+    """`(rows, poly, prof, land)` arrays for the native strip readers.
+
+    rows (S, 12): ax,ay,az,bx,by,bz,half,poly_off,poly_n,prof_off,prof_n,
+    on_land; poly (P, 2) outlines and prof (F, 3) profiles they index; land the
+    one LandField every terrain strip follows (`_land_of`), or None.
+    """
+    rows, poly, prof = [], [], []
+    for s in strips:
+        p = s.get('poly')
+        off, n = 0, 0
+        if p is not None:
+            off, n = len(poly), len(p)
+            poly.extend(p)
+        pr = s.get('prof')
+        proff, prn = 0, 0
+        if pr is not None and len(pr) >= 2:
+            proff, prn = len(prof), len(pr)
+            prof.extend(pr)
+        a, b = s['a'], s['b']
+        rows.append((a[0], a[1], a[2], b[0], b[1], b[2], float(s['half']),
+                     float(off), float(n), float(proff), float(prn),
+                     float(s.get('land') is not None)))
+    return (np.asarray(rows, dtype=np.float64).reshape(-1, 12),
+            np.asarray(poly, dtype=np.float64).reshape(-1, 2),
+            np.asarray(prof, dtype=np.float64).reshape(-1, 3),
+            _land_of(strips))
+
+
 def _height_on(s, px, py):
     """Height of strip `s` at (px, py), following its own slope.
 
     A STEEP strip may carry a 'prof' polyline whose interior follows the real
     treads; otherwise the straight A->B line is used.  Must stay IDENTICAL to
-    the native mirror in grow.cpp (py_levels_at).
+    the native mirror, strip.h's strip_height.
 
     See: docs/commentary/tes5_import_navmesh.md#height-follows-the-pathgrid-line
     """

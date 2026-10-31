@@ -14,10 +14,10 @@ import struct
 import numpy as np
 
 from ..base.text_reader import get_float, get_formid, get_hex_bytes, get_int
-from . import params
+from . import native_loader, params
 from .corridor_grow import walkable_sampler, wall_slab_sampler
 from .edge_links import CELL_SIZE, border_edges, exterior_views, master_view
-from .world import gather_cell_geometry, land_field, open_water_z
+from .world import gather_cell_geometry, land_field, open_water_z, placements
 
 #: Spacing of the flood lattice; the terrain grow widens each ribbon to the walls between nodes.
 LATTICE_SPACING = 512.0
@@ -367,11 +367,19 @@ def seeded_pathgrid(job, base_model_by_fid, door_fids, get_collision):
     ox = float(cell.get('XCLC.X') or 0) * CELL_SIZE
     oy = float(cell.get('XCLC.Y') or 0) * CELL_SIZE
     bases = set(door_fids.keys()) if isinstance(door_fids, dict) else set(door_fids or ())
-    walkable, blocking = gather_cell_geometry(job['refr_recs'], base_model_by_fid, get_collision,
-                                              job['land_rec'], ox, oy, skip_bases=bases,
-                                              water_z=open_water_z(cell, True))
-    points, edges = seed_graph(job['seeds'], np.asarray(walkable), np.asarray(blocking),
-                               land_field(job['land_rec'], ox, oy), ox, oy)
+    land = land_field(job['land_rec'], ox, oy)
+    if native_loader.NATIVE:
+        points, edges = native_loader.native_core().seed_graph(
+            *placements(job['refr_recs'], base_model_by_fid, get_collision, bases),
+            None if land is None else land.grid, ox, oy, open_water_z(cell, True),
+            np.asarray(job['seeds'], dtype=np.float64).reshape(-1, 3))
+    else:
+        walkable, blocking = gather_cell_geometry(job['refr_recs'], base_model_by_fid,
+                                                  get_collision, job['land_rec'], ox, oy,
+                                                  skip_bases=bases,
+                                                  water_z=open_water_z(cell, True))
+        points, edges = seed_graph(job['seeds'], np.asarray(walkable), np.asarray(blocking),
+                                   land, ox, oy)
     if not edges:
         return None
     rec = dict(job['pgrd_rec'])

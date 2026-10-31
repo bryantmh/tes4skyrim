@@ -10,6 +10,7 @@ See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
 
 from asset_convert.game_paths import current_namespace
 from output_layout import asset_cache_chain
+import gc
 import glob
 import hashlib
 import math
@@ -19,12 +20,12 @@ import struct
 import sys
 import time
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
-from contextlib import nullcontext
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
 
 from core.navmesh_options import CORRIDOR, navmesh_generator
 from core.worker_budget import worker_count
-from . import cache_audit as navm_verify, worker as navm_worker
+from . import cache_audit as navm_verify, native_loader, worker as navm_worker
 from .edge_links import exterior_views
 from .seeding import drop_unplayable, grow_into_empty, master_views, seeded_record
 from .spawn_nodes import ACTOR_SIGS, is_airborne, spawn_point
@@ -628,12 +629,12 @@ _TAG_EXCLUDE = frozenset({
     'worker.py', '__init__.py', 'lookup_grid.py', 'seeding.py',
 })
 
-#: Native SOURCES deciding cell geometry; hashed with the Python, never the .pyd.
-_TAG_NATIVE = ('navgrow/grow.cpp',)
+#: Native source directory deciding cell geometry; its .cpp/.h are hashed with the Python, never the .pyd.
+_TAG_NATIVE = 'navgrow'
 
 
 def _native_tag_sources() -> list:
-    """Each `_TAG_NATIVE` file's bytes, newline-normalized; missing ones drop.
+    """Each `_TAG_NATIVE` .cpp/.h file's bytes, by name, newline-normalized.
 
     Anchored on the REPO, not on this module's `__file__`: the tag tests copy
     the navmesh package to a temp dir, and a path derived from the copy would
@@ -641,12 +642,13 @@ def _native_tag_sources() -> list:
 
     See: docs/commentary/tes5_import_navmesh.md#the-tag-covers-the-native-march
     """
-    root = os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))))
+    src = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), 'native', 'src', _TAG_NATIVE)
+    names = (sorted(f for f in os.listdir(src) if f.endswith(('.cpp', '.h')))
+             if os.path.isdir(src) else [])
     out = []
-    for name in _TAG_NATIVE:
-        path = os.path.join(root, 'native', 'src',
-                            name.replace('/', os.sep))
+    for name in names:
+        path = os.path.join(src, name)
         try:
             with open(path, 'rb') as fh:
                 out.append(fh.read().replace(b'\r\n', b'\n'))
@@ -794,12 +796,29 @@ def _map_kwargs(n_jobs, n_workers) -> dict:
     return kwargs
 
 
-def _pool(initargs, n_workers) -> ProcessPoolExecutor:
-    """A run_job pool whose workers carry this plugin's context."""
-    return ProcessPoolExecutor(max_workers=n_workers,
-                               initializer=navm_worker.init_worker,
-                               initargs=initargs,
-                               max_tasks_per_child=_TASKS_PER_CHILD)
+@contextmanager
+def _pool(initargs, n_workers):
+    """A run_job pool: threads sharing this process's context when native, else worker processes.
+
+    The native build runs with the GIL released, so threads share one copy of
+    the collision; the collector pauses for the run, as it is off in a worker.
+    `init_context` MUST have run first.
+    See: docs/plans/navmesh_native_rewrite.md#one-process-many-threads
+    """
+    if not native_loader.NATIVE:
+        with ProcessPoolExecutor(max_workers=n_workers, initializer=navm_worker.init_worker,
+                                 initargs=initargs, max_tasks_per_child=_TASKS_PER_CHILD) as ex:
+            yield ex
+        return
+    native_loader.native_core()
+    collecting = gc.isenabled()
+    gc.disable()
+    try:
+        with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix='navmesh') as ex:
+            yield ex
+    finally:
+        if collecting:
+            gc.enable()
 
 
 def _run_jobs(jobs, ex, n_workers) -> dict:
@@ -815,6 +834,12 @@ def _run_jobs(jobs, ex, n_workers) -> dict:
         if done % every == 0 or done == total:
             _progress(done, total, t0)
     return cache
+
+
+def run_pooled(jobs, initargs, n_workers) -> dict:
+    """{key: result} for `jobs` on a pool of `n_workers`, as the import runs them."""
+    with _pool(initargs, n_workers) as ex:
+        return _run_jobs(jobs, ex, n_workers)
 
 
 def pooled_prover(initargs, n_workers):
@@ -946,7 +971,7 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
                 geom_cache, get_injected_formids(), True, door_centers, activator_fids)
     navm_verify.init_context(base_model_by_fid, door_fids, collision_cache,
                              formid_offset, geom_cache,
-                             get_injected_formids(), door_centers)
+                             get_injected_formids(), door_centers, activator_fids)
     navm_verify.prepare(jobs, geom_cache,
                         pooled_prover(initargs, n_workers))
 

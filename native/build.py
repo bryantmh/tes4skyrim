@@ -4,18 +4,18 @@
     python native/build.py --force    # rebuild even if up to date
 
 The compiled module lands in `native/dist/` and is loaded by path (see
-`tes5_import/navmesh/_native_loader.py`).  It is REQUIRED at runtime -- falling
+`tes5_import/navmesh/native_loader.py`).  It is REQUIRED at runtime -- falling
 back to Python would make output depend on whether a build artifact happened to
 be present, which breaks byte-reproducibility -- so the .pyd/.so is committed.
 
 On Windows, MSVC is located through vswhere (Build Tools are enough; a full
 Visual Studio install is not required), so this works on a machine that has
 never opened an IDE. Off Windows, g++/clang++ from PATH build a .so instead --
-grow.cpp is portable C++17 (only Python.h/numpy's C API), so it compiles
-unmodified; verified by hand with g++ 14 producing a working
-_navgrow_native.cpython-3xx-x86_64-linux-gnu.so that imports and exposes
-grow_strips/levels_at. Nothing here is invoked by the conversion pipeline
-itself; the .pyd/.so is a build artifact you produce once.
+the sources are C++17 over Python.h/numpy's C API, with GEOS bound at runtime
+from shapely (geos_bind.cpp has a dlopen branch).  grow.cpp alone was verified
+by hand with g++ 14; the Linux build of the newer kernels is untested.
+Nothing here is invoked by the conversion pipeline itself; the .pyd/.so is a
+build artifact you produce once.
 """
 
 import argparse
@@ -27,14 +27,17 @@ import sysconfig
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# module name -> source file.  Each builds to its own .pyd; they share no code,
-# so a failure in one does not block the other.
+#: Module name -> source directory; each .cpp there is one translation unit, each module its own .pyd.
 MODULES = {
-    '_navgrow_native': os.path.join(ROOT, 'native', 'src', 'navgrow',
-                                    'grow.cpp'),
-    '_nifgeom_native': os.path.join(ROOT, 'native', 'src', 'nifgeom',
-                                    'geom.cpp'),
+    '_navgrow_native': os.path.join(ROOT, 'native', 'src', 'navgrow'),
+    '_nifgeom_native': os.path.join(ROOT, 'native', 'src', 'nifgeom'),
 }
+
+
+def module_files(src_dir, exts=('.cpp',)):
+    """The files in `src_dir` with one of `exts`, sorted by name."""
+    return sorted(os.path.join(src_dir, f) for f in os.listdir(src_dir)
+                  if f.endswith(exts))
 
 # Standalone EXECUTABLES, not importable modules.  They need their own build
 # rules (no Python/numpy headers, no ABI suffix, and spt_engine must be 32-bit
@@ -85,8 +88,10 @@ def find_unix_compiler():
     return None
 
 
-def _build_one_msvc(name, src, toolchain, py_inc, np_inc, py_lib, target, obj_dir):
+def _build_one_msvc(name, srcs, toolchain, py_inc, np_inc, py_lib, target, obj_dir):
+    """Compile and link `srcs` into `target` with MSVC; returns the exit code."""
     vcvars = toolchain
+    quoted = ' '.join(f'"{s}"' for s in srcs)
     # /O2 optimise, /GL whole-program, /fp:precise so the compiler may NOT
     # reassociate float ops -- the geometry predicates compare against exact
     # thresholds and reassociation would change which branches are taken.
@@ -113,7 +118,7 @@ def _build_one_msvc(name, src, toolchain, py_inc, np_inc, py_lib, target, obj_di
         fh.write(
             f'cl /nologo /LD /O2 /GL /EHsc /std:c++17 /fp:precise /W3 '
             f'/I"{py_inc}" /I"{np_inc}" '
-            f'/Fo"{obj_dir}\\\\" /Fe:"{target}" "{src}" '
+            f'/Fo"{obj_dir}\\\\" /Fe:"{target}" {quoted} '
             f'/link /LIBPATH:"{py_lib}" /IMPLIB:"{implib}" '
             f'/OPT:REF /OPT:ICF\n')
     print('building', target)
@@ -121,7 +126,8 @@ def _build_one_msvc(name, src, toolchain, py_inc, np_inc, py_lib, target, obj_di
     return r.returncode
 
 
-def _build_one_unix(name, src, toolchain, py_inc, np_inc, target, obj_dir):
+def _build_one_unix(name, srcs, toolchain, py_inc, np_inc, target, obj_dir):
+    """Compile and link `srcs` into `target` with g++/clang++; returns the exit code."""
     compiler = toolchain
     # -fPIC -shared for a loadable extension module. -O2 (no -ffast-math, so
     # this stays strict-IEEE like MSVC's /fp:precise above -- same reasoning:
@@ -132,7 +138,7 @@ def _build_one_unix(name, src, toolchain, py_inc, np_inc, target, obj_dir):
     cmd = [
         compiler, '-shared', '-fPIC', '-O2', '-std=c++17', '-Wall',
         '-I', py_inc, '-I', np_inc,
-        '-o', target, src,
+        '-o', target, *srcs,
     ]
     print('building', target)
     print('  ' + ' '.join(cmd))
@@ -140,11 +146,14 @@ def _build_one_unix(name, src, toolchain, py_inc, np_inc, target, obj_dir):
     return r.returncode
 
 
-def build_one(name, src, toolchain, py_inc, np_inc, py_lib, ext_suffix, force):
+def build_one(name, src_dir, toolchain, py_inc, np_inc, py_lib, ext_suffix, force):
     """Compile one module; returns a shell return code (0 = ok)."""
     target = os.path.join(OUT_DIR, name + ext_suffix)
+    srcs = module_files(src_dir)
+    newest = max(os.path.getmtime(f)
+                 for f in module_files(src_dir, ('.cpp', '.h')))
     if (not force and os.path.exists(target)
-            and os.path.getmtime(target) > os.path.getmtime(src)):
+            and os.path.getmtime(target) > newest):
         print('up to date:', target)
         return 0
 
@@ -155,10 +164,10 @@ def build_one(name, src, toolchain, py_inc, np_inc, py_lib, ext_suffix, force):
     os.makedirs(obj_dir, exist_ok=True)
 
     if sys.platform == 'win32':
-        rc = _build_one_msvc(name, src, toolchain, py_inc, np_inc, py_lib,
+        rc = _build_one_msvc(name, srcs, toolchain, py_inc, np_inc, py_lib,
                              target, obj_dir)
     else:
-        rc = _build_one_unix(name, src, toolchain, py_inc, np_inc,
+        rc = _build_one_unix(name, srcs, toolchain, py_inc, np_inc,
                              target, obj_dir)
     if rc != 0:
         print('BUILD FAILED:', name, file=sys.stderr)
@@ -235,8 +244,8 @@ def main():
     np_inc = numpy.get_include()
 
     todo = MODULES if not a.module else {a.module: MODULES[a.module]}
-    for name, src in todo.items():
-        rc = build_one(name, src, toolchain, py_inc, np_inc, py_lib,
+    for name, src_dir in todo.items():
+        rc = build_one(name, src_dir, toolchain, py_inc, np_inc, py_lib,
                        ext_suffix, a.force)
         if rc != 0:
             return rc

@@ -9,7 +9,7 @@ See: docs/commentary/tes5_import_navmesh.md#decimation
 
 import math
 
-from . import params
+from . import native_loader, params
 
 def _badness(verts, t):
     """Normalized shape badness; 1.0 = exactly at the contract boundary.
@@ -177,7 +177,7 @@ class _Collapse:
         side_v = dx * (p[1] - a0[1]) - dy * (p[0] - a0[0])
         cx = cy = 0.0
         cnt = 0
-        for ti in self.vmap.get(vi, ()):
+        for ti in sorted(self.vmap.get(vi, ())):
             if not self.alive[ti]:
                 continue
             t = self.tris[ti]
@@ -272,9 +272,16 @@ class _Collapse:
                      if self.alive[ti] and b in self.tris[ti])
         return shared == 1
 
+    def incident(self, keep, drop):
+        """Triangle indices touching either vertex, ascending (not set order).
+
+        See: docs/commentary/tes5_import_navmesh.md#native-port-ab
+        """
+        return sorted(self.vmap.get(keep, set()) | self.vmap.get(drop, set()))
+
     def affected(self, keep, drop):
         """(indices, triangles) that survive the collapse and must be rewound."""
-        inc = self.vmap.get(keep, set()) | self.vmap.get(drop, set())
+        inc = self.incident(keep, drop)
         idx = [ti for ti in inc if self.alive[ti]
                and not (keep in self.tris[ti] and drop in self.tris[ti])]
         return idx, [self.tris[ti] for ti in idx]
@@ -299,8 +306,8 @@ class _Collapse:
 
         See: docs/commentary/tes5_import_navmesh.md#boundary-cuts-are-charged-to-a-budget
         """
-        inc = self.vmap.get(keep, set()) | self.vmap.get(drop, set())
-        killed = [self.tris[ti] for ti in inc if self.alive[ti]
+        killed = [self.tris[ti] for ti in self.incident(keep, drop)
+                  if self.alive[ti]
                   and keep in self.tris[ti] and drop in self.tris[ti]]
         self.verts[keep] = old
         before_area = _mesh_area(self.verts, affected + killed)
@@ -427,6 +434,11 @@ def decimate(verts, tris, pinned_xy=None, seam_bounds=None, rounds=None,
     surface: f(x, y, z) -> the walkable height a needle split sits on.
     See: docs/commentary/tes5_import_navmesh.md#decimation
     """
+    if native_loader.NATIVE:
+        return native_loader.native_core().decimate(
+            verts, tris, pinned_xy, seam_bounds,
+            params.DECIMATE_ROUNDS if rounds is None else rounds,
+            allow_split, ground_ok, surface)
     tris = [tuple(int(i) for i in t) for t in tris]
     verts = [list(map(float, v)) for v in verts]
     min_edge = params.DECIMATE_MIN_EDGE

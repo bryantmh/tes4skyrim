@@ -20,7 +20,7 @@ import numpy as np
 
 from ..base.text_reader import get_float, get_formid, get_int, get_str
 from ..record_types.world import shifted_position
-from . import params
+from . import native_loader, params
 
 _CELL_SIZE = 4096.0
 _LAND_VERTS = 33
@@ -33,9 +33,7 @@ MAX_PLACEMENT = 1e7
 
 def _finite_placement(pos, scale):
     """True if a REFR's placement can contribute usable collision geometry."""
-    if not np.all(np.isfinite(pos)) or not math.isfinite(scale):
-        return False
-    return bool(np.all(np.abs(pos) <= MAX_PLACEMENT))
+    return math.isfinite(scale) and all(math.isfinite(v) and abs(v) <= MAX_PLACEMENT for v in pos)
 
 
 def rot_matrix(rx, ry, rz):
@@ -151,6 +149,14 @@ class LandField:
             return float(z00 + (z10 - z00) * tx + (z11 - z10) * ty)
         return float(z00 + (z11 - z01) * tx + (z01 - z00) * ty)
 
+    def z_many(self, xy):
+        """`z` at every row of the (N, 2) array `xy`, as a list."""
+        if native_loader.NATIVE:
+            return native_loader.load_native().land_z(
+                self.grid, self.ox, self.oy,
+                np.ascontiguousarray(xy, dtype=np.float64).reshape(-1, 2))
+        return [self.z(x, y) for (x, y) in xy]
+
 
 def land_field(land_rec, origin_x, origin_y):
     """The cell's LandField, or None when it has no readable LAND."""
@@ -182,10 +188,9 @@ def base_fid(rec: dict):
     return get_formid(rec, 'NAME') or None
 
 
-def _placed_soup(refr, base_model_by_fid, get_collision):
-    """Return (walkable, blocking) placed arrays for one REFR, or (None, None).
+def _placement(refr, base_model_by_fid, get_collision):
+    """(soup, rot, scale, pos) for one REFR, or None when it places no usable collision.
 
-    Either element is None when that class is absent or the ref is unusable.
     Placement uses `shifted_position`, the SAME position the ESM writes, so
     furniture collision does not float above where the engine puts the object.
 
@@ -195,18 +200,53 @@ def _placed_soup(refr, base_model_by_fid, get_collision):
     key = base_model_by_fid.get(base_fid(refr))
     soup = get_collision(key) if key else None
     if not soup:
-        return None, None
+        return None
     scale = get_float(refr, 'XSCL.Scale', 1.0) or 1.0
     pos = np.array(shifted_position(refr, scale), dtype=np.float64)
     if not _finite_placement(pos, scale):
-        return None, None
+        return None
     rot = rot_matrix(get_float(refr, 'RotX'),
                       get_float(refr, 'RotY'),
                       get_float(refr, 'RotZ'))
     if not np.all(np.isfinite(rot)):
+        return None
+    return soup, rot, scale, pos
+
+
+def _placed_soup(refr, base_model_by_fid, get_collision):
+    """Return (walkable, blocking) placed arrays for one REFR, or (None, None).
+
+    Either element is None when that class is absent or the ref is unusable.
+    """
+    got = _placement(refr, base_model_by_fid, get_collision)
+    if got is None:
         return None, None
+    soup, rot, scale, pos = got
     return (place(soup.get('w'), rot, scale, pos),
             place(soup.get('b'), rot, scale, pos))
+
+
+def _native_soup(flat):
+    """A cache soup as the float32/float64 buffer the native gather borrows, or None."""
+    if flat is None or len(flat) == 0:
+        return None
+    arr = np.asarray(flat)
+    return np.ascontiguousarray(arr if arr.dtype in (np.float32, np.float64) else arr.astype(np.float64))
+
+
+def placements(refr_recs, base_model_by_fid, get_collision, skip_bases=()):
+    """((R, 14) float64 rows, [(w, b)]) of the refs placing collision, for the native gather.
+
+    A row is [scale, x, y, z, rot_matrix row-major, is skip base].
+    """
+    rows, soups = [], []
+    for refr in refr_recs or ():
+        got = _placement(refr, base_model_by_fid, get_collision)
+        if got is not None:
+            soup, rot, scale, pos = got
+            rows.append([scale, *pos, *rot.ravel(), float(base_fid(refr) in skip_bases)])
+            soups.append((_native_soup(soup.get('w')), _native_soup(soup.get('b'))))
+    return np.asarray(rows, dtype=np.float64).reshape(-1, 14), soups
 
 
 def cell_water_z(cell_rec):

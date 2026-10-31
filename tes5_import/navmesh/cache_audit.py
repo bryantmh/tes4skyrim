@@ -370,11 +370,12 @@ def door_centers_cache_path(collision_cache):
 
 def init_context(base_model_by_fid, door_fids, collision_cache,
                  formid_offset, geom_cache, injected_formids,
-                 door_centers_cache) -> None:
+                 door_centers_cache, activator_fids=None) -> None:
     """Populate this process's navm_worker globals before any run_job call.
 
     MUST run before `prepare`: `rekey_cache` reads these globals in the PARENT,
-    and a serial prover rebuilds cells here too.
+    a serial prover rebuilds cells here too, and the native pool's threads
+    build every cell against them.
     disable_gc=False keeps the parent's collector; the pool's copies pass True.
 
     See: docs/commentary/tes5_import_navmesh.md#verifying-a-cache-against-fresh-geometry
@@ -383,7 +384,8 @@ def init_context(base_model_by_fid, door_fids, collision_cache,
     navm_worker.init_worker(base_model_by_fid, door_fids, collision_cache,
                             formid_offset, geom_cache, injected_formids,
                             disable_gc=False,
-                            door_centers_cache=door_centers_cache)
+                            door_centers_cache=door_centers_cache,
+                            activator_fids=activator_fids)
 
 
 def prepare(jobs: list, geom_cache, rebuild=None) -> None:
