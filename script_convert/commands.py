@@ -28,6 +28,7 @@ from script_convert.command_rows import (
     ACTOR, COMMAND_ROWS, GMST_TO_ACTOR_VALUE, ACTOR_VALUE_FUNCTIONS,
     ACTOR_VALUE_READ_FUNCTIONS, Cmd, param_types
 )
+from script_convert.context_setup import add_topic_call
 from script_convert.emit.commands import emit_row
 from script_convert.commands_falloutnv import FALLOUT_HANDLERS
 from script_convert.message_menus import PAGE_OPTIONS, parse_button_box, resolve_pipe_box
@@ -412,21 +413,24 @@ def force_flee(ctx, call) -> str:
 
 @command('addtopic')
 def add_topic(ctx, call) -> str:
-    """AddTopic on a GATED topic opens that topic's unlock gate.
+    """AddTopic opens a GATED topic's unlock gate and hands MorrowindRuntime
+    the topic's display name.
 
     Skyrim has no AddTopic, so visibility is re-expressed as one
     `TES4Unlock_<topic>` global per explicitly-added topic.  A script AddTopic
-    is the THIRD reveal route after INFO and quest-stage fragments; an
-    UNGATED topic is already visible, so it no-ops.
+    is the THIRD reveal route after INFO and quest-stage fragments.
 
     See: docs/commentary/tes5_import_dialogue.md#addtopic-unlock-globals
+    See: docs/commentary/morrowind_runtime.md#tes4-addtopic-teaches-tes3-topics
     """
     topic = call.source(0).strip().strip('"')
-    gname = (ctx.topic_unlock_globals or {}).get(topic.lower())
-    if not gname:
-        return ctx.note(f'{call.raw_name} (topic not gated)')
-    ctx.sc.property_refs.setdefault(gname, 'GlobalVariable')
-    return f'{gname}.SetValue(1)'
+    line = add_topic_call(ctx.topic_reveals, topic)
+    if not line:
+        return ctx.note(f'{call.raw_name} (unknown topic)')
+    gate = ctx.topic_reveals[topic.lower()][0]
+    if gate:
+        ctx.sc.property_refs.setdefault(gate, 'GlobalVariable')
+    return line
 
 
 # ---------------------------------------------------------------------------

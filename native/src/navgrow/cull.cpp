@@ -56,12 +56,7 @@ struct Mesh {
 
     const double* v(int i) const { return V + 3 * (size_t)i; }
 
-    bool on_seam(int vi) const {
-        if (!seam) return false;
-        const double x = v(vi)[0], y = v(vi)[1];
-        return std::fabs(x - seam[0]) <= 0.5 || std::fabs(x - seam[2]) <= 0.5
-            || std::fabs(y - seam[1]) <= 0.5 || std::fabs(y - seam[3]) <= 0.5;
-    }
+    bool on_seam(int vi) const { return on_seam_rect(v(vi)[0], v(vi)[1], seam); }
 
     // _bary_z: interpolated Z of t at (x, y); false when outside.
     bool bary_z(const Tri& t, double x, double y, double& z) const {

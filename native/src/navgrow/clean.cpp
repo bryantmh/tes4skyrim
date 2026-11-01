@@ -278,8 +278,9 @@ bool carries_pathgrid(const std::vector<Vert>& V, const CellGrid<Sample>& pg, co
     return false;
 }
 
+// A free edge on the cell seam is a portal to the neighbour, never a rim.
 void cull_open_flaps(const std::vector<Vert>& V, std::vector<Tri>& T,
-                     const std::vector<Sample>& pin_xy) {
+                     const std::vector<Sample>& pin_xy, const double* seam) {
     if (T.empty()) return;
     const CellGrid<Sample> pg = bucket_samples(pin_xy, kPgCell);
     const EdgeOwners owners(T);
@@ -289,7 +290,9 @@ void cull_open_flaps(const std::vector<Vert>& V, std::vector<Tri>& T,
         int free = 0;
         for (int k = 0; k < 3; ++k) {
             const int a = t[k], b = t[(k + 1) % 3];
-            if (owners.count(a, b) != 1) continue;
+            const Vert &va = V[(size_t)a], &vb = V[(size_t)b];
+            if (owners.count(a, b) != 1
+                || (on_seam_rect(va.x, va.y, seam) && on_seam_rect(vb.x, vb.y, seam))) continue;
             if (std::fabs(V[(size_t)a].z - V[(size_t)b].z) >= P().FLAP_EDGE_DROP) ++free;
         }
         if (free >= 2 && !(!pg.empty() && carries_pathgrid(V, pg, t))) cands.push_back((int)ti);
@@ -652,7 +655,7 @@ CleanOutput finalize_impl(CleanInput in, CellGeo& G) {
     plain_floats(V);
     decimate_mesh(V, T, pins, bounds, 2, false, cell_oracles(G, false));
     cull_slivers(V, T, pins, in, N.CULL_SLIVER_AREA_FRAC * 0.4);
-    cull_open_flaps(V, T, in.pin_xy);
+    cull_open_flaps(V, T, in.pin_xy, bounds);
     const std::vector<LedgeMark> marks = find_ledge_marks(V, T, G);
     make_manifold(V, T, in.pin_xy);
     plain_floats(V);

@@ -2,13 +2,14 @@
 
 A TES3 punch tires its target; a Skyrim punch wounds it. A script that reads its own
 GetFatigue on OnPCHitMe counts on the first (HroldarScript, TR's Anbarnag and
-Savrethi), so the runtime gives each actor running one TES3BrawlAbility, whose perk
-zeroes the health the player's bare fists take, and moves the punch to Stamina.
+Savrethi), so the runtime gives each actor running one, and the player, TES3BrawlAbility.
+Its effect marks the brawler; its perk, which reaches only the player, zeroes the
+damage of the player's bare fists on a marked target; the runtime moves the punch to Stamina.
 
 See: docs/commentary/morrowind_runtime.md#brawls
 """
 
-from ..base.conditions import FUNC_GET_IS_ID, build_ctda
+from ..base.conditions import build_ctda
 from ..base.owned_records import (adopted_or_derived, hidden_perk, multiply_entry,
                                   owner_row, perk_effect, perk_spell)
 from ..base.writer import pack_subrecord
@@ -17,24 +18,32 @@ from ..base.writer import pack_subrecord
 BRAWL_ABILITY = 'TES3BrawlAbility'
 _EFFECT, _PERK = BRAWL_ABILITY + 'Effect', BRAWL_ABILITY + 'Perk'
 
-#: PERK entry point 36 Mod Incoming Damage, function 3 Multiply Value, 3 tabs (vanilla DeftMovement).
-_INCOMING_DAMAGE = bytes((36, 3, 3))
+#: PERK entry point 0 Mod Attack Damage, function 3 Multiply Value, 3 tabs (vanilla C06BladeOfYsgramorPerk).
+_ATTACK_DAMAGE = bytes((0, 3, 3))
 
-#: Mod Incoming Damage's Attacker and Attacker Weapon tabs.
-_TAB_ATTACKER, _TAB_WEAPON = 1, 2
+#: Mod Attack Damage's Perk Owner and Target tabs.
+_TAB_OWNER, _TAB_TARGET = 0, 2
 
-#: Skyrim.esm's Player NPC_ and its Unarmed WEAP, the "weapon" of a bare fist.
-_PLAYER, _UNARMED = 0x00000007, 0x000001F4
+#: GetEquippedItemType(hand), 0 for hand to hand; vanilla DualSavagery tests both hands (0 left, 1 right).
+_GET_EQUIPPED_ITEM_TYPE = 597
+
+#: HasMagicEffect(effect).
+_HAS_MAGIC_EFFECT = 214
 
 #: This run's ability FormID, or empty when the source is not TES3.
 _ability: list = []
 
 
-def _player_punch_entry() -> bytes:
-    """Zeroes the damage of a hit the player lands with bare fists."""
-    return multiply_entry(_INCOMING_DAMAGE, {
-        _TAB_ATTACKER: pack_subrecord('CTDA', build_ctda(FUNC_GET_IS_ID, param1=_PLAYER)),
-        _TAB_WEAPON: pack_subrecord('CTDA', build_ctda(FUNC_GET_IS_ID, param1=_UNARMED))})
+def _player_punch_entry(effect: int) -> bytes:
+    """Zeroes the damage of the owner's bare fists on a target under `effect`.
+
+    See: docs/commentary/morrowind_runtime.md#brawls
+    """
+    fists = b''.join(pack_subrecord('CTDA', build_ctda(_GET_EQUIPPED_ITEM_TYPE, param1=hand,
+                                                       comp_value=0.0))
+                     for hand in (0, 1))
+    marked = pack_subrecord('CTDA', build_ctda(_HAS_MAGIC_EFFECT, param1=effect))
+    return multiply_entry(_ATTACK_DAMAGE, {_TAB_OWNER: fists, _TAB_TARGET: marked})
 
 
 def create_brawl_ability(writer, master_index, wanted: bool) -> dict:
@@ -46,7 +55,7 @@ def create_brawl_ability(writer, master_index, wanted: bool) -> dict:
     if own:
         perk = writer.derive_formid('PERK', _PERK)
         mgef = writer.derive_formid('MGEF', _EFFECT)
-        writer.add_record('PERK', hidden_perk(perk, _PERK, _player_punch_entry()))
+        writer.add_record('PERK', hidden_perk(perk, _PERK, _player_punch_entry(mgef)))
         writer.add_record('MGEF', perk_effect(mgef, _EFFECT, perk, ability=True))
         writer.add_record('SPEL', perk_spell(spel, BRAWL_ABILITY, mgef, ability=True))
     _ability.append(spel)

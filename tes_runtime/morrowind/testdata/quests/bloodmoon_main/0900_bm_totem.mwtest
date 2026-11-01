@@ -19,7 +19,6 @@ run
 player->PositionCell -16 -7150 -111 180 "Solstheim, Tombs of Skaalara"
 until 600 GetPCCell "Solstheim, Tombs of Skaalara" == 1
 run
-"067BAB04"->RemoveItem misc_BM_ClawFang_UNIQUE 1
 player->AddItem misc_BM_ClawFang_UNIQUE 1
 until 300 GetJournalIndex BM_Ceremony1 == 30
 run

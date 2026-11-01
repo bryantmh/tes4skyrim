@@ -17,7 +17,7 @@ holds the same facts directly:
 
 It also carries the six values the pipeline currently injects as MUTABLE
 CLASS ATTRIBUTES on ScriptConverter (`say_durations`, `say_topics`,
-`topic_unlock_globals`, `message_menus`, `chargen_menus`, `music_cues`) --
+`topic_reveals`, `message_menus`, `chargen_menus`, `music_cues`) --
 a hidden global channel that appears in no function signature and forces a
 unit test to do global setup before it can convert a single line.
 

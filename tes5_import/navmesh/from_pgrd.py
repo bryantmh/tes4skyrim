@@ -115,11 +115,14 @@ PATHING_DOOR_CRC = 0xE48B73F3
 #: NVNM version: 12 for Skyrim SE.
 NVNM_VERSION = 12
 
-# Triangle flags (wbDefinitionsTES5.pas wbNVNM triangle flags).
-_TRI_FLAG_WATER = 0x0200
+#: NVNM triangle flag (xEdit wbNVNM): the triangle lies under water.
+TRI_FLAG_WATER = 0x0200
+#: NVNM triangle flag: the triangle carries a door link.
 _TRI_FLAG_DOOR = 0x0400
-_TRI_FLAG_FOUND = 0x0800     # set on every vanilla generated triangle
-_TRI_EDGE_LINK = (0x0001, 0x0002, 0x0004)  # per-edge "has Edge Link" bits
+#: NVNM triangle flag set on every vanilla generated triangle.
+_TRI_FLAG_FOUND = 0x0800
+#: Per-edge "this edge has an Edge Link" triangle flag bits.
+_TRI_EDGE_LINK = (0x0001, 0x0002, 0x0004)
 
 # NVNM Edge Link types (xEdit wbNavmeshEdgeLinkEnum).  A DROP-DOWN is a pair:
 # Ledge Down on the upper triangle, Ledge Up on the lower.
@@ -553,13 +556,10 @@ def build_door_links(verts, tris, doors):
     return links
 
 
-def _compute_water_flags(verts, tris, water_z) -> list:
-    flags = []
-    for tri in tris:
-        v0, v1, v2 = tri
-        cz = (verts[v0][2] + verts[v1][2] + verts[v2][2]) / 3.0
-        flags.append(_TRI_FLAG_WATER if cz < water_z else 0)
-    return flags
+def compute_water_flags(verts, tris, water_z) -> list:
+    """Water for each triangle whose centroid lies under `water_z`."""
+    return [TRI_FLAG_WATER if sum(verts[v][2] for v in tri[:3]) / 3.0 < water_z else 0
+            for tri in tris]
 
 
 # ---------------------------------------------------------------------------
@@ -1209,7 +1209,7 @@ def packed_nvnm(geometry, doors, water_z, frame, navm_fid):
         return native_loader.native_core().pack_nvnm(
             verts, tris, ledges, doors, water_z, wrld_fid, cell_fid,
             grid_x, grid_y, is_exterior, navm_fid)
-    tri_flags = (_compute_water_flags(verts, tris, water_z)
+    tri_flags = (compute_water_flags(verts, tris, water_z)
                  if water_z is not None else [0] * len(tris))
     door_tris = build_door_links(verts, tris, doors)
     nvnm = pack_nvnm(verts, tris, compute_adjacency(tris), tri_flags,

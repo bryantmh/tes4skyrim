@@ -50,6 +50,8 @@ constexpr int kPersuadeTries = 30;
 // How long a menu other than the conversation may hold a step that needs the
 // world before the case fails naming it, rather than the run hanging.
 constexpr int kHeldTicks = 300;
+// The Sleep/Wait menu may hold that many times longer: a 24-hour sleep at 1x.
+constexpr int kSleepHeldFactor = 20;
 // How long a `walk` may take: room for crossing a region on foot.
 constexpr int kWalkTicks = 9000;
 // The world settles this long after a load before the first case, as no
@@ -528,6 +530,9 @@ void KeepFollowing() {
     for (const Spot& point : trail) {
         if (Apart(point, at) >= kFollowBehind) spot = &point;
     }
+    // Already there: a move every tick would hold every `until` (MoveLanding) forever.
+    const Spot me{Hooks().position("player", 0), Hooks().position("player", 1), 0.0f};
+    if (Apart(me, *spot) < kTrailStep) return;
     Log("follow: the player moves to (%g, %g, %g), %g behind %s", spot->x, spot->y, spot->z, gap,
         npc.c_str());
     Hooks().placeHere("player", spot->x, spot->y, spot->z,
@@ -600,7 +605,9 @@ void RunSteps(const TestCase& test, bool held) {
                                 step.kind == Kind::kUntil || step.kind == Kind::kWalk ||
                                 (step.kind == Kind::kTalk && g_case.ticksLeft < 0);
         if (held && !Talking() && needsWorld) {
-            if (++g_case.heldTicks > kHeldTicks) g_case.error = "a menu holds the game";
+            // A sleep runs its hours in real time at 1x, far past what any other menu may hold.
+            const int limit = MenuUp(ids::kSleepWaitMenu) ? kHeldTicks * kSleepHeldFactor : kHeldTicks;
+            if (++g_case.heldTicks > limit) g_case.error = "a menu holds the game";
             return;
         }
         g_case.heldTicks = 0;

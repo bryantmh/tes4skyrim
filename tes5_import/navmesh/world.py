@@ -149,6 +149,16 @@ class LandField:
             return float(z00 + (z10 - z00) * tx + (z11 - z10) * ty)
         return float(z00 + (z11 - z01) * tx + (z01 - z00) * ty)
 
+    def rim_t(self, ax, ay, bx, by):
+        """Fraction along a->b (a inside the cell) where the segment leaves the LAND square."""
+        span = (_LAND_VERTS - 1) * _LAND_SPACING
+        t = 1.0
+        for a, b, lo in ((ax, bx, self.ox), (ay, by, self.oy)):
+            edge = lo + span if b > lo + span else lo if b < lo else None
+            if edge is not None:
+                t = min(t, (edge - a) / (b - a))
+        return t
+
     def z_many(self, xy):
         """`z` at every row of the (N, 2) array `xy`, as a list."""
         if native_loader.NATIVE:

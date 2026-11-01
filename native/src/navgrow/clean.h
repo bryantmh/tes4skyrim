@@ -1,6 +1,7 @@
 // The cleanup stage's native entry points (corridor_clean, clean_decimate).
 #pragma once
 
+#include <cmath>
 #include <functional>
 #include <vector>
 
@@ -22,6 +23,13 @@ struct Oracles {
     std::function<bool(const Vert& a, const Vert& v, const Vert& b)> ground_ok;
     std::function<bool(double x, double y, double near, double* z, bool* znp)> surface;
 };
+
+// clean_decimate.on_seam_rect: (x, y) on a side of the `seam` rectangle (minx, miny, maxx,
+// maxy); always false for nullptr.
+inline bool on_seam_rect(double x, double y, const double* seam) {
+    return seam && (std::fabs(x - seam[0]) <= 0.5 || std::fabs(x - seam[2]) <= 0.5
+                    || std::fabs(y - seam[1]) <= 0.5 || std::fabs(y - seam[3]) <= 0.5);
+}
 
 // clean_decimate.decimate on (V, T) in place; `seam` is minx, miny, maxx,
 // maxy or nullptr.  Vertex Z types are taken as given.

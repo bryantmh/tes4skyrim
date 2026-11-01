@@ -75,6 +75,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\scope.cpp ^
    plugin\chargen_menu.cpp plugin\chargen_tables.cpp ^
    "%COMMON%\ui_message.cpp" "%COMMON%\crafting_client.cpp" ^
    "%COMMON%\glide.cpp" "%COMMON%\main_tick.cpp" "%COMMON%\ref_handle.cpp" ^
+   "%COMMON%\mod_event.cpp" plugin\topic_events.cpp ^
    plugin\filter.cpp plugin\session.cpp plugin\activation.cpp ^
    plugin\game_actor.cpp plugin\conversation.cpp ^
    plugin\script_context.cpp plugin\dialogue_state.cpp ^

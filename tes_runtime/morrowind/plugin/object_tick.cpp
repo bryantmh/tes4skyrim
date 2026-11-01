@@ -65,6 +65,11 @@ constexpr std::size_t kHeartbeatTicks = 150;
 // ticks of rest are left before the next one starts.
 std::size_t g_discoverAt = 0;
 std::size_t g_untilHeartbeat = 0;
+// Ticks left after a cell change in which laps run back to back: the first lap
+// often finishes before the new cell's references load, and a heartbeat rest
+// then left them unbound for 5 s, long enough to talk to a steward whose
+// `CellChanged` check had not run (TT_SevenGraces).
+std::size_t g_eagerTicks = 0;
 
 // Where the player's sleep stands for `GetPCSleep`: `kWoke` holds the answer
 // until one tick has run after the engine said the sleep ended.
@@ -84,7 +89,14 @@ void DiscoverLoaded(bool cellChanged) {
     // A cell change restarts the lap at once, since that is when a batch of
     // references appears; otherwise the heartbeat picks up whatever streamed
     // in without one.
-    if (cellChanged) g_untilHeartbeat = 0;
+    if (cellChanged) {
+        g_untilHeartbeat = 0;
+        g_eagerTicks = kHeartbeatTicks;
+    }
+    if (g_eagerTicks) {
+        --g_eagerTicks;
+        g_untilHeartbeat = 0;
+    }
     if (g_discoverAt == 0 && g_untilHeartbeat) {
         --g_untilHeartbeat;
         return;
@@ -277,6 +289,7 @@ void RunOneTick() {
     const bool inWorld = SessionLive();
     if (inWorld && Hooks().crimeTick) Hooks().crimeTick();
     if (inWorld && Hooks().combatTick) Hooks().combatTick();
+    if (inWorld && Hooks().brawlTick) Hooks().brawlTick();
     if (inWorld && Hooks().weatherTick) Hooks().weatherTick();
     if (inWorld) TickTestRunner(GameHeldByMenu());
     if (!inWorld || GameHeldByMenu()) {

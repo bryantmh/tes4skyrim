@@ -70,15 +70,24 @@ std::pair<double, double> prof_at(const std::vector<P3>& prof, const P3& pa, con
     return {q0[2] + (q1[2] - q0[2]) * (f - (double)k), std::fabs(q1[2] - q0[2]) / run};
 }
 
+// _node_on_land: outside the cell, the edge is judged where it crosses the rim,
+// a lone node against the rim nearest it.
+bool node_on_land(const CellCtx& C, int n, int other) {
+    const Land& L = *C.land;
+    const P3& p = C.nodes[(size_t)n];
+    if (L.covers(p[0], p[1]))
+        return std::fabs(C.node_z[(size_t)n] - L.z(p[0], p[1])) <= kNodeSnapRadius0;
+    const P3& o = C.nodes[(size_t)other];
+    if (!L.covers(o[0], o[1]))
+        return std::fabs(C.node_z[(size_t)n] - L.z(p[0], p[1])) <= P().MAX_CLIMB;
+    const double t = L.rim_t(o[0], o[1], p[0], p[1]);
+    const double zo = C.node_z[(size_t)other];
+    const double z = zo + (C.node_z[(size_t)n] - zo) * t;
+    return std::fabs(z - L.z(o[0] + (p[0] - o[0]) * t, o[1] + (p[1] - o[1]) * t)) <= P().MAX_CLIMB;
+}
+
 bool stands_on_land(const CellCtx& C, int i, int j) {
-    if (!C.land) return false;
-    for (int n : {i, j}) {
-        const P3& p = C.nodes[(size_t)n];
-        if (C.land->covers(p[0], p[1])
-            && !(std::fabs(C.node_z[(size_t)n] - C.land->z(p[0], p[1])) <= kNodeSnapRadius0))
-            return false;
-    }
-    return true;
+    return C.land && node_on_land(C, i, j) && node_on_land(C, j, i);
 }
 
 // --------------------------------------------------------------------------
@@ -87,12 +96,18 @@ bool stands_on_land(const CellCtx& C, int i, int j) {
 
 struct Station { double x, y; std::vector<double> zs; };
 
+// _height_window: the heights an edge from az to bz samples, a step past its own range or all.
+void height_window(double az, double bz, bool bounded, double* lo, double* hi) {
+    *lo = bounded ? std::min(az, bz) - P().MAX_CLIMB : -kInf;
+    *hi = bounded ? std::max(az, bz) + P().MAX_CLIMB : kInf;
+}
+
 bool leaves_chord(const CellCtx& C, const P3& pa, const P3& pb) {
     if (!C.has_sample()) return false;
     const long long n = std::max(2LL, (long long)py_floordiv(
         py_hypot(pb[0] - pa[0], pb[1] - pa[1]), 32.0));
-    const double lo = std::min(pa[2], pb[2]) - P().MAX_CLIMB;
-    const double hi = std::max(pa[2], pb[2]) + P().MAX_CLIMB;
+    double lo, hi;
+    height_window(pa[2], pb[2], true, &lo, &hi);
     for (long long s = 1; s < n; ++s) {
         double q[3];
         for (int k = 0; k < 3; ++k) q[k] = pa[(size_t)k] + (pb[(size_t)k] - pa[(size_t)k]) * (double)s / (double)n;
@@ -109,12 +124,13 @@ bool leaves_chord(const CellCtx& C, const P3& pa, const P3& pb) {
 }
 
 std::vector<Station> profile_stations(const CellCtx& C, const P3& pa, const P3& pb,
-                                      long long n, double half) {
+                                      long long n, double half, bool bounded) {
     const double ax = pa[0], ay = pa[1], az = pa[2], bx = pb[0], by = pb[1], bz = pb[2];
     double run = py_hypot(bx - ax, by - ay);
     if (run == 0.0) run = 1.0;
     const double wx = -(by - ay) / run, wy = (bx - ax) / run;
-    const double lo = std::min(az, bz) - P().MAX_CLIMB, hi = std::max(az, bz) + P().MAX_CLIMB;
+    double lo, hi;
+    height_window(az, bz, bounded, &lo, &hi);
     std::vector<Station> out;
     for (long long s = 0; s <= n; ++s) {
         const double t = (double)s / (double)n;
@@ -151,14 +167,15 @@ bool clamped_chord(const std::vector<Station>& st, double az, double bz, long lo
     return true;
 }
 
-// _surface_profile; false for None.
-bool surface_profile(const CellCtx& C, const P3& pa, const P3& pb, std::vector<P3>* prof) {
+// _surface_profile; false for None.  `deep` (exteriors) may search every floor height.
+bool surface_profile(const CellCtx& C, const P3& pa, const P3& pb, std::vector<P3>* prof,
+                     bool bounded = true, bool deep = false) {
     if (!C.has_sample()) return false;
     const double az = pa[2], bz = pb[2];
     const double run = py_hypot(pb[0] - pa[0], pb[1] - pa[1]);
     if (run < 32.0) return false;
     const long long n = std::max(2LL, (long long)py_floordiv(run, 16.0));
-    const std::vector<Station> st = profile_stations(C, pa, pb, n, P().RIBBON_STAIR_HALF_WIDTH);
+    const std::vector<Station> st = profile_stations(C, pa, pb, n, P().RIBBON_STAIR_HALF_WIDTH, bounded);
     const double step = P().MAX_CLIMB;
     std::vector<std::vector<double>> costs(1);
     std::vector<std::vector<size_t>> back;
@@ -190,7 +207,9 @@ bool surface_profile(const CellCtx& C, const P3& pa, const P3& pb, std::vector<P
             have = true; bd = d; bc = c; bi = i;
         }
     }
-    if (!have) return clamped_chord(st, az, bz, n, prof);
+    if (!have)
+        return bounded && ((deep && surface_profile(C, pa, pb, prof, false))
+                           || clamped_chord(st, az, bz, n, prof));
     std::vector<double> zs((size_t)n + 1);
     size_t idx = bi;
     for (long long s = n; s >= 0; --s) {
@@ -671,7 +690,7 @@ Group build_corridor_strips(CellCtx& C) {
         extended_ends(f, degree, e.first, e.second, &pa, &pb);
         if (!is_steep(pa, pb) && !leaves_chord(C, pa, pb)) continue;
         std::vector<P3> prof;
-        if (!C.has_sample() || !surface_profile(C, pa, pb, &prof)) prof.clear();
+        if (!C.has_sample() || !surface_profile(C, pa, pb, &prof, true, static_cast<bool>(C.land))) prof.clear();
         G.profiles[e] = prof;
     }
     if (grow) plan_stations(C, G, degree);

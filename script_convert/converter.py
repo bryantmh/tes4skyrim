@@ -99,8 +99,8 @@ class ScriptConverter:
     # the two can never disagree about which INFOs carry a fragment.
     say_topics: set = set()
 
-    #: DIAL EditorID (lower) -> `TES4Unlock_<topic>` global, from build_unlock_plan.
-    topic_unlock_globals: dict = {}
+    #: DIAL EditorID or unlock global (lower) -> (unlock global or '', display name), from topic_reveals.
+    topic_reveals: dict = {}
 
     #: Started topic EditorID (lower) -> its plugin's StartConversation routing script.
     conversation_starts: dict = {}

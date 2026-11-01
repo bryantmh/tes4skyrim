@@ -290,7 +290,11 @@ void NoteHit(std::uint32_t target, std::uint32_t source, bool byPlayer,
         instance->Events().pcHitMe = true;
         if (!IsBrawler(*instance)) return;
         Log("brawl: the player hits %08X with %08X", target, source);
-        if (source == kUnarmedWeapon) TireBrawler(target);
+        if (source == kUnarmedWeapon) {
+            TireBrawler(target);
+        } else {
+            BreakBrawl(target);
+        }
     }
 }
 

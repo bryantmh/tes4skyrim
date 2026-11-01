@@ -36,12 +36,9 @@ from tes5_import.navmesh.edge_links import (
     CELL_SIZE, NavMeshView, border_edges, extract_nvnm, match_seam,
 )
 from tes5_import.navmesh.from_pgrd import (
-    compute_adjacency, pack_navm_record, pack_nvnm,
+    TRI_FLAG_WATER, compute_adjacency, compute_water_flags, pack_navm_record, pack_nvnm,
 )
 from tes5_import.navmesh.split import Nvnm, components, pack_component_nvnm
-
-#: Triangle flag the water pass sets; carried over from the replaced mesh.
-TRI_FLAG_WATER = 0x0200
 
 #: Exterior neighbours sharing a seam, as (dx, dy, axis); axis 0 = constant X.
 SEAM_NEIGHBOURS = ((1, 0, 0), (-1, 0, 0), (0, 1, 1), (0, -1, 1))
@@ -136,12 +133,7 @@ def carry_water_flags(old, verts, tris):
            if t[6] & TRI_FLAG_WATER]
     if not wet:
         return [0] * len(tris)
-    water_z = max(wet)
-    out = []
-    for (a, b, c) in tris:
-        cz = (verts[a][2] + verts[b][2] + verts[c][2]) / 3.0
-        out.append(TRI_FLAG_WATER if cz < water_z else 0)
-    return out
+    return compute_water_flags(verts, tris, max(wet))
 
 
 def centroid(verts, tri):

@@ -25,7 +25,7 @@ cl /nologo /c /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG /I..\common ^
    ..\common\test_runner.cpp ^
    ..\common\hook.cpp ..\common\main_tick.cpp ^
    ..\common\json.cpp ..\common\log.cpp ..\common\paths.cpp ^
-   ..\common\ui_message.cpp /Fo:obj\
+   ..\common\mod_event.cpp ..\common\ui_message.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: TESRuntime compilation failed
     exit /b 1

@@ -135,12 +135,7 @@ struct Ctx {
     const Oracles& O;
     const Params& P;
 
-    bool on_seam(int vi) const {
-        if (!seam) return false;
-        const Vert& v = V[(size_t)vi];
-        return std::fabs(v.x - seam[0]) <= 0.5 || std::fabs(v.x - seam[2]) <= 0.5
-            || std::fabs(v.y - seam[1]) <= 0.5 || std::fabs(v.y - seam[3]) <= 0.5;
-    }
+    bool on_seam(int vi) const { return on_seam_rect(V[(size_t)vi].x, V[(size_t)vi].y, seam); }
     bool pinned(int v) const { return flagged(pin, v); }
 };
 

@@ -61,6 +61,7 @@ from .actors.stat_factions import create_stat_factions
 from .actors.brawl import create_brawl_ability
 from .actors.disposition import create_disposition_factions
 from script_convert.constants import FORCE_FLEE_QUEST, FORCE_GREET_QUEST
+from script_convert.context_setup import topic_reveals
 from .packages.force_flee import write_force_flee_quest
 from .packages.actor_wiring import set_stand_still_list
 from .packages.stand_still import create_stand_still
@@ -386,20 +387,12 @@ def _prescan_unlock_plan(by_type: dict, writer, num_tes4_masters: int,
     unlock_globals = create_unlock_globals(writer, unlock_plan)
 
     from script_convert.converter import ScriptConverter as _SC
-    _SC.topic_unlock_globals = {
-        (d.get('EditorID') or '').lower(): gname
-        for d in by_type.get('DIAL', [])
-        if (d.get('EditorID') or '')
-        for gname in [unlock_plan['gated'].get(
-            int(d.get('FormID', '0'), 16) & 0xFFFFFF)]
-        if gname
-    }
+    _SC.topic_reveals = topic_reveals(by_type, unlock_plan)
     WELL_KNOWN_PROPERTIES.update(unlock_globals)
 
     print(f"  AddTopic unlocks: {len(unlock_globals)} gated topics, "
           f"{len(unlock_plan['info_reveals'])} revealer INFOs, "
-          f"{len(unlock_plan['stage_reveals'])} revealer quest stages, "
-          f"{len(_SC.topic_unlock_globals)} topic->global names for scripts")
+          f"{len(unlock_plan['stage_reveals'])} revealer quest stages")
     _step_done('addtopic unlock plan')
     return (unlock_plan, unlock_globals, _SC)
 

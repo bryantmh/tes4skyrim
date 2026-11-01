@@ -28,6 +28,7 @@
 #include "skse_abi.h"
 #include "stats_sheet.h"
 #include "store.h"
+#include "topic_events.h"
 
 namespace tesruntime::mw {
 
@@ -39,6 +40,7 @@ constexpr UInt32 kPluginVersion = 1;
 constexpr UInt32 kSerializationId = 'MWRT';
 
 SKSESerializationInterface* g_serialization = nullptr;
+SKSEMessagingInterface* g_messaging = nullptr;
 
 // The sidecars are only readable once the engine knows its own data path, so
 // the store loads on kMessage_DataLoaded rather than at plugin load.
@@ -65,6 +67,8 @@ void OnSKSEMessage(SKSEMessagingInterface::Message* msg) {
     // registers here rather than at plugin load.
     Log("menu: install %s", InstallMenu() ? "ok" : "FAILED");
     InstallConversation();
+    Log("topic: TES4 AddTopic listener %s",
+        InstallTopicEvents(g_messaging) ? "ok" : "FAILED");
     InstallGameCalls();
     InstallActivation();
     // Only a converted game with attributes -- one whose sidecar staged its
@@ -85,6 +89,7 @@ bool CaptureVm(void* vm) {
 void QueryInterfaces(const SKSEInterface* skse) {
     auto* msg = static_cast<SKSEMessagingInterface*>(
         skse->QueryInterface(kInterface_Messaging));
+    g_messaging = msg;
     if (msg) msg->RegisterListener(skse->GetPluginHandle(), "SKSE",
                                    OnSKSEMessage);
     auto* papyrus = static_cast<SKSEPapyrusInterface*>(

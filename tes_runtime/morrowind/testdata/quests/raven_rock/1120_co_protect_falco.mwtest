@@ -41,12 +41,14 @@ player->SetPos y TestResult
 set TestResult to ( ( "Falco Galenus"->GetPos z ) + 20 )
 player->SetPos z TestResult
 until 300 "Falco Galenus"->GetDistance player < 150
-console 0654C18C.kill
+# The assassins die before Baslod: ColonyAssassin writes 100 only outside menus, and while CO_12 is under 100
+# Falco force-greets a player who strays past 512 in the fight, a greeting nothing here closes.
 until 900 "Capiton Popillius"->GetDisabled == 0
 until 900 "Cimber Valerius"->GetDisabled == 0
 console 067BC8FB.kill
 console 063BD04C.kill
 until 600 GetJournalIndex CO_12 == 100
+console 0654C18C.kill
 follow
 expect "Falco Galenus"->GetHealth > 0
 run

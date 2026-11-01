@@ -23,7 +23,7 @@ end
 case tt_ministry_cure
 run
 player->Position 21774 34800 1958 0
-until 600 "assantushansar"->GetDistance player < 600
+until 600 "assantushansar"->GetDistance player < 1000
 wait 60
 console player.cast 0590EB09 0529FF8B right
 until 300 GetJournalIndex TT_MinistryHeathen == 50

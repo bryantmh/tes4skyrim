@@ -142,18 +142,37 @@ def service_menu_topics(by_type: dict) -> dict:
             for rec in by_type.get('DIAL', []) if service_menu_kind(rec)}
 
 
-def topic_unlock_globals(by_type: dict, unlock_plan: dict) -> dict:
-    """DIAL EditorID (lower) -> unlock global, so a script `AddTopic X` opens the same gate."""
+def topic_reveals(by_type: dict, unlock_plan: dict) -> dict:
+    """DIAL EditorID and unlock global (both lower) -> (unlock global or '',
+    display name), so a script `AddTopic X` and a reveal fragment open the same
+    gate and name the same topic.
+
+    See: docs/commentary/morrowind_runtime.md#tes4-addtopic-teaches-tes3-topics
+    """
     out = {}
     for d in by_type.get('DIAL', []):
         edid = (d.get('EditorID') or '').lower()
         fid = d.get('FormID', '')
         if not edid or not fid:
             continue
-        gname = unlock_plan['gated'].get(int(fid, 16) & 0xFFFFFF)
-        if gname:
-            out[edid] = gname
+        gate = unlock_plan['gated'].get(int(fid, 16) & 0xFFFFFF, '')
+        out[edid] = (gate, (d.get('FULL') or '').strip())
+        if gate:
+            out[gate.lower()] = out[edid]
     return out
+
+
+def add_topic_call(reveals: dict, key: str) -> str:
+    """`TES4Polyfill.AddTopic(gate, "name")` for a topic EditorID or unlock
+    global in `topic_reveals`; '' when it has neither a gate nor a name.
+
+    See: docs/commentary/morrowind_runtime.md#tes4-addtopic-teaches-tes3-topics
+    """
+    gate, name = reveals.get(key.lower(), ('', ''))
+    if not gate and not name:
+        return ''
+    text = name.replace('\\', '\\\\').replace('"', '\\"')
+    return f'TES4Polyfill.AddTopic({gate or "None"}, "{text}")'
 
 
 def quest_edids_by_fid(by_type: dict) -> dict:

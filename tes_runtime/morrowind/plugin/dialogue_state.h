@@ -432,6 +432,9 @@ struct GameHooks {
     // Polled by the tick, on the main thread: ends the feuds StartCombat set
     // up once either side is dead.
     void (*combatTick)() = nullptr;
+    // Polled by the tick, on the main thread: a brawler the punches have
+    // stopped for regenerates its Stamina again.
+    void (*brawlTick)() = nullptr;
     // The engine frame timer's millisecond clock, which advances with GAME
     // time (each frame's clamped delta); 0 when unresolved.
     std::uint32_t (*frameClockMs)() = nullptr;

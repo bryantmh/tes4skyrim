@@ -30,6 +30,16 @@ struct Land {
         if (tx >= ty) return z00 + (z10 - z00) * tx + (z11 - z10) * ty;
         return z00 + (z11 - z01) * tx + (z01 - z00) * ty;
     }
+    // Fraction along a->b (a inside) where the segment leaves the square.  MUST mirror LandField.rim_t.
+    double rim_t(double ax, double ay, double bx, double by) const {
+        double t = 1.0;
+        const double a[2] = {ax, ay}, b[2] = {bx, by}, lo[2] = {ox, oy};
+        for (int k = 0; k < 2; ++k) {
+            if (b[k] > lo[k] + 4096.0) t = std::min(t, (lo[k] + 4096.0 - a[k]) / (b[k] - a[k]));
+            else if (b[k] < lo[k]) t = std::min(t, (lo[k] - a[k]) / (b[k] - a[k]));
+        }
+        return t;
+    }
 };
 
 struct Strip {

@@ -42,7 +42,6 @@ choose 1
 expect GetJournalIndex BM_WildHunt == 42
 bye
 run
-"06A2F096"->RemoveItem key_hircine1 1
 player->AddItem key_hircine1 1
 until 300 GetJournalIndex BM_WildHunt == 50
 run
@@ -72,7 +71,6 @@ console 067703BF.kill
 until 300 GetJournalIndex BM_WildHunt == 69
 expect player->GetItemCount BM_ring_hircine == 1
 run
-"067703BF"->RemoveItem key_hircine2 1
 player->AddItem key_hircine2 1
 until 300 GetJournalIndex BM_WildHunt == 70
 run
@@ -93,7 +91,6 @@ until 900 "bm_hircine_straspect"->GetDisabled == 0
 console 068DF59A.kill
 until 300 GetJournalIndex BM_WildHunt == 92
 run
-"068DF59A"->RemoveItem key_hircine3 1
 player->AddItem key_hircine3 1
 wait 120
 run

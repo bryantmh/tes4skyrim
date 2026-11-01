@@ -209,6 +209,8 @@ void* EquippedWeapon(void* actor, bool left);
 // See: docs/commentary/morrowind_runtime.md#brawls
 void InstallBrawlCalls(GameHooks& hooks);
 void TireBrawler(std::uint32_t target);
+// A player's hit with anything but fists: the brawl becomes a real fight.
+void BreakBrawl(std::uint32_t target);
 // Skyrim.esm's Unarmed WEAP, the source a bare-fisted hit reports.
 constexpr std::uint32_t kUnarmedWeapon = 0x000001F4;
 // Keeps the player's and each watched actor's Sanctuary faction rank at its

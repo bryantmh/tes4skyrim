@@ -114,5 +114,7 @@ run
 player->Position -97820 404819 1317 180
 until 600 GetJournalIndex A_II_Galeone == 1
 expect GetJournalIndex A_II_Galeone == 1
+until 300 MenuMode == 1
+bye
 until 600 GetPCCell "Galleon, Cells" == 1
 end

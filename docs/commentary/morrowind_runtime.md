@@ -950,6 +950,51 @@ every player, and Ordinators set fight 100 and attacked on sight. A `set`
 cannot repair it either: the compiler's `getGlobalType` returns `' '` for an
 unknown global, so `OrdinatorUniform` fails to compile.
 
+### <a id="vanilla-object-scripts"></a>A vanilla object names its script from the TES3 source
+
+**Code:** `_take_script` in `morrowind_sidecar_source.py`; `_object_script_lines`
+in `morrowind_sidecar.py`
+
+In Morroblivion mode the compat patch stages vanilla's script bodies and
+dialogue, but vanilla's actors are Morrowind_ob.esm records, which carry no
+TES3 script. So nothing tied `athyn sarethi` to `athynSarethiScript`, and every
+`"Athyn Sarethi".duelOndresNerano` failed to compile: 130 of the patch's 1,204
+bodies, 17 of them started by the patch's own dialogue (`CountMonopolyVotes`,
+`HolmarCellCheck`, `WildHuntStartScript`, ...).
+
+The link is authored in the TES3 binaries `gather` already reads: each
+NPC_, CREA, ACTI, CONT and DOOR record's SCRI. `SCPT_objects` gains a row for
+each source object whose script this sidecar stages and whose id the plugin's
+own export does not already map. Items are left out: a carried item's row arms
+an equip watch that would run the TES3 script beside Morroblivion's own. A row
+never runs a script on a placed reference; only `SCPT_instances` does that.
+
+### <a id="tes4-addtopic-teaches-tes3-topics"></a>A TES4 AddTopic teaches the TES3 topic of the same name
+
+**Code:** `topic_reveals`, `add_topic_call` in `script_convert/context_setup.py`;
+`TES4Polyfill.AddTopic`; `plugin/topic_events.cpp`; `common/mod_event.cpp`
+
+In Morroblivion mode the chargen is Morroblivion's: Captain Gravius runs
+`addtopic 1Background`, `1Morrowind`, `1duties`, which only opened TES4 unlock
+globals. `SeedChargenTopics` stands down because the chargen actor exists, so
+the runtime never knew `Background`, and a Tamriel Rebuilt quest reached only
+through it (TR_m2_Nm_BrokenFamily, Velyn Alari) could not start.
+
+Every converted reveal (a script `AddTopic`, an INFO's reveal fragment, a
+quest stage's) is now one `TES4Polyfill.AddTopic(gate, "Display Name")`. It
+opens the gate as before and sends the `TES3LearnTopic` mod event. The runtime
+learns the TES3 topic with that id in every layer that stages it; a name no
+TES3 topic has is ignored. TES3 topics are named by their text, and
+Morroblivion's display names match them: 1,452 of the 1,470 topics
+Morrowind_ob adds (27,633 of 27,685 adds) are TES3 topic names in Morrowind,
+Tribunal, Bloodmoon, Tamriel_Data or TR_Mainland. The misses are
+Morroblivion's own renames ("Longbow", "Egg Mine", "TRUE Grand Souls").
+
+An INFO's add-topic list reaches the runtime only when the topic is gated: an
+ungated topic gets no fragment, and adding one to every such line would bind a
+script per spoken line. The listener needs the 1.6 Address Library id of
+`AddEventSink`, as TESRuntime's spin does.
+
 ### <a id="master-placements"></a>🛑 A placement belongs to the plugin that PLACES it
 
 **Code:** `master_scripted`, `rebased_formid`, `runtime_masters` in
@@ -3880,15 +3925,17 @@ over the TR chain.
 **Code:** `plugin/game_calls_brawl.cpp`, `IsBrawler` in `plugin/object_script.cpp`,
 `NoteHit` in `plugin/game_calls_query.cpp`; `tes5_import/actors/brawl.py`
 
-**Switched off** (`kBrawlsOn`): Skyrim's Stamina regeneration outruns the punch drain, and
-the drain and regeneration a brawler gets are not chosen yet
-([run log](../audits/headless_quest_runs.md#raven-rock-open)).
-
 A TES3 punch drains fatigue and leaves health alone (OpenMW
 `getHandToHandDamage`); a Skyrim punch takes health. Scripts that stage a
 fistfight count on the first. A brawler is an object script that declares
-`OnPCHitMe` and reads `GetFatigue`. Three scripts match across Morrowind,
-Bloodmoon, Tamriel_Data and TR_Mainland, all fistfights:
+`OnPCHitMe` and tests its fatigue FALLING: `GetFatigue`, or a variable set from
+it, on the small side of a comparison (`IsBrawler`). Merely reading it is not
+enough: Tribunal's `karrodScript` also declares `OnPCHitMe`, but its
+TR_Champion duel ends on health and it reads fatigue only as
+`GetFatigue > 100`, to lower his stats after a bribe. Matching him zeroed a
+hand-to-hand player's punches in an armed duel that only health can end.
+Three scripts match across Morrowind, Tribunal, Bloodmoon, Tamriel_Data and
+TR_Mainland, all fistfights:
 - `HroldarScript`: beaten at fatigue 150, then 50. Hroldar has 40 health and
   300 fatigue.
 - `TR_m4_NPC_Anbarnag`
@@ -3897,15 +3944,44 @@ Bloodmoon, Tamriel_Data and TR_Mainland, all fistfights:
 Only those actors change. Every other actor keeps Skyrim's punch, and a
 weapon or spell still wounds a brawler.
 
-- The import writes `TES3BrawlAbility` for a TES3 source. Its perk is a Mod
-  Incoming Damage entry ×0 whose attacker is `GetIsID Player` and whose
-  weapon is `GetIsID Unarmed` (`0x1F4`). Both tabs follow vanilla's
-  `DeftMovement` and its weapon-tab `GetIsID`. `effects_formid.txt`
-  (`brawl=plugin|FormID`) names it.
-- The tick gives the ability to a brawler's reference when it first loads.
+- The import writes `TES3BrawlAbility` for a TES3 source; `effects_formid.txt`
+  (`brawl=plugin|FormID`) names it. Its effect marks a brawler. Its perk is a
+  Mod Attack Damage entry ×0 (entry point 0, tabs as vanilla's
+  `C06BladeOfYsgramorPerk`): the owner's hands both `GetEquippedItemType` 0
+  (vanilla `DualSavagery` tests hands the same way), the target
+  `HasMagicEffect TES3BrawlAbilityEffect`.
+- **The perk is the player's, not the brawler's.** A magic effect's PerkToApply
+  reaches the player only (CK wiki, Magic Effect: "if and only if the target is
+  the player"). The first build put a Mod Incoming Damage perk on Hroldar's
+  ability: in game he held the spell (`HasSpell` 1) but not the perk (`HasPerk`
+  0), and 12 punches killed him (40 health). Before that, a weapon-tab
+  `GetIsID Unarmed` never matched at all.
+- The tick gives the ability to a brawler's reference when it first loads, and
+  to the player, and puts both in Skyrim.esm's `DGIntimidateFaction`
+  (`0x0004CFA6`). Vanilla's own brawl faction makes the fight no crime, so
+  bystanders don't join it; `NoteHit` takes both out of it when the player hits
+  a brawler with anything but fists, as vanilla's `DGIntimidateAliasScript`
+  does.
 - `NoteHit` sees each player punch on a brawler (hit source `0x1F4`) and takes
   the player's `UnarmedDamage` from the brawler's Stamina, which `GetFatigue`
   reads.
+- Each punch also sets the brawler's `StaminaRateMult` to 0 until 3 s of game
+  time pass without another, then puts the old value back (`BrawlTick`).
+  Skyrim's own pause after Stamina damage is 0.5 s (`fDamagedStaminaRegenDelay`),
+  and Nord regeneration (5% of 300 a second) outran a 4-point punch every
+  1.5 s: 208 punches never took Hroldar below 150. Paused, his 300 falls to 150
+  in about 38 punches and to 50 in about 63. A save made mid-brawl keeps the 0,
+  so arming a brawler on load puts a 0 back to Skyrim's default of 100.
+- The test runner's `punch` re-places the player only when it is out of reach
+  (110 units) or turned more than 20° away, and only redraws when a weapon is
+  out or the fists are down. A move or a draw cancels the attack it lands in,
+  so re-placing every time left about 1 hit in 150; a stale facing landed
+  punches on a bystander.
+
+Verified 2026-10-31 in the headless game at normal speed (Morrowind +
+Bloodmoon): 64 punches each took 4 Stamina, Hroldar took no health and greeted
+at 150, gave up at 50 (CO_2 50), and Falco (70) and Carnius (90) closed the
+quest. No bystander joined the fight.
 
 ## <a id="the-control-switches"></a>The player-control switches
 

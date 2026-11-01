@@ -823,7 +823,14 @@ exterior cells, removing this stop raised cracks 88 -> 195 and 437 -> 502.
 
 <a id="terrain-standing-ribbons-follow-the-land"></a>**A ribbon whose nodes
 stand on LAND follows the LAND** (`_stands_on_land`: each node snapped within
-`NODE_SNAP_RADII[0]` of the terrain, or lies in a neighbouring cell). The cap
+`NODE_SNAP_RADII[0]` of the terrain; a node in a neighbouring cell is judged
+where its edge crosses the rim, the chord within `MAX_CLIMB` of the LAND there;
+its disc, against the rim nearest it). Exempting outside nodes outright
+flattened a dock bridge crossing the seam onto the seabed 215u below, so the
+two cells' border edges never paired (Arktwend (-20,0)/(-19,0)), and draped an
+exit node's disc on the seabed under a boardwalk, whose clashing levels erased
+the walkway's last 226u (Arktwend (-4,-1)). `_node_on_land`, mirrored in native
+`cstrips.cpp`. The cap
 was not what clipped hilly exteriors — the flat-ribbon floor test was: a rail
 stopped once terrain left its chord by `MAX_CLIMB` (median rail 96u; 303u with
 that test off). For such a ribbon:
@@ -1587,6 +1594,8 @@ exterior cells regenerate automatically.
 **Code:** `tes5_import/navmesh/corridor_clean.py`
 
 <a id="a-flap-is-topological-not-steep"></a>**An open flap is found by TOPOLOGY, never by slope** (`cull_open_flaps`). A triangle with TWO UNSHARED edges that each fall a storey-ish drop is not ground: both long edges are the mesh's own silhouette, so nothing walks across them and nothing connects through them, and the only thing holding it on is the short edge along the floor rim it grew from. It reaches from that rim down to a single vertex on the stairs below, across a void -- the shape the author saw jutting "from the upper left to the right" through a wall in Pinarus's upstairs. `_drop_walls` cannot find it, because a flap is not vertical: **the Pinarus one measures 30 degrees (corners at z 68.6, 68.6 and 18.8 over ~95u of plan)**, comfortably inside the walkable band. Nor is it unsupported -- every sample under it lands on real collision, because the stairwell it spans genuinely has floor at the bottom. What distinguishes it is that real sloped ground is STITCHED: a stair tread shares its edges with the treads above and below, a ramp shares its edges with the floors it joins, and even a ledge an actor drops off has ONE free edge at its lip, never two that both plunge.
+
+<a id="flaps-are-culled-after-decimation"></a>**Flaps are culled after decimation and before `find_ledge_links`.** Emission fans a whole floor rim back to one stair vertex below; while every spoke of that fan is present each shares its long edges with the next, so nothing upstream sees a free edge. Decimation merges the spokes into one triangle, and the fan's two outer edges become the silhouette that identifies the flap. Culling before the ledge pass keeps a flap from being mistaken for a mezzanine an actor is meant to drop off. **A free edge on the cell seam never counts**: it is a portal to the neighbour, not a rim. Counting it emptied whole exterior cells: Arktwend (18,-38), whose only pathgrid node sits on the cell corner, kept a two-triangle quarter disc on a hillside whose two seam edges fall 56u and 66u, and the cull deleted both triangles.
 
 <a id="the-pathgrid-is-the-prime-directive"></a>**A triangle carrying a walked sample is never dropped, however shaped** (`cull_open_flaps`). Topology alone is not enough: a ramp landing in an open room legitimately presents two free sloping edges, and the census caught one -- **LeyawiinCastleCountyHall's 105u/91u ramp spanning 44u, a ~25 degree slope the authored pathgrid walks straight down; culling it cost three walked samples**. The same guard is why `_drop_walls` spares steep ground the pathgrid uses. What remains is only ground the author never routed an actor across. Census over the reference cells: **zero matches in ChorrolFightersGuild, ImperialDungeon01, ImperialDungeon05, AnvilFightersGuild and Moranda02, and in Pinarus exactly the triangle the author reported.**
 

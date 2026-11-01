@@ -1138,11 +1138,30 @@ EndFunction
 ; ==========================================================================
 
 ; OBSE `IsModLoaded "Foo.esp"` asks whether a plugin is in the load order.
-; Vanilla Papyrus has no direct query, but Game.GetFormFromFile returns None
-; for a file that is not loaded, so asking it for the plugin's own header
-; record (0x00000000 in that file's local space) answers the same question.
+; SKSE's GetModByName answers 255 for a file that is not loaded, without the
+; log line Game.GetFormFromFile writes for a missing file (scripts poll this).
 Bool Function IsModLoaded(String asPlugin) Global
-  Return Game.GetFormFromFile(0x00000000, asPlugin) != None
+  Return Game.GetModByName(asPlugin) != 255
+EndFunction
+
+; A TES4 topic the player has been given: opens its unlock gate, when it has
+; one, and tells MorrowindRuntime the display name, so the TES3 topic of that
+; name is known too (TES3 topics are named by their text).
+; See: docs/commentary/morrowind_runtime.md#tes4-addtopic-teaches-tes3-topics
+Function AddTopic(GlobalVariable akGate, String asName) Global
+  If akGate
+    akGate.SetValue(1)
+  EndIf
+  If asName != ""
+    Game.GetPlayer().SendModEvent("TES3LearnTopic", asName)
+  EndIf
+EndFunction
+
+; OBSE `IsPluginInstalled "Name"` asks for an OBSE DLL plugin, not a data
+; file; the matching question here is whether an SKSE plugin of that name is
+; loaded. SKSE.GetPluginVersion answers -1 for a missing one.
+Bool Function IsPluginInstalled(String asPlugin) Global
+  Return SKSE.GetPluginVersion(asPlugin) >= 0
 EndFunction
 
 ; ==========================================================================

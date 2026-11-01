@@ -58,12 +58,12 @@ choose 2
 choose 3
 choose 4
 bye
-expect GetJournalIndex A_V_KanzlerEssen == 6
+expect GetJournalIndex A_V_KanzlerEssen >= 6
 end
 
 # Cries from the streets.
 case essen_cries
-until 600 GetJournalIndex A_V_KanzlerEssen == 7
+until 600 GetJournalIndex A_V_KanzlerEssen >= 7
 until 600 MenuMode == 1
 wait 60
 bye

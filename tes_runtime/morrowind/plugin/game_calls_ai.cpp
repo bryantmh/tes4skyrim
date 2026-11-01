@@ -98,7 +98,13 @@ void* AiQuestForm() {
     void* form = AiQuestRecord();
     bool justStarted = false;
     if (form && StartQuest(form, &justStarted)) {
-        if (justStarted) Log("ai: the AI quest started");
+        // Once: the start reads as new for every lookup until the engine
+        // marks the quest running, about 40 lookups in the first tick.
+        static bool startLogged = false;
+        if (justStarted && !startLogged) {
+            startLogged = true;
+            Log("ai: the AI quest started");
+        }
         return form;
     }
     // Once: every alias lookup comes through here, so a missing quest would
@@ -782,7 +788,7 @@ struct PendingWalk {
 };
 
 // Ticks between the walk's progress lines, which show where a stalled walk stopped.
-constexpr int kWalkLogTicks = 300;
+constexpr int kWalkLogTicks = 60;
 
 PendingWalk& Walk() {
     static PendingWalk walk;
@@ -824,8 +830,15 @@ bool PlayerWalkDone() {
     }
     if (++walk.ticks % kWalkLogTicks == 0) {
         void* player = PlayerRef();
-        Log("ai: the player walks at (%g, %g, %g)", RefPositionAxis(PapyrusVm(), player, 0),
-            RefPositionAxis(PapyrusVm(), player, 1), RefPositionAxis(PapyrusVm(), player, 2));
+        void* pack = player && g_currentPackage ? g_currentPackage(PapyrusVm(), 0, player) : nullptr;
+        void* foe = player ? CombatTargetOf(player) : nullptr;
+        const auto it = AiDestinations().find(kPlayerId);
+        void* marker = it == AiDestinations().end() ? nullptr : RefByRuntimeId(it->second);
+        Log("ai: the player walks at (%g, %g, %g), PACK %08X, fighting %08X, marker at (%g, %g)",
+            RefPositionAxis(PapyrusVm(), player, 0), RefPositionAxis(PapyrusVm(), player, 1),
+            RefPositionAxis(PapyrusVm(), player, 2), pack ? FormIdOf(pack) : 0,
+            foe ? FormIdOf(foe) : 0, marker ? RefPositionAxis(PapyrusVm(), marker, 0) : 0.0f,
+            marker ? RefPositionAxis(PapyrusVm(), marker, 1) : 0.0f);
     }
     if (!ReachedAiDestination(kPlayerId)) return false;
     PlayerWalkStop();

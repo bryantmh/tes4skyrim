@@ -143,7 +143,8 @@ void UpdateWeather() {
         want = Roll(region);
         State().SetVar(kSet, region, static_cast<float>(want));
     }
-    if (want < 0 || want == g_applied) return;
+    // A weather set while a cell loads is undone by the load's own, so the sky is checked too.
+    if (want < 0 || (want == g_applied && CurrentType() == want)) return;
     Apply(want, hold);
     g_applied = want;
 }

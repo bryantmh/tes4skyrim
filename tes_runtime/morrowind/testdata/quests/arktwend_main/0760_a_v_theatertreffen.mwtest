@@ -14,6 +14,10 @@ until 300 MenuMode == 1
 wait 60
 bye
 expect GetJournalIndex A_V_TheaterTreffen == 3
+# The second guard then greets on his own (TheaterWache02: Stormwendvar 20, within 500).
+until 300 MenuMode == 1
+wait 60
+bye
 end
 
 # Calisto's house near Castle Grel, the guards following the player; they

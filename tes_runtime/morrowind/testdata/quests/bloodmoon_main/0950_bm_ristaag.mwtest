@@ -79,7 +79,6 @@ follow
 console 0644DCAB.kill
 until 300 GetJournalIndex BM_BearHunt1 >= 75
 run
-"0644DCAB"->RemoveItem BM_bearheart_UNIQUE 1
 player->AddItem BM_bearheart_UNIQUE 1
 until 300 GetJournalIndex BM_BearHunt1 == 80
 run

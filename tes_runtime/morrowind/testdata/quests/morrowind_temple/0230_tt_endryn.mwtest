@@ -22,7 +22,8 @@ end
 case tt_rilms_take
 run
 player->PositionCell 4772 3900 13542 0 "Ald Sotha, Shrine"
-wait 60
+until 600 GetPCCell "Ald Sotha, Shrine" == 1
+wait 150
 console 0552B792.removeallitems player
 until 120 player->GetItemCount "shoes of st. rilms" >= 1
 end

@@ -152,6 +152,17 @@ verified when the quest case that found it passed on the test instance after it.
 |---|---|---|---|---|
 | DA_Sheogorath | `"id"->OnDeath` reads and clears the NAMED actor's own death, scripted or not (OpenMW `CreatureStats::hasDied`) | It answered only when the running script belonged to that actor. `da_forkScript` watches the scriptless giant bull netch, so killing it with the Fork equipped never logged 60 and the quest stuck at 50 | `script_ops_events.cpp` `OpOnDeathExplicit`, `game_calls.cpp` `TakeDeathOf`, `dialogue_state.h`; test in `script_test.cpp` | Explicit `OnDeath`: Morrowind 3 (fork, bull netch, `fallingScript`), Tribunal 2 (`Contract_Calvus`, `ScrollSales`), Bloodmoon 2 (`ColonyAssassin`), TR 76 in 52 scripts. Verified: the netch case passes |
 
+### 2.12 Before the full run (offline, from §3)
+
+| Item | Fix | Where | Blast radius |
+|---|---|---|---|
+| `IsModLoaded` log flood | `IsModLoaded` asks SKSE's `Game.GetModByName` (255 when absent, no log line); OBSE `IsPluginInstalled`, which asks for an OBSE DLL, maps to a new `IsPluginInstalled` on `SKSE.GetPluginVersion` | `TES4Polyfill.psc`, `command_rows.py` | 777 `IsModLoaded` and 3 `IsPluginInstalled` sites (Morroblivion) |
+| "the AI quest started" ×40 | Logged once | `game_calls_ai.cpp` | Log only. The unported-command log was already once per site |
+| Morroblivion-mode object scripts not compiling | Vanilla objects map to their scripts from the TES3 binaries' SCRI ([vanilla-object-scripts](../commentary/morrowind_runtime.md#vanilla-object-scripts)) | `morrowind_sidecar_source.py`, `morrowind_sidecar.py` | Compat patch `SCPT_objects` 365 → 1,443 rows; failures 130 → 6 of 1,204 (the 4 werewolf scripts, `Museum`'s authored typo, `DagothUrCreature2`'s `LorkhanHeart`, which the patch does not carry; none runs in Morroblivion mode). Morrowind, Tribunal, Bloodmoon, Tamriel_Data, TR_Mainland: +0 −0 |
+| `OnDeath` for an actor killed in its first seconds | Already fixed by `6eab392a` (the engine's death event is held until the script binds); verified by DA_Sheogorath's netch case | `object_script.cpp` `TakeEngineDeath` | — |
+| Morroblivion chargen topics never reach the runtime | Every converted reveal is `TES4Polyfill.AddTopic(gate, "Name")`, which also sends `TES3LearnTopic`; MorrowindRuntime learns the TES3 topic of that name ([tes4-addtopic](../commentary/morrowind_runtime.md#tes4-addtopic-teaches-tes3-topics)) | `context_setup.py`, `commands.py`, `pipeline.py`, `quest_fragments.py`, `TES4Polyfill.psc`, `topic_events.cpp`, `common/mod_event.cpp` | 1,452 of Morrowind_ob's 1,470 added topics name a TES3 topic. Every TES4 plugin's reveal fragments change text; behavior outside MorrowindRuntime is unchanged |
+| CO_2 brawl drain loses to regeneration | Each punch pauses the brawler's Stamina regeneration (`StaminaRateMult` 0) until 3 s pass without one. The fist-zeroing perk moved to the player (an effect's perk never reaches an NPC), and the fight is in vanilla's `DGIntimidateFaction` so bystanders stay out ([brawls](../commentary/morrowind_runtime.md#brawls)) | `game_calls_brawl.cpp`, `object_tick.cpp`, `game_calls_query.cpp`, `brawl.py` | Hroldar, Anbarnag, the Savrethi couple. Verified: CO_2 10→90 passes at normal speed, 64 punches, no deaths |
+
 ## 3. Found, not fixed
 
 **Arktwend**
@@ -160,9 +171,6 @@ verified when the quest case that found it passed on the test instance after it.
   EnderalTurm01a moves north with `MoveWorld Y 300` until the player reaches it. Our rate matches
   OpenMW's (rate × frame time), yet the player never catches it. It is unclear how a real player
   does.
-- **An actor killed in its first seconds never gets `OnDeath`.** Object scripts bind about 6 s
-  after the actor loads, and `PollDeath` takes its first sample then. A corpse at that first
-  sample is never seen dying.
 - **Mauragin's force-greet while disabled is skipped** (0840 `enderal_pass`). OpenMW returns early
   for a disabled actor too, so this matches.
 - **Asartan's journal 2 (0830)** is reachable only on a visit before Tyrat. Nothing reads it.
@@ -180,11 +188,35 @@ verified when the quest case that found it passed on the test instance after it.
   `ForceGreeting` (no "force-greets" line in 20 s, the player 120 units away); in the next,
   `ZwergenMissionMadchenSchreck` never wrote journal 6. Every other run of each passed. Cause
   unknown.
+- **Followed walks fail (full run 2026-10-31).** These cases teleported the follower until
+  `4f506d01` made them real walks, and no pass of a walk version is recorded: `herbert_gor`,
+  `herbert_house`, `herbert_gron`, `tate_nembrest`, `sohn_lift`, `sohn_airship`, `sohn_worldend`,
+  `sohn_home`, `dwarves_mert`, `dwarves_picks`, `dwarves_shaft`. Herbert's are the unlinked seam
+  fixed in §2.13. `sohn_lift`'s target, the Crystal Hall lift door at (-199, -2885, 38), is 321u
+  from the nearest navmesh triangle. The rest are not yet diagnosed.
+- **Two pathgrid nodes 1u apart on a seam fold the mesh** (Arktwend (-12,1)/(-12,2)): node 26 at
+  (-47369, 8192) and node 10 at (-47370, 8192) each get a disc, and the overlapping layers leave
+  (-12,2) no border edge on the seam. Present before 12ef67db's emission change too.
+- **14 authored crossings stay unlinked in Arktwend after §2.13**; 6 of them were linked in the
+  10-27 build and lost to commits since (the §2.13 rules A/B identical on them).
+- **The goths' camp guard never greeted** (0860 `goths_camp`): no menu within 600 ticks.
 
 **Morrowind and Tribunal**
 
 - **The game exits silently when the level-up menu opens** (`a1_v_levels`), twice in a row without
-  a debugger. With cdb attached it did not crash. Timing-dependent; no dump yet.
+  a debugger. With cdb attached it did not crash. Timing-dependent; no dump yet. Again in the
+  2026-10-31 full run.
+- **The game exits after `light_bar` is disabled and enabled** (`tr_assassins`, 2026-10-31). No
+  crash log.
+- **Escorted NPCs stall although the navmesh connects** (`b2_escort` Sinnammu, Raven Rock
+  `co_survivor` Apronia; `reach.py` finds both routes). Not diagnosed.
+- **Falura stands on a 3-triangle navmesh island inside a slave pod** (`b3_bride`,
+  `ex_t_slavepod_01`), with no pathgrid point inside it.
+- **Player walks stall in reachable interiors** (`tr_shrine_dead` in Temple Shrine,
+  `tr_mazed_band` beside `in_mold_rock_18` in the Abandoned Crypt). Both passed on 10-28;
+  Tribunal.esm was rebuilt on 10-30. Not diagnosed.
+- **Solstheim (-43,33)/(-44,33) has no navmesh link** (`co_mine`): the route to the mine detours
+  south through (-44,32) and the walk sticks in water. Still unlinked on a 2026-10-31 rebuild.
 - **`GetCollidingPC` is not ported** (Tribunal: `ExitBlockMessage` and `explosion_pushout`, 11
   calls logged during MS_Warlords; 275 in a Show of Power run). Same gap as the line below.
 - **`HurtStandingActor`, `GetStandingPC`, `GetStandingActor` are not ported.** Skyrim has no
@@ -209,15 +241,6 @@ verified when the quest case that found it passed on the test instance after it.
   west and 1,050 lower, and the runtime logs his death the second he binds. The player placed at the
   same spot stays on the peak (z 1816). No script moves him (`TR_m2_q_Nm_Wake_vanrythscr`,
   `_vanrythdeath`), so he slides or falls off. Cause not found. The quest cannot start.
-- **In Morroblivion mode the player never learns the topics Morroblivion's chargen adds**
-  (TR_m2_Nm_BrokenFamily, `tr_necrom` 0130). Vanilla's chargen captain teaches `Background` by
-  naming it in his greeting; Morroblivion's Captain Gravius says the same and runs
-  `addtopic 1Background`, `1Morrowind`, `1duties` (Morrowind_ob INFO after 01000F49). That TES4
-  `AddTopic` converts only to a TES4 unlock global (`script_convert/commands.py` `add_topic`), and
-  `SeedChargenTopics` stands down because the chargen actor exists, so MorrowindRuntime's known
-  topics never get them. Velyn Alari offers only `my trade`; `Adren Alari` is named only in his
-  `Background` line, so the quest cannot start. Nothing converts a TES4 `AddTopic` into the
-  runtime's `LearnTopic` today: a design question.
 
 **Morrowind Temple**
 
@@ -229,19 +252,20 @@ verified when the quest case that found it passed on the test instance after it.
 
 **Morroblivion and Nehrim (TES4 scripts)**
 
-- **`IsModLoaded` floods the Papyrus log.** `TES4Polyfill.IsModLoaded` asks
-  `Game.GetFormFromFile(0, name)`, which logs "does not exist or is not currently loaded" for a
-  missing file. `mwMorroDefaultQuestScript` asks for the `AddActorValues` OBSE plugin every poll:
-  about 3 errors a second, 401 in 3 minutes of chargen. Harmless to play, but it buries real
-  errors.
 - **Nehrim's wait menu has no buttons** (`AAWaitMenuActorScript`, Nehrim.esm and Translation.esp).
   Its `MessageBoxEX` text carries the current time through `%z` strings computed at runtime, so
   it cannot become a fixed MESG the way Morroblivion's class quiz did, and it shows as a plain
   box with OK; the wait choice never comes back.
+- **Skipping the class quiz took it** (`mb_chargen_class`, 2026-10-31): the case presses button
+  1 ("Skip Quiz") on `fbmwChargenQuestScript`'s "Take Quiz|Skip Quiz" box (§2.7), yet
+  `GetButtonPressed` read 0 and the quiz started. The chargen passed before (§2.7; the rest of
+  `morroblivion_main` and the quiz folder passed then). Not yet rerun, so a flake is not ruled out.
+- **`mbq_offer` held a menu past the runner's limit** (2026-10-31) after Socucius's greeting; it
+  passed 6 times before. Not yet rerun.
 
 <a id="raven-rock-open"></a>**Bloodmoon and Raven Rock**
 
-- **CO_2 (Hroldar) needs a punch to tire its target.** Built, not yet verified: a brawler (a
+- **CO_2 (Hroldar) needs a punch to tire its target.** Fixed (see the end of this item): a brawler (a
   script that declares `OnPCHitMe` and reads `GetFatigue`) takes no health from the player's
   bare fists, and each punch takes the player's `UnarmedDamage` from its Stamina
   ([brawls](../commentary/morrowind_runtime.md#brawls)). Three scripts match: Hroldar, TR's
@@ -252,13 +276,10 @@ verified when the quest case that found it passed on the test instance after it.
   regeneration 5% of the maximum a second, about 15/s at 300; that rate is read from the record,
   not timed. OpenMW returns fatigue at `fFatigueReturnBase` + `fFatigueReturnMult` × Endurance a
   second, and a Morrowind punch drains Hand-to-Hand × 0.1 to 0.5. Open: which drain and which
-  regeneration a brawler gets. The two choices on the table: Morrowind on both sides for
-  brawlers (regeneration 2.5 + 0.02 × Endurance, 4.5/s for Hroldar; a punch drains
-  Hand-to-Hand × 0.5), or Skyrim's 4-point punch with the brawler's regeneration paused while
-  it is being punched (about 63 punches).
-  **Switched off pending that choice** (`kBrawlsOn` in `game_calls_brawl.cpp`): no brawler
-  is armed and no punch drains Stamina, so a brawler takes Skyrim's ordinary punch damage.
-  The import still writes `TES3BrawlAbility`, unused.
+  regeneration a brawler gets. **Chosen:** Skyrim's 4-point punch with the brawler's
+  regeneration paused while it is being punched (about 63 punches). **Fixed and verified
+  2026-10-31** (§2.12): the quest passes 10→90 at normal speed. Run it without `--fast`:
+  regeneration runs on game time, and `--fast` puts about 16 game seconds between punches.
 - **Three bittergreen plants gave four petals, not six** (CO_10). The converted containers each
   hold two (`CNTO` count 2 on `flora_bittergreen_02/04/05`); after `activate` and console
   `removeallitems` the player had four, twice. Which plant came up empty is unknown.
@@ -275,11 +296,8 @@ verified when the quest case that found it passed on the test instance after it.
   - Authored mode: 4 of 1,644 fail. Bloodmoon's `WereChange2Script`, `MockChangeScript`,
     `wereDreamScript2` and `wereDreamScript3` stop at `if ( BM_BearHunt1 == 0 )`, which names
     a journal id where a variable belongs, so the werewolf dream scripts never run.
-  - Morroblivion mode: 132 of 5,520 fail, nearly all on a member of another actor's script
-    (`"Athyn Sarethi".duelOndresNerano`, `skinkintreesshade.soulAshGhoul`). The patch sidecar's
-    `SCPT_objects.txt` maps 365 objects and leaves out vanilla actors such as Athyn Sarethi,
-    whom the authored Morrowind sidecar maps to `athynSarethiScript`.
-  - Neither is diagnosed yet.
+  - Morroblivion mode: fixed (§2.12); the compat patch's 6 remaining failures never run there.
+  - The authored-mode four are not diagnosed yet.
 
 **Engine behavior not matched yet**
 
@@ -326,7 +344,6 @@ verified when the quest case that found it passed on the test instance after it.
 
 **Noise**
 
-- "the AI quest started" logs about 40 times in one tick.
 - The "door heavy close" sound keeps playing.
 - Authored per-frame calls flood the log.
 

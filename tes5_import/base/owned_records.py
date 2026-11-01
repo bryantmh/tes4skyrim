@@ -316,7 +316,7 @@ def hidden_perk(fid: int, edid: str, entries: bytes) -> bytes:
 
 
 def perk_effect(fid: int, edid: str, perk: int, ability: bool = False) -> bytes:
-    """MGEF whose only job is PerkToApply, the way an NPC receives a perk; Constant for an `ability`."""
+    """MGEF whose only job is PerkToApply, which the engine applies to the player only; Constant for an `ability`."""
     data = bytearray(152)
     struct.pack_into('<I', data, 0, _MGEF_FALL_FLAGS)
     struct.pack_into('<ii', data, 12, -1, -1)
@@ -350,7 +350,7 @@ def create_fall_damage_spell(writer: PluginWriter, master_index=None) -> dict:
     """`TES4NoFallDamage`, the spell converted ResetFallDamageTimer casts; a master's is adopted.
 
     Skyrim reaches falling damage only through perk entry point Mod Falling
-    Damage, and a magic effect's PerkToApply is how an NPC holds a perk.
+    Damage, which a magic effect's PerkToApply gives the player (never an NPC).
     The name is imported here, not at module scope, to break the cycle
     owned_records -> script_convert (package __init__) -> tes5_import.dialogue
     -> base.conditions -> owned_records.

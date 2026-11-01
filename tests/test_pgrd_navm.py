@@ -189,8 +189,8 @@ def test_water_flag_set_below_water_height():
     verts = [(0.0, 0.0, -50.0), (100.0, 0.0, -50.0), (100.0, 100.0, -50.0),
              (0.0, 0.0, 50.0), (100.0, 0.0, 50.0), (100.0, 100.0, 50.0)]
     tris = [(0, 1, 2), (3, 4, 5)]
-    flags = p2n._compute_water_flags(verts, tris, water_z=0.0)
-    assert flags[0] == p2n._TRI_FLAG_WATER
+    flags = p2n.compute_water_flags(verts, tris, water_z=0.0)
+    assert flags[0] == p2n.TRI_FLAG_WATER
     assert flags[1] == 0
 
 

@@ -381,13 +381,23 @@ def _instance_lines(export_dir: str, bases: dict, plugin_name: str) -> list:
     return lines
 
 
-def _object_script_lines(export_dir: str, by_formid: dict) -> list:
-    """`object=script` for every scripted object whose script was resolved."""
-    lines = []
+def _object_script_lines(export_dir: str, by_formid: dict, staged: list,
+                         source_scripts: dict) -> list:
+    """`object=script` for every scripted object whose script was resolved,
+    then each TES3 source object whose script is in `staged` (locals lines).
+
+    See: docs/commentary/morrowind_runtime.md#vanilla-object-scripts
+    """
+    lines, seen = [], set()
     for _name, rec in folder_tables(export_dir)['scripted']:
         script = by_formid.get(rec.get('SCRI', '').upper())
         if script and rec.get('EditorID'):
             lines.append(f"{rec['EditorID']}={script}")
+            seen.add(rec['EditorID'].lower())
+    names = {line.split('=', 1)[0].lower(): line.split('=', 1)[0] for line in staged}
+    for key, (object_id, script) in source_scripts.items():
+        if key not in seen and script.lower() in names:
+            lines.append(f"{object_id}={names[script.lower()]}")
     return lines
 
 
@@ -697,7 +707,8 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
             + _write_lines(os.path.join(out_dir, SCRIPT_LOCALS_TABLE),
                            locals_lines)
             + _write_lines(os.path.join(out_dir, ACTOR_SCRIPTS_TABLE),
-                           _object_script_lines(export_dir, by_formid))
+                           _object_script_lines(export_dir, by_formid, locals_lines,
+                                                ids.get('object_scripts', {})))
             + _write_lines(os.path.join(out_dir, SCRIPT_INSTANCES_TABLE),
                            _instance_lines(export_dir,
                                            _scripted_bases(export_dir,

@@ -166,9 +166,14 @@ PLAYER's resistance. `TG11FallingExit`'s one-shot `Player.ResetFallDamageTimer`
 did the same, permanently, because neither script has a teardown.
 
 **The engine's own mechanism** is perk entry point 58, Mod Falling Damage. Vanilla
-Cushioned uses it at ×0.5. Papyrus `AddPerk` works only on the player, and a
-magic effect's PerkToApply is how any actor holds a perk. Vanilla does both:
-`NN01PerkEffect` (constant) and `ghostExtraDamageEffect` (fire-and-forget).
+Cushioned uses it at ×0.5. Papyrus `AddPerk` works only on the player, and so
+does a magic effect's PerkToApply: the CK wiki's Magic Effect page says the perk
+is added "if and only if the target is the player", and a 2026-10-31 in-game probe
+agreed (an NPC holding `TES3BrawlAbility` answered `HasPerk` 0 and took full
+damage). Vanilla uses PerkToApply both ways: `NN01PerkEffect` (constant) and
+`ghostExtraDamageEffect` (fire-and-forget). **So `ResetFallDamageTimer` on an NPC
+does nothing to its falls;** the player's falls, the case `TG11FallingExit` and
+`SE02GatekeeperScript` reach, are covered.
 
 **Fix:** the importer writes `TES4NoFallDamagePerk` (entry point 58, Multiply
 Value ×0, unconditioned like `TGSkeletonKeyPerk`), `TES4NoFallDamageEffect`
@@ -4900,9 +4905,12 @@ a Papyrus approximation.
   own looping Gamebryo-animation call.
 - **`IsOnGround`** (OBSE) is the complement of `IsFlying` — both engines only
   distinguish "supported by the ground" from "not".
-- **`IsModLoaded "Foo.esp"`**: `Game.GetFormFromFile` returns `None` for an
-  unloaded file, answering the same question in vanilla Papyrus. `Morrowind_ob`
-  guards every Oblivion XP hand-off with it.
+- **`IsModLoaded "Foo.esp"`**: SKSE's `Game.GetModByName` answers 255 for an
+  unloaded file. `Morrowind_ob` guards every Oblivion XP hand-off with it, and
+  polls it, so the query must not log: `Game.GetFormFromFile` on a missing file
+  writes "does not exist or is not currently loaded" every call.
+- **`IsPluginInstalled "Name"`** asks for an OBSE DLL plugin, not a data file;
+  `SKSE.GetPluginVersion` asks the same of SKSE plugins (-1 when absent).
 - **`print`/`printc`** write to the console log; `Debug.Trace` is Papyrus's own
   log write, the same capability.
 - **`GetPCExpelled`/`SetPCExpelled`** have exact natives on both sides —

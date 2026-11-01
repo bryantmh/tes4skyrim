@@ -172,7 +172,11 @@ rest, handed to the runner through `SetTestConversation`). While a menu other
 than the conversation holds the game, a `run`, `activate`, `until` or a new
 `talk` waits for it to close, and every other step goes on: a `button` has to
 click the MessageBox that holds the game. After 300 held ticks the case fails
-with "a menu holds the game" rather than the run hanging.
+with "a menu holds the game" rather than the run hanging; the sleep/wait menu
+gets 20 times that (`kSleepHeldFactor`), because a 24-hour sleep runs in real
+time at 1x and outlasts 300 ticks (Raven Rock's `co_brawl`). A `follow` step
+that already stands at its spot issues no new move: each move set `MoveLanding`,
+which holds every `until` (`co_thief` hung on it).
 
 One JSON line per case records `ok`, the step `error` if one failed, each
 verdict, `said` (the newest history line after each conversation step), and

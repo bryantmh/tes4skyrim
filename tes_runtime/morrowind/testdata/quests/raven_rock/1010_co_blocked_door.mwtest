@@ -1,7 +1,7 @@
 # Bloodmoon "A Blocked Door": three days after the mine opens (ColonyTimer),
 # Carnius sends the player to Falco. Hroldar the Strange refuses to leave,
-# Falco allows a fistfight. The brawl is switched off until its stamina rules
-# are chosen, so the case takes the quest's other path: Hroldar dies (journal
+# Falco allows a fistfight, which needs normal speed (raven_rock_brawl), so
+# this --fast case takes the quest's other path: Hroldar dies (journal
 # 60), Falco is angry (80), Carnius closes it (100). `sleep` passes the days.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_bm_wildhunt --timeout 2400
 # See docs/commentary/headless_testing.md#quest-runs

@@ -4,9 +4,11 @@
 #include <cstdio>
 #include <map>
 #include <mutex>
+#include <regex>
 #include <set>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "dialogue_state.h"
 #include "log.h"
@@ -86,6 +88,21 @@ const ScriptLocals* CompiledLocals(const std::string& script) {
     return ObjectScriptLocals(script);
 }
 
+// True when the lowered source tests its own fatigue FALLING: `GetFatigue`, or a
+// variable set from it, on the small side of a comparison (`x < n`, `n > x`).
+// Karrod's duel reads it only as `GetFatigue > 100`, to lower his stats.
+bool TestsFatigueFalling(const std::string& source) {
+    std::vector<std::string> names = {"getfatigue"};
+    static const std::regex kSetFrom(R"(\bset\s+(\w+)\s+to\s+getfatigue\b)");
+    for (std::sregex_iterator m(source.begin(), source.end(), kSetFrom), end; m != end; ++m)
+        names.push_back((*m)[1].str());
+    for (const std::string& name : names) {
+        const std::regex falling("\\b" + name + "\\s*<|(^|[^-])>=?\\s*" + name + "\\b");
+        if (std::regex_search(source, falling)) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 bool IsBrawler(const ObjectScript& instance) {
@@ -94,7 +111,7 @@ bool IsBrawler(const ObjectScript& instance) {
     if (fresh) {
         const ScriptLocals* locals = CompiledLocals(instance.Script());
         it->second = locals && locals->TypeOf(kOnPcHitMe) != ' ' &&
-                     LowerId(ScriptSource(instance.Script())).find("getfatigue") != std::string::npos;
+                     TestsFatigueFalling(LowerId(ScriptSource(instance.Script())));
     }
     return it->second;
 }

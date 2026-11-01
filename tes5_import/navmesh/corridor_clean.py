@@ -25,6 +25,7 @@ from .clean_decimate import (
     _pin_verts,
     _split_needles as _split_needles,
     decimate as decimate,
+    on_seam_rect,
 )
 from .clean_validate import (
     _boundary_edges as _boundary_edges,
@@ -226,16 +227,7 @@ def finalize(verts, tris, cs=None, pinned=None, doors=None, cell_bounds=None,
                                  seam_bounds=cell_bounds,
                                  budget_frac=params.CULL_SLIVER_AREA_FRAC
                                  * 0.4)
-    # Drop OPEN FLAPS — triangles hanging off a floor's rim into a stairwell.
-    # This runs here, after decimation, because that is where they become
-    # visible: emission fans a whole floor rim back to one stair vertex below,
-    # and while every spoke of that fan is present each shares its long edges
-    # with the next, so nothing upstream sees a free edge.  Decimation merges
-    # the spokes into one triangle and the fan's two outer edges become the
-    # silhouette — which is exactly what makes the flap identifiable.  It runs
-    # BEFORE find_ledge_links so a flap is never mistaken for a mezzanine an
-    # actor is meant to drop off.
-    tris = cull_open_flaps(verts, tris, pin_xy)
+    tris = cull_open_flaps(verts, tris, pin_xy, cell_bounds)
     ledge_pairs = find_ledge_links(verts, tris, reach=ledge_reach)
     # Identify each ledge triangle by its CENTROID, not its index: the passes
     # below drop and reorder both triangles and vertices, so an index captured
@@ -337,9 +329,10 @@ def _carries_pathgrid(verts, pg, t):
     return False
 
 
-def _flap_candidates(verts, tris, edge_tris, pg):
+def _flap_candidates(verts, tris, edge_tris, pg, seam_bounds):
     """Triangles with two plunging free edges that no walked sample crosses.
 
+    A free edge on the cell seam is a portal to the neighbour, never a rim.
     See: docs/commentary/tes5_import_navmesh.md#a-flap-is-topological-not-steep
     """
     from .corridor_union import FLAP_EDGE_DROP
@@ -349,7 +342,8 @@ def _flap_candidates(verts, tris, edge_tris, pg):
         for k in range(3):
             a, b = t[k], t[(k + 1) % 3]
             key = (a, b) if a < b else (b, a)
-            if len(edge_tris.get(key, ())) != 1:
+            if (len(edge_tris.get(key, ())) != 1
+                    or (on_seam_rect(verts[a], seam_bounds) and on_seam_rect(verts[b], seam_bounds))):
                 continue
             if abs(verts[a][2] - verts[b][2]) >= FLAP_EDGE_DROP:
                 free += 1
@@ -358,11 +352,11 @@ def _flap_candidates(verts, tris, edge_tris, pg):
     return cands
 
 
-def cull_open_flaps(verts, tris, pin_xy=None):
+def cull_open_flaps(verts, tris, pin_xy=None, seam_bounds=None):
     """Drop triangles that hang off a floor's rim into open space.
 
     A flap is dropped only when its neighbours stay mutually reachable, so
-    this can never sever a mesh.
+    this can never sever a mesh. `seam_bounds` is the exterior cell rectangle.
     See: docs/commentary/tes5_import_navmesh.md#a-flap-is-topological-not-steep
     """
     if not tris:
@@ -373,7 +367,7 @@ def cull_open_flaps(verts, tris, pin_xy=None):
                       []).append((p[0], p[1]))
 
     edge_tris = _edge_owners(tris)
-    cands = _flap_candidates(verts, tris, edge_tris, pg)
+    cands = _flap_candidates(verts, tris, edge_tris, pg, seam_bounds)
     if not cands:
         return tris
 
@@ -722,12 +716,7 @@ def cull_boundary_slivers(verts, tris, pinned_xy=None, pin_xy=None,
 
     def on_seam(vi):
         """True if this vertex sits on the exterior cell seam rectangle."""
-        if seam_bounds is None:
-            return False
-        x, y = verts[vi][0], verts[vi][1]
-        minx, miny, maxx, maxy = seam_bounds
-        return (abs(x - minx) <= 0.5 or abs(x - maxx) <= 0.5
-                or abs(y - miny) <= 0.5 or abs(y - maxy) <= 0.5)
+        return on_seam_rect(verts[vi], seam_bounds)
 
     removed_area = 0.0
     for _round in range(3):

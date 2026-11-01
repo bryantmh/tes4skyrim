@@ -423,6 +423,15 @@ def _decimate_round(verts, tris, pin, on_seam, min_edge, budget, area_lost,
     return tris, area_lost, st.changed or flipped is not None
 
 
+def on_seam_rect(vert, seam_bounds):
+    """True when `vert` lies on a side of the (minx, miny, maxx, maxy) rectangle; False for None."""
+    if seam_bounds is None:
+        return False
+    minx, miny, maxx, maxy = seam_bounds
+    return (abs(vert[0] - minx) <= 0.5 or abs(vert[0] - maxx) <= 0.5
+            or abs(vert[1] - miny) <= 0.5 or abs(vert[1] - maxy) <= 0.5)
+
+
 def decimate(verts, tris, pinned_xy=None, seam_bounds=None, rounds=None,
              allow_split=True, ground_ok=None, surface=None):
     """Collapse sliver-producing SHORT edges into near-equilateral triangles.
@@ -449,12 +458,7 @@ def decimate(verts, tris, pinned_xy=None, seam_bounds=None, rounds=None,
 
     def on_seam(vi):
         """True if this vertex sits on the exterior cell seam rectangle."""
-        if seam_bounds is None:
-            return False
-        x, y = verts[vi][0], verts[vi][1]
-        minx, miny, maxx, maxy = seam_bounds
-        return (abs(x - minx) <= 0.5 or abs(x - maxx) <= 0.5
-                or abs(y - miny) <= 0.5 or abs(y - maxy) <= 0.5)
+        return on_seam_rect(verts[vi], seam_bounds)
 
     budget = params.DECIMATE_MAX_AREA_LOSS * _mesh_area(verts, tris)
     area_lost = 0.0

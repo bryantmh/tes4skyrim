@@ -349,6 +349,19 @@ def _take_tables(out: dict, rec) -> None:
             out['own'][table].add(key)
 
 
+def _take_script(out: dict, rec) -> None:
+    """A non-item object's SCRI into `object_scripts`; a later script-less record drops it.
+
+    See: docs/commentary/morrowind_runtime.md#vanilla-object-scripts
+    """
+    key = rec.record_id.lower()
+    script = _text(rec, 'SCRI')
+    if script and rec.type not in _ITEM_TYPES:
+        out['object_scripts'][key] = (rec.record_id, script)
+    else:
+        out['object_scripts'].pop(key, None)
+
+
 def _take(out: dict, rec, topic: str) -> str:
     """Fold one record into `out`; returns the topic INFOs now belong to."""
     if rec.type in ('DIAL', 'INFO'):
@@ -369,6 +382,7 @@ def _take(out: dict, rec, topic: str) -> str:
     _take_tables(out, rec)
     if rec.type in _OBJECT_TYPES:
         out['objects'][rec.record_id.lower()] = rec.record_id
+        _take_script(out, rec)
     if rec.type in _ITEM_TYPES:
         out['items'][rec.record_id.lower()] = rec.record_id
     if rec.type == 'SOUN':
@@ -473,7 +487,7 @@ def _gather(chain: tuple, whole: bool) -> dict:
     """
     out = {'npcs': {}, 'races': {}, 'classes': {},
            'skills': {}, 'gmsts': {}, 'factions': {}, 'items': {},
-           'objects': {}, 'sounds': {}, 'spells': {}, 'exteriors': {},
+           'objects': {}, 'object_scripts': {}, 'sounds': {}, 'spells': {}, 'exteriors': {},
            'quasi_exteriors': {}, 'regions': {}, 'cells': set(),
            'table_records': []}
     _reset_own(out)

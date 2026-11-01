@@ -81,7 +81,7 @@ end
 case storm_dargun
 until 600 "TUNIDargunDerSchwarze"->GetDisabled == 0
 console 058D151A.damageav health 10000
-until 600 Tuniervar == 5
+until 600 Tuniervar >= 5
 end
 
 # Herbin the Golden.

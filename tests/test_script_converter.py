@@ -3928,21 +3928,27 @@ class TestScriptAddTopicOpensTheGate:
     whose reveal is reading the wanted poster / the mysterious note.
     """
 
-    def test_gated_topic_emits_the_setvalue(self, converter):
-        converter.topic_unlock_globals = {'tggrayfox': 'TES4Unlock_TGGrayFox'}
+    def test_gated_topic_opens_the_gate_and_names_the_topic(self, converter):
+        """The gate opens and MorrowindRuntime hears the display name."""
+        converter.topic_reveals = {'tggrayfox': ('TES4Unlock_TGGrayFox', 'Gray Fox')}
         out = conv_line(converter, 'AddTopic TGGrayFox', 'ObjectReference')
-        assert out == 'TES4Unlock_TGGrayFox.SetValue(1)'
+        assert out == 'TES4Polyfill.AddTopic(TES4Unlock_TGGrayFox, "Gray Fox")'
         assert converter.get_property_refs()['TES4Unlock_TGGrayFox'] \
             == 'GlobalVariable'
 
-    def test_ungated_topic_stays_inert(self, converter):
-        """An ungated topic is already visible and has no global to set."""
-        converter.topic_unlock_globals = {}
-        converter._line_comments = []
-        out = conv_line(converter, 'AddTopic SomeUngatedTopic',
-                                      'ObjectReference')
-        assert 'SetValue' not in out
+    def test_ungated_topic_still_names_the_topic(self, converter):
+        """An ungated topic has no global, but the runtime still learns it."""
+        converter.topic_reveals = {'1background': ('', 'Background')}
+        out = conv_line(converter, 'AddTopic 1Background', 'ObjectReference')
+        assert out == 'TES4Polyfill.AddTopic(None, "Background")'
         assert 'TES4Unlock_' not in str(converter.get_property_refs())
+
+    def test_unknown_topic_stays_inert(self, converter):
+        """A topic no DIAL defines emits no call."""
+        converter.topic_reveals = {}
+        converter._line_comments = []
+        out = conv_line(converter, 'AddTopic NoSuchTopic', 'ObjectReference')
+        assert 'AddTopic(' not in out
 
 
 class TestBareMenuModeRuns:

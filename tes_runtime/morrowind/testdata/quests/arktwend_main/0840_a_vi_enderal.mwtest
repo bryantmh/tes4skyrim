@@ -106,6 +106,7 @@ expect GetJournalIndex A_VI_EnderalBruder == 2
 expect EnderalTurmvar == 8
 run
 player->Position 142753 -186600 10542 0
+until 300 MenuMode == 1
 button 0
 until 300 GetPCCell "Calisto's House" == 1
 end

@@ -32,6 +32,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from core.plugin_masters import export_root, master_export_dir
 from output_layout import plugin_esm
 from tes5_import.base.tes5_reader import walk
 from tes5_import.navmesh.edge_links import DOOR_TRI_SIZE, NavMeshView
@@ -538,14 +539,14 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('cells', nargs='*')
     ap.add_argument('--plugin', required=True)
-    ap.add_argument('--export', help='export dir (default export/<plugin>)')
+    ap.add_argument('--export', help="export dir (default: the plugin's record folder under export/)")
     ap.add_argument('--prefix', help='every cell whose EditorID starts with this')
     ap.add_argument('--dump', help='write every finding with coordinates here')
     ap.add_argument('--build', choices=('corridor', 'lattice'),
                     help='check a mesh this generator makes now, not the built ESM')
     a = ap.parse_args()
-    export = a.export or os.path.join('export', a.plugin)
-    esm = str(plugin_esm('output', a.plugin, export))
+    export = a.export or master_export_dir('export', a.plugin)
+    esm = str(plugin_esm('output', a.plugin, export_root(export)))
     names = list(a.cells)
     if a.prefix:
         names += sorted(e for e in cell_editor_ids(esm).values()

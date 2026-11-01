@@ -113,10 +113,12 @@ run
 player->Position 52060 109300 6263 0
 until 600 GetPCCell "Cavern of the Incarnate" == 0
 wait 60
-console set timescale to 2000
-until 3600 GameHour < 18
-until 3600 GameHour > 18.2
+console set timescale to 200
+until 3600 GameHour < 16
+until 3600 GameHour > 17
 console set timescale to 20
+until 3600 GameHour > 18.2
+expect GameHour < 20
 activate in_ci_door_01
 until 900 GetPCCell "Cavern of the Incarnate" == 1
 end

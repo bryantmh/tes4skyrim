@@ -33,7 +33,7 @@ from script_convert.converter import ScriptConverter
 from script_convert.context_setup import (
     build_xref, chargen_menu_plan, deploy_static_scripts, load_bounds_cache,
     load_records, prepare_output_dir, quest_edids_by_fid,
-    service_menu_topics, topic_unlock_globals)
+    service_menu_topics, topic_reveals, add_topic_call)
 from script_convert.ownership import departed_owners, owner_key, write_owned
 from script_convert.message_menus import build_message_plan
 from script_convert.commands_falloutnv import (quest_objective_indices,
@@ -130,7 +130,7 @@ def _load_music_cues(output_dir) -> dict:
 def script_worker_init(xref, output_dir, info_reveals, service_topics,
                         stage_reveals, say_durations=None,
                         quest_script_vars=None,
-                        quest_edid_by_fid=None, topic_unlock_globals=None,
+                        quest_edid_by_fid=None, topic_reveals=None,
                         message_menus=None, mesh_bounds_cache=None,
                         chargen_menus=None, say_topics=None,
                         music_cues=None, namespace=None,
@@ -173,9 +173,7 @@ def script_worker_init(xref, output_dir, info_reveals, service_topics,
     # scripts does not survive into the child, and an empty set here would
     # make info_needs_fragment() drop the timing fragments that SayLine needs.
     ScriptConverter.say_topics = set(say_topics or ())
-    # DIAL EditorID -> unlock global, so a script `AddTopic X` opens the same
-    # gate the INFO/QUST fragments do.
-    ScriptConverter.topic_unlock_globals = topic_unlock_globals or {}
+    ScriptConverter.topic_reveals = topic_reveals or {}
     ScriptConverter.conversation_starts = conversation_starts or {}
     ScriptConverter.force_greet_slots = force_greet_slots or {}
     ScriptConverter.force_flee_slots = force_flee_slots or {}
@@ -273,7 +271,7 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
                 service_menu_topics(by_type),
                 unlock_plan['stage_reveals'], say_durations,
                 quest_script_vars, quest_edids_by_fid(by_type),
-                topic_unlock_globals(by_type, unlock_plan), message_menus,
+                topic_reveals(by_type, unlock_plan), message_menus,
                 bounds_cache, chargen_menu_plan(export_dir), say_topics,
                 _load_music_cues(output_dir), current_namespace(),
                 quest_script_delays(by_type),
@@ -681,7 +679,7 @@ def _info_end_fragment(body_lines: list, seq_gate: str, reveals,
     See: docs/commentary/script_convert.md#sequenced-fragment-surgery
     """
     out = ['Function Fragment_0(ObjectReference akSpeakerRef)']
-    out += [f'  {gname}.SetValue(1)' for gname in reveals]
+    out += [f'  {add_topic_call(ScriptConverter.topic_reveals, gname)}' for gname in reveals]
     body_lines = state_writes_before_setstage(body_lines)
     counter_step, rest_body = split_counter_step(body_lines, seq_gate)
     if seq_gate and body_lines and counter_step:

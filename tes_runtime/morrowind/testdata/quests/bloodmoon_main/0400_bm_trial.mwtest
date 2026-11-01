@@ -100,7 +100,6 @@ expect GetJournalIndex BM_Draugr == 70
 bye
 run
 player->PositionCell 2480 2100 29 45 "Solstheim, Aesliip's Lair"
-until 300 "0691BB21"->GetDistance player < 300
 until 1200 "draugr_aesliip"->GetDistance player < 400
 activate 0691BB21
 until 600 GetPCCell "Solstheim, Aesliip's Lair, Caverns" == 1

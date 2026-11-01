@@ -671,7 +671,7 @@ COMMAND_ROWS = {
     #: See: docs/commentary/script_convert.md#zero-arg-reads-need-function-map
     'equipitem2': Cmd('EquipItem', MAP),
     #: See: docs/commentary/script_convert.md#receiver-and-argument-not-interchangeable
-    'isplugininstalled': Cmd('TES4Polyfill.IsModLoaded', MAP, bare=True),
+    'isplugininstalled': Cmd('TES4Polyfill.IsPluginInstalled', MAP, bare=True),
     #: Debug.Trace is Papyrus's own log write, the same capability.
     'print': Cmd('Debug.Trace', MAP, bare=True),
 

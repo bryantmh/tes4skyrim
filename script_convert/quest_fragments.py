@@ -8,6 +8,7 @@ See: docs/commentary/script_convert.md#quest-fragments
 """
 
 from script_convert.constants import papyrus_script_name, script_prefix
+from script_convert.context_setup import add_topic_call
 from script_convert.converter import ScriptConverter
 from script_convert.cross_ref import CrossRefGraph
 from script_convert.objective_completion import (
@@ -64,7 +65,7 @@ def _fragment_lines(conv, rec: dict, xref, edid: str, frag: tuple,
     if completes:
         out += ['  CompleteAllObjectives()', '  CompleteQuest()']
     for gname in stage_reveals.get((edid.lower(), stage_idx), []):
-        out.append(f'  {gname}.SetValue(1)')
+        out.append(f'  {add_topic_call(ScriptConverter.topic_reveals, gname)}')
     if script_src.strip():
         out.extend(conv.convert_fragment(script_src, 'Quest'))
     out += ['EndFunction', '']

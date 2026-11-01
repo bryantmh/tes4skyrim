@@ -16,6 +16,7 @@
 #include "engine_ids.h"
 #include "glide.h"
 #include "log.h"
+#include "mod_event.h"
 
 namespace tesruntime {
 
@@ -48,23 +49,10 @@ constexpr double kTrackGaps = 1.5;
 // something else, and the goal follows it.
 constexpr float kMovedAway = 1.0f;
 
-// SKSEModCallbackEvent: BSFixedString is one pointer to the interned text.
-struct ModEvent {
-    const char* eventName;
-    const char* strArg;
-    float numArg;
-    void* sender;
-};
-
-// BSTEventSink<SKSEModCallbackEvent>: slot 0 the destructor, slot 1
-// ReceiveEvent(event, dispatcher) returning 0 to let the event continue.
-class SpinSink {
+class SpinSink : public ModEventSink {
 public:
-    virtual ~SpinSink() = default;
-    virtual int ReceiveEvent(const ModEvent* event, void* dispatcher);
+    int ReceiveEvent(const ModEvent* event, void* dispatcher) override;
 };
-
-using AddEventSinkFn = void (*)(void* dispatcher, void* sink);
 
 enum class Mode : std::uint8_t { kIdle, kRate, kTrack };
 
@@ -269,18 +257,8 @@ bool InstallSpin(SKSEMessagingInterface* messaging) {
         Log("spin: a position, angle or TranslateTo native is unresolved");
         return false;
     }
-    void* dispatcher = messaging->GetEventDispatcher(
-        SKSEMessagingInterface::kDispatcher_ModEvent);
-    auto add = reinterpret_cast<AddEventSinkFn>(
-        Resolve("BSTEventSource::AddEventSink", ids::kAddEventSink, nullptr));
-    if (!dispatcher || !add) {
-        Log("spin: mod-event dispatcher %p, AddEventSink %p -- not installed",
-            dispatcher, reinterpret_cast<void*>(add));
-        return false;
-    }
     if (!StartMainThreadTick(kTickMs, Tick)) return false;
-    add(dispatcher, &g_sink);
-    return true;
+    return AddModEventSink(messaging, &g_sink, "spin");
 }
 
 }  // namespace tesruntime

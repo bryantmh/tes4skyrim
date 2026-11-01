@@ -121,6 +121,7 @@ Designed, NOT yet built. Opens with `Status: PLAN`. Becomes commentary when buil
 |---|---|
 | [character_sheet.md](plans/character_sheet.md) | Character sheet in TESRuntime: attributes, legacy skills, Nehrim leveling takeover; converter bugs found on the way |
 | [horse_rideability.md](plans/horse_rideability.md) | Rideable Horse Conversion: Oblivion CREA → Skyrim Mountable Actor |
+| [navmesh_native_rewrite.md](plans/navmesh_native_rewrite.md) | Navmesh generator as one C++ process on a thread pool, bit-identical to the Python reference |
 | [navmesh_lattice.md](plans/navmesh_lattice.md) | Lattice navmesh generator: collision columns grown from the pathgrid (experimental, opt-in via `--navmesh-generator lattice`) |
 | [oblivion_native_scripts.md](plans/oblivion_native_scripts.md) | Run TES4 scripts on MorrowindRuntime's tick and the vendored interpreter, one ported command at a time |
 | [morrowind_object_scripts.md](plans/morrowind_object_scripts.md) | Move TES3 object scripts off the lossy Papyrus path onto the vendored interpreter |

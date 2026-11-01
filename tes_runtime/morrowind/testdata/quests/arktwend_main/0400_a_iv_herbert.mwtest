@@ -27,8 +27,13 @@ bye
 expect GetJournalIndex A_IV_Herbert == 1
 end
 
-# In sight of Gor, Herbert tells of the goods he stored there.
+# In sight of Gor, Herbert tells of the goods he stored there. Rats near the
+# meeting place attack, and a player in combat runs no walk. Position stands in
+# for the road past the Gor lake, whose bank an AI-driven player slides off;
+# Herbert follows on his own legs, and the last stretch is walked together.
 case herbert_gor
+defend
+player->Position -71250 6474 288 60
 walk -68693 7482 163
 until 600 "Herbert".State == 3
 wait 30

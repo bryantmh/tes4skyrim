@@ -1,0 +1,80 @@
+# Bloodmoon "A Blocked Door" won by the fistfight Falco allows; raven_rock's 1010 takes the other path (Hroldar dies).
+# Each bare-fisted punch takes the player's UnarmedDamage from Hroldar's Stamina and pauses his regeneration; at
+# fatigue 150 he greets once, at 50 he gives up (50), Falco rewards the player (70) and Carnius closes it (90).
+# No --fast: Stamina regenerates in game time, and --fast puts about 16 game seconds between punches.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --checkpoints --stop-on-fail --load mwtest_co_mine --timeout 3600
+# See docs/commentary/morrowind_runtime.md#brawls
+
+case co_brawl
+run
+player->PositionCell -450 -142 330 0 "Raven Rock, Vacant House"
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+activate 0676D5A3
+sleep 24
+until 600 ColonyState == 2
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask assignment
+expect GetJournalIndex CO_2 == 10
+bye
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask assignment
+ask get rid of him
+expect GetJournalIndex CO_2 == 20
+bye
+run
+player->Position -198100 160900 975 0
+until 600 "Hroldar the Strange"->GetDistance player < 400
+talk Hroldar the Strange
+expect GetJournalIndex CO_2 == 30
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask get rid of him
+expect GetJournalIndex CO_2 == 40
+bye
+end
+
+# Run this one without --fast: Stamina regenerates in game time, and --fast puts ~16 game seconds between punches.
+case co_brawl_fight
+console tgm
+run
+player->Position -198100 160900 975 0
+until 600 "Hroldar the Strange"->GetDistance player < 400
+punch 150 Hroldar the Strange
+expect "Hroldar the Strange"->GetFatigue <= 150
+expect "Hroldar the Strange"->GetHealth > 0
+bye
+punch 150 Hroldar the Strange
+until 300 GetJournalIndex CO_2 == 50
+expect "Hroldar the Strange"->GetFatigue <= 50
+bye
+end
+
+case co_brawl_reward
+run
+player->Position -197200 160250 870 0
+until 600 "Falco Galenus"->GetDistance player < 400
+talk Falco Galenus
+ask get rid of him
+expect GetJournalIndex CO_2 == 70
+bye
+run
+player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
+until 600 "Carnius Magius"->GetDistance player < 400
+talk Carnius Magius
+ask assignment
+expect GetJournalIndex CO_2 == 90
+bye
+end

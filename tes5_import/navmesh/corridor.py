@@ -374,19 +374,34 @@ def _disc_march_rows(nodes, node_z, degree, rows):
     return plan
 
 
+def _node_on_land(land, nodes, node_z, n, other):
+    """True when node `n` of edge (n, other) stands on the LAND.
+
+    Outside the cell the edge is judged where it crosses the rim, a lone node
+    against the rim nearest it.
+    See: docs/commentary/tes5_import_navmesh.md#terrain-standing-ribbons-follow-the-land
+    """
+    x, y = nodes[n][0], nodes[n][1]
+    if land.covers(x, y):
+        return abs(node_z[n] - land.z(x, y)) <= NODE_SNAP_RADII[0]
+    ox, oy = nodes[other][0], nodes[other][1]
+    if not land.covers(ox, oy):
+        return abs(node_z[n] - land.z(x, y)) <= params.MAX_CLIMB
+    t = land.rim_t(ox, oy, x, y)
+    z = node_z[other] + (node_z[n] - node_z[other]) * t
+    return abs(z - land.z(ox + (x - ox) * t, oy + (y - oy) * t)) <= params.MAX_CLIMB
+
+
 def _stands_on_land(land, nodes, node_z, i, j):
     """True when ribbon (i, j) -- or node disc (i, i) -- follows the LAND.
 
-    Each node must have snapped onto the terrain itself or lie in a
-    neighbouring cell.  Such an edge is never a staircase, however steep.
+    Such an edge is never a staircase, however steep.
     See: docs/commentary/tes5_import_navmesh.md#terrain-standing-ribbons-follow-the-land
     """
     if land is None:
         return False
-    return all(not land.covers(nodes[n][0], nodes[n][1])
-               or abs(node_z[n] - land.z(nodes[n][0], nodes[n][1]))
-               <= NODE_SNAP_RADII[0]
-               for n in (i, j))
+    return (_node_on_land(land, nodes, node_z, i, j)
+            and _node_on_land(land, nodes, node_z, j, i))
 
 
 def _plan_stations(nodes, edges, node_z, degree, grow, profiles, land=None,
@@ -415,12 +430,13 @@ def _plan_stations(nodes, edges, node_z, degree, grow, profiles, land=None,
     return st, plan, on_land
 
 
-def _profile_stations(sample, pa, pb, n, half):
+def _profile_stations(sample, pa, pb, n, half, bounded=True):
     """Per-station (x, y, candidate heights) along a steep edge's centerline.
 
     Candidates come from the whole CROSS-SECTION (centerline and +-half/2,
     +-half across it), so a line that clips a flight's corner still sees
-    every tread.
+    every tread.  `bounded` keeps only heights within a step of the edge's
+    own z range.
     See: docs/commentary/tes5_import_navmesh.md#profile-samples-the-cross-section
     """
     layers = sample.layers
@@ -428,8 +444,7 @@ def _profile_stations(sample, pa, pb, n, half):
     bx, by, bz = pb
     run = math.hypot(bx - ax, by - ay) or 1.0
     wx, wy = -(by - ay) / run, (bx - ax) / run
-    lo = min(az, bz) - params.MAX_CLIMB
-    hi = max(az, bz) + params.MAX_CLIMB
+    lo, hi = _height_window(az, bz, bounded)
     stations = []
     for s in range(n + 1):
         t = s / n
@@ -441,6 +456,13 @@ def _profile_stations(sample, pa, pb, n, half):
                         if lo <= z <= hi)
         stations.append((x, y, sorted(cand) or [az + (bz - az) * t]))
     return stations
+
+
+def _height_window(az, bz, bounded):
+    """(lo, hi) heights an edge samples: a step past its own range, or all."""
+    if not bounded:
+        return -math.inf, math.inf
+    return min(az, bz) - params.MAX_CLIMB, max(az, bz) + params.MAX_CLIMB
 
 
 def _clamped_chord(stations, az, bz, n):
@@ -495,11 +517,12 @@ def _cheapest_layer_path(stations, az, n):
     return costs, back
 
 
-def _surface_profile(sample, pa, pb, half=None):
+def _surface_profile(sample, pa, pb, half=None, bounded=True, deep=False):
     """Height profile along a STEEP edge, following the real walkable surface.
 
-    Returns None (caller keeps the chord) only when no layer path reaches the
-    far node's height AND the clamped-chord fallback has nothing to hold.
+    A walk over heights near the edge's own range comes first, then (when
+    `deep`) one over every height, as for a dock sunk below both nodes, then
+    the clamped chord.  Returns None (caller keeps the chord) when all fail.
     See: docs/commentary/tes5_import_navmesh.md#steep-heights-follow-the-treads
     """
     if getattr(sample, 'layers', None) is None:
@@ -512,7 +535,7 @@ def _surface_profile(sample, pa, pb, half=None):
     n = max(2, int(run // 16.0))
     stations = _profile_stations(
         sample, pa, pb, n,
-        params.RIBBON_STAIR_HALF_WIDTH if half is None else half)
+        params.RIBBON_STAIR_HALF_WIDTH if half is None else half, bounded)
     costs, back = _cheapest_layer_path(stations, az, n)
 
     inf = float('inf')
@@ -524,7 +547,10 @@ def _surface_profile(sample, pa, pb, half=None):
         if best is None or key < best:
             best = key
     if best is None:
-        return _clamped_chord(stations, az, bz, n)
+        if not bounded:
+            return None
+        return ((deep and _surface_profile(sample, pa, pb, half, bounded=False))
+                or _clamped_chord(stations, az, bz, n))
     idx = best[2]
     zs = [0.0] * (n + 1)
     for s in range(n, -1, -1):
@@ -578,7 +604,7 @@ def _leaves_chord(sample, pa, pb):
     if layers is None:
         return False
     n = max(2, int(math.hypot(pb[0] - pa[0], pb[1] - pa[1]) // 32.0))
-    lo, hi = min(pa[2], pb[2]) - params.MAX_CLIMB, max(pa[2], pb[2]) + params.MAX_CLIMB
+    lo, hi = _height_window(pa[2], pb[2], True)
     for s in range(1, n):
         x, y, z = (pa[k] + (pb[k] - pa[k]) * s / n for k in range(3))
         near = [abs(c - z) for c in layers(x, y) if lo <= c <= hi]
@@ -587,9 +613,10 @@ def _leaves_chord(sample, pa, pb):
     return False
 
 
-def _surface_profiles(nodes, edges, node_z, degree, sample, flat=()):
+def _surface_profiles(nodes, edges, node_z, degree, sample, flat=(), deep=False):
     """{(i, j): tread profile or None} for every edge not in `flat` that is steep or leaves its chord.
 
+    `deep` (exteriors) lets a profile search every floor height.
     See: docs/commentary/tes5_import_navmesh.md#profile-samples-the-cross-section
     """
     out = {}
@@ -599,7 +626,7 @@ def _surface_profiles(nodes, edges, node_z, degree, sample, flat=()):
             continue
         pa, pb = _extended_ends(got, degree, i, j)
         if _is_steep(pa, pb) or _leaves_chord(sample, pa, pb):
-            out[(i, j)] = (_surface_profile(sample, pa, pb)
+            out[(i, j)] = (_surface_profile(sample, pa, pb, deep=deep)
                            if sample is not None else None)
     return out
 
@@ -796,7 +823,8 @@ def _build_corridor_strips(nodes, edges, node_z, wall_hit=None,
     degree.update((i, 0) for i in lone if i not in degree)
     flat = {e for e in edges if _stands_on_land(land, nodes, node_z, *e)}
     steep_count = _steep_counts(nodes, edges, node_z, flat)
-    profiles = _surface_profiles(nodes, edges, node_z, degree, sample, flat)
+    profiles = _surface_profiles(nodes, edges, node_z, degree, sample, flat,
+                                 deep=land is not None)
 
     stations, plan, on_land = _plan_stations(nodes, edges, node_z, degree,
                                              grow, profiles, land, flat)
