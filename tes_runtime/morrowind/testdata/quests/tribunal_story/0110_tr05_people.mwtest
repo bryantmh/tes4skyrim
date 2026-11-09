@@ -3,7 +3,7 @@
 # ("official matter": "Tell me more." 1, then "I'll take care of it." 4: 1).
 # Anrel in Llethan Manor, at disposition 70, admits spreading them (50), and
 # Tienius takes the report (100).
-# Bribes, repeated until they land, raise Anrel. Ref FormIDs carry
+# SetDisposition stands in for persuading Anrel (persuasion is tested elsewhere). Ref FormIDs carry
 # Tribunal.esm's slot 06.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_dbhunt --timeout 2400
 # See docs/commentary/headless_testing.md#quest-runs
@@ -21,8 +21,10 @@ bye
 run
 player->PositionCell -210 885 -353 0 "Mournhold, Llethan Manor"
 until 600 "Anrel"->GetDistance player < 400
+run
+"Anrel"->SetDisposition 70
 talk Anrel
-persuade bribe100 until "Anrel"->GetDisposition >= 70
+expect "Anrel"->GetDisposition >= 70
 ask King Llethan's death
 expect GetJournalIndex TR05_People == 50
 bye

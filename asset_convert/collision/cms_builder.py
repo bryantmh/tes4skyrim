@@ -37,13 +37,10 @@ culprit was a rotated-root mesh converted to bhkRigidBodyT + CMS).
 import json
 import math
 import os
-import struct
 import subprocess
-import sys
 import uuid
-from pathlib import Path
 
-from asset_convert.collision.cms import decode_cms
+from asset_convert.collision.cms import chunk_vertex, decode_cms, f32
 from asset_convert.collision.collision_stairs import stairs_materials
 from asset_convert.collision.mopp import walk_mopp
 
@@ -56,9 +53,12 @@ GAME_UNITS_PER_HAVOK = 69.9904
 
 _BITS_PER_INDEX = 17
 _BITS_PER_W_INDEX = 18
-_QUANT = 1000.0            # u16 chunk offsets are v*1000 (0.001 hu steps)
-_MAX_CHUNK_EXTENT = 60.0   # hu; hard u16 span limit is 65.535
-_MAX_CHUNK_TRIS = 2000     # keep chunks in the vanilla size range
+#: u16 chunk offsets are v * 1000 (0.001 hu steps).
+_QUANT = 1000.0
+#: Largest chunk span in hu; the hard u16 limit is 65.535.
+_MAX_CHUNK_EXTENT = 60.0
+#: Triangles per chunk, kept in the vanilla size range.
+_MAX_CHUNK_TRIS = 2000
 
 
 def run_mopp_bridge(vertices, triangles, shape_keys, timeout=300):
@@ -194,7 +194,7 @@ def _add_big_tris(data, big):
                 big_vert_index[key] = i
                 big_verts.append(key)
             idx.append(i)
-        if len(set(idx)) < 3 or _float32_collinear([big_verts[i] for i in idx]):
+        if len(set(idx)) < 3 or float32_collinear([big_verts[i] for i in idx]):
             continue
         big_tri_rows.append((idx, mi))
 
@@ -212,21 +212,16 @@ def _add_big_tris(data, big):
         bt.unknown_short_1 = 0
 
 
-def _f32(value):
-    """`value` rounded to the float32 precision a NIF float field stores."""
-    return struct.unpack('<f', struct.pack('<f', value))[0]
-
-
 #: float64 sin^2 below which a corner gets the exact float32 replay; float32 noise on the determinant is ~1e-6
 _COLLINEAR_SIN2 = 1e-5
 
 
 def _dot_f32(u, v):
     """u.v summed in float32, in the order Havok's SIMD dot3 adds the lanes."""
-    return _f32(_f32(_f32(u[0] * v[0]) + _f32(u[1] * v[1])) + _f32(u[2] * v[2]))
+    return f32(f32(f32(u[0] * v[0]) + f32(u[1] * v[1])) + f32(u[2] * v[2]))
 
 
-def _float32_collinear(tri):
+def float32_collinear(tri):
     """True when Havok's float32 triangle determinant |Q|^2|R|^2 - (Q.R)^2
     is not positive at some corner, so the engine cannot tell `tri` from a
     line.  `tri` holds the vertices as the engine decodes them.
@@ -241,10 +236,10 @@ def _float32_collinear(tri):
         qr = q[0] * r[0] + q[1] * r[1] + q[2] * r[2]
         if qq * rr - qr * qr > _COLLINEAR_SIN2 * qq * rr:
             continue
-        q = [_f32(_f32(p[i]) - _f32(o[i])) for i in range(3)]
-        r = [_f32(_f32(n[i]) - _f32(o[i])) for i in range(3)]
+        q = [f32(f32(p[i]) - f32(o[i])) for i in range(3)]
+        r = [f32(f32(n[i]) - f32(o[i])) for i in range(3)]
         qr = _dot_f32(r, q)
-        if _f32(_dot_f32(q, q) * _dot_f32(r, r)) - _f32(qr * qr) <= 0.0:
+        if f32(_dot_f32(q, q) * _dot_f32(r, r)) - f32(qr * qr) <= 0.0:
             return True
     return False
 
@@ -259,7 +254,7 @@ def _quantize_bucket(bucket):
     decoded vertex by the rounding error once the file is read back.
     See: docs/commentary/tes5_import_pipeline.md#producer-emitted-mesh-entries
     """
-    base = [_f32(min(v[i] for t in bucket for v in t)) for i in range(3)]
+    base = [f32(min(v[i] for t in bucket for v in t)) for i in range(3)]
     vert_index = {}
     offs = []
     indices = []
@@ -269,8 +264,7 @@ def _quantize_bucket(bucket):
                   for i in range(3))
             for v in t
         ]
-        if len(set(quant)) < 3 or _float32_collinear(
-                [[base[i] + q[i] / _QUANT for i in range(3)] for q in quant]):
+        if len(set(quant)) < 3 or float32_collinear([chunk_vertex(base, q) for q in quant]):
             continue
         for q in quant:
             i = vert_index.get(q)

@@ -71,11 +71,20 @@ def _exterior_name(out: dict, x: float, y: float) -> str:
     return _grid_name(out, (math.floor(x / _CELL_SIZE), math.floor(y / _CELL_SIZE)))
 
 
+def _own_grid_names(gathered: dict):
+    """`((x, y), shown name)` for each exterior grid the plugin authors, in grid order."""
+    return ((grid, _grid_name(gathered, grid))
+            for grid in sorted(gathered.get('own', {}).get('exteriors', ())))
+
+
 def exterior_name_lines(gathered: dict) -> list:
     """`x|y=name` for each named exterior grid the plugin authors."""
-    names = ((grid, _grid_name(gathered, grid))
-             for grid in sorted(gathered.get('own', {}).get('exteriors', ())))
-    return [f'{x}|{y}={name}' for (x, y), name in names if name]
+    return [f'{x}|{y}={name}' for (x, y), name in _own_grid_names(gathered) if name]
+
+
+def shown_exterior_names(gathered: dict) -> set:
+    """The names the plugin's own exteriors show: a cell's own, else its region's."""
+    return {name for _grid, name in _own_grid_names(gathered) if name}
 
 
 def cell_region_lines(gathered: dict) -> list:

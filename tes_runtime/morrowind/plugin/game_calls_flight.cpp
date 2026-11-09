@@ -116,12 +116,13 @@ void EffectTick() {
     TickStillActors(player);
     TickSanctuary(player);
     TickAttributeEffects(player);
+    TickPlayerFollowers();
 }
 
 // Where the keys and the look point, at the fly speed, in havok units: OpenMW
 // flies the way it swims, forward along the pitch and strafing level.
 bool FlyVelocity(float out[4]) {
-    void* controls = g_playerControls ? *g_playerControls : nullptr;
+    void* controls = PlayerControls();
     void* player = g_player.load();
     if (!controls || !player) return false;
     const float strafe = At<float>(controls, ids::kOffPlayerControlsMoveX);
@@ -233,6 +234,8 @@ SimulateFn SwapSimulate(const char* what, std::uint64_t vtableId,
 void* CharController(void* actor) {
     return actor && g_controllerOf ? g_controllerOf(actor) : nullptr;
 }
+
+void* PlayerControls() { return g_playerControls ? *g_playerControls : nullptr; }
 
 // Every active instance of a runtime-carried effect, in any of its delivery
 // copies. An effect whose conditions switched it off is skipped.

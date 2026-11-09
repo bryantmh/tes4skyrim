@@ -2,10 +2,11 @@
 # a high-born Telvanni bride, so the wise woman Sonummu Zabamat's plan passes a
 # slave, Falura Llervu, off as one: dressed, perfumed and bought from Savile
 # Imayn at Tel Aruhn, she is escorted to the ashkhan's yurt.
-# PositionCell and Position stand in for the player's travel; on the escort
-# back each Position step waits for Falura to catch up on her own, killing the
-# creatures on the way so she does not stop to fight them; AddItem buys
-# the clothes, perfume and her price, and the console's damageav for the fight
+# PositionCell and Position stand in for the player's travel until Falura
+# follows; the escort back is steered at the controls in straight runs along
+# the navmesh, swimming off Tel Aruhn's island, with the creatures on the way
+# killed first and any that attacks fought off, so she does not stop to fight
+# them; AddItem buys # the clothes, perfume and her price, and the console's damageav for the fight
 # with Calvario; ref FormIDs carry Morrowind.esm's slot 05.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from b3_task
 # See docs/commentary/headless_testing.md#quest-runs
@@ -80,9 +81,9 @@ end
 # to the ashkhan's yurt, where Kaushad weds her and names the player Nerevarine.
 case b3_bride
 run
-player->Position 124234 47990 1040 0
+player->Position 124400 48300 700 180
 until 300 "falura llervu"->GetDistance player < 400
-console 055FA5D7.activate player
+activate 055FA5D7
 talk falura llervu
 ask Falura Llervu
 choose 1
@@ -93,42 +94,101 @@ choose 5
 bye
 until 300 "falura llervu"->GetCurrentAiPackage == 3
 run
-player->Position 119237 51750 4000 0
 console 05AC6B55.kill
 console 05CDE7CD.kill
-until 3000 "falura llervu"->GetDistance player < 600
-player->Position 114241 55511 4000 0
 console 053BAE90.kill
 console 05D74070.kill
-until 3000 "falura llervu"->GetDistance player < 600
-player->Position 109244 59271 4000 0
 console 05D92CDB.kill
 console 053629A6.kill
 console 05E97020.kill
-until 3000 "falura llervu"->GetDistance player < 600
-player->Position 104247 63032 4000 0
 console 05883A77.kill
 console 05B26D65.kill
-until 3000 "falura llervu"->GetDistance player < 600
-player->Position 99251 66792 4000 0
 console 05A4D854.kill
 console 054E7794.kill
-until 3000 "falura llervu"->GetDistance player < 600
-player->Position 94254 70553 4000 0
 console 05428D4A.kill
 console 0541440D.kill
-until 3000 "falura llervu"->GetDistance player < 600
-player->Position 89258 74313 4000 0
 console 056C59A3.kill
-until 3000 "falura llervu"->GetDistance player < 600
-player->Position 84261 78073 1060 0
 console 0575BD2D.kill
+defend
+# The player stands on the open ground north of the slave pods (hers at 124220 48084 and another at
+# 124552 48121 hang from root hooks over rocks, an invisible collision wall behind hers): placed at
+# her pod's door, the player perched on the rocks 250 above the ground, off the navmesh, and every
+# leg away jammed.
+steer 124554 49596 868
 until 3000 "falura llervu"->GetDistance player < 600
-player->Position 79264 81834 1380 0
+walk 124782 50745 505
 until 3000 "falura llervu"->GetDistance player < 600
-player->Position 76766 83714 860 0
+# To the sea along the navmesh's own route (mesh_route.py), so she can follow: the direct slope north
+# has no navmesh link and she stuck on it. Then the swim clear of the rocks (swim_route.py).
+steer 124852 49612 919
+steer 125311 49272 1004
+until 3000 "falura llervu"->GetDistance player < 600
+steer 127189 49735 856
+until 3000 "falura llervu"->GetDistance player < 600
+steer 127979 50506 328
+steer 128201 52336 -143
+until 3000 "falura llervu"->GetDistance player < 600
+steer 127680 53829 -312
+until 3000 "falura llervu"->GetDistance player < 600
+steer 126656 55488 0
+until 3000 "falura llervu"->GetDistance player < 600
+steer 124928 59328 0
+until 3000 "falura llervu"->GetDistance player < 600
+# The rest of the escort: the swim clear of the rocks (swim_route.py), then the navmesh route
+# (mesh_route.py) to the yurt, so she can follow every leg.
+steer 120896 65856 0
+steer 120768 67520 0
+until 3000 "falura llervu"->GetDistance player < 600
+steer 118875 67926 -77
+steer 117033 68371 -129
+steer 115061 68862 865
+steer 112906 69081 787
+until 3000 "falura llervu"->GetDistance player < 600
+steer 111027 69299 1220
+steer 109547 69897 1181
+steer 109497 69860 1178
+steer 109167 70089 1229
+until 3000 "falura llervu"->GetDistance player < 600
+steer 109155 70150 1233
+steer 109115 70193 1233
+steer 109058 70235 1230
+steer 109000 70266 1225
+until 3000 "falura llervu"->GetDistance player < 600
+steer 108523 70113 1166
+steer 107456 70112 1051
+steer 106336 70685 1244
+steer 103360 71590 960
+until 3000 "falura llervu"->GetDistance player < 600
+steer 102571 72026 708
+steer 100862 72738 1064
+steer 98242 73910 1498
+steer 97247 74375 1413
+until 3000 "falura llervu"->GetDistance player < 600
+steer 95839 74890 805
+steer 91499 77238 1056
+steer 89498 77542 1395
+steer 88106 77990 1329
+until 3000 "falura llervu"->GetDistance player < 600
+steer 86987 79190 1430
+steer 86333 79727 1350
+steer 85660 80447 1077
+steer 84598 81163 1355
+until 3000 "falura llervu"->GetDistance player < 600
+steer 82325 81848 1634
+steer 81451 81776 2083
+steer 80629 81775 1836
+steer 79066 82847 1314
+until 3000 "falura llervu"->GetDistance player < 600
+steer 77961 83824 863
+steer 77916 83995 836
+steer 77642 84144 780
+steer 77605 84182 773
+until 3000 "falura llervu"->GetDistance player < 600
+steer 77530 84207 774
+steer 76739 83931 776
+steer 76766 83714 776
 until 3000 "falura llervu"->GetDistance player < 500
-console 05AB7B01.activate player
+activate 05AB7B01
 until 600 GetPCCell "Zainab Camp, Ashkhan's Yurt" == 1
 until 900 GetJournalIndex B3_ZainabBride == 47
 until 600 MenuMode == 1

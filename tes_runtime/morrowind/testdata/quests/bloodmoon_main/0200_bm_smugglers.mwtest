@@ -66,6 +66,7 @@ end
 # Loyalty: restore the six standing stones, as Korst explains.
 case bm_carius
 until 600 GetJournalIndex BM_Smugglers == 100
+approach 0635C797
 until 600 MenuMode == 1
 bye
 run

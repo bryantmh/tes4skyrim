@@ -161,11 +161,9 @@ class LandField:
 
     def z_many(self, xy):
         """`z` at every row of the (N, 2) array `xy`, as a list."""
-        if native_loader.NATIVE:
-            return native_loader.load_native().land_z(
-                self.grid, self.ox, self.oy,
-                np.ascontiguousarray(xy, dtype=np.float64).reshape(-1, 2))
-        return [self.z(x, y) for (x, y) in xy]
+        return native_loader.load_native().land_z(
+            self.grid, self.ox, self.oy,
+            np.ascontiguousarray(xy, dtype=np.float64).reshape(-1, 2))
 
 
 def land_field(land_rec, origin_x, origin_y):

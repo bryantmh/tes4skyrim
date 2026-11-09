@@ -76,7 +76,7 @@ player->PositionCell 2662 6104 269 0 "Galleon, Deck"
 until 600 GetPCCell "Galleon, Deck" == 1
 activate GaleoneRuderboot01
 until 600 Storyvar == 13
-until 1800 "a_Galeone_Ruderboot_02".State == 3
+until 6000 "a_Galeone_Ruderboot_02".State == 3
 run
 player->Position -79052 24500 30 180
 until 600 GetJournalIndex A_III_Arktrand == 1

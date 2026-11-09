@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core.navmesh_options import NAVMESH_PLUGIN_ENV_VAR, navmesh_plugin
 from tes5_import.base import navmesh_pins as pins
 
 SQUARE = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (10.0, 10.0, 0.0),
@@ -83,10 +84,15 @@ def test_the_exterior_key_ignores_the_load_order_index():
             pins.cell_key({}, 0x0500003C, (1, 2)))
 
 
-def test_plugin_is_read_off_the_geometry_cache_path():
-    """Deriving it keeps pins out of every navmesh worker's signature."""
-    assert pins.plugin_of('export/Oblivion.esm/navmesh_geom_cache') == \
-        'Oblivion.esm'
+def test_pins_keyed_by_the_mod_folder_move_to_the_plugin(tmp_path, monkeypatch):
+    """A single-plugin mod's folder-named pin file is renamed to the plugin's."""
+    _store(tmp_path, monkeypatch)
+    monkeypatch.delenv(NAVMESH_PLUGIN_ENV_VAR, raising=False)
+    (tmp_path / 'Mod 1.2.json').write_text('{"frozen": {"Cell": []}}')
+    pins.use_plugin('Mod.esm', 'Mod 1.2')
+    assert navmesh_plugin() == 'Mod.esm'
+    assert sorted(os.listdir(tmp_path)) == ['Mod.esm.json']
+    assert pins.load('Mod.esm')['frozen'] == {'Cell': []}
 
 
 # ---------------------------------------------------------------------------

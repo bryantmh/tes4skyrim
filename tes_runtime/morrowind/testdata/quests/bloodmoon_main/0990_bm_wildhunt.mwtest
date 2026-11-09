@@ -45,6 +45,18 @@ run
 player->AddItem key_hircine1 1
 until 300 GetJournalIndex BM_WildHunt == 50
 run
+player->PositionCell 1401 976 -172 180 "Solstheim, Mortrag Glacier: Outer Ring"
+until 900 "falx carius2"->GetDistance player < 600
+player->PositionCell -55 1804 -274 180 "Solstheim, Mortrag Glacier: Outer Ring"
+until 900 "falx carius2"->GetDistance player < 600
+player->PositionCell 295 1091 -172 180 "Solstheim, Mortrag Glacier: Outer Ring"
+until 900 "falx carius2"->GetDistance player < 600
+player->PositionCell -1283 1166 -285 180 "Solstheim, Mortrag Glacier: Outer Ring"
+until 900 "falx carius2"->GetDistance player < 600
+player->PositionCell -1229 -258 -197 180 "Solstheim, Mortrag Glacier: Outer Ring"
+until 900 "falx carius2"->GetDistance player < 600
+player->PositionCell -722 176 -154 180 "Solstheim, Mortrag Glacier: Outer Ring"
+until 900 "falx carius2"->GetDistance player < 600
 player->PositionCell 60 400 -200 180 "Solstheim, Mortrag Glacier: Outer Ring"
 until 1200 GetJournalIndex BM_WildHunt == 55
 bye

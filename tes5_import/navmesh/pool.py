@@ -20,12 +20,13 @@ import struct
 import sys
 import time
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 
 from core.navmesh_options import CORRIDOR, navmesh_generator
 from core.worker_budget import worker_count
 from . import cache_audit as navm_verify, native_loader, worker as navm_worker
+from .door_reach import door_seeds, landings_by_cell
 from .edge_links import exterior_views
 from .seeding import drop_unplayable, grow_into_empty, master_views, seeded_record
 from .spawn_nodes import ACTOR_SIGS, is_airborne, spawn_point
@@ -36,7 +37,7 @@ from ..record_types.items import tree_nif_stem
 from ..record_types.world import build_cell_xclw, cell_water_height
 from ..record_types.world_falloutnv import parent_use_flags
 from ..record_types.world_morrowind import is_tes3_source
-from ..base.master_export import records_of
+from ..base.master_export import records_of, values_of
 from ..base.mesh_bounds import get_mesh_obnd
 from ..base.obstacles import OBSTACLE_SIGS, is_obstacle
 from ..base.text_reader import (get_float, get_formid, get_formid_index_offset,
@@ -59,9 +60,6 @@ _PNAM_USE_LAND = 0x01
 
 #: Jobs pickled and queued at once, as a multiple of workers * chunksize.
 _BUFFER_FACTOR = 4
-
-#: Tasks a pool worker runs before it is recycled.
-_TASKS_PER_CHILD = 500
 
 
 # ---------------------------------------------------------------------------
@@ -610,12 +608,54 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
 
     jobs = []
     blocks = _interior_blocks(cells)
+    landings = landings_by_cell(_merged(by_type, master_export, 'REFR'))
+    master_cells = {get_formid(c, 'FormID') for c in values_of(master_export, 'CELL')}
     for block in sorted(blocks):
         for sub in sorted(blocks[block]):
             for cell_rec in blocks[block][sub]:
-                _emit_jobs(jobs, cell_rec, None, indexes)
+                _emit_interior(jobs, by_type, cell_rec, indexes, landings, master_cells)
     _gather_exteriors(jobs, by_type, cells, indexes, pers_doors, overhang, seedable)
+    _attach_landings(jobs, landings, {get_formid(c, 'FormID') for c in cells if get_formid(c, 'ParentWRLD')})
     return jobs
+
+
+def _attach_landings(jobs, landings, world_cells) -> None:
+    """Give each job the door landings in its cell: an interior's by cell, an exterior's by its grid square,
+    since a persistent door's landings are filed under the worldspace's persistent cell."""
+    by_square = defaultdict(list)
+    for cell_fid, points in landings.items():
+        if cell_fid not in world_cells:
+            continue
+        for p in points:
+            by_square[(int(p[0] // _CELL_SIZE), int(p[1] // _CELL_SIZE))].append(p)
+    for job in jobs:
+        cell = job['cell_rec']
+        if get_formid(cell, 'ParentWRLD'):
+            job['landings'] = list(by_square.get((get_int(cell, 'XCLC.X'), get_int(cell, 'XCLC.Y')), ()))
+        else:
+            job['landings'] = list(landings.get(get_formid(cell, 'FormID'), ()))
+
+
+def _emit_interior(jobs, by_type, cell_rec, indexes, landings, master_cells) -> None:
+    """One interior's jobs; a pathgrid-less one of this plugin's with doors gets a synthetic
+    pathgrid (joining by_type['PGRD']) whose jobs carry the door seeds. An authored pathgrid is
+    never extended.
+
+    See: docs/commentary/tes5_import_navmesh.md#door-reach
+    """
+    cell_fid = get_formid(cell_rec, 'FormID')
+    if _emit_jobs(jobs, cell_rec, None, indexes) or cell_fid in master_cells:
+        return
+    seeds = door_seeds(indexes[0].get(cell_fid, []), landings.get(cell_fid, ()))
+    if not seeds:
+        return
+    pgrd = seeded_record(cell_rec)
+    by_type.setdefault('PGRD', []).append(pgrd)
+    indexes[2][cell_fid] = [pgrd]
+    first = len(jobs)
+    _emit_jobs(jobs, cell_rec, None, indexes)
+    for job in jobs[first:]:
+        job['door_seeds'] = seeds
 
 
 # ---------------------------------------------------------------------------
@@ -797,19 +837,14 @@ def _map_kwargs(n_jobs, n_workers) -> dict:
 
 
 @contextmanager
-def _pool(initargs, n_workers):
-    """A run_job pool: threads sharing this process's context when native, else worker processes.
+def _pool(n_workers):
+    """A run_job pool: threads sharing this process's context.
 
     The native build runs with the GIL released, so threads share one copy of
     the collision; the collector pauses for the run, as it is off in a worker.
     `init_context` MUST have run first.
     See: docs/plans/navmesh_native_rewrite.md#one-process-many-threads
     """
-    if not native_loader.NATIVE:
-        with ProcessPoolExecutor(max_workers=n_workers, initializer=navm_worker.init_worker,
-                                 initargs=initargs, max_tasks_per_child=_TASKS_PER_CHILD) as ex:
-            yield ex
-        return
     native_loader.native_core()
     collecting = gc.isenabled()
     gc.disable()
@@ -836,13 +871,13 @@ def _run_jobs(jobs, ex, n_workers) -> dict:
     return cache
 
 
-def run_pooled(jobs, initargs, n_workers) -> dict:
+def run_pooled(jobs, n_workers) -> dict:
     """{key: result} for `jobs` on a pool of `n_workers`, as the import runs them."""
-    with _pool(initargs, n_workers) as ex:
+    with _pool(n_workers) as ex:
         return _run_jobs(jobs, ex, n_workers)
 
 
-def pooled_prover(initargs, n_workers):
+def pooled_prover(n_workers):
     """A `rebuild` callable for cache_audit.prove_cache, backed by the pool.
 
     Yields `(key, meta)` in SUBMISSION order, so the first mismatch a caller
@@ -857,7 +892,7 @@ def pooled_prover(initargs, n_workers):
                 yield navm_worker.run_job(job)
             return
         workers = min(n_workers, len(jobs))
-        with _pool(initargs, workers) as ex:
+        with _pool(workers) as ex:
             yield from ex.map(navm_worker.run_job, jobs,
                               **_map_kwargs(len(jobs), workers))
     return _rebuild
@@ -908,15 +943,15 @@ def _seed_empty_cells(by_type, writer, masters, cache, seedable, run) -> None:
     by_type.setdefault('PGRD', []).extend(built)
 
 
-def _generate(jobs, seedable, initargs, n_workers, seeding) -> dict:
+def _generate(jobs, seedable, n_workers, seeding) -> dict:
     """Build the pathgrid jobs, then the seeded cells, on one pool; return {key: result}.
 
     `seeding` is (by_type, writer, masters) for _seed_empty_cells.
     """
     print(f"  Generating {len(jobs)} navmeshes (PGRD->NAVM, {navmesh_generator()} "
-          f"generator) across {n_workers} processes...")
+          f"generator) across {n_workers} threads...")
     t0 = time.time()
-    with _pool(initargs, n_workers) if n_workers > 1 else nullcontext() as ex:
+    with _pool(n_workers) if n_workers > 1 else nullcontext() as ex:
         cache = _run_jobs(jobs, ex, n_workers)
         hits = sum(1 for (_b, m) in cache.values() if m and m.get('geom_cached'))
         print(f"    Navmesh generation: {len(jobs)} cells in "
@@ -967,15 +1002,13 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
                  else (collision_cache[-1] if collision_cache else ''))
     geom_cache = navmesh_geom_cache(own_cache)
     door_centers = navm_verify.door_centers_cache_path(collision_cache)
-    initargs = (base_model_by_fid, door_fids, collision_cache, formid_offset,
-                geom_cache, get_injected_formids(), True, door_centers, activator_fids)
     navm_verify.init_context(base_model_by_fid, door_fids, collision_cache,
                              formid_offset, geom_cache,
                              get_injected_formids(), door_centers, activator_fids)
     navm_verify.prepare(jobs, geom_cache,
-                        pooled_prover(initargs, n_workers))
+                        pooled_prover(n_workers))
 
-    cache = _generate(jobs, seedable, initargs, n_workers,
+    cache = _generate(jobs, seedable, n_workers,
                       (by_type, writer, (master_index, master_navms)))
 
     navm_verify.report_verification(cache, geom_cache)

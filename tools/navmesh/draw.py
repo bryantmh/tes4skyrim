@@ -14,7 +14,7 @@ import math
 
 from PIL import Image, ImageDraw
 
-from tes5_import.navmesh import corridor_clean, params
+from tes5_import.navmesh import clean_validate, params
 
 #: Mesh defect fills by severity.  These hues are reserved for defects.
 DEFECT_BAD2 = (220, 40, 40, 160)
@@ -136,7 +136,7 @@ def tri_class(verts, tri):
     and colour it itself, rather than re-deriving the thresholds.
     """
     p, q, r = (verts[k] for k in tri)
-    bad = corridor_clean._badness(verts, tri)
+    bad = clean_validate.badness(verts, tri)
     area = abs((q[0] - p[0]) * (r[1] - p[1])
                - (q[1] - p[1]) * (r[0] - p[0])) * 0.5
     if bad > 2.0:

@@ -4,7 +4,7 @@
 # 5,000 (choice 3, 40). Felvan Ienith wants Elanande's axe and robe (60, 70),
 # Olvyne Dobar Bels Uvenim's spear and helm (90, 100), and Dovor last
 # Suldreni Salandas's amulet and mace (110, 120).
-# Bribes, repeated until they land, raise Dovor from his base 50; kills and looting stand in for the
+# SetDisposition stands in for persuading Dovor (persuasion is tested elsewhere) from his base 50; kills and looting stand in for the
 # fights. Ref FormIDs carry Tribunal.esm's slot 06.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_barbarian_book --timeout 2400
 # See docs/commentary/headless_testing.md#quest-runs
@@ -13,8 +13,10 @@ case ms_warlords
 run
 player->PositionCell -204 330 -368 0 "Mournhold, Vacant Manor"
 until 600 "Dovor Oren"->GetDistance player < 400
+run
+"Dovor Oren"->SetDisposition 60
 talk Dovor Oren
-persuade bribe100 until "Dovor Oren"->GetDisposition >= 60
+expect "Dovor Oren"->GetDisposition >= 60
 ask business
 expect GetJournalIndex MS_Warlords == 10
 ask assist
@@ -63,6 +65,7 @@ talk Dovor Oren
 ask assist
 expect GetJournalIndex MS_Warlords == 80
 bye
+approach 062E6218
 talk Olvyne Dobar
 expect GetJournalIndex MS_Warlords == 90
 bye
@@ -75,7 +78,7 @@ console 06688FEB.removeallitems player
 expect player->GetItemCount "silver spear_uvenim" == 1
 run
 player->PositionCell -176 119 -377 0 "Mournhold, Vacant Manor"
-until 600 "Olvyne Dobar"->GetDistance player < 400
+approach 062E6218
 talk Olvyne Dobar
 ask Bels Uvenim
 choose 1

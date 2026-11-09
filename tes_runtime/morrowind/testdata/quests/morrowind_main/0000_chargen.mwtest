@@ -95,9 +95,9 @@ end
 case chargen_captain
 activate "chargen door captain"
 until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 1
+button 0
 run
 player->PositionCell 1200 -380 220 90 "Seyda Neen, Census and Excise Office"
-button 0
 talk chargen captain
 ask Morrowind
 ask duties

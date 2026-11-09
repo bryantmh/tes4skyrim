@@ -3,7 +3,9 @@
 # Skaal turn werewolf in the village (BecomeWerewolf on NPCs), two more in the
 # Greathall, and the player catches werewolf blood. The player answers Korst
 # Wind-Eye infected, then drinks a cure. Console kills stand in for the
-# player's fights; ref FormIDs carry Bloodmoon.esm's slot 06.
+# player's fights; ref FormIDs carry Bloodmoon.esm's slot 06. Each village
+# werewolf counts its own death only after its script has enabled it, so the
+# kills wait for all seven to be enabled.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_siege
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -22,6 +24,14 @@ player->PositionCell -159200 211500 3010 0 "Skaal Village"
 until 600 GetPCCell "Skaal Village" == 1
 wait 60
 expect SkaalAttack == 2
+until 600 "BM_werewolf_skaal1A3"->GetDisabled == 0
+until 600 "BM_werewolf_skaal1B3"->GetDisabled == 0
+until 600 "BM_werewolf_skaal1C3"->GetDisabled == 0
+until 600 "BM_werewolf_skaal1D3"->GetDisabled == 0
+until 600 "BM_werewolf_skaal1E3"->GetDisabled == 0
+until 600 "BM_werewolf_skaal1F3"->GetDisabled == 0
+until 600 "BM_werewolf_skaal1G3"->GetDisabled == 0
+wait 30
 console 0629250B.kill
 console 06C2CFE0.kill
 console 06711609.kill

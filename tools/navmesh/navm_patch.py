@@ -371,9 +371,10 @@ def patch(plugin, cell_fid, cell_name, result, export=None,
           out_root='output'):
     """Write one correction's `result` mesh into `plugin`'s built ESM.
 
+    `export` is the plugin's record folder; the ESM is found through the export root's source registry.
     Returns `{esm, navm, tris, verts, restitched}`, or `{error}`.
     """
-    esm = str(plugin_esm(out_root, plugin, export))
+    esm = str(plugin_esm(out_root, plugin, 'export'))
     if not os.path.isfile(esm):
         return {'error': 'no built ESM at %s -- run: python convert.py -f %s '
                          '--import-only' % (esm, plugin)}

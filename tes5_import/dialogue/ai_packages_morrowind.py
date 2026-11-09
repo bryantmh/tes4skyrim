@@ -54,6 +54,9 @@ _AT_THE_REF = 0
 #: How far a wander package sandboxes around its marker, in units.
 _WANDER_RADIUS = 512
 
+#: Follow min/max radius: a Skyrim follower rests up to ~100 past max; OpenMW's within 226 (aifollow.cpp).
+_FOLLOW_RADIUS = 128.0
+
 #: TES4 PKDT.Type per kind, which is what decides the speech a package allows.
 _TES4_TYPE = {'travel': 6, 'wander': 5, 'follow': 1, 'escort': 2,
               'activate': 0}
@@ -154,6 +157,8 @@ def _inputs(kind: str, slot: str, template) -> Inputs:
             _alias_index(f'{slot}Where'), _AT_THE_REF))
     else:
         inputs.set('target', build_alias_target(target))
+    if kind == 'follow':
+        inputs.set('max_radius', _FOLLOW_RADIUS)
     return inputs
 
 

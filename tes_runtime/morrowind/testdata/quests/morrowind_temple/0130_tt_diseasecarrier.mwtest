@@ -2,7 +2,7 @@
 # player to talk the holy woman Tanusea Veloth out of Vivec ("leave Vivec City": 10). At disposition 80 she goes as a
 # favor ("Do this as a favor for me." 2: 50, TeleportTanusea moves her to Tel Fyr once the player is out of Vivec);
 # Endryn Llethan pays in cure blight potions (100).
-# PositionCell stands in for the travel; bribes, repeated until they land, raise Tanusea. The AddItem of gold stands
+# PositionCell stands in for the travel; SetDisposition stands in for persuading Tanusea (persuasion is tested elsewhere). The AddItem of gold stands
 # in for money the player earned on the way.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tt_maargan_done --timeout 3600
 # See docs/commentary/headless_testing.md#quest-runs
@@ -25,8 +25,10 @@ player->AddItem Gold_001 2000
 player->PositionCell 731 850 -85 0 "Vivec, Arena Pit"
 until 600 "tanusea veloth"->GetDistance player < 600
 wait 120
+run
+"tanusea veloth"->SetDisposition 80
 talk tanusea veloth
-persuade bribe100 until "tanusea veloth"->GetDisposition >= 80
+expect "tanusea veloth"->GetDisposition >= 80
 ask leave Vivec City
 choose 2
 expect GetJournalIndex TT_DiseaseCarrier == 50

@@ -29,7 +29,7 @@ bool floor_below(const CellCtx& C, double x, double y, double z, double* out) {
 bool body_clear(const CellCtx& C, double x, double y, double z) {
     return !C.wall_hit(x, y, 1.0, 0.0, 0.0, 1.0, z + P().RIBBON_GROW_SLAB_Z_BOTTOM,
                        z + P().AGENT_HEIGHT, P().RIBBON_GROW_SLAB_HALF_WIDTH,
-                       P().RIBBON_GROW_SLAB_HALF_WIDTH);
+                       P().RIBBON_GROW_SLAB_HALF_WIDTH, true);
 }
 
 // --------------------------------------------------------------------------
@@ -414,14 +414,14 @@ DoorGeometry door_geometry(CellCtx& C, const Group& corridors, std::vector<DoorR
     return out;
 }
 
-bool route_doors(CellCtx& C, const std::vector<DoorRef>& doors) {
+bool route_doors(CellCtx& C, const std::vector<DoorRef>& doors, const std::vector<P3>& spawns) {
     std::set<int> used;
     for (const Edge2& e : C.edges) { used.insert(e.first); used.insert(e.second); }
     std::vector<Target> targets;
     for (int i : used)
         targets.push_back({i, C.nodes[(size_t)i][0], C.nodes[(size_t)i][1], C.node_z[(size_t)i]});
     if (!C.has_sample() || targets.empty()) return false;
-    bool routed = false;
+    std::vector<std::pair<std::vector<P3>, int>> found;
     for (const DoorRef& d : doors) {
         const double fx = crt_cos(d.rz), fy = -crt_sin(d.rz);
         std::vector<P3> path;
@@ -435,6 +435,16 @@ bool route_doors(CellCtx& C, const std::vector<DoorRef>& doors) {
                 break;
             path.clear();
         }
+        found.push_back({path, hit});
+    }
+    for (const P3& s : spawns) {
+        std::vector<P3> path;
+        int hit = -1;
+        if (!route(C, s, targets, &path, &hit)) path.clear();
+        found.push_back({path, hit});
+    }
+    bool routed = false;
+    for (const auto& [path, hit] : found) {
         if (path.empty()) continue;
         std::vector<int> chain;
         const std::vector<P3> tight = pull_tight(C, path);
@@ -480,6 +490,29 @@ Group drop_covered_discs(const Group& strips, const std::set<int>& lone, const L
     }
     for (const UStrip* s : strips)
         if (!spawn_disc(s) || kept.count(s->ei)) out.push_back(s);
+    return out;
+}
+
+std::vector<P3> isolated_spawns(const CellCtx& C, const Group& strips, const std::set<int>& lone,
+                                const std::set<int>& kept) {
+    auto spawn_disc = [&lone](const UStrip* s) { return s->ei == s->ej && lone.count(s->ei); };
+    Group ribbons;
+    for (const UStrip* s : strips)
+        if (!spawn_disc(s)) ribbons.push_back(s);
+    std::vector<P3> out;
+    for (const UStrip* s : strips) {
+        if (!spawn_disc(s) || !kept.count(s->ei)) continue;
+        const double z = C.node_z[(size_t)s->ei];
+        std::vector<P2> rim = s->poly;
+        rim.push_back({s->na[0], s->na[1]});
+        bool reached = false;
+        for (const P2& p : rim) {
+            for (double h : levels_at_py(ribbons, C.land, p[0], p[1]))
+                reached = reached || std::fabs(h - z) <= P().SAME_SURFACE_Z;
+            if (reached) break;
+        }
+        if (!reached) out.push_back({s->na[0], s->na[1], z});
+    }
     return out;
 }
 

@@ -1,14 +1,32 @@
-"""Mesh topology queries used by tools, acceptance and the ledge pass.
+"""Mesh topology and shape queries used by tools, acceptance and the ledge pass.
 
 Edge adjacency and connected components over SHARED EDGES -- what the engine
-actually walks -- plus the drop-down (ledge) link search.  Nothing here mutates
-a mesh; the build half of `corridor_clean` imports from this module, never the
-other way round.
+actually walks -- triangle shape badness, plus the drop-down (ledge) link
+search.  Nothing here mutates a mesh.
 """
 
 import math
 
 from . import params
+
+
+def badness(verts, t):
+    """Normalized shape badness; 1.0 = exactly at the contract boundary.
+
+    max(edge_ratio / MAX_EDGE_RATIO, aspect / MAX_TRI_ASPECT): the ratio term
+    catches needles (one short edge), the aspect term catches CAPS (all edges
+    comparable, near-zero height) which the ratio cannot see.
+    """
+    p, q, r = verts[t[0]], verts[t[1]], verts[t[2]]
+    e = [math.dist(p[:2], q[:2]), math.dist(q[:2], r[:2]),
+         math.dist(r[:2], p[:2])]
+    lo, hi = min(e), max(e)
+    area = abs((q[0] - p[0]) * (r[1] - p[1]) -
+               (q[1] - p[1]) * (r[0] - p[0])) * 0.5
+    if lo <= 1e-9 or area <= 1e-9:
+        return 1e9
+    return max((hi / lo) / params.MAX_EDGE_RATIO,
+               (hi * hi / (4.0 * area)) / params.MAX_TRI_ASPECT)
 
 
 def edge_adjacency(tris):
@@ -49,35 +67,6 @@ def _centroid(verts, tri):
     return ((a[0] + b[0] + c[0]) / 3.0,
             (a[1] + b[1] + c[1]) / 3.0,
             (a[2] + b[2] + c[2]) / 3.0)
-
-def _resolve_ledges(verts, tris, marks, tol=1.0):
-    """Map centroid-marked ledge pairs back to FINAL triangle indices.
-
-    A pair is dropped when either of its triangles did not survive the cull —
-    a link to a triangle that no longer exists is worse than no link.
-    """
-    if not marks or len(tris) == 0:
-        return []
-    cents = [_centroid(verts, t) for t in tris]
-    tol2 = tol * tol
-
-    def _find(mark):
-        """Index of the triangle whose centroid matches, or None."""
-        best = None
-        for i, c in enumerate(cents):
-            d = ((c[0] - mark[0]) ** 2 + (c[1] - mark[1]) ** 2
-                 + (c[2] - mark[2]) ** 2)
-            if d <= tol2 and (best is None or d < best[0]):
-                best = (d, i)
-        return best[1] if best else None
-
-    out = []
-    for (hi_mark, lo_mark, drop) in marks:
-        hi = _find(hi_mark)
-        lo = _find(lo_mark)
-        if hi is not None and lo is not None and hi != lo:
-            out.append((hi, lo, drop))
-    return out
 
 def _edge_tri(tris, ti_set, a, b):
     """The triangle in this component owning boundary edge (a, b)."""

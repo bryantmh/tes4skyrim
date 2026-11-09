@@ -3,12 +3,16 @@
 # player kills the Spirit Bear and brings its heart back. trackerScript walks
 # the hunters on only while the player keeps within 500 units of Rolf, so the
 # player follows him; it marks each body found only after the player has left
-# him for it. The hunt must finish before daylight. Ref FormIDs carry
+# him for it. Rolf hunts only at night (21:00-6:00, rolftime; by day his
+# greeting says to come back at nightfall), and the hunt fails at daylight
+# (105), so setting the hour to 21:00 stands in for waiting until nightfall
+# before meeting him. Ref FormIDs carry
 # Bloodmoon.esm's slot 06.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_ristaag
 # See docs/commentary/headless_testing.md#quest-runs
 
 case bm_ristaag
+defend
 run
 player->Position -159017 212412 2949 180
 until 600 "korst wind-eye"->GetDistance player < 400
@@ -19,6 +23,7 @@ ask Ristaag
 expect GetJournalIndex BM_BearHunt1 == 15
 bye
 run
+set GameHour to 21
 player->Position -172076 196700 990 180
 until 600 "rolf long-tooth"->GetDistance player < 400
 talk rolf long-tooth

@@ -117,14 +117,16 @@ float AccrueDamage(const std::string& actor, int attribute, float perSecond, flo
     return now;
 }
 
-// The TES3 id the stat store keeps an actor under: "player", or its base
-// NPC_'s id; "" for an actor no Morrowind record made.
+}  // namespace
+
 std::string ActorKey(void* ref) {
     if (!IsActorRef(ref)) return std::string();
     if (ref == PlayerRef()) return kPlayerId;
     const char* id = SpeakerId(FormIdOf(At<void*>(ref, ids::kOffRefBase)));
     return id ? Lower(id) : std::string();
 }
+
+namespace {
 
 // Sums one actor's attribute effects into g_effects; true while any is
 // active or any damage is left. `base` is what damage is capped by, the

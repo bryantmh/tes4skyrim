@@ -65,7 +65,7 @@ using GetPlayerFn = void* (*)(void* vm, std::uint32_t stack, void* tag);
 using SetEnabledFn = void (*)(void* vm, std::uint32_t stack, void* ref,
                               bool fade);
 using IsDisabledFn = bool (*)(void* vm, std::uint32_t stack, void* ref);
-using ActivateFn = void (*)(void* vm, std::uint32_t stack, void* ref,
+using ActivateFn = bool (*)(void* vm, std::uint32_t stack, void* ref,
                             void* actionRef, bool defaultOnly);
 using LockFn = void (*)(void* vm, std::uint32_t stack, void* ref, bool lock,
                         bool asOffLimits);
@@ -508,8 +508,39 @@ bool PlayerActivate(const std::string& id) {
     if (!Has3D(ref)) return false;
     const ObjectScript* script = InstanceForRef(FormIdOf(ref));
     if (script && !script->WasLoaded()) return false;
+    // A load door moves the player a frame or more later; until that lands the
+    // next step would read the old cell's position.
+    if (IsDoor(ref)) HoldMenusForPlayerMove();
     ActivateBy(ref, false);
     return true;
+}
+
+// Where the reference a player action names stands, for a failure message.
+std::string WhereIs(const std::string& id) {
+    void* ref = PlayerTarget(id);
+    if (!ref) return "no reference";
+    void* place = PlaceOf(ref);
+    char text[256];
+    std::snprintf(text, sizeof text, "%08X in '%s' (place %08X%s) at (%.0f, %.0f, %.0f), 3D %d, disabled %d, dead %d",
+                  FormIdOf(ref), InteriorName(ref).c_str(), place ? FormIdOf(place) : 0,
+                  place == PlaceOf(PlayerRef()) ? ", the player's" : "", RefPositionAxis(PapyrusVm(), ref, 0),
+                  RefPositionAxis(PapyrusVm(), ref, 1), RefPositionAxis(PapyrusVm(), ref, 2), Has3D(ref) ? 1 : 0,
+                  g_isDisabled && g_isDisabled(PapyrusVm(), 0, ref) ? 1 : 0, IsDead(ref) ? 1 : 0);
+    return text;
+}
+
+bool IsDoor(void* ref) {
+    void* base = ref ? At<void*>(ref, ids::kOffRefBase) : nullptr;
+    return base && At<std::uint8_t>(base, ids::kOffFormType) == ids::kFormTypeDoor;
+}
+
+// How far the player stands from `id` when its base is a door; -1 otherwise.
+float DoorDistance(const std::string& id) {
+    void* ref = PlayerTarget(id);
+    void* player = PlayerRef();
+    if (!player || !IsDoor(ref)) return -1.0f;
+    return std::hypot(RefPositionAxis(PapyrusVm(), ref, 0) - RefPositionAxis(PapyrusVm(), player, 0),
+                      RefPositionAxis(PapyrusVm(), ref, 1) - RefPositionAxis(PapyrusVm(), player, 1));
 }
 
 // The player picking `id` up: the reference itself moves into the inventory,
@@ -583,10 +614,28 @@ float DistanceBetween(void* from, void* to) {
     return g_distance(PapyrusVm(), 0, from, to);
 }
 
+// The distance from `other` to where the player's script move lands, or -1 when no move is landing.
+float DistanceToLanding(void* other) {
+    void* place = nullptr;
+    float at[3] = {};
+    if (!other || !PlayerLandingSpot(&place, at)) return -1.0f;
+    if (PlaceOf(other) != place) return std::numeric_limits<float>::max();
+    const float dx = RefPositionAxis(PapyrusVm(), other, 0) - at[0];
+    const float dy = RefPositionAxis(PapyrusVm(), other, 1) - at[1];
+    const float dz = RefPositionAxis(PapyrusVm(), other, 2) - at[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 // A reference Skyrim has not loaded stands in another cell, where OpenMW's
 // GetDistance answers FLT_MAX: 0 would pass every `GetDistance < x` test.
+// A player whose script move is landing stands where it lands, as in OpenMW.
 float Distance(const std::string& from, const std::string& to) {
-    const float apart = DistanceBetween(OwnerRef(from), OwnerRef(to));
+    void* a = OwnerRef(from);
+    void* b = OwnerRef(to);
+    void* player = PlayerRef();
+    const float landing = a == player ? DistanceToLanding(b) : b == player ? DistanceToLanding(a) : -1.0f;
+    if (landing >= 0.0f) return landing;
+    const float apart = DistanceBetween(a, b);
     return apart < 0.0f ? std::numeric_limits<float>::max() : apart;
 }
 
@@ -672,17 +721,26 @@ void KillIfDrained(void* ref, void* name) {
 }
 
 // The test runner's player fighting back: each nearby actor attacking the
-// player is killed by the player. Game thread. The kills come after the walk,
-// since a death changes the process lists being walked.
+// player, or an actor following the player, is killed by the player. Game
+// thread. The kills come after the walk, since a death changes the process
+// lists being walked. An actor whose script is staged but not yet bound has not
+// run its first frame, which may disable it (a TES3 script runs before the AI).
 void KillPlayerAttackers() {
     void* player = PlayerRef();
     if (!player || !g_kill) return;
+    std::vector<void*> party = PlayerParty();
+    party.push_back(player);
     std::vector<void*> attackers;
-    ForEachHighActor([player, &attackers](void* actor) {
-        if (!IsDead(actor) && CombatTargetOf(actor) == player) attackers.push_back(actor);
+    ForEachHighActor([&party, &attackers](void* actor) {
+        const std::uint32_t id = FormIdOf(actor);
+        if (InstanceByLocal(id) && !InstanceForRef(id)) return;
+        void* target = IsDead(actor) ? nullptr : CombatTargetOf(actor);
+        if (target && std::find(party.begin(), party.end(), target) != party.end()) {
+            attackers.push_back(actor);
+        }
     });
     for (void* actor : attackers) {
-        Log("test: the player kills %08X, which attacked it", FormIdOf(actor));
+        Log("test: the player kills %08X, which attacked the player or a follower", FormIdOf(actor));
         g_kill(PapyrusVm(), 0, actor, player);
     }
 }
@@ -911,6 +969,7 @@ int PlaySoundAt(const std::string& ref, const std::string& sound, bool loop,
     void* form = Form(found);
     void* source = ref.empty() ? PlayerRef() : OwnerRef(ref);
     if (!form || !source) return 0;
+    if (g_isDisabled && g_isDisabled(PapyrusVm(), 0, source)) return 0;
     const std::int32_t instance = g_soundPlay(PapyrusVm(), 0, form, source);
     if (instance && volume < 1.0f && g_instanceVolume) {
         g_instanceVolume(PapyrusVm(), 0, nullptr, instance, volume);
@@ -1069,7 +1128,9 @@ bool TakeDeathOf(const std::string& id) {
 // `IsAttached` or `Is3DLoaded` alone the scripts of the previous cell ran on
 // behind the player's back: measured, a chargen script went on enabling its
 // light for 48 seconds, and Arktwend's Void marker moved the player back into
-// the Hall of Fate 652 times over 40 seconds.
+// the Hall of Fate 652 times over 40 seconds. Likewise an EXTERIOR is no
+// active cell while the player is indoors: Jarko, the lookout outside the
+// Abandoned House, force-greeted the player inside it.
 bool Has3D(void* ref) {
     return ref && g_is3DLoaded && g_is3DLoaded(PapyrusVm(), 0, ref);
 }
@@ -1077,7 +1138,7 @@ bool Has3D(void* ref) {
 bool InWorld(void* ref) {
     void* cell = ref && g_parentCell ? g_parentCell(PapyrusVm(), 0, ref) : nullptr;
     const bool interior = cell && g_isInterior && g_isInterior(PapyrusVm(), 0, cell);
-    if (interior && cell != PlayerCell()) return false;
+    if (interior ? cell != PlayerCell() : cell && PlayerInInterior()) return false;
     if (Has3D(ref)) return true;
     return cell && g_cellAttached && g_cellAttached(PapyrusVm(), 0, cell);
 }
@@ -1296,6 +1357,8 @@ void InstallGameCalls() {
     hooks.moveGold = MoveGold;
     hooks.activate = Activate;
     hooks.playerActivate = PlayerActivate;
+    hooks.whereIs = WhereIs;
+    hooks.doorDistance = DoorDistance;
     hooks.playerTake = PlayerTake;
     hooks.showRestMenu = ShowRestMenu;
     hooks.sleepFor = SleepFor;

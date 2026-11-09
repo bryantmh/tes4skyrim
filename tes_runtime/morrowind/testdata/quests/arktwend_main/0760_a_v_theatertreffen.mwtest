@@ -6,10 +6,18 @@
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from theater_guards
 # See docs/commentary/headless_testing.md#quest-runs
 
-# The two guards in front of the theater greet the player and come along.
+# The two guards in front of the theater greet the player and come along. The
+# second enables himself only while the journal is still 2, which the first's
+# greeting moves on, so the player arrives 1500 units out, as a walker would,
+# and the guards' scripts run before the approach.
 case theater_guards
 run
-player->Position -343 49200 220 0
+player->Position -343 47700 220 0
+wait 120
+# Walked in, not placed: Wache02 greets within 500 and Wache01 within 400, so an approaching player meets Wache02
+# first ("we will accompany you", journal 2 -> 3 and both follow). The walk stops on its own route inside
+# Wache02's range only (446 from him, 515 from Wache01): ending inside both is a race between the two scripts.
+walk -727 48903 208
 until 300 MenuMode == 1
 wait 60
 bye
@@ -23,8 +31,40 @@ end
 # Calisto's house near Castle Grel, the guards following the player; they
 # stay outside.
 case theater_calisto_house
+# The guards follow, so the player walks there; the gate guard's recruiting pitch and STADAntonia
+# outside the gate may greet on the way, which ends a walk, so the walk is taken up again.
+defend
+# The engine's route walks into the gap between a rock and a tree south of the town and stalls on
+# the X0Y6 hill: the player steers past both (the old route's turns), at pace 10 for the climb.
+walk -1641 28801 742
+bye if open
+walk -1641 28801 742
+bye if open
+pace 10
+steer -1145 27342 418
+walk 1994 26389 201
+bye if open
+walk 1994 26389 201
+steer 2270 26119 354
+steer 2251 25961 524
+steer 2161 25751 552
+steer 2018 25584 580
+steer 1987 25499 596
+steer 1729 24498 1015
+pace 25
 walk 33300 37150 123
+bye if open
+walk 33300 37150 123
+bye if open
+walk 33300 37150 123
+bye if open
+walk 33300 37150 123
+until 3000 "TheaterTreffenWache01"->GetDistance player < 800
+until 3000 "TheaterTreffenWache02"->GetDistance player < 800
 until 300 GetJournalIndex A_V_TheaterTreffen == 4
+# "We'll stand watch out here": both guards stop following before the door.
+until 600 "TheaterTreffenWache01"->GetCurrentAIPackage != 3
+until 600 "TheaterTreffenWache02"->GetCurrentAIPackage != 3
 activate 055BCF10
 until 300 GetPCCell "Calisto's House" == 1
 end

@@ -3,7 +3,8 @@
 # Antonius Nuncius; his desk in the Armory holds the missing liquor, and once
 # confronted the player reports him to Carius.
 # AddItem stands in for buying the sujamma; the unlock stands in for picking
-# the desk's lock. Ref FormIDs carry Bloodmoon.esm's slot 06.
+# the desk's lock; `approach` takes the player to Vilbia wherever she has
+# walked. Ref FormIDs carry Bloodmoon.esm's slot 06.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_morale
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -22,7 +23,7 @@ expect GetJournalIndex BM_Morale == 20
 bye
 run
 player->Position -173771 143037 908 0
-until 600 "vilbia herennia"->GetDistance player < 400
+approach 063FD697
 talk vilbia herennia
 ask booze
 choose 9
@@ -39,7 +40,7 @@ expect GetJournalIndex BM_Morale == 50
 bye
 run
 player->Position -173771 143037 908 0
-until 600 "vilbia herennia"->GetDistance player < 400
+approach 063FD697
 talk vilbia herennia
 ask booze
 expect GetJournalIndex BM_Morale == 55

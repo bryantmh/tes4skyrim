@@ -27,7 +27,11 @@ _ANCHOR_PLUGIN = 'Morrowind.esm'
 #: Archive subfolder every mesh path is stored under.
 _MESHES = 'meshes'
 
+#: Folder Morroblivion moved its reworked Morrowind meshes under.
+_MORRO = 'morro' + chr(92)
+
 _index_cache = {}
+_folded_cache = {}
 
 
 def _archive_index(data_dir: str) -> dict:
@@ -94,6 +98,33 @@ def find_archived_mesh(export_root, rel: str):
         return cached
     entry = _archive_index(data_dir).get(_MESHES + chr(92) + rel)
     return None if entry is None else _cache_entry(cached, entry)
+
+
+def _folded_meshes(data_dir: str) -> dict:
+    """{mesh path with `_` folded to `u`: archived mesh path}; a fold two paths share is left out."""
+    if data_dir not in _folded_cache:
+        prefix = _MESHES + chr(92)
+        seen = {}
+        for key in _archive_index(data_dir):
+            if key.startswith(prefix):
+                rel = key[len(prefix):]
+                seen.setdefault(rel.replace('_', 'u'), []).append(rel)
+        _folded_cache[data_dir] = {k: v[0] for k, v in seen.items() if len(v) == 1}
+    return _folded_cache[data_dir]
+
+
+def find_original_mesh(export_root, rel: str):
+    """The archived Morrowind original of Morroblivion mesh `rel` (under `morro\\`), or None.
+
+    Morroblivion writes each `_` of the original's file name as `U`, so the
+    two match once `_` is folded to `u`.
+    """
+    rel = _normalize(rel)
+    data_dir = source_registry.directory_for(str(export_root), _ANCHOR_PLUGIN)
+    if not rel.startswith(_MORRO) or not data_dir:
+        return None
+    original = _folded_meshes(data_dir).get(rel[len(_MORRO):])
+    return find_archived_mesh(export_root, original) if original else None
 
 
 def resolve_mesh(roots, rel: str, export_root):

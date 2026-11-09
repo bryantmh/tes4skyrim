@@ -45,8 +45,9 @@ struct CellCtx {
     std::vector<double> layers(double x, double y) const;
     // corridor_grow.wall_slab_sampler with its default depth / half width.
     bool wall_hit(double cx, double cy, double ux, double uy, double tx, double ty,
-                  double z_lo, double z_hi, double depth, double half_w) const {
-        return geo.wall_at(cx, cy, ux, uy, tx, ty, z_lo, z_hi, depth, half_w);
+                  double z_lo, double z_hi, double depth, double half_w,
+                  bool exact = false) const {
+        return geo.wall_at(cx, cy, ux, uy, tx, ty, z_lo, z_hi, depth, half_w, exact);
     }
 };
 
@@ -78,8 +79,11 @@ struct DoorGeometry {
 // corridor._door_geometry; doors without a footprint go to `unreached`.
 DoorGeometry door_geometry(CellCtx& C, const Group& corridors,
                            std::vector<DoorRef>* unreached);
-// door_routes.route_doors: true when any door was routed (nodes / edges grown).
-bool route_doors(CellCtx& C, const std::vector<DoorRef>& doors);
+// door_routes.route_doors: true when any door or island spawn was routed (nodes / edges grown).
+bool route_doors(CellCtx& C, const std::vector<DoorRef>& doors, const std::vector<P3>& spawns);
+// spawn_nodes.isolated_spawns: each kept spawn disc no ribbon reaches, as the point to route from.
+std::vector<P3> isolated_spawns(const CellCtx& C, const Group& strips, const std::set<int>& lone,
+                                const std::set<int>& kept);
 // spawn_nodes.standing_spawns (drops each into node_z).
 std::set<int> standing_spawns(CellCtx& C);
 // spawn_nodes.drop_covered_discs: the kept strips and kept spawn nodes.

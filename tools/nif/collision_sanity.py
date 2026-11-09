@@ -5,13 +5,14 @@ flags degenerate shapes, and can dump constraint descriptors in detail
 (pivots, axes, limits) for source-vs-converted comparison.
 
 Usage:
-    python tools/nif/collision_sanity.py <nif_or_dir> [--constraints] [--workers N]
-    python tools/nif/collision_sanity.py output/.../upperscales01.nif --constraints
+    python -m tools.nif.collision_sanity <nif_or_dir_or_listfile.txt> [--constraints] [--geometry] [--quiet]
+    python -m tools.nif.collision_sanity output/.../upperscales01.nif --constraints
 
 Checks:
     - NaN/Inf in any float field of any bhk block (incl. nested structs/arrays)
     - bhkConvexVerticesShape with < 4 vertices or 0 planes
     - bhkListShape with 0 children
+    - compressed-mesh triangles Havok decodes as a line (float32 determinant <= 0)
     - hinge min_angle > max_angle
     - constraint axis vectors with |v| far from 1
 """
@@ -20,21 +21,29 @@ import math
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 if not hasattr(time, 'clock'):
     time.clock = time.perf_counter
 
 from pyffi.formats.nif import NifFormat
 
+from asset_convert.collision.cms import decode_cms
+from asset_convert.collision.cms_builder import float32_collinear
+
+#: Constraint descriptor attributes, in the order a block is searched for one.
+_DESCRIPTORS = ('ragdoll', 'limited_hinge', 'hinge', 'malleable')
+
+#: Name fragments of descriptor fields that must be unit vectors.
+_AXIS_WORDS = ('axle', 'axis', 'twist', 'plane', 'motor')
+
 
 def _iter_floats(obj, path, out, depth=0, seen=None):
-    """Recursively yield (path, value) for float-ish attributes of PyFFI structs."""
-    if depth > 6:
-        return
+    """Append (path, value) for every float reachable from a PyFFI struct or array."""
     if seen is None:
         seen = set()
-    if id(obj) in seen:
+    if depth > 6 or id(obj) in seen:
         return
     seen.add(id(obj))
     if isinstance(obj, float):
@@ -42,175 +51,193 @@ def _iter_floats(obj, path, out, depth=0, seen=None):
         return
     if isinstance(obj, (int, str, bytes, bool)) or obj is None:
         return
-    # PyFFI struct: iterate declared attributes
     attrs = getattr(obj, '_attrs', None)
     if attrs is not None:
         for a in attrs:
-            name = a.name
-            try:
-                v = getattr(obj, name)
-            except Exception:
-                continue
-            _iter_floats(v, f"{path}.{name}", out, depth + 1, seen)
+            v = _attr(obj, a.name)
+            if v is not None:
+                _iter_floats(v, f"{path}.{a.name}", out, depth + 1, seen)
         return
-    # Arrays
     try:
-        it = list(obj)
+        items = list(obj)
     except TypeError:
         return
-    for i, v in enumerate(it):
+    for i, v in enumerate(items):
         _iter_floats(v, f"{path}[{i}]", out, depth + 1, seen)
 
 
+def _attr(obj, name):
+    """`obj.name`, or None when PyFFI cannot produce it."""
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return None
+
+
 def _vec_len(v):
+    """Length of a PyFFI vector's xyz."""
     return math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
 
 
 def _fmt4(v):
+    """A PyFFI 4-vector as text."""
     return f"({v.x:.4f}, {v.y:.4f}, {v.z:.4f}, {v.w:.4f})"
+
+
+def _finite(*values):
+    """Whether every value is finite."""
+    return all(math.isfinite(x) for x in values)
 
 
 def _check_geometry(block, issues):
     """NaN/Inf sweep over render geometry (NiTriShapeData etc.)."""
     tname = type(block).__name__
-    n_nan_v = n_nan_n = n_nan_uv = 0
-    if getattr(block, 'has_vertices', False):
-        for v in block.vertices:
-            if not (math.isfinite(v.x) and math.isfinite(v.y) and math.isfinite(v.z)):
-                n_nan_v += 1
-    if getattr(block, 'has_normals', False):
-        for v in block.normals:
-            if not (math.isfinite(v.x) and math.isfinite(v.y) and math.isfinite(v.z)):
-                n_nan_n += 1
-    for uvset in getattr(block, 'uv_sets', []):
-        for uv in uvset:
-            if not (math.isfinite(uv.u) and math.isfinite(uv.v)):
-                n_nan_uv += 1
-    c = getattr(block, 'center', None)
-    r = getattr(block, 'radius', None)
-    if c is not None and not (math.isfinite(c.x) and math.isfinite(c.y) and math.isfinite(c.z)):
+    verts = block.vertices if getattr(block, 'has_vertices', False) else []
+    norms = block.normals if getattr(block, 'has_normals', False) else []
+    bad_v = sum(not _finite(v.x, v.y, v.z) for v in verts)
+    bad_n = sum(not _finite(v.x, v.y, v.z) for v in norms)
+    bad_uv = sum(not _finite(uv.u, uv.v) for s in getattr(block, 'uv_sets', []) for uv in s)
+    c, r = getattr(block, 'center', None), getattr(block, 'radius', None)
+    if c is not None and not _finite(c.x, c.y, c.z):
         issues.append(f"{tname}: NON-FINITE bound-sphere center")
     if r is not None and not math.isfinite(r):
         issues.append(f"{tname}: NON-FINITE bound-sphere radius {r}")
-    if n_nan_v:
-        issues.append(f"{tname}: {n_nan_v}/{block.num_vertices} NON-FINITE vertices")
-    if n_nan_n:
-        issues.append(f"{tname}: {n_nan_n} NON-FINITE normals")
-    if n_nan_uv:
-        issues.append(f"{tname}: {n_nan_uv} NON-FINITE UVs")
+    for count, what in ((bad_v, f"/{block.num_vertices} NON-FINITE vertices"), (bad_n, " NON-FINITE normals"),
+                        (bad_uv, " NON-FINITE UVs")):
+        if count:
+            issues.append(f"{tname}: {count}{what}")
 
 
-def check_file(path, dump_constraints=False, geometry=False):
-    lines = []
-    issues = []
+def _check_floats(block, tname, issues):
+    """Every non-finite float anywhere in the block."""
+    floats = []
+    _iter_floats(block, tname, floats)
+    issues += [f"NON-FINITE {p} = {v}" for p, v in floats if not math.isfinite(v)]
+
+
+def _check_shapes(block, tname, issues):
+    """Degenerate hulls, empty lists, and compressed-mesh triangles Havok reads as a line.
+    See: docs/commentary/asset_convert_collision.md#float32-collinear-triangles
+    """
+    if isinstance(block, NifFormat.bhkConvexVerticesShape):
+        if block.num_vertices < 4:
+            issues.append(f"{tname}: degenerate hull verts={block.num_vertices}")
+        if block.num_normals == 0:
+            issues.append(f"{tname}: hull with 0 planes")
+    if isinstance(block, NifFormat.bhkListShape) and block.num_sub_shapes == 0:
+        issues.append(f"{tname}: 0 children")
+    if tname == 'bhkCompressedMeshShapeData':
+        keys = [key for key, tri in decode_cms(block, engine=True) if float32_collinear(tri)]
+        if keys:
+            issues.append(f"{tname}: {len(keys)} float32-COLLINEAR triangles, keys "
+                          + ' '.join('%08X' % k for k in keys[:8]))
+
+
+def _descriptor(block):
+    """(descriptor, attribute name) of a constraint block, or (None, None)."""
+    for name in _DESCRIPTORS:
+        d = getattr(block, name, None)
+        if d is not None:
+            return d, name
+    return None, None
+
+
+def _dump_descriptor(desc, tname, dname, lines):
+    """Append every vector, float and int field of a constraint descriptor."""
+    lines.append(f"  {tname} ({dname}):")
+    for a in desc._attrs:
+        v = _attr(desc, a.name)
+        if hasattr(v, 'w') and hasattr(v, 'x'):
+            lines.append(f"    {a.name:24} {_fmt4(v)}  |xyz|={_vec_len(v):.4f}")
+        elif isinstance(v, float):
+            lines.append(f"    {a.name:24} {v:.6f}")
+        elif isinstance(v, int):
+            lines.append(f"    {a.name:24} {v}")
+
+
+def _check_descriptor(desc, label, issues):
+    """Inverted angle limits and axis fields that are not unit vectors."""
+    mn, mx = getattr(desc, 'min_angle', None), getattr(desc, 'max_angle', None)
+    if mn is not None and mx is not None and mn > mx:
+        issues.append(f"{label}: min_angle {mn} > max_angle {mx}")
+    for a in desc._attrs:
+        n = a.name
+        v = _attr(desc, n) if any(w in n for w in _AXIS_WORDS) and not n.startswith('pivot') else None
+        if not (hasattr(v, 'x') and hasattr(v, 'z')):
+            continue
+        length = _vec_len(v)
+        if length <= 1e-6:
+            issues.append(f"{label}.{n}: zero vector")
+        elif abs(length - 1.0) > 0.05:
+            issues.append(f"{label}.{n}: |v|={length:.4f} not unit")
+
+
+def _check_block(block, issues, lines, dump_constraints):
+    """All bhk checks on one block; constraint fields dumped into `lines` when asked."""
+    tname = type(block).__name__
+    _check_floats(block, tname, issues)
+    _check_shapes(block, tname, issues)
+    desc, dname = _descriptor(block)
+    if desc is None:
+        return
+    if dump_constraints:
+        _dump_descriptor(desc, tname, dname, lines)
+    _check_descriptor(desc, f"{tname}.{dname}", issues)
+
+
+def _read(path):
+    """The parsed NIF, or the parse error's text."""
     try:
         data = NifFormat.Data()
         with open(path, 'rb') as f:
             data.read(f)
+        return data
     except Exception as e:
-        return [f"{path}: PARSE FAILED: {e}"], 1
+        return str(e)
 
+
+def check_file(path, dump_constraints=False, geometry=False):
+    """(report lines, issue count) for one NIF."""
+    data = _read(path)
+    if isinstance(data, str):
+        return [f"{path}: PARSE FAILED: {data}"], 1
+    issues, lines = [], []
     for block in data.blocks:
-        tname = type(block).__name__
         if geometry and isinstance(block, NifFormat.NiGeometryData):
             _check_geometry(block, issues)
-        if not tname.startswith('bhk'):
-            continue
+        if type(block).__name__.startswith('bhk'):
+            _check_block(block, issues, lines, dump_constraints)
+    return [path] + [f"  ISSUE: {i}" for i in issues] + lines, len(issues)
 
-        # NaN/Inf sweep over the whole block
-        floats = []
-        _iter_floats(block, tname, floats)
-        for fpath, val in floats:
-            if math.isnan(val) or math.isinf(val):
-                issues.append(f"NON-FINITE {fpath} = {val}")
 
-        if isinstance(block, NifFormat.bhkConvexVerticesShape):
-            nv = block.num_vertices
-            npl = block.num_normals
-            if nv < 4:
-                issues.append(f"{tname}: degenerate hull verts={nv}")
-            if npl == 0:
-                issues.append(f"{tname}: hull with 0 planes")
-
-        if isinstance(block, NifFormat.bhkListShape):
-            if block.num_sub_shapes == 0:
-                issues.append(f"{tname}: 0 children")
-
-        # Constraint detail
-        desc = None
-        dname = None
-        for attr in ('ragdoll', 'limited_hinge', 'hinge', 'malleable'):
-            d = getattr(block, attr, None)
-            if d is not None:
-                desc, dname = d, attr
-                break
-        if desc is None:
-            continue
-
-        if dump_constraints:
-            lines.append(f"  {tname} ({dname}):")
-            for a in desc._attrs:
-                try:
-                    v = getattr(desc, a.name)
-                except Exception:
-                    continue
-                if hasattr(v, 'w') and hasattr(v, 'x'):
-                    lines.append(f"    {a.name:24} {_fmt4(v)}  |xyz|={_vec_len(v):.4f}")
-                elif isinstance(v, float):
-                    lines.append(f"    {a.name:24} {v:.6f}")
-                elif isinstance(v, int):
-                    lines.append(f"    {a.name:24} {v}")
-
-        # Range checks
-        mn = getattr(desc, 'min_angle', None)
-        mx = getattr(desc, 'max_angle', None)
-        if mn is not None and mx is not None and mn > mx:
-            issues.append(f"{tname}.{dname}: min_angle {mn} > max_angle {mx}")
-        for a in desc._attrs:
-            n = a.name
-            if ('axle' in n or 'axis' in n or 'twist' in n or 'plane' in n or 'motor' in n) and not n.startswith('pivot'):
-                try:
-                    v = getattr(desc, n)
-                except Exception:
-                    continue
-                if hasattr(v, 'x') and hasattr(v, 'z'):
-                    L = _vec_len(v)
-                    if L > 1e-6 and abs(L - 1.0) > 0.05:
-                        issues.append(f"{tname}.{dname}.{n}: |v|={L:.4f} not unit")
-                    if L <= 1e-6:
-                        issues.append(f"{tname}.{dname}.{n}: zero vector")
-
-    header = f"{path}"
-    out = [header]
-    if issues:
-        out += [f"  ISSUE: {i}" for i in issues]
-    out += lines
-    return out, len(issues)
+def _files(root):
+    """The NIFs named by a list file, a single NIF, or a directory tree."""
+    if os.path.isfile(root) and root.lower().endswith('.txt'):
+        with open(root, encoding='utf-8') as f:
+            return [line.strip() for line in f if line.strip()]
+    if os.path.isfile(root):
+        return [root]
+    return [os.path.join(dp, f) for dp, _, fs in os.walk(root) for f in fs if f.lower().endswith('.nif')]
 
 
 def main():
+    """Check every NIF and print the reports; the issue total goes to stderr."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root")
     ap.add_argument("--constraints", action="store_true", help="dump constraint descriptors in detail")
-    ap.add_argument("--geometry", action="store_true", help="also NaN-sweep render geometry (verts/normals/UVs/bound spheres)")
+    ap.add_argument("--geometry", action="store_true",
+                    help="also NaN-sweep render geometry (verts/normals/UVs/bound spheres)")
     ap.add_argument("--quiet", action="store_true", help="only print files with issues")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     args = ap.parse_args()
-
-    if os.path.isfile(args.root) and args.root.lower().endswith('.txt'):
-        files = [l.strip() for l in open(args.root) if l.strip()]
-    elif os.path.isfile(args.root):
-        files = [args.root]
-    else:
-        files = [os.path.join(dp, f) for dp, _, fs in os.walk(args.root)
-                 for f in fs if f.lower().endswith('.nif')]
-
+    files = _files(args.root)
     total_issues = 0
-    with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        for out, nissues in ex.map(lambda p: check_file(p, args.constraints, args.geometry), files):
+    check = partial(check_file, dump_constraints=args.constraints, geometry=args.geometry)
+    with ProcessPoolExecutor(max_workers=args.workers) as ex:
+        for out, nissues in ex.map(check, files, chunksize=8):
             total_issues += nissues
             if nissues or not args.quiet or args.constraints:
-                print("\n".join(out))
+                print("\n".join(out), flush=True)
     print(f"\n{len(files)} files, {total_issues} issues", file=sys.stderr)
 
 

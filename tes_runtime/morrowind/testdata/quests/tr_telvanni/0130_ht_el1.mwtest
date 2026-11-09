@@ -20,7 +20,7 @@ bye
 end
 
 # Cerul cannot work for the noise of a cursed ring ("Noises Off", TR_m1_PT_NoisesOff): his greeting logs 10 and
-# says goodbye until the player learns the ring's secret from its maker, Turosi Salvel (bribed to disposition 80; a Warrior's Admire only angers him, and the AddItem stands in for
+# says goodbye until the player learns the ring's secret from its maker, Turosi Salvel (SetDisposition 80 stands in for persuading him; a Warrior's Admire only angers him, and the AddItem stands in for
 # the gold a player has from selling loot by now;
 # "cacophony": 30); then Cerul, gestured to take the ring off (Choice 1), quiets down (40) and will talk.
 case ht_el1_noises_off
@@ -36,8 +36,10 @@ player->AddItem Gold_001 1000
 player->PositionCell -115 -150 30 0 "Port Telvannis, Turosi Salvel: Enchanter"
 until 600 "TR_m1_Turosi_Salvel"->GetDistance player < 600
 wait 120
+run
+"TR_m1_Turosi_Salvel"->SetDisposition 80
 talk TR_m1_Turosi_Salvel
-persuade bribe100 until "TR_m1_Turosi_Salvel"->GetDisposition >= 80
+expect "TR_m1_Turosi_Salvel"->GetDisposition >= 80
 ask cacophony
 expect GetJournalIndex TR_m1_PT_NoisesOff == 30
 bye

@@ -7,13 +7,22 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 
 namespace navgrow {
 
 namespace {
 
-// corridor._snap_node_z.
+// Whether height s at (x, y) is the cell's own terrain.
+bool on_land(const CellCtx& C, double x, double y, double s) {
+    return C.land && C.land->covers(x, y) && std::fabs(C.land->z(x, y) - s) <= P().MAX_CLIMB;
+}
+
+// A node onto the walkable surface nearest it; one far above is dropped onto
+// the terrain under it, but only partway onto anything else (a walkway whose
+// collision is missing must not pull the path down a storey).
 double snap_node_z(const CellCtx& C, double x, double y, double z) {
     if (!C.has_sample()) return z;
     double s = 0.0, c = 0.0;
@@ -26,10 +35,9 @@ double snap_node_z(const CellCtx& C, double x, double y, double z) {
                 have = true;
             }
     }
-    if (!have) return z;
-    if (s <= z + P().SEED_Z_TOLERANCE && s >= z - P().SEED_SNAP) return s;
-    if (s < z) return z - P().SEED_SNAP;
-    return z;
+    if (!have || s > z + P().SEED_Z_TOLERANCE) return z;
+    if (s >= z - P().SEED_SNAP || on_land(C, x, y, s)) return s;
+    return z - P().SEED_SNAP;
 }
 
 struct Built {
@@ -109,7 +117,8 @@ CleanOutput build_corridor_cell(CellCtx& C) {
     const std::set<int> standing = standing_spawns(C);
     std::vector<DoorRef> unreached;
     Built b = strips_and_doors(C, standing, &unreached);
-    if (route_doors(C, unreached)) b = strips_and_doors(C, standing, nullptr);
+    if (route_doors(C, unreached, isolated_spawns(C, b.corridors, C.lone, b.kept)))
+        b = strips_and_doors(C, standing, nullptr);
     UnionArgs A;
     A.store = &C.store;
     A.strips = b.corridors;
@@ -119,6 +128,20 @@ CleanOutput build_corridor_cell(CellCtx& C) {
     std::copy(C.clip, C.clip + 4, A.bounds);
     A.land = C.land;
     A.geo = C.land ? &C.geo : nullptr;
+    if (const char* dbg = std::getenv("NAVGROW_TEMP_STRIPS")) {
+        double dx = 0, dy = 0, dr = 0;
+        std::sscanf(dbg, "%lf,%lf,%lf", &dx, &dy, &dr);
+        for (size_t k = 0; k < A.strips.size(); ++k) {
+            const UStrip& s = *A.strips[k];
+            const double ux = s.b[0] - s.a[0], uy = s.b[1] - s.a[1];
+            const double L2 = ux * ux + uy * uy;
+            const double t = L2 > 0 ? std::max(0.0, std::min(1.0, ((dx - s.a[0]) * ux + (dy - s.a[1]) * uy) / L2)) : 0.0;
+            if (std::hypot(s.a[0] + t * ux - dx, s.a[1] + t * uy - dy) > dr) continue;
+            std::fprintf(stderr, "TEMP strip %zu (%s) edge %d-%d a (%.0f %.0f %.0f) b (%.0f %.0f %.0f) half %.1f poly %d land %d\n",
+                         k, k < b.corridors.size() ? "corridor" : "door", s.ei, s.ej, s.a[0], s.a[1], s.a[2],
+                         s.b[0], s.b[1], s.b[2], s.half, (int)s.has_poly, (int)s.land);
+        }
+    }
     UMesh M = b.corridors.empty() ? UMesh() : build_union_mesh(A);
     if (M.t.empty()) return none;
     CleanInput in;

@@ -16,6 +16,7 @@
 #include "game_actor.h"
 #include "game_calls.h"
 #include "game_calls_internal.h"
+#include "hook.h"
 #include "ids.h"
 #include "log.h"
 #include "paths.h"
@@ -287,6 +288,40 @@ bool MuteCreature(void* ref, std::uint32_t baseId) {
     return Greet(actor).text.empty();
 }
 
+// The lock flags a TES3 placement reads only THROUGH its linked door, locked, else null.
+std::uint8_t* BorrowedLockFlags(void* ref) {
+    using GetByTypeFn = void* (*)(void* list, std::uint32_t type);
+    using GetLockFn = void* (*)(void* ref);
+    static const auto getByType = reinterpret_cast<GetByTypeFn>(
+        Resolve("ExtraDataList::GetByType", ids::kExtraListGetByType, nullptr));
+    static const auto getLock = reinterpret_cast<GetLockFn>(
+        Resolve("TESObjectREFR::GetLock", ids::kRefGetLock, nullptr));
+    if (!getByType || !getLock || !IsMorrowindForm(FormIdOf(ref))) return nullptr;
+    if (getByType(static_cast<char*>(ref) + ids::kOffRefExtraList, ids::kExtraLock)) return nullptr;
+    void* lock = getLock(ref);
+    std::uint8_t* flags = lock ? static_cast<std::uint8_t*>(lock) + ids::kOffLockFlags : nullptr;
+    return flags && (*flags & ids::kLockLocked) ? flags : nullptr;
+}
+
+// TES3 locks each door alone; Skyrim's GetLock lends an unlocked door its linked door's lock. This lifts
+// that borrowed lock for one activation and puts it back.
+class OwnLockOnly {
+public:
+    explicit OwnLockOnly(void* ref) : flags_(BorrowedLockFlags(ref)) {
+        if (!flags_) return;
+        *flags_ &= static_cast<std::uint8_t>(~ids::kLockLocked);
+        Log("activation: %08X is unlocked -- its linked door's lock is not its own", FormIdOf(ref));
+    }
+    ~OwnLockOnly() {
+        if (flags_) *flags_ |= ids::kLockLocked;
+    }
+    OwnLockOnly(const OwnLockOnly&) = delete;
+    OwnLockOnly& operator=(const OwnLockOnly&) = delete;
+
+private:
+    std::uint8_t* flags_;
+};
+
 // Our Activate. The FIRST test is one bit on the ref's load-order
 // index, so a vanilla or Oblivion-converted NPC reaches the engine's own
 // Activate having cost nothing measurable.
@@ -307,8 +342,13 @@ bool ActivateHook(void* base, void* ref, void* activator, std::uint8_t unk,
         return true;
     }
     const ActivateFn original = OriginalActivate(base);
-    return original ? original(base, ref, activator, unk, object, count)
-                    : false;
+    const OwnLockOnly ownLock(ref);
+    const bool done = original ? original(base, ref, activator, unk, object, count) : false;
+    if (ScriptInstance(ref)) {
+        Log("TEMP activate %08X by %08X: original %s, returned %d, script pass %d", FormIdOf(ref),
+            FormIdOf(activator), original ? "ran" : "missing", done, ref == g_scriptActivation);
+    }
+    return done;
 }
 
 // The load-order index `plugin` actually has in THIS game, by resolving one of
@@ -519,6 +559,30 @@ std::size_t LoadActorIndexFrom(const std::string& rootIn) {
     return total;
 }
 
+using HelloApproachFn = std::uint64_t (*)(void* actor, std::uint64_t arg);
+HelloApproachFn g_helloApproach = nullptr;
+
+// 🛑 A Morrowind actor never walks up to greet: OpenMW's Hello is a line said
+// where the actor stands. Skyrim's hello approach gives the actor a Follow
+// package on the player that only its spoken hello ends, so a converted NPC
+// trailed the player out of the room and through every later teleport
+// (Olvyne to the Temple Courtyard gate, Hasphat to the guild exit). The
+// hello itself stays allowed by the package's "Hellos to player" flag.
+std::uint64_t HelloApproachHook(void* actor, std::uint64_t arg) {
+    void* base = actor ? At<void*>(actor, ids::kOffRefBase) : nullptr;
+    if (base && IsMorrowindSpeaker(FormIdOf(base))) return 0;
+    return g_helloApproach(actor, arg);
+}
+
+void InstallHelloApproachSkip() {
+    const std::uintptr_t evaluator = Resolve("hello evaluator", ids::kHelloEvaluator, nullptr);
+    const std::uintptr_t approach = Resolve("hello approach", ids::kHelloApproach, nullptr);
+    const std::uintptr_t site = evaluator && approach ? FindCallTo(evaluator, ids::kHelloEvaluatorScan, approach) : 0;
+    g_helloApproach = reinterpret_cast<HelloApproachFn>(approach);
+    const bool patched = site && PatchCall(site, reinterpret_cast<void*>(&HelloApproachHook), "hello approach");
+    Log("activation: Skyrim's hello approach %s for Morrowind actors", patched ? "skipped" : "NOT hooked");
+}
+
 // Swaps one type's Activate slot. False when it did not swap, which is never
 // fatal: the other types still hook and that type keeps vanilla behaviour.
 bool SwapActivate(const ids::ActivateTarget& target) {
@@ -546,6 +610,7 @@ bool InstallActivation() {
         if (SwapActivate(target)) ++hooked;
     }
     g_installed = hooked > 0;
+    if (!g_speakers.empty()) InstallHelloApproachSkip();
     Log("activation: hooked %zu of %zu Activate slot(s); %zu speaker(s) across "
         "%zu plugin slot(s), %zu script instance(s)", hooked,
         sizeof(ids::kActivateTargets) / sizeof(ids::kActivateTargets[0]),

@@ -27,8 +27,15 @@ ask assignment
 ask Seler Favelnim
 expect GetJournalIndex CO_7 == 10
 bye
-run
-player->PositionCell 4480 3700 15820 0 "Raven Rock, Bar"
+# ColonySeler's PositionCell names the cell first, a line Morrowind's compiler skipped, so Seler
+# stays at his table; the player walks into the bar to him.
+# Seler's wife Dralora greets on the way; the player hears her out and walks on.
+walk -196321 161700 872
+bye if open
+walk -196321 161700 872
+activate 0628A2D7
+until 300 GetPCCell "Raven Rock, Bar" == 1
+walk 480 175 76
 until 600 GetJournalIndex CO_7 == 40
 bye
 until 1800 GetJournalIndex CO_7 == 50

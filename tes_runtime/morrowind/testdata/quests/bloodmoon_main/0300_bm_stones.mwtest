@@ -52,6 +52,8 @@ case bm_trees
 run
 player->Position -178382 174065 1426 180
 wait 30
+# The riekling's script must have run (and hidden it) before the stone sets 10, or it never arms its 800 check.
+until 600 "BM_riekling_st_UNIQUE"->GetDisabled == 1
 activate 06EAFD58
 until 300 GetJournalIndex BM_Trees == 10
 run
@@ -74,7 +76,9 @@ until 300 GetJournalIndex BM_Trees == 100
 end
 
 # Rieklings have shot the Good Beast, a bear in the south; once they are dead
-# the arrow comes out and the bear walks with the player back to the Stone.
+# the arrow comes out (40), the player heals him above 800 (50, beastbearScript)
+# and the bear walks with the player back to the Stone. ModCurrentHealth stands
+# in for the player's healing spell.
 case bm_beasts
 run
 player->Position -159404 200971 1382 180
@@ -84,15 +88,18 @@ until 300 GetJournalIndex BM_Beasts == 10
 run
 player->Position -158694 183250 836 0
 until 600 GetJournalIndex BM_Beasts == 20
-console 066C4CB7.kill
-console 06DBD610.kill
-console 06C1AAC3.kill
-console 06BDCAEE.kill
-console 062FFC57.kill
+run
+"BM_riekling_be_UNIQUE1"->SetHealth 0
+"BM_riekling_be_UNIQUE2"->SetHealth 0
+"BM_riekling_be_UNIQUE3"->SetHealth 0
+"BM_riekling_be_UNIQUE4"->SetHealth 0
+"BM_riekling_be_UNIQUE5"->SetHealth 0
 until 300 GetJournalIndex BM_Beasts == 30
 run
 "BM_bear_be_UNIQUE"->RemoveItem BM_arrow_riekling_uni 1
 player->AddItem BM_arrow_riekling_uni 1
+until 300 GetJournalIndex BM_Beasts >= 40
+"BM_bear_be_UNIQUE"->ModCurrentHealth 900
 until 300 GetJournalIndex BM_Beasts == 50
 run
 player->Position -159404 200971 1382 180

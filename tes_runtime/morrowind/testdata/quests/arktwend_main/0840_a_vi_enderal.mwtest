@@ -23,39 +23,52 @@ player->Position 116740 -163130 10985 0
 until 300 GetJournalIndex A_VI_EnderalPass == 3
 end
 
-# Trun Telur: the arrival and the outer gate.
+# Trun Telur: the arrival and the outer gate. From the arrival on the player
+# walks (Jarko, Gargart and Calisto follow), and uses each gate door from its
+# own landing.
 case enderal_burg_gate
 run
-player->Position 135936 -143680 4634 0
+player->Position 136217 -143308 4770 0
 until 300 GetJournalIndex A_VI_EnderalBurg == 1
+walk 140500 -143235 5714
 activate 05BC8A49
 until 300 GetJournalIndex A_VI_EnderalBurg == 2
+# The journal is set on the click; the gate's landing (y -143673) comes after it.
+until 300 player->GetPos Y < -143500
 end
 
 # Scouting the walls sets off the fireball cannons; the inner gate.
 case enderal_burg_scout
-run
-player->Position 143566 -148300 4536 0
+pace 10
+defend
+walk 143300 -147900 4649
 until 300 GetJournalIndex A_VI_EnderalBurg == 3
-run
-player->Position 142964 -145880 5269 0
+walk 143023 -145863 5158
 until 300 Enderalvar == 3
+walk 140730 -143673 5744
 activate 05D5AC07
 until 300 Enderalvar == 5
 end
 
 # The wall, then the camp: a soldier sends the player to bed.
 case enderal_burg_camp
-run
-player->Position 139557 -144080 6626 0
+pace 10
+# From the gate square the wall's only route runs ~2500 round the fortress wall,
+# by the low ground: walked in legs on that route (as enderal_burg_battle).
+walk 139343 -142146 5503
+walk 138638 -141749 5442
+walk 138955 -141109 5716
+walk 138888 -141658 5892
+walk 138577 -142471 5915
+walk 138792 -143012 6079
+walk 139051 -143404 6378
+walk 139564 -144003 6550
 until 300 GetJournalIndex A_VI_EnderalBurg == 4
-run
-player->Position 138519 -142600 5899 180
+walk 138526 -142621 5886
 until 300 MenuMode == 1
 wait 60
 bye
-run
-player->Position 137012 -140520 5453 0
+walk 136989 -140496 5445
 activate 05289DC2
 sleep 8
 button 0
@@ -64,19 +77,38 @@ end
 
 # Morning: the wall, the gate square, the walls come down, the wall again.
 case enderal_burg_battle
-run
-player->Position 139557 -144080 6626 0
+walk 139564 -144003 6550
 until 300 GetJournalIndex A_VI_EnderalBurg == 5
-run
-player->Position 140330 -143180 5610 0
+# The square is ~1000 east of the wall but its only route runs ~2500 west, past
+# the camp and round by the low ground: walked in legs on that route.
+walk 138832 -143102 6118
+walk 138539 -142743 5883
+walk 138766 -141809 5981
+walk 138955 -141109 5716
+walk 138700 -141906 5436
+walk 139343 -142146 5503
+walk 139801 -142921 5546
+walk 140292 -143227 5584
 until 300 GetJournalIndex A_VI_EnderalBurg == 6
-run
-player->Position 138800 -141910 5479 0
+walk 138779 -141927 5450
 until 300 Enderalvar == 10
 expect "a_Enderal_Mauer_Einsturz01"->GetDisabled == 1
-run
-player->Position 139557 -144080 6626 0
+walk 138713 -141200 5609
+walk 138955 -141109 5716
+walk 138888 -141658 5892
+walk 138577 -142471 5915
+walk 138792 -143012 6079
+walk 139051 -143404 6378
+walk 139564 -144003 6550
 until 300 GetJournalIndex A_VI_EnderalBurg == 7
+walk 138832 -143102 6118
+walk 138539 -142743 5883
+walk 138766 -141809 5981
+walk 138955 -141109 5716
+walk 138700 -141906 5436
+walk 139343 -142146 5503
+walk 139801 -142921 5546
+walk 140500 -143235 5714
 activate 05BC8A49
 until 300 Enderalvar == 12
 end
@@ -93,6 +125,8 @@ end
 
 # The marked figure at the portal is the player's brother.
 case enderal_brother
+# The fleeing marker's box opens only within 1000 of it while it flies 300 a game second: ~3 game s.
+pace 2
 run
 player->Position 142712 -190400 10550 180
 until 600 MenuMode == 1
@@ -105,12 +139,17 @@ bye
 expect GetJournalIndex A_VI_EnderalBruder == 2
 expect EnderalTurmvar == 8
 run
-player->Position 142753 -186600 10542 0
-until 300 MenuMode == 1
+set TestResult to ( "MarkerEnderalTurm01"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( "MarkerEnderalTurm01"->GetPos y )
+player->SetPos y TestResult
+set TestResult to ( "MarkerEnderalTurm01"->GetPos z )
+player->SetPos z TestResult
 button 0
 until 300 GetPCCell "Calisto's House" == 1
 end
 # The player flees; the tower wavers and the player wakes in Calisto's house.
 # Its marker flies north at MoveWorld Y 300 from EnderalTurmvar 8, so the run
-# to it shares the brother's case: no checkpoint lands between them.
+# to it shares the brother's case: no checkpoint lands between them. The player
+# is set on it wherever it has flown to, in the cells loaded around the brother.
 # See: docs/audits/headless_quest_runs.md#3-found-not-fixed

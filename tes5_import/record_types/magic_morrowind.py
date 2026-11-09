@@ -48,7 +48,7 @@ AV_REFLECT_DAMAGE = 163
 #: An effect Skyrim has no mechanism for; inert until the runtime carries it.
 NATIVE_NONE = 'runtime'
 
-#: TES3 MEDT flag -> the TES4 DATA.Flags bit meaning the same thing.
+#: TES3 MEDT flag -> the TES4 DATA.Flags bit meaning the same thing (AppliedOnce 0x1000 = Recover 0x2).
 MW_FLAG_TO_TES4 = (
     (0x00004, 0x00000080),    # NoDuration
     (0x00008, 0x00000100),    # NoMagnitude
@@ -61,6 +61,7 @@ MW_FLAG_TO_TES4 = (
     (0x00400, 0x00001000),    # AllowEnchanting
     (0x00001, 0x00080000),    # TargetSkill -> UseSkill
     (0x00002, 0x00100000),    # TargetAttribute -> UseAttribute
+    (0x01000, 0x00000002),
 )
 
 #: TES3 effect index -> (TES5 archetype, actor value | DERIVE_AV | NATIVE_NONE).

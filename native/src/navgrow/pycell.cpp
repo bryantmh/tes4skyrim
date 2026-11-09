@@ -237,3 +237,46 @@ PyObject* py_seed_graph(PyObject*, PyObject* args) {
         return nullptr;
     return graph_result(points, edges);
 }
+
+// door_reach(refs, soups, land, ox, oy, water_z, seeds, anchors) -> (points, edges, joins)
+//
+// door_reach.door_reach over the cell's gathered collision; seeds (S, 3) and
+// anchors (A, 3) float64; joins are (point, anchor) index pairs.
+PyObject* py_door_reach(PyObject*, PyObject* args) {
+    PyObject *o_r, *o_rs, *o_land, *o_wz, *o_s, *o_a;
+    double ox, oy;
+    if (!PyArg_ParseTuple(args, "OOOddOOO", &o_r, &o_rs, &o_land, &ox, &oy, &o_wz, &o_s, &o_a))
+        return nullptr;
+    BufView lv(o_land, 'd', 8), sv(o_s, 'd', 8), av(o_a, 'd', 8);
+    Held held;
+    Land land;
+    std::vector<PlacedRef> refs;
+    double wz = 0.0;
+    bool has_wz = false;
+    if (!land_of(o_land, lv, ox, oy, land) || !refs_of(o_r, o_rs, held, refs)
+        || !water_of(o_wz, &wz, &has_wz) || !rows_of(3, sv) || !rows_of(3, av))
+        return nullptr;
+    const std::vector<P3> seeds = points_of(sv), anchors = points_of(av);
+    std::vector<P3> points;
+    std::vector<std::pair<int, int>> edges, joins;
+    if (!released("door_reach", [&] {
+            const Land* L = land.g ? &land : nullptr;
+            const Soups S = gather_cell(refs, L, has_wz ? &wz : nullptr);
+            CellGeo geo;
+            geo.build(S.walk.data(), S.walk.size() / 9, S.block.data(), S.block.size() / 9);
+            Ground ground{geo, L};
+            door_reach(seeds, anchors, ground, points, edges, joins);
+        }))
+        return nullptr;
+    PyObject* graph = graph_result(points, edges);
+    PyObject* pj = graph ? graph_result({}, joins) : nullptr;
+    if (!pj) {
+        Py_XDECREF(graph);
+        return nullptr;
+    }
+    PyObject* out = Py_BuildValue("(OOO)", PyTuple_GET_ITEM(graph, 0), PyTuple_GET_ITEM(graph, 1),
+                                  PyTuple_GET_ITEM(pj, 1));
+    Py_DECREF(graph);
+    Py_DECREF(pj);
+    return out;
+}

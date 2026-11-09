@@ -23,10 +23,6 @@ namespace navgrow {
 
 namespace {
 
-constexpr double kTsplitTol = 2.0;
-constexpr double kTsplitCrackTol = 6.0;
-constexpr double kTsplitZTol = 12.0;
-
 double tri_area(const std::vector<Vert>& V, const Tri& t) {
     const Vert &a = V[(size_t)t[0]], &b = V[(size_t)t[1]], &c = V[(size_t)t[2]];
     return std::fabs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) * 0.5;
@@ -338,7 +334,8 @@ int stitch_round(std::vector<Vert>& V, std::vector<Tri>& T, bool allow_overlap) 
 std::vector<int> hanging_on_edge(const std::vector<Vert>& V,
                                  const std::unordered_map<uint64_t, std::vector<int>>& grid,
                                  const std::unordered_map<uint64_t, int>& counts,
-                                 const std::vector<char>& bverts, Key edge, double cell) {
+                                 const std::vector<char>& bverts, Key edge, double cell,
+                                 double ztol) {
     const int a = edge.first, b = edge.second;
     const Vert &pa = V[(size_t)a], &pb = V[(size_t)b];
     const double dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z;
@@ -361,9 +358,9 @@ std::vector<int> hanging_on_edge(const std::vector<Vert>& V,
                 const double s = ((p.x - pa.x) * dx + (p.y - pa.y) * dy) / span2;
                 if (!(0.02 < s && s < 0.98)) continue;
                 const double qx = pa.x + dx * s, qy = pa.y + dy * s, qz = pa.z + dz * s;
-                const double r = bverts[(size_t)i] ? kTsplitCrackTol : kTsplitTol;
+                const double r = bverts[(size_t)i] ? P().TSPLIT_CRACK_TOL : P().TSPLIT_TOL;
                 if (py_square(p.x - qx) + py_square(p.y - qy) > r * r
-                    || std::fabs(p.z - qz) > kTsplitZTol)
+                    || std::fabs(p.z - qz) > ztol)
                     continue;
                 if (cnt(a, i) <= 1 && cnt(i, b) <= 1) hits.push_back({s, i});
             }
@@ -376,7 +373,7 @@ std::vector<int> hanging_on_edge(const std::vector<Vert>& V,
 }
 
 // _plan_splits + _apply_splits: false when nothing was split.
-bool split_round(const std::vector<Vert>& V, std::vector<Tri>& T) {
+bool split_round(const std::vector<Vert>& V, std::vector<Tri>& T, double ztol) {
     std::unordered_map<uint64_t, int> counts;
     for (const Tri& t : T)
         for (int k = 0; k < 3; ++k) counts[key64(t[k], t[(k + 1) % 3])]++;
@@ -403,7 +400,7 @@ bool split_round(const std::vector<Vert>& V, std::vector<Tri>& T) {
     for (const auto& kv : counts) {
         if (kv.second != 1) continue;
         const Key e((int)(kv.first >> 32), (int)(uint32_t)kv.first);
-        std::vector<int> got = hanging_on_edge(V, grid, counts, bverts, e, cell);
+        std::vector<int> got = hanging_on_edge(V, grid, counts, bverts, e, cell, ztol);
         if (!got.empty()) splits[kv.first] = std::move(got);
     }
     if (splits.empty()) return false;
@@ -498,10 +495,14 @@ std::vector<Tri> stitch_shared_nodes(std::vector<Vert>& V, std::vector<Tri> T) {
     return T;
 }
 
-std::vector<Tri> split_t_junctions(const std::vector<Vert>& V, std::vector<Tri> T) {
+std::vector<Tri> split_t_junctions(const std::vector<Vert>& V, std::vector<Tri> T, double ztol) {
     for (int round = 0; round < 3; ++round)
-        if (!split_round(V, T)) break;
+        if (!split_round(V, T, ztol)) break;
     return T;
+}
+
+std::vector<Tri> split_t_junctions(const std::vector<Vert>& V, std::vector<Tri> T) {
+    return split_t_junctions(V, std::move(T), P().TSPLIT_Z_TOL);
 }
 
 }  // namespace navgrow

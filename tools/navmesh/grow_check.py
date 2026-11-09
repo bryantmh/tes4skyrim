@@ -30,7 +30,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from tes5_import.navmesh import (build, corridor, corridor_clean,
+from tes5_import.navmesh import (build, corridor, clean_validate,
                                  corridor_grow, params, world)
 from tools.navmesh.probe import load_cell
 
@@ -96,6 +96,20 @@ def _nearest_edge_point(nodes, edges, node_z, x, y, z):
         if best is None or d < best[3]:
             best = (px, py, pz, d)
     return best
+
+
+def _floor_merges(v, t):
+    """(ti, nb, z0, z1) for edge-connected triangle pairs whose heights differ by over a storey."""
+    merges = []
+    for ti, nbrs in enumerate(clean_validate.edge_adjacency(t)):
+        _, _, z0 = _centroid(v, t[ti])
+        for nb in nbrs:
+            if nb < 0 or nb <= ti:
+                continue
+            _, _, z1 = _centroid(v, t[nb])
+            if abs(z1 - z0) > 120.0:
+                merges.append((ti, nb, z0, z1))
+    return merges
 
 
 def check(export_dir, cell, use_grow=True, dump=None):
@@ -207,19 +221,8 @@ def check(export_dir, cell, use_grow=True, dump=None):
         if not hit:
             stair_gaps.append((i, j, mx, my, mz))
 
-    # FLOOR MERGE: edge-connected triangle pairs whose Z differ by > a storey.
-    adj = corridor_clean.edge_adjacency(t)
-    merges = []
-    for ti, nbrs in enumerate(adj):
-        _, _, z0 = _centroid(v, t[ti])
-        for nb in nbrs:
-            if nb < 0 or nb <= ti:
-                continue
-            _, _, z1 = _centroid(v, t[nb])
-            if abs(z1 - z0) > 120.0:
-                merges.append((ti, nb, z0, z1))
-
-    comps = len(corridor_clean.components(t))
+    merges = _floor_merges(v, t)
+    comps = len(clean_validate.components(t))
     tag = 'GROW' if use_grow else 'FIXED'
     print(f"{cell} [{tag}] {len(v)}v {len(t)}t comps={comps}")
     print(f"   through-wall : {len(through)}")

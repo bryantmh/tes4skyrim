@@ -3,7 +3,7 @@
 # the Temple Infirmary, at disposition 90, says what the priests think of
 # Helseth ("discontent in the Temple", "Ask about the Temple and King Helseth"
 # 1: 50), and Tienius takes the report (100).
-# Bribes, repeated until they land, raise Galsa. Ref FormIDs carry
+# SetDisposition stands in for persuading Galsa (persuasion is tested elsewhere). Ref FormIDs carry
 # Tribunal.esm's slot 06.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr05_people --timeout 2400
 # See docs/commentary/headless_testing.md#quest-runs
@@ -20,8 +20,10 @@ bye
 run
 player->PositionCell 4119 4220 14866 0 "Mournhold Temple: Infirmary"
 until 600 "Galsa Andrano"->GetDistance player < 400
+run
+"Galsa Andrano"->SetDisposition 90
 talk Galsa Andrano
-persuade bribe100 until "Galsa Andrano"->GetDisposition >= 90
+expect "Galsa Andrano"->GetDisposition >= 90
 ask discontent in the Temple
 choose 1
 expect GetJournalIndex TR06_Temple == 50

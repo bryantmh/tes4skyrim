@@ -1004,23 +1004,26 @@ std::vector<std::string> ConversationTopics() {
     return topics;
 }
 
-// Matched as the list shows it, ignoring case, since a case file names the
-// topic as a player reads it.
+// A topic or a service row (Travel, Barter...), matched as the list shows it,
+// ignoring case, since a case file names it as a player reads it.
 bool ConversationAsk(const std::string& topic) {
     const LayerScope scope(g_layer);
-    for (const Item& item : g_items) {
-        if (item.kind != Kind::Topic || _stricmp(item.text.c_str(), topic.c_str()) != 0) {
+    for (std::size_t i = 0; i < g_items.size(); ++i) {
+        const Item& item = g_items[i];
+        if (item.kind == Kind::Separator || _stricmp(item.text.c_str(), topic.c_str()) != 0) {
             continue;
         }
         if (ListLocked()) return false;
-        SelectTopic(item.text);
+        SelectItem(static_cast<int>(i));
         return true;
     }
     return false;
 }
 
+// A choice line, or, while the list modal is up, its row `index` counted from 1.
 bool ConversationChoose(int index) {
     const LayerScope scope(g_layer);
+    if (ListModalOpen()) return ListModalChoose(index - 1);
     for (const ChoiceLine& choice : State().choices) {
         if (choice.index != index) continue;
         AnswerChoice(index);

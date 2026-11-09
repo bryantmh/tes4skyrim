@@ -93,8 +93,9 @@ import pickle
 import struct
 import logging
 
+from core.navmesh_options import navmesh_plugin
 from ..base.navmesh_pins import (apply_hand_edits, cell_key, digest,
-                                 hand_edits_for, plugin_of)
+                                 hand_edits_for)
 from ..base.text_reader import get_int, get_float, get_str, get_formid
 from . import native_loader
 from .lookup_grid import build_navmesh_grid
@@ -204,11 +205,6 @@ def _collect_intercell(rec, points, origin_x, origin_y):
         out.append((lp, (x, y, z)))
     return out
 
-def _tri_area_2d(ax, ay, bx, by, cx, cy) -> float:
-    """Signed area of a 2D triangle (positive = CCW)."""
-    return 0.5 * ((bx - ax) * (cy - ay) - (cx - ax) * (by - ay))
-
-
 def compute_adjacency(tris: list) -> list:
     """Per-triangle (e01, e12, e20) adjacent-triangle indices, -1 for boundary."""
     edge_map: dict = {}
@@ -248,17 +244,6 @@ _DOOR_NO_THRESHOLD = set()
 _DOOR_WIDTH = {}
 #: model key -> collision-panel local (cx, cy), world units; the exact center.
 _DOOR_PANEL_CTR = {}
-
-
-def door_threshold_axis(model_key):
-    """Unit local-space direction the door's threshold line runs along.
-
-    Returns (x, y) in the door mesh's LOCAL frame; the caller rotates it by the
-    REFR's RotZ.  Defaults to local +Y, which is the more common door layout.
-    """
-    if _DOOR_THRESH_LOCAL_Y.get(model_key, True):
-        return (0.0, 1.0)
-    return (1.0, 0.0)
 
 
 def _apply_door_axis(key, a):
@@ -945,17 +930,16 @@ def _cell_graph(rec, cell_rec, graph=None):
     return points, edges, origin_x, origin_y, is_exterior
 
 
-def cell_pins(rec, cell_rec, geom_cache):
+def cell_pins(rec, cell_rec):
     """(hand edits by section, digest) a human recorded for this cell.
 
     Both the hash and the build read pins through here, so the value that
     invalidates a cached cell is exactly the value the build then honors.
+    Every build applies them, cached or not.
 
     See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
     """
-    if geom_cache is None:
-        return {}, ''
-    plugin = plugin_of(geom_cache[0])
+    plugin = navmesh_plugin()
     if not plugin:
         return {}, ''
     grid = None
@@ -995,7 +979,7 @@ def cell_geom_key(rec, land_rec, cell_rec, refr_recs, base_model_by_fid,
     return geom_hash(geom_cache[1], points, edges, refr_recs,
                      base_model_by_fid, doors,
                      land_rec if is_exterior else None, origin_x, origin_y,
-                     pin_digest=cell_pins(rec, cell_rec, geom_cache)[1],
+                     pin_digest=cell_pins(rec, cell_rec)[1],
                      water_z=open_water_z(cell_rec, is_exterior))
 
 
@@ -1069,7 +1053,7 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
     geom_key = cache_path = None
     verts3d = tris = None
     ledges = []
-    edits, pin_digest = cell_pins(rec, cell_rec, geom_cache)
+    edits, pin_digest = cell_pins(rec, cell_rec)
     water_z = open_water_z(cell_rec, is_exterior)
     if geom_cache is not None:
         geom_key = geom_hash(geom_cache[1], points, edges, refr_recs,
@@ -1122,14 +1106,12 @@ def convert_PGRD(rec: dict, writer=None,
                  extra_door_refrs: list = None,
                  spawns: list = None,
                  obstacles: list = None,
-                 graph: tuple = None) -> tuple:
-    """Convert one TES4 PGRD to a TES5 NAVM record.
-
-    Returns (navm_bytes, meta), or (None, None) when the pathgrid is too sparse
-    to form a ribbon or the build yields under 3 verts.  `spawns` are actor
-    spawn points (spawn_nodes) the pathgrid must reach; `obstacles` are the
-    (placement, model key) pairs it is bridged across (obstacle_bridge);
-    `graph` is a seeded cell's (points, edges) (seeding.seeded_graph).
+                 graph: tuple = None,
+                 door_spots: dict = None) -> tuple:
+    """One TES4 PGRD as a TES5 NAVM: (navm_bytes, meta), or (None, None) when the pathgrid is too
+    sparse for a ribbon or the build has under 3 verts.  `spawns`: points the pathgrid must reach;
+    `obstacles`: (placement, model key) pairs to bridge; `graph`: a seeded cell's (points, edges);
+    `door_spots`: {door ref: (x, y, z)} where a door's triangle is picked instead.
 
     See: docs/commentary/tes5_import_navmesh.md#convert-pgrd-arguments
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
@@ -1163,7 +1145,7 @@ def convert_PGRD(rec: dict, writer=None,
         navm_fid = writer.derive_formid(
             'NAVM', (cell_fid, get_formid(rec, 'FormID')))
     nvnm, door_tris, (cx, cy, cz) = packed_nvnm(
-        (verts3d, tris, ledges), doors, water_z,
+        (verts3d, tris, ledges), at_spots(doors, door_spots), water_z,
         (cell_fid, wrld_fid, grid_x, grid_y, is_exterior), navm_fid)
     navm_bytes = pack_navm_record(navm_fid,
                                   _navm_subrecords(rec, nvnm, base_objects))
@@ -1195,8 +1177,13 @@ def convert_PGRD(rec: dict, writer=None,
     return navm_bytes, meta
 
 
+def at_spots(doors, spots) -> list:
+    """collect_doors rows, each door in `spots` (ref -> (x, y, z)) moved there."""
+    return [(*spots[d[4]], *d[3:]) if spots and d[4] in spots else d for d in doors]
+
+
 def packed_nvnm(geometry, doors, water_z, frame, navm_fid):
-    """(nvnm, door_tris, center) for a built cell, natively or by the Python reference.
+    """(nvnm, door_tris, center) for a built cell, packed natively.
 
     geometry is (verts, tris, ledges); doors are collect_doors rows; water_z is
     cell_water_z or None; frame is (cell_fid, wrld_fid, grid_x, grid_y,
@@ -1205,18 +1192,9 @@ def packed_nvnm(geometry, doors, water_z, frame, navm_fid):
     """
     verts, tris, ledges = geometry
     cell_fid, wrld_fid, grid_x, grid_y, is_exterior = frame
-    if native_loader.NATIVE:
-        return native_loader.native_core().pack_nvnm(
-            verts, tris, ledges, doors, water_z, wrld_fid, cell_fid,
-            grid_x, grid_y, is_exterior, navm_fid)
-    tri_flags = (compute_water_flags(verts, tris, water_z)
-                 if water_z is not None else [0] * len(tris))
-    door_tris = build_door_links(verts, tris, doors)
-    nvnm = pack_nvnm(verts, tris, compute_adjacency(tris), tri_flags,
-                     wrld_fid, cell_fid, grid_x, grid_y, is_exterior,
-                     door_tris=door_tris, ledges=ledges, navm_fid=navm_fid)
-    center = tuple(sum(v[k] for v in verts) / len(verts) for k in range(3))
-    return nvnm, door_tris, center
+    return native_loader.native_core().pack_nvnm(
+        verts, tris, ledges, doors, water_z, wrld_fid, cell_fid,
+        grid_x, grid_y, is_exterior, navm_fid)
 
 
 def _navm_subrecords(rec, nvnm: bytes, base_objects: list) -> bytes:

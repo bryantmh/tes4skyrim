@@ -73,6 +73,14 @@ expect GetJournalIndex BM_Draugr == 20
 bye
 run
 player->Position -158513 195075 190 0
+until 300 "korst wind-eye"->GetDistance player < 4000
+run
+set TestResult to ( "korst wind-eye"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "korst wind-eye"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "korst wind-eye"->GetPos z ) + 20 )
+player->SetPos z TestResult
 until 600 "korst wind-eye"->GetDistance player < 400
 talk korst wind-eye
 expect GetJournalIndex BM_Draugr == 30
@@ -100,7 +108,7 @@ expect GetJournalIndex BM_Draugr == 70
 bye
 run
 player->PositionCell 2480 2100 29 45 "Solstheim, Aesliip's Lair"
-until 1200 "draugr_aesliip"->GetDistance player < 400
+until 2400 "draugr_aesliip"->GetDistance player < 400
 activate 0691BB21
 until 600 GetPCCell "Solstheim, Aesliip's Lair, Caverns" == 1
 until 300 "draugr_aesliip"->GetDistance player < 800
@@ -120,6 +128,14 @@ until 300 GetJournalIndex BM_Draugr == 85
 bye
 run
 player->Position -158513 195075 190 0
+until 300 "korst wind-eye"->GetDistance player < 4000
+run
+set TestResult to ( "korst wind-eye"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "korst wind-eye"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "korst wind-eye"->GetPos z ) + 20 )
+player->SetPos z TestResult
 until 600 "korst wind-eye"->GetDistance player < 400
 talk korst wind-eye
 ask Aesliip

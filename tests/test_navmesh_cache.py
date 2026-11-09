@@ -1316,7 +1316,7 @@ def test_rekey_keeps_a_cell_whose_pins_changed_stale(tmp_path, monkeypatch):
     monkeypatch.setattr(navm_verify, '_job_key',
                         lambda job, gc: '%s|%s' % (gc[1], job['pins']))
     monkeypatch.setattr(from_pgrd, 'cell_pins',
-                        lambda rec, cell, gc: ({}, rec['pins']))
+                        lambda rec, cell: ({}, rec['pins']))
     stored = {1: 'T0|', 2: 'T0|p1', 3: 'T0|'}
     pins = {1: '', 2: 'p1', 3: 'p2'}
     jobs = []

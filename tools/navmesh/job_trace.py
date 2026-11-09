@@ -13,8 +13,8 @@ this is how you get the actual traceback: it calls `convert_PGRD` directly, in
 this process, for the cell you name.
 
 It also finds jobs that kill the interpreter outright. A C++ exception escaping
-the native extension aborts the process with no Python traceback at all, which in
-a pool worker surfaces only as an opaque `BrokenProcessPool`. With `--all`, each
+the native extension aborts the process with no Python traceback at all, and on
+the import's thread pool it takes the whole import down. With `--all`, each
 job's identity is flushed BEFORE the call, so a hard crash leaves the culprit as
 the last line printed (this is how Nehrim's cell 011E4FEC was found -- see
 docs/commentary/performance.md).
@@ -41,17 +41,17 @@ import time
 import traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
+from core.navmesh_options import set_navmesh_plugin
 from output_layout import asset_cache_chain
 from tes5_import.base.mesh_bounds import load_mesh_bounds
 from tes5_import.base.obstacles import index_obstacles
-from tes5_import.navmesh import cache_audit, native_loader, pool as navm_pool
+from tes5_import.navmesh import cache_audit, pool as navm_pool
 from tes5_import.navmesh import worker as navm_worker
 from tes5_import.record_types.world_morrowind import register_tes3_locks
-from tools.navmesh.perf import rss_note
 
 
 def init_worker_for(export_dir, im, door_fids, base_model_by_fid, offset):
-    """Initialise the in-process navmesh worker as the import does; (geom_cache, pool initargs).
+    """Initialise the in-process navmesh context as the import does; the geometry cache.
 
     Collision and door centers load as the MASTERS-FIRST chain: with only the
     plugin's own file, master-owned meshes have no collision and a child
@@ -64,46 +64,21 @@ def init_worker_for(export_dir, im, door_fids, base_model_by_fid, offset):
     door_centers = cache_audit.door_centers_cache_path(collision)
     cache_audit.init_context(base_model_by_fid, door_fids, collision, offset, geom_cache,
                              im.get_injected_formids(), door_centers)
-    initargs = (base_model_by_fid, door_fids, collision, offset, geom_cache,
-                im.get_injected_formids(), True, door_centers, None)
-    return geom_cache, initargs
+    return geom_cache
 
 
-def run_on_pool(sel, initargs, workers, no_cache):
-    """Run the selected jobs on the import's own pool; print wall-clock and throughput.
-
-    Native builds run on threads in this process, Python ones on worker processes.
-    """
+def run_on_pool(sel, workers, no_cache):
+    """Run the selected jobs on the import's own thread pool; print wall-clock and throughput."""
     jobs = [dict(job, prove=no_cache) for _i, job in sel]
     t0 = time.time()
-    results = navm_pool.run_pooled(jobs, initargs, workers)
+    results = navm_pool.run_pooled(jobs, workers)
     dt = time.time() - t0
     failed = sum(1 for _nb, meta in results.values() if (meta or {}).get('error'))
     built = sum(1 for nb, _meta in results.values() if nb)
-    print(f'\n{len(jobs)} jobs on {workers} {"threads" if native_loader.NATIVE else "processes"}: '
+    print(f'\n{len(jobs)} jobs on {workers} threads: '
           f'{dt:.1f}s ({len(jobs) / max(dt, 1e-9):.2f} jobs/s), {built} built, {failed} failed',
           flush=True)
-    print(f'this process:{rss_note()} (worker processes not included)', flush=True)
     return 1 if failed else 0
-
-
-def compare_paths(sel, base_model_by_fid, door_fids):
-    """Build each job with the Python reference and natively; count byte-level mismatches."""
-    bad = 0
-    for i, job in sel:
-        out = []
-        for native in (False, True):
-            native_loader.NATIVE = native
-            t0 = time.time()
-            out.append((navm_worker.convert_job(job, base_model_by_fid, door_fids, None),
-                        time.time() - t0))
-        same = out[0][0][0] == out[1][0][0]
-        bad += not same
-        print(f'  job[{i}] cell {job["key"][0]:08X}  py {out[0][1]:.2f}s  nat {out[1][1]:.2f}s  '
-              f'{"MATCH" if same else "DIFF"}', flush=True)
-    native_loader.NATIVE = True
-    print(f'\n{len(sel) - bad}/{len(sel)} jobs byte-identical', flush=True)
-    return 1 if bad else 0
 
 
 def load_export(export_dir, offset):
@@ -160,7 +135,7 @@ def parse_args():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--plugin', default='Oblivion.esm',
-                    help='plugin name; export dir is export/<plugin>')
+                    help='plugin name (its pins apply); export dir is export/<plugin>')
     ap.add_argument('--export', help='explicit export dir (overrides --plugin)')
     ap.add_argument('--cell', action='append', default=[],
                     help='cell FormID hex (repeatable)')
@@ -185,17 +160,14 @@ def parse_args():
     ap.add_argument('--offset', type=int, default=1,
                     help='load-order FormID index offset (default 1)')
     ap.add_argument('--workers', type=int, metavar='N',
-                    help="run the selection on the import's own pool of N workers "
-                         '(threads when native, processes with TES_NAVMESH_IMPL=python)')
-    ap.add_argument('--ab', action='store_true',
-                    help='build each selected job with the Python reference and '
-                         'natively, and require identical NAVM bytes')
+                    help="run the selection on the import's own pool of N threads")
     args = ap.parse_args()
     if not (args.cell or args.all or args.uncached or args.sample):
         ap.error('pass --cell, --all, --uncached or --sample')
     args.export_dir = args.export or os.path.join('export', args.plugin)
     if not os.path.isdir(args.export_dir):
         ap.error(f'no such export dir: {args.export_dir}')
+    set_navmesh_plugin(args.plugin)
     return args
 
 
@@ -295,16 +267,13 @@ def main():
     faulthandler.enable()
     im, _by_type, door_fids, base_model_by_fid, jobs = load_export(args.export_dir, args.offset)
     print(f'  {len(jobs)} navmesh jobs', flush=True)
-    geom_cache, initargs = init_worker_for(args.export_dir, im, door_fids, base_model_by_fid,
-                                           args.offset)
+    geom_cache = init_worker_for(args.export_dir, im, door_fids, base_model_by_fid, args.offset)
     sel = select_jobs(args, jobs, geom_cache)
     if args.no_cache:
         geom_cache = None
         print('  geometry cache DISABLED (cold-cache timing)', flush=True)
-    if args.ab:
-        return compare_paths(sel, base_model_by_fid, door_fids)
     if args.workers:
-        return run_on_pool(sel, initargs, args.workers, args.no_cache)
+        return run_on_pool(sel, args.workers, args.no_cache)
     return run_serial(sel, base_model_by_fid, door_fids, geom_cache, args.extrapolate)
 
 

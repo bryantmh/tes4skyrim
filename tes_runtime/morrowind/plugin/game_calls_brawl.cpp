@@ -1,7 +1,7 @@
 // Brawls: TES3's punch tires its target, Skyrim's wounds it. An actor whose
 // script reads its own fatigue when the player hits it (IsBrawler) gets the
-// import's TES3BrawlAbility when it loads, and so does the player: the
-// ability's effect marks the brawler, and its perk, which the engine applies
+// import's TES3BrawlAbility when it loads, and so does the player: holding the
+// ability marks the brawler, and its effect's perk, which the engine applies
 // only to the player, zeroes the player's bare fists on a marked target. Each
 // such punch then takes the player's unarmed
 // damage from its Stamina instead, and its Stamina stops regenerating until

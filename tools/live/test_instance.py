@@ -28,11 +28,13 @@ import os
 import re
 import shutil
 import struct
+import subprocess
 import sys
 import time
 
 from asset_convert.lod.esm_scan import plugin_masters
 from core.chargen_source import candidates
+from core.subprocess_flags import POPEN_FLAGS
 from source_paths import find_game_path
 from tools.live import hidden_launch, tes4_cases
 from tools.live.game_bridge import Bridge, BridgeError
@@ -40,7 +42,9 @@ from tools.release.package_runtime_dll import (EXPORT_ROOT, MOD_NAME, MODS, char
                                                configured_choice, morrowind_menus)
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-INSTANCE = r'C:\Other Games\Skyrim Test'
+#: Instance 1's folder; instance N > 1 lives in "<this> N" with its own pipe and desktop.
+FIRST_INSTANCE = r'C:\Other Games\Skyrim Test'
+INSTANCE = FIRST_INSTANCE
 PROFILE = os.path.join(INSTANCE, '_profile')
 DOCUMENTS = os.path.join(PROFILE, 'Documents')
 LOCAL_APPDATA = os.path.join(PROFILE, 'LocalAppData')
@@ -87,6 +91,37 @@ SKYRIM_INI = (('General', 'bAlwaysActive', '1'), ('General', 'sIntroSequence', '
 PREFS_INI = (('Display', 'bFull Screen', '0'), ('Display', 'bBorderless', '1'),
              ('Display', 'iSize W', '640'), ('Display', 'iSize H', '360'),
              ('AudioMenu', 'fAudioMasterVolume', '0.0000'), ('General', 'bUpsellOwned', '1'))
+
+
+def use_instance(slot: int) -> None:
+    """Points the folder, profile, bridge pipe and hidden desktop at test instance `slot` (1 = the first).
+
+    See: docs/commentary/headless_testing.md#parallel-instances
+    """
+    global INSTANCE, PROFILE, DOCUMENTS, LOCAL_APPDATA, MY_GAMES, PID_FILE, PIPE, DESKTOP
+    suffix = '' if slot == 1 else ' %d' % slot
+    INSTANCE = FIRST_INSTANCE + suffix
+    PROFILE = os.path.join(INSTANCE, '_profile')
+    DOCUMENTS = os.path.join(PROFILE, 'Documents')
+    LOCAL_APPDATA = os.path.join(PROFILE, 'LocalAppData')
+    MY_GAMES = os.path.join(DOCUMENTS, 'My Games', 'Skyrim Special Edition')
+    PID_FILE = os.path.join(PROFILE, 'pid.txt')
+    PIPE = r'\\.\pipe\tes_test_bridge' + suffix.strip()
+    DESKTOP = 'TESConversionTest' + suffix.strip()
+
+
+def share_saves() -> None:
+    """Makes this instance's Saves a junction to instance 1's, so checkpoints load in either.
+
+    Never `rmtree` a profile holding it: rmtree follows the junction into instance 1's saves.
+    """
+    saves = os.path.join(MY_GAMES, 'Saves')
+    first = os.path.join(FIRST_INSTANCE, '_profile', 'Documents', 'My Games', 'Skyrim Special Edition', 'Saves')
+    if INSTANCE == FIRST_INSTANCE or os.path.exists(saves):
+        return
+    os.makedirs(MY_GAMES, exist_ok=True)
+    os.makedirs(first, exist_ok=True)
+    subprocess.run(['cmd', '/c', 'mklink', '/J', saves, first], check=True, capture_output=True, **POPEN_FLAGS)
 
 
 def steam_dir() -> str:
@@ -229,10 +264,18 @@ def loadable(data: str, plugins: list) -> list:
     return keep
 
 
+def unlink_plugins(data: str) -> None:
+    """Removes plugin hard links an earlier build left in `data`."""
+    for path in glob.glob(os.path.join(data, '*.es[mpl]')):
+        if os.stat(path).st_nlink > 1:
+            os.remove(path)
+
+
 def build(steam_exe: bool, plugins, mods=()) -> None:
     """Links the vanilla game, SKSE, the bridge and each converted mod, and writes the profile."""
     root = steam_dir()
     data = os.path.join(INSTANCE, 'Data')
+    unlink_plugins(data)
     enabled = list(plugins)
     for mod in mods:
         enabled += link_mod(mod, data)
@@ -252,6 +295,7 @@ def build(steam_exe: bool, plugins, mods=()) -> None:
         f.write(APP_ID)
     enabled = loadable(data, enabled)
     write_profile(root, enabled)
+    share_saves()
     print('built %s (%s exe, %d archives, plugins: %s)' % (
         INSTANCE, 'Steam' if steam_exe else 'unpacked', len(archives), ', '.join(enabled) or 'none'))
 
@@ -536,8 +580,9 @@ def speed(cell: str, settle: float, commands: list, seconds: float) -> None:
             name, values[len(values) // 2], 1 / max(values[len(values) // 2], 1e-6), values[0], values[-1]))
 
 
-#: Settings `--fast` adds: a fixed 1/6 s game step per frame, about 11x real time.
-FAST_INI = ['Skyrim.ini:General:iFPSClamp=6']
+#: Settings `--fast` adds: uncapped frames of a fixed game step, which the runtime then steers to ~25x real time.
+FAST_INI = ['Skyrim.ini:General:iFPSClamp=60', 'Skyrim.ini:Display:iVSyncPresentInterval=0',
+            'Skyrim.ini:Display:bLockFramerate=0']
 #: Settings `questtest` adds: the Papyrus log, and subtitles, without which no spoken line is recorded.
 PAPYRUS_INI = ['Skyrim.ini:Papyrus:bEnableLogging=1', 'SkyrimPrefs.ini:Interface:bGeneralSubtitles=1',
                'SkyrimPrefs.ini:Interface:bDialogueSubtitles=1']
@@ -633,16 +678,29 @@ def case_names(path: str) -> list:
         return re.findall(r'(?im)^\s*case\s+(.+?)\s*$', f.read())
 
 
-def cases_from(path: str, first: str) -> str:
-    """A copy of case file `path` in the profile that starts at case `first`."""
+def _case_start(text: str, name: str, path: str) -> int:
+    """Where case `name` begins in case-file `text`."""
+    found = re.search(r'(?im)^\s*case\s+%s\s*$' % re.escape(name), text)
+    if not found:
+        raise SystemExit('no case %r in %s' % (name, path))
+    return found.start()
+
+
+def cases_from(path: str, first: str, last: str = None) -> str:
+    """A copy of case file `path` in the profile from case `first` (else the start) through `last` (else the end)."""
     with open(path, encoding='utf-8') as f:
         text = f.read()
-    start = re.search(r'(?im)^\s*case\s+%s\s*$' % re.escape(first), text)
-    if not start:
-        raise SystemExit('no case %r in %s' % (first, path))
+    start = _case_start(text, first, path) if first else 0
+    end = len(text)
+    if last:
+        names = case_names(path)
+        after = names.index(last) + 1 if last in names else None
+        if after is None:
+            raise SystemExit('no case %r in %s' % (last, path))
+        end = _case_start(text, names[after], path) if after < len(names) else len(text)
     out = os.path.join(PROFILE, 'cases_from.mwtest')
     with open(out, 'w', encoding='utf-8') as f:
-        f.write(text[start.start():])
+        f.write(text[start:end])
     return out
 
 
@@ -775,7 +833,7 @@ def run_cases(args, game: CaseGame) -> int:
         if os.path.exists(stale):
             os.remove(stale)
     cases = join_cases(args.cases, game.ext)
-    chosen = cases_from(cases, args.from_case) if args.from_case else cases
+    chosen = cases_from(cases, args.from_case, args.to_case) if args.from_case or args.to_case else cases
     env = {game.prefix + 'CASES': game.prepare(chosen) if game.prepare else chosen,
            game.prefix + 'RESULTS': results}
     flags = {game.prefix + 'STOP_ON_FAIL': args.stop_on_fail, game.prefix + 'CHECKPOINTS': args.checkpoints}
@@ -854,15 +912,18 @@ def _case_options(parser) -> None:
     parser.add_argument('--stop-on-fail', action='store_true', help='end the run at the first failing case')
     parser.add_argument('--new-game', type=int, metavar='BUTTON',
                         help="click New Game and answer TESGameSelect's prompt with this button")
-    parser.add_argument('--fast', action='store_true', help='about 11x game speed (iFPSClamp=6) and god mode')
+    parser.add_argument('--fast', action='store_true', help='uncapped frames of a fixed 1/60 s (about 27x in QASmoke) and god mode')
     parser.add_argument('--checkpoints', action='store_true', help='save in the sandbox after each passing case')
     parser.add_argument('--from', dest='from_case', help='load the save of the case before this one and resume')
+    parser.add_argument('--to', dest='to_case', help='stop after this case (`--from X --to X` runs just X)')
     parser.add_argument('--load', help='start from this sandbox save (e.g. mwtest_chargen_class)')
 
 
 def parse_args():
     """The command line."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--instance', type=int, default=1,
+                        help='which test instance: 1 is the first; N > 1 is "Skyrim Test N", run in parallel')
     sub = parser.add_subparsers(dest='cmd', required=True)
     b = sub.add_parser('build', help='link the instance and write its profile')
     b.add_argument('--steam-exe', action='store_true', help="use Steam's exe, not the unpacked one")
@@ -870,7 +931,7 @@ def parse_args():
     b.add_argument('--mod', action='append', default=[],
                    help='converted output/ folder to link, plugins enabled, with the runtime DLLs')
     s = sub.add_parser('shot', help='screenshot the hidden game window')
-    s.add_argument('--out', default=os.path.join(PROFILE, 'shot.png'))
+    s.add_argument('--out', help="PNG path; the instance profile's shot.png by default")
     _launched_parsers(sub)
     c = sub.add_parser('close', help="post the engine's close message to a menu")
     c.add_argument('menu', help='registered menu name, e.g. MessageBoxMenu')
@@ -882,7 +943,8 @@ def parse_args():
 def main() -> int:
     """Command-line entry point."""
     args = parse_args()
-    extra = (FAST_INI if getattr(args, 'fast', False) else []) + (PAPYRUS_INI if args.cmd == 'questtest' else [])
+    use_instance(args.instance)
+    extra =(FAST_INI if getattr(args, 'fast', False) else []) + (PAPYRUS_INI if args.cmd == 'questtest' else [])
     with ini_overrides(getattr(args, 'ini', []) + extra):
         return run(args)
 
@@ -890,7 +952,7 @@ def main() -> int:
 def run(args) -> int:
     """Runs the parsed subcommand; its exit code."""
     actions = {'build': lambda: build(args.steam_exe, args.plugin, args.mod), 'launch': launch,
-               'shot': lambda: shot(args.out), 'menus': menus, 'stop': stop,
+               'shot': lambda: shot(args.out or os.path.join(PROFILE, 'shot.png')), 'menus': menus, 'stop': stop,
                'close': lambda: close_named(args.menu),
                'speed': lambda: speed(args.cell, args.settle, args.console, args.seconds)}
     if args.cmd == 'mwtest':

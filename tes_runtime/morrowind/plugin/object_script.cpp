@@ -364,6 +364,12 @@ void ObjectContext::messageBox(std::string_view message,
                                const std::vector<std::string>& buttons) {
     Log("object: %s says \"%.*s\"", mInstance.Script().c_str(),
         static_cast<int>(message.size()), message.data());
+    char owner[16];
+    std::snprintf(owner, sizeof owner, "%08X", mInstance.RuntimeFormId());
+    if (Hooks().whereIs) {
+        Log("object: TEMP box owner %s; player %s", Hooks().whereIs(owner).c_str(),
+            Hooks().whereIs("player").c_str());
+    }
     if (Hooks().showMessage) Hooks().showMessage(std::string(message), buttons);
 }
 

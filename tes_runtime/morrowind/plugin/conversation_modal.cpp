@@ -136,11 +136,15 @@ void ListModalClick(double x, double y) {
         CloseListModal();
         return;
     }
-    const int row = RowAt(x, y);
-    if (!RowEnabled(row) || !kModal.Contains(x, y)) return;
+    if (kModal.Contains(x, y)) ListModalChoose(RowAt(x, y));
+}
+
+bool ListModalChoose(int row) {
+    if (!g_open || !RowEnabled(row)) return false;
     const ModalChosen chosen = g_onChosen;
     CloseListModal();
     if (chosen) chosen(row);
+    return true;
 }
 
 }  // namespace tesruntime::mw

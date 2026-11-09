@@ -74,6 +74,10 @@ These protect things that are hard or impossible to get back.
 
 ## Working with the user
 
+- 🛑 **After a compaction or resume, `.claude/hooks/worklog_gate.py` blocks every
+  tool until the whole worklog [docs/audits/mwscript_full_runs.md](docs/audits/mwscript_full_runs.md)
+  has been Read** (it tracks the lines covered). Read it all, first, every time; update a quest's entry in place.
+
 - Agents are expensive and I want token usage kept down. Default to doing the
   work yourself; think twice before spawning one and only do so when it clearly
   saves tokens (focused or repetitive tasks that can be fully specified in the

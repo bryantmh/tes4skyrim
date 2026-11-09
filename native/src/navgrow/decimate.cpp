@@ -134,6 +134,7 @@ struct Ctx {
     const double* seam;          // minx, miny, maxx, maxy, or nullptr
     const Oracles& O;
     const Params& P;
+    const std::vector<Pin>& pts;
 
     bool on_seam(int vi) const { return on_seam_rect(V[(size_t)vi].x, V[(size_t)vi].y, seam); }
     bool pinned(int v) const { return flagged(pin, v); }
@@ -457,6 +458,30 @@ bool flip_improves(const Ctx& C, const Tri& t1, const Tri& t2, int a, int b,
     return std::fabs(V[(size_t)c].z - V[(size_t)d].z) <= dz_old + C.P.max_climb;
 }
 
+bool covers(const std::vector<Vert>& V, const Tri& t, const Pin& p) {
+    const Vert &a = V[(size_t)t[0]], &b = V[(size_t)t[1]], &c = V[(size_t)t[2]];
+    const double d = area2(a, b, c);
+    if (std::fabs(d) < 1e-9) return false;
+    const double u = ((b.x - p.x) * (c.y - p.y) - (c.x - p.x) * (b.y - p.y)) / d;
+    const double v = ((c.x - p.x) * (a.y - p.y) - (a.x - p.x) * (c.y - p.y)) / d;
+    return u >= -1e-9 && v >= -1e-9 && u + v <= 1.0 + 1e-9;
+}
+
+// A flip of a folded pair (both apexes on one side of the shared edge) moves the
+// covered area; it may not leave a pin point with no triangle under it.
+bool flip_uncovers_pin(const Ctx& C, const std::vector<Tri>& tris, int ti, int tj,
+                       const Tri& n1, const Tri& n2) {
+    for (const Pin& p : C.pts) {
+        if (!covers(C.V, tris[(size_t)ti], p) && !covers(C.V, tris[(size_t)tj], p)) continue;
+        if (covers(C.V, n1, p) || covers(C.V, n2, p)) continue;
+        bool other = false;
+        for (size_t k = 0; k < tris.size() && !other; ++k)
+            other = (int)k != ti && (int)k != tj && covers(C.V, tris[k], p);
+        if (!other) return true;
+    }
+    return false;
+}
+
 bool flip_round(const Ctx& C, std::vector<Tri>& tris) {
     const std::map<Key, std::vector<int>> owners = edge_owners(tris);
     std::vector<char> done(tris.size(), 0);
@@ -479,8 +504,14 @@ bool flip_round(const Ctx& C, std::vector<Tri>& tris) {
         const double s_b = area2(C.V[(size_t)c], C.V[(size_t)d], C.V[(size_t)b]);
         if (s_a * s_b >= 0 || std::fabs(s_a) <= 1e-6 || std::fabs(s_b) <= 1e-6)
             continue;
-        tris[(size_t)ti] = s_b > 0 ? Tri{c, d, b} : Tri{d, c, b};
-        tris[(size_t)tj] = s_a > 0 ? Tri{c, d, a} : Tri{d, c, a};
+        const Tri n1 = s_b > 0 ? Tri{c, d, b} : Tri{d, c, b};
+        const Tri n2 = s_a > 0 ? Tri{c, d, a} : Tri{d, c, a};
+        if (area2(C.V[(size_t)a], C.V[(size_t)b], C.V[(size_t)c]) *
+                area2(C.V[(size_t)a], C.V[(size_t)b], C.V[(size_t)d]) > 0 &&
+            flip_uncovers_pin(C, tris, ti, tj, n1, n2))
+            continue;
+        tris[(size_t)ti] = n1;
+        tris[(size_t)tj] = n2;
         new_edges.push_back(ck);
         done[(size_t)ti] = done[(size_t)tj] = 1;
         changed = true;
@@ -709,7 +740,7 @@ void decimate_mesh(std::vector<Vert>& V, std::vector<Tri>& T,
                    bool allow_split, const Oracles& O) {
     const Params Pd = decimate_params();
     const std::vector<char> pin = pin_verts(V, pins);
-    Ctx C{V, pin, seam, O, Pd};
+    Ctx C{V, pin, seam, O, Pd, pins};
     run_decimate(C, T, rounds, allow_split);
 }
 

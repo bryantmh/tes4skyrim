@@ -34,7 +34,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from asset_convert.collision import collision_extract as ce
-from tes5_import.navmesh import build, corridor, corridor_clean, world
+from tes5_import.navmesh import build, clean_validate, corridor, params, world
 from tools.navmesh.probe import load_cell
 
 # A sample and a triangle are on the same storey when their heights differ by
@@ -55,9 +55,9 @@ def _reference_strips(ctx):
         import numpy as np
         walk = (np.concatenate([walk, land_walk]) if len(walk) else land_walk)
     sample = corridor._surface_sampler(walk)
-    node_z = [corridor._snap_node_z(sample, nodes[i][0], nodes[i][1], nodes[i][2])
-              for i in range(len(nodes))]
-    return corridor._build_corridor_strips(nodes, edges, node_z)
+    ends = [(n[0], n[1], corridor._snap_node_z(sample, n[0], n[1], n[2])) for n in nodes]
+    return [{'na': ends[i], 'nb': ends[j], 'half': params.RIBBON_HALF_WIDTH}
+            for (i, j) in edges]
 
 
 def _ribbon_heights(strips, px, py):
@@ -170,7 +170,7 @@ def measure(export_dir, cell, step=8.0, dump=None):
             x += step
         y += step
 
-    comps = corridor_clean.components(tris)
+    comps = clean_validate.components(tris)
     cov = 100.0 * (total - missing) / total if total else 0.0
     dbl = 100.0 * double / total if total else 0.0
     print('%-28s coverage=%6.2f%%  overlap=%5.2f%%  missing=%-5d doubled=%-5d '

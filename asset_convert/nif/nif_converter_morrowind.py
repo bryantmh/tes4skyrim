@@ -680,6 +680,7 @@ def opaque_unblended_shapes(data, stats=None) -> int:
 
 def run_morrowind_fixups(data, stats=None) -> None:
     """Apply the Morrowind-only repairs that must precede the version upgrade."""
+    discard_root_transform(data)
     raise_triangle_flags(data, stats)
     sample_materials(data, stats)
     upgrade_legacy_particles(data, stats)
@@ -691,6 +692,18 @@ def run_morrowind_fixups(data, stats=None) -> None:
     src_path = (stats or {}).get('_src_path', '')
     if os.path.basename(src_path).lower() == 'skeleton.nif':
         attach_synthetic_bodies(data, src_path)
+
+
+def discard_root_transform(data) -> None:
+    """Reset record 0's transform when it is a NiNode not named Bip01, exactly as
+    OpenMW does on read (components/nif/node.cpp, NiNode::read)."""
+    root = data.blocks[0] if data.blocks else None
+    if (not isinstance(root, NifFormat.NiNode)
+            or (root.name or b'').decode('latin-1').lower() == 'bip01'):
+        return
+    root.rotation.set_identity()
+    root.translation.x = root.translation.y = root.translation.z = 0.0
+    root.scale = 1.0
 
 
 def is_morrowind(data) -> bool:

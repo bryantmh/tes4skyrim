@@ -104,6 +104,14 @@ struct GameHooks {
     // False, doing nothing, while `ref` has no 3D or its script has not run
     // since it loaded: nobody clicks what is not there yet.
     bool (*playerActivate)(const std::string& ref) = nullptr;
+    // Where `ref` stands (place, position, 3D, disabled, dead), for a failure message.
+    std::string (*whereIs)(const std::string& ref) = nullptr;
+    // How far the player stands from `ref` when it is a door; negative otherwise.
+    float (*doorDistance)(const std::string& ref) = nullptr;
+    // `approach`: the player is put in front of `ref` wherever it stands, unless
+    // already within reach or followed. 1 when a move was posted, 0 when none
+    // is needed, -1 while `ref` does not resolve. game_calls_move.cpp PlayerToSpeaker.
+    int (*playerToSpeaker)(const std::string& ref) = nullptr;
     // The player picks `ref` up into the inventory (a headless run's `take`).
     void (*playerTake)(const std::string& ref) = nullptr;
     // `ShowRestMenu`: sleep in `bed` as in a Skyrim bed; empty rests in place.
@@ -304,6 +312,10 @@ struct GameHooks {
     // The test runner's `walk`: the player walks to a point in the current
     // cell; `playerWalkDone` is true once there (and ends it), `Stop` gives up.
     void (*playerWalk)(float x, float y, float z) = nullptr;
+    // `steer`: the same at the controls, straight there with no navmesh, at a
+    // walk when `walking`; `playerWalkStuck` is true once it stops making headway.
+    void (*playerSteer)(float x, float y, float z, bool walking) = nullptr;
+    bool (*playerWalkStuck)() = nullptr;
     bool (*playerWalkDone)() = nullptr;
     void (*playerWalkStop)() = nullptr;
     void (*aiActivate)(const std::string& actor,
@@ -394,6 +406,9 @@ struct GameHooks {
     // destination.
     // See: docs/commentary/morrowind_runtime.md#travel
     int  (*followerCount)() = nullptr;
+    // The player's party (followers in its place within one cell, a lagging one included), TES3 ids
+    // comma-separated: the test runner's door-reach guard names them.
+    std::string (*followerNames)() = nullptr;
     void (*advanceHours)(int hours) = nullptr;
     void (*travelTo)(const TravelDest& dest) = nullptr;
     // `GetDeadCount id`: how many of that base actor have died, which the
@@ -438,6 +453,12 @@ struct GameHooks {
     // The engine frame timer's millisecond clock, which advances with GAME
     // time (each frame's clamped delta); 0 when unresolved.
     std::uint32_t (*frameClockMs)() = nullptr;
+    // Each live wake: the game and real seconds it covered, which steer a
+    // clamped (--fast) game's step toward a fixed speed, and the seconds its
+    // tick took. game_calls_query.cpp.
+    void (*paceFrames)(float gameSeconds, float realSeconds, float tickSeconds) = nullptr;
+    // The speed paceFrames steers toward; 0 or less restores the default.
+    void (*setPaceTarget)(float speed) = nullptr;
     // Once a tick of unpaused play: re-reads the runtime-carried duration
     // effects -- Levitate, SlowFall for the physics hook, Sanctuary's ranks.
     void (*effectTick)() = nullptr;
@@ -490,6 +511,10 @@ struct GameHooks {
     void (*skipAnim)(const std::string& ref) = nullptr;
     // Once a tick of unpaused play: advances every queue `playGroup` filled.
     void (*animTick)() = nullptr;
+    // Once a tick of unpaused play: settles every Move/Rotate glide no script
+    // fed last tick where it ended, so its collision follows, and takes the
+    // player's followers through a door the player just used.
+    void (*moveTick)() = nullptr;
     // What the NPC animation driver (npc_anim.cpp) needs of ONE reference, by
     // RUNTIME FormID: a base NPC is placed many times and each copy plays its
     // own idle, so the TES3 id alone cannot name which.

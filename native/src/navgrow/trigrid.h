@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -353,10 +354,46 @@ inline bool walk_nearest_py(const TriGrid& g, double x, double y, double near_z,
 // Tested by projecting into the slab's own 2D frame and running SAT against
 // the axis-aligned rectangle, gated by Z overlap.
 // --------------------------------------------------------------------------
+// The height range of the part of a triangle, given in the slab frame as
+// (along tangent, along march, z), inside |x| <= half_w, |y| <= depth; false
+// when none of it is.  Planar, so the clipped polygon's corners bound it.
+inline bool clipped_z_range(const double* px, const double* py, const double* pz,
+                            double half_w, double depth, double* lo, double* hi) {
+    std::vector<std::array<double, 3>> poly{{px[0], py[0], pz[0]}, {px[1], py[1], pz[1]},
+                                            {px[2], py[2], pz[2]}};
+    const double planes[4][3] = {{1, 0, half_w}, {-1, 0, half_w}, {0, 1, depth}, {0, -1, depth}};
+    for (const auto& pl : planes) {
+        std::vector<std::array<double, 3>> out;
+        for (size_t i = 0; i < poly.size(); ++i) {
+            const auto& a = poly[i];
+            const auto& b = poly[(i + 1) % poly.size()];
+            const double da = pl[2] - (pl[0] * a[0] + pl[1] * a[1]);
+            const double db = pl[2] - (pl[0] * b[0] + pl[1] * b[1]);
+            if (da >= 0) out.push_back(a);
+            if ((da >= 0) != (db >= 0)) {
+                const double f = da / (da - db);
+                out.push_back({a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f,
+                               a[2] + (b[2] - a[2]) * f});
+            }
+        }
+        poly.swap(out);
+        if (poly.empty()) return false;
+    }
+    *lo = 1e300;
+    *hi = -1e300;
+    for (const auto& p : poly) {
+        *lo = std::min(*lo, p[2]);
+        *hi = std::max(*hi, p[2]);
+    }
+    return true;
+}
+
+// `exact` gates Z by the part of the triangle inside the slab, not its whole
+// span: a body column must not read a slope under its feet as a wall.
 inline bool tri_hits_slab(const double* t, double cx, double cy,
                           double ux, double uy, double half_w,
                           double tx, double ty, double depth,
-                          double z_lo, double z_hi) {
+                          double z_lo, double z_hi, bool exact = false) {
     const double tz0 = t[2], tz1 = t[5], tz2 = t[8];
     if (std::max(std::max(tz0, tz1), tz2) < z_lo) return false;
     if (std::min(std::min(tz0, tz1), tz2) > z_hi) return false;
@@ -392,7 +429,10 @@ inline bool tri_hits_slab(const double* t, double cx, double cy,
         }
         if (tmin > rmax || tmax < rmin) return false;
     }
-    return true;
+    if (!exact) return true;
+    const double pz[3] = {tz0, tz1, tz2};
+    double lo = 0.0, hi = 0.0;
+    return clipped_z_range(px, py, pz, half_w, depth, &lo, &hi) && hi >= z_lo && lo <= z_hi;
 }
 
 // Wall test over the 3x3 bucket neighbourhood.
@@ -406,7 +446,8 @@ inline constexpr double kSlabPad = 1e-3;
 
 inline bool wall_hit(const TriGrid& g, double cx, double cy,
                      double ux, double uy, double tx, double ty,
-                     double z_lo, double z_hi, double depth, double half_w) {
+                     double z_lo, double z_hi, double depth, double half_w,
+                     bool exact = false) {
     if (!g.ntri || g.items.empty()) return false;
     const long long gx = (long long)std::floor((cx - g.minx) / g.cell);
     const long long gy = (long long)std::floor((cy - g.miny) / g.cell);
@@ -433,7 +474,7 @@ inline bool wall_hit(const TriGrid& g, double cx, double cy,
                 if (g.x1[k] < sx0 || g.x0[k] > sx1 || g.y1[k] < sy0
                     || g.y0[k] > sy1) continue;
                 if (tri_hits_slab(&g.vx[(size_t)i * 9], cx, cy, ux, uy,
-                                  half_w, tx, ty, depth, z_lo, z_hi))
+                                  half_w, tx, ty, depth, z_lo, z_hi, exact))
                     return true;
             }
         }

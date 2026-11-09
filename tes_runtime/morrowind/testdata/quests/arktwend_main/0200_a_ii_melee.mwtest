@@ -93,11 +93,12 @@ until 120 Storyvar == 7
 expect player->GetItemCount Key_MeleePaul == 1
 end
 
-# Out by Paul's back door.
+# Out by Paul's back door (16). The door lands the player within 200 of
+# MarkerMeleeHafen03, whose MeleeJournal02 logs 21 the next frame.
 case melee_backdoor
 activate ANFMeleeTurPaul01
 until 300 Storyvar == 8
-expect GetJournalIndex A_II_Paul == 16
+expect GetJournalIndex A_II_Paul >= 16
 end
 
 # Paul lies dead in the street.

@@ -44,8 +44,9 @@ struct CellGeo {
 
     // corridor_grow.wall_slab_sampler.
     bool wall_at(double cx, double cy, double ux, double uy, double tx, double ty,
-                 double z_lo, double z_hi, double depth, double half_w) const {
-        return wall_hit(wall, cx, cy, ux, uy, tx, ty, z_lo, z_hi, depth, half_w);
+                 double z_lo, double z_hi, double depth, double half_w,
+                 bool exact = false) const {
+        return wall_hit(wall, cx, cy, ux, uy, tx, ty, z_lo, z_hi, depth, half_w, exact);
     }
 };
 

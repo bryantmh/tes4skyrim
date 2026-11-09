@@ -47,7 +47,7 @@ from .morrowind_teleport import (ANCHORS_TABLE, EFFECT_FORMS_TABLE, MARKERS_TABL
                                  target_lines, teleport_lines, world_lines)
 from .morrowind_travel import (CELL_REGIONS_TABLE, EXTERIOR_NAMES_TABLE, TRAVEL_TABLE,
                                cell_region_lines, exterior_name_lines,
-                               marker_index, travel_lines)
+                               marker_index, shown_exterior_names, travel_lines)
 from .say_morrowind import SAY_TABLE, say_rows
 
 #: Where the runtime looks, relative to a plugin's output root.
@@ -633,7 +633,20 @@ def _cell_names(gathered: dict) -> set:
         name.lower() for name in gathered.get('regions', {}).values()}
 
 
-def _cell_lines(loaded: list, keeps, names: set, wilderness: str) -> list:
+def _shown_rows(rows: set, shown: set, wilderness: str) -> set:
+    """`shown name=worldspace` for each own exterior's shown name no row already keys.
+
+    See: docs/commentary/morrowind_runtime.md#positioncell-moves-into-the-cell
+    """
+    keyed = {row.partition('=')[0].lower() for row in rows}
+    worlds = {row.partition('=')[2] for row in rows if row.startswith(wilderness + '=')}
+    if len(worlds) != 1:
+        return set()
+    world = worlds.pop()
+    return {f'{name}={world}' for name in shown if name.lower() not in keyed}
+
+
+def _cell_lines(loaded: list, keeps, names: set, wilderness: str, shown: set) -> list:
     """This plugin's cell rows that no master's export repeats -- a renamed
     override is its own -- plus the rows naming a TES3 cell or region in
     `names` of each master it `keeps`, which has no sidecar to stage them.
@@ -641,6 +654,7 @@ def _cell_lines(loaded: list, keeps, names: set, wilderness: str) -> list:
     See: docs/plans/morrowind_object_scripts.md#cumulative-gather-must-go
     """
     lines = _cell_rows(*loaded[0][:2], wilderness)
+    lines |= _shown_rows(lines, shown, wilderness)
     for folder, plugin, _own in loaded[1:]:
         rows = _cell_rows(folder, plugin, wilderness)
         if keeps(plugin):
@@ -725,7 +739,8 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
             + _write_lines(os.path.join(out_dir, CELLS_TABLE),
                            _cell_lines(loaded,
                                        _row_keeper(export_dir, plugin_name),
-                                       _cell_names(ids), _wilderness(ids)))
+                                       _cell_names(ids), _wilderness(ids),
+                                       shown_exterior_names(ids)))
             + _write_lines(os.path.join(out_dir, EXTERIOR_NAMES_TABLE),
                            exterior_name_lines(ids))
             + _write_lines(os.path.join(out_dir, CELL_REGIONS_TABLE),

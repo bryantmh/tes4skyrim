@@ -33,7 +33,9 @@ end
 
 case ht_ra2_contact
 run
-player->PositionCell 2951 3300 8150 0 "Llothanis, The Water's Shadow Tavern"
+# Inside the room, by her: the old spot (2951 3300) was just behind the room's wall (its floor ends
+# at x ~2945), and the player was pushed out ~1500 away.
+player->PositionCell 2900 3440 8150 0 "Llothanis, The Water's Shadow Tavern"
 until 600 "TR_M1_Q66_Ra2_Contact"->GetDistance player < 800
 wait 120
 talk TR_M1_Q66_Ra2_Contact

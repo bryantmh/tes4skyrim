@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import numpy as np
 
 from asset_convert.collision import collision_extract as ce
-from tes5_import.navmesh import (build, corridor, corridor_clean,
+from tes5_import.navmesh import (build, corridor, clean_validate,
                                  world)
 from tools.navmesh.probe import load_cell
 
@@ -48,7 +48,7 @@ def measure(export_dir, cell):
         w = np.concatenate([w, lw]) if len(w) else lw
     sample = corridor._surface_sampler(w)
 
-    comps = corridor_clean.components(tris)
+    comps = clean_validate.components(tris)
     comps.sort(key=len, reverse=True)
     vcomp = {}
     for ci, c in enumerate(comps):

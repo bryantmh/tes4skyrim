@@ -59,7 +59,7 @@ from .actors.lava_placement import LavaPlanner
 from .record_types.region import record_default_water
 from asset_convert.sources.skyrim_assets import find_skyrim_data
 from .base.locations import build_marker_locations
-from .base.master_export import records_of, values_of
+from .base.master_export import values_of
 from .record_types.world import (
     convert_ACHR,
     convert_CELL,
@@ -84,7 +84,8 @@ from .base.text_reader import (
 from .base.writer import PluginWriter, pack_group
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from output_layout import asset_cache_chain
+from output_layout import asset_cache_chain, assets_for
+from .base.navmesh_pins import use_plugin as use_navmesh_pins
 
 
 
@@ -341,21 +342,6 @@ def _phases23_records(st, export_dir: str, phase_done,
 
 
 
-def _door_xtel_targets(st) -> dict:
-    """{door REFR FormID: XTEL target FormID} over the masters' and own REFRs."""
-    door_xtel_target = {}
-    sources = [records_of(getattr(st.ctx, 'master_export', None), 'REFR'),
-               ((r.get('FormID', ''), r) for r in st.by_type.get('REFR', []))]
-    for fid_str, rec in (p for src in sources for p in src):
-        if 'XTEL.Door' not in rec or not fid_str or rec.get('Signature', 'REFR') != 'REFR':
-            continue
-        tgt = get_formid(rec, 'XTEL.Door')
-        src_fid = get_formid({'FormID': fid_str}, 'FormID') if tgt else 0
-        if src_fid:
-            door_xtel_target[src_fid] = tgt
-    return door_xtel_target
-
-
 def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
     """Phase 4a: generate navmeshes, then the three ordered post-passes.
 
@@ -387,6 +373,8 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
     _mi = getattr(st.ctx, 'master_index', None) if st.ctx else None
     _mx = getattr(st.ctx, 'master_export', None) if st.ctx else None
     master_navms = navm_pool.master_navm_grid(_mx, _mi)
+    use_navmesh_pins(os.path.basename(st.output_path),
+                     os.path.basename(str(assets_for(export_dir))))
     st.navm_cache = navm_pool.precompute_navmeshes(
         st.by_type, st.writer, st.base_model_by_fid, st.door_fids,
         collision_cache=navm_pool.collision_cache_chain(export_dir),
@@ -405,8 +393,7 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
 
     from .navmesh.split import split_disconnected_interiors
     _t_sp = time.time()
-    n_split = split_disconnected_interiors(
-        st.navm_cache, st.writer, _door_xtel_targets(st)) if st.navm_cache else 0
+    n_split = split_disconnected_interiors(st.navm_cache, st.writer) if st.navm_cache else 0
     print(f"    Interior split: {time.time() - _t_sp:.1f}s")
     if n_split:
         print(f"  Navmesh split: {n_split} interior meshes split into "

@@ -25,6 +25,9 @@ from asset_convert.collision.collision_winding import (
     INVERTED_FLOOR_FLIPS,
     repair_inverted_floors,
 )
+from asset_convert.collision.collision_original import (
+    original_tris,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -574,7 +577,8 @@ def _rebuild_mesh_collision(rb, target_node):
     authored_normals = _normals_in_body_frame(rb, authored_normals)
     tris = _bake_body_transform_into_tris(rb, tris)
     tris, n_flipped = repair_inverted_floors(
-        tris, _visual_tri_soup(target_node), groups, authored_normals)
+        tris, _visual_tri_soup(target_node), groups, authored_normals,
+        original_tris(_visual_tri_soup))
     if n_flipped:
         INVERTED_FLOOR_FLIPS[0] += n_flipped
     mopp = build_cms_collision(tris, materials, NifFormat)

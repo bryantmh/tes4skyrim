@@ -3,9 +3,8 @@
 # wants him taken to the Lovers' shrine on the causeway (30). Nedim won't go out without his shirt; found ("I found
 # it." 1) he follows (40). Within 650 of the shrine (TR_m2_q_A9_2_NedimScript) his greeting logs 50; Rilam pays (60,
 # "I'll take the hackle-lo." 10).
-# Position and PositionCell stand in for the player's travel, the escort's too: the Lovers' shrine stands on a navmesh
-# island the city's mesh does not reach, so `walk` finds no path. Nedim follows on his own. Refs carry TR_Mainland's
-# slot 09: 09EB0978 the shirt, 09DC6D19 the house door.
+# The player walks the escort and Nedim follows on his own; pinned navmesh carries the causeway to the Lovers' shrine.
+# Refs carry TR_Mainland's slot 09: 09EB0978 the shirt, 09DC6D19 the house door.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_nm_scout_done --timeout 3600
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -58,8 +57,32 @@ case nm_drunk_shrine
 activate 09DC6D19
 until 600 GetPCCell "Necrom" == 1
 wait 120
-run
-player->Position 340564 -80300 1300 0
+# Nedim follows, so the player walks him through Necrom to the causeway, then steers Olmu's
+# authored route (TR_m2_q_29_OlmuTravel) over it to the shrine, stepping round the signpost at the fork.
+walk 354301 -85000 986
+until 900 "TR_m2_Nedim Fareloth"->GetDistance player < 600
+walk 352813 -84994 1054
+walk 350021 -84975 1601
+until 900 "TR_m2_Nedim Fareloth"->GetDistance player < 600
+walk 347493 -84988 1601
+walk 345369 -84992 1601
+until 900 "TR_m2_Nedim Fareloth"->GetDistance player < 600
+steer 344394 -84981 1581
+steer 344000 -84990 1490
+steer 343500 -84990 1357
+steer 342800 -84990 1299
+steer 342300 -84990 1288
+until 900 "TR_m2_Nedim Fareloth"->GetDistance player < 600
+steer 341500 -84990 1280
+steer 340764 -85006 1242
+steer 339976 -84990 1256
+steer 339647 -84804 1296
+until 900 "TR_m2_Nedim Fareloth"->GetDistance player < 600
+steer 339900 -84400 1366
+steer 339960 -83746 1376
+steer 340195 -82951 1327
+# Straight down the slope to the shrine: the travel package heads off the hill to the shore below.
+steer 340528 -80600 1135
 until 3600 "TR_m2_Nedim Fareloth".controlQ == 10
 talk TR_m2_Nedim Fareloth
 expect GetJournalIndex TR_m2_Nm_Drunk == 50

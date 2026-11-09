@@ -55,16 +55,19 @@ def _has_collision(export):
 
 
 def _names():
-    """Every plugin name to consider: registered ones plus loose folders.
+    """Every plugin name to consider: registered ones plus loose plugin folders.
 
-    A registered mod's plugins are nested, so listing `export/` alone shows
-    the mod FOLDER and never the ESM inside it.
+    A registered mod's folder is never offered: pins save under the name
+    picked here, and they key on the plugin, not the folder.
+    See: docs/commentary/tes5_import_navmesh.md#pins-key-on-the-plugin
     """
     out = set(os.listdir(EXPORT_ROOT) if os.path.isdir(EXPORT_ROOT) else [])
     try:
-        out.update(source_registry.plugins(EXPORT_ROOT))
+        mods = source_registry.plugins(EXPORT_ROOT)
     except (OSError, ValueError):
-        pass
+        mods = []
+    out -= {source_registry.asset_root_name(EXPORT_ROOT, p) for p in mods}
+    out.update(mods)
     return sorted(out, key=str.lower)
 
 

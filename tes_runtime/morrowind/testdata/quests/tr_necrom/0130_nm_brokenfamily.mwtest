@@ -14,6 +14,8 @@ player->PositionCell 5277 4800 14535 0 "Sadalvel Ancestral Tomb"
 until 600 "TR_m2_Velyn Alari"->GetDistance player < 600
 wait 120
 talk TR_m2_Velyn Alari
+# His background names his brother, which teaches "Adren Alari".
+ask Background
 ask Adren Alari
 choose 2
 expect GetJournalIndex TR_m2_Nm_BrokenFamily == 10

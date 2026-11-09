@@ -2,7 +2,7 @@
 # someone in Ranyon-ruhn spat at the Temple priest Ratagos. Ratagos, at disposition 80, names Dilnar Llenim (20);
 # Dilnar, reminded he dishonors Mithras (Choice 1), writes an apology and pays 100 drakes (30); Ratagos takes both
 # (Choice 1: 40); Nevrile rewards the player (50, +5 reputation).
-# PositionCell stands in for the travel.
+# PositionCell stands in for the travel; Dilnar wanders his house, so the player stands by him.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ht_el2_done --timeout 3600
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -47,8 +47,16 @@ end
 case ht_mi2_dilnar
 run
 player->PositionCell 4211 2750 16010 0 "Ranyon-ruhn, Dilnar Llenim's House"
-until 600 "TR_m1_Dilnar_Llenim"->GetDistance player < 600
+until 600 "TR_m1_Dilnar_Llenim"->GetDistance player < 4000
 wait 120
+run
+set TestResult to ( "TR_m1_Dilnar_Llenim"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "TR_m1_Dilnar_Llenim"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "TR_m1_Dilnar_Llenim"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 300 "TR_m1_Dilnar_Llenim"->GetDistance player < 400
 talk TR_m1_Dilnar_Llenim
 ask offense to the Temple
 choose 1

@@ -3,7 +3,8 @@
 # force-greets, asks for help against the grahls, and follows the player once
 # all eight are dead; the castle door opens only with him beside the player.
 # Dulk in the Throne Room clears the Rieklings, and Korst rewards the player.
-# Console kills stand in for the player's fights, PositionCell for the walks;
+# Console kills stand in for the player's fights; Krish is led to the castle
+# door on foot, other trips use PositionCell;
 # ref FormIDs carry Bloodmoon.esm's slot 06.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from bm_karstaag
 # See docs/commentary/headless_testing.md#quest-runs
@@ -54,15 +55,46 @@ player->SetPos z TestResult
 until 600 MenuMode == 1
 expect GetJournalIndex BM_FrostGiant1 == 80
 bye
-run
-player->PositionCell 560 -32 -43 90 "Solstheim, Castle Karstaag, Caverns of Karstaag"
+walk -8592 2039 -717
+bye if open
+walk -8028 1534 -760
+bye if open
+until 3000 "BM_riekling_Krish_UNIQU"->GetDistance player < 600
+walk -7239 2167 -622
+bye if open
+walk -6488 3945 -498
+bye if open
+until 3000 "BM_riekling_Krish_UNIQU"->GetDistance player < 600
+walk -5080 3144 -679
+bye if open
+walk -3866 3047 -683
+bye if open
+until 3000 "BM_riekling_Krish_UNIQU"->GetDistance player < 600
+walk -2732 2192 -686
+bye if open
+walk -2639 1279 -654
+bye if open
+until 3000 "BM_riekling_Krish_UNIQU"->GetDistance player < 600
+walk -2414 20 -694
+bye if open
+walk -1726 36 -566
+bye if open
+until 3000 "BM_riekling_Krish_UNIQU"->GetDistance player < 600
+walk -822 -45 -237
+bye if open
+walk 260 -116 -154
+bye if open
+until 3000 "BM_riekling_Krish_UNIQU"->GetDistance player < 600
+walk 454 -104 -118
+bye if open
+until 3000 "BM_riekling_Krish_UNIQU"->GetDistance player < 600
 until 1200 "BM_riekling_Krish_UNIQU"->GetDistance player < 400
 activate 063B4EE9
 until 600 GetPCCell "Solstheim, Castle Karstaag, Banquet Hall" == 1
 run
 player->PositionCell 121 1300 -488 0 "Solstheim, Castle Karstaag, Throne Room"
 until 600 GetPCCell "Solstheim, Castle Karstaag, Throne Room" == 1
-until 300 "BM_riekling_Dulk_UNIQUE"->GetDistance player < 400
+approach BM_riekling_Dulk_UNIQUE
 talk BM_riekling_Dulk_UNIQUE
 ask death of the horkers
 expect GetJournalIndex BM_FrostGiant1 == 90

@@ -116,11 +116,11 @@ case storm_calisto
 until 600 GetJournalIndex A_IV_Stormwend == 90
 wait 30
 bye
-until 600 Tuniervar == 11
-until 1800 Tuniervar == 12
+until 600 Tuniervar >= 11
+until 1800 Tuniervar >= 12
 wait 30
 bye
-until 1800 Tuniervar == 13
+until 1800 Tuniervar >= 13
 wait 30
 bye
 button 0

@@ -16,7 +16,7 @@ from ..base.locations import WORLD_NAMES
 from ..base.equivalents import TES4_MARKER_FORMID_TO_SKYRIM
 from .world_falloutnv import (marker_substitute, parent_use_flags,
                               tes5_world_flags, world_map_offset)
-from .world_morrowind import is_tes3_source, lock_is_exit_only, tes3_refr_flags
+from .world_morrowind import actor_placement_z, is_tes3_source, lock_is_exit_only, tes3_refr_flags
 from .vendor_stock_morrowind import stock_owner
 from .npc_markers_morrowind import final_base, linked_ref_subrecord
 from .items import get_base_origin_shift
@@ -1124,7 +1124,7 @@ def convert_ACHR(rec: dict) -> bytes:
 
     px = get_float(rec, 'PosX')
     py = get_float(rec, 'PosY')
-    pz = get_float(rec, 'PosZ')
+    pz = actor_placement_z(get_float(rec, 'PosZ'))
     rx = _safe_angle(get_float(rec, 'RotX'))
     ry = _safe_angle(get_float(rec, 'RotY'))
     rz = _safe_angle(get_float(rec, 'RotZ'))

@@ -39,6 +39,9 @@ _CONSENSUS_MARGIN = 0.05
 #: A render face further than this many triangle-widths away is another surface.
 _MAX_MATCH_WIDTHS = 2.0
 
+#: Vertex-set quantum for matching the Morrowind original (0.5 game units, in havok).
+_ORIGINAL_QUANTUM = 0.5 / 69.9904
+
 
 def face_normal(tri):
     """Normalized face normal for a triangle given as three xyz tuples."""
@@ -54,9 +57,9 @@ def face_normal(tri):
     return nx, ny, nz
 
 
-def _vertex_key(tri):
+def _vertex_key(tri, quantum=_TWIN_QUANTUM):
     """Order-independent quantized key for a triangle's three corners."""
-    return tuple(sorted(tuple(round(c / _TWIN_QUANTUM) for c in v)
+    return tuple(sorted(tuple(round(c / quantum) for c in v)
                         for v in tri))
 
 
@@ -239,6 +242,33 @@ def _render_flips(tris, faces):
     return flip
 
 
+def _original_flips(tris, flip, original_tris):
+    """`flip` with every face that exactly matches an up-facing Morrowind original face stood up.
+
+    Morrowind collides from both sides, so its winding can only prove a
+    floor, never a ceiling: a verdict that would leave the face pointing down
+    is ignored, as is a match whose original faces disagree.
+    """
+    if not original_tris:
+        return flip
+    index = {}
+    for t in original_tris:
+        n = face_normal(t)
+        if n[0] or n[1] or n[2]:
+            index.setdefault(_vertex_key(t, _ORIGINAL_QUANTUM), []).append(n)
+    out = set(flip)
+    for i, t in enumerate(tris):
+        n = face_normal(t)
+        dots = [n[0]*o[0] + n[1]*o[1] + n[2]*o[2]
+                for o in index.get(_vertex_key(t, _ORIGINAL_QUANTUM), ())]
+        verdicts = {d < 0 for d in dots if abs(d) > 0.5}
+        if len(verdicts) == 1 and abs(n[2]) > 0.5:
+            invert = verdicts.pop()
+            if (n[2] < 0) == invert:
+                (out.add if invert else out.discard)(i)
+    return out
+
+
 def _rewound(tris, flip):
     """`(tris, n)` with every index in `flip` reversed; the input when empty."""
     if not flip:
@@ -249,12 +279,13 @@ def _rewound(tris, flip):
 
 
 def repair_inverted_floors(tris, visual_tris=None, groups=None,
-                           authored_normals=None):
+                           authored_normals=None, original_tris=None):
     """Rewind collision triangles wound backwards; `(repaired_tris, n_flipped)`.
 
     Step 0 (the authored normal) is ungated; the render-mesh repair is gated
     per plugin except for FO3/FNV sources, and supersedes step 0 where it
-    reaches a verdict.  `groups` is accepted for call compatibility only.
+    reaches a verdict; a face matching `original_tris` (the Morrowind
+    original) takes its facing over both.  `groups` is for call compatibility.
     See: docs/commentary/asset_convert_collision.md#morroblivion-collision-is-copied-render
     See: docs/commentary/asset_convert_falloutnv.md#two-sided-welding
     """
@@ -268,4 +299,4 @@ def repair_inverted_floors(tris, visual_tris=None, groups=None,
     faces = _render_faces(visual_tris)
     if faces and _render_states_a_floor(faces):
         flip = _render_flips(tris, faces)
-    return _rewound(tris, flip)
+    return _rewound(tris, _original_flips(tris, flip, original_tris))

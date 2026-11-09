@@ -26,7 +26,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from tes5_import.navmesh import corridor_clean, params
+from tes5_import.navmesh import clean_validate, params
 
 GRID = 128.0
 CHOKE_MIN_WIDTH = 48.0      # half a doorway
@@ -405,7 +405,7 @@ def shape_stats(verts, tris):
     bad = []
     small = 0
     for tri in tris:
-        bad.append(corridor_clean._badness(verts, tri))
+        bad.append(clean_validate.badness(verts, tri))
         p, q, r = (verts[k] for k in tri)
         area = abs((q[0] - p[0]) * (r[1] - p[1])
                    - (q[1] - p[1]) * (r[0] - p[0])) * 0.5
@@ -425,7 +425,7 @@ def measure(verts, tris, cell, want_overlaps=True):
     """Every invariant for one cell, as a dict."""
     surf = Surface(verts, tris)
     gaps = walked_gaps(surf, cell)
-    comps = sorted((len(c) for c in corridor_clean.components(tris)),
+    comps = sorted((len(c) for c in clean_validate.components(tris)),
                    reverse=True)
     p50, p90, over, small = shape_stats(verts, tris)
     ovl = count_overlaps(verts, tris)[0] if want_overlaps else -1

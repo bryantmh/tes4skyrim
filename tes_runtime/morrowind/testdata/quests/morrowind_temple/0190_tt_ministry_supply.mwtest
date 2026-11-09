@@ -46,7 +46,7 @@ end
 case tt_supply_deliver
 run
 player->Position 39815 154250 929 0
-until 600 "sendus sathis"->GetDistance player < 600
+until 600 "sendus sathis"->GetDistance player < 4000
 wait 60
 talk sendus sathis
 ask food and drink

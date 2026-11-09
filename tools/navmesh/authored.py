@@ -45,7 +45,7 @@ def cell_editor_ids(path):
     return out
 
 
-def _meshes_by_cell(path):
+def meshes_by_cell(path):
     """`{cell FormID: [NavMesh]}` for every NAVM in the file."""
     with open(path, 'rb') as fh:
         data = fh.read()
@@ -109,7 +109,7 @@ def load_authored_full(path, cell_name):
     fids = [f for f, e in names.items() if e.lower() == want]
     if not fids:
         return [], [], []
-    by_cell = _meshes_by_cell(path)
+    by_cell = meshes_by_cell(path)
     meshes = [m for f in fids for m in by_cell.get(f, [])]
     verts, tris = _as_arrays(meshes)
     return verts, tris, door_triangles(meshes)
@@ -126,15 +126,26 @@ def load_authored(path, cell_name):
     fids = [f for f, e in names.items() if e.lower() == want]
     if not fids:
         return [], []
-    by_cell = _meshes_by_cell(path)
+    by_cell = meshes_by_cell(path)
     meshes = [m for f in fids for m in by_cell.get(f, [])]
     return _as_arrays(meshes)
+
+
+def navm_arrays(path, cell=None):
+    """`{NAVM FormID: (verts, tris)}` of the file's navmeshes, only those whose cell's low 24 bits are `cell`
+    when given (exterior NAVMs never match)."""
+    out = {}
+    for meshes in meshes_by_cell(path).values():
+        for nm in meshes:
+            if nm.tris and (cell is None or (not nm.is_exterior and nm.cell & 0xFFFFFF == cell)):
+                out[nm.formid] = _as_arrays([nm])
+    return out
 
 
 def _report(path, cell):
     """Print the authored triangle/vertex counts for one cell or all of them."""
     names = cell_editor_ids(path)
-    by_cell = _meshes_by_cell(path)
+    by_cell = meshes_by_cell(path)
     rows = []
     for fid, meshes in by_cell.items():
         eid = names.get(fid, '%08X' % fid)

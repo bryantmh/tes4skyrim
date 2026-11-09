@@ -15,6 +15,9 @@ until 900 Zwergenvar == 10
 until 300 MenuMode == 1
 wait 60
 bye
+# In the tower VerratMarker01 gives Brutus 8 game seconds to greet before the
+# Gargart message: slower from here through verrat_brutus.
+pace 5
 until 600 GetJournalIndex A_V_KanzlerVerrat == 1
 until 600 GetPCCell "Stormwend Tower" == 1
 end
@@ -22,6 +25,7 @@ end
 # Brutus greets the player himself, asks for his stones, and sends the
 # player to Gargart.
 case verrat_brutus
+pace 5
 run
 until 600 MenuMode == 1
 wait 60

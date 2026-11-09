@@ -13,7 +13,7 @@
 case tr_kill_goblins
 run
 player->PositionCell -116 483 -684 0 "Mournhold Temple: Reception Area"
-until 600 "fedris hler"->GetDistance player < 400
+until 600 "fedris hler"->GetDistance player < 4000
 talk fedris hler
 ask service to our Lady
 ask matters to discuss
@@ -42,7 +42,7 @@ until 600 GetDeadCount "armion" >= 1
 until 600 GetDeadCount "yarnar" >= 1
 run
 player->PositionCell -116 483 -684 0 "Mournhold Temple: Reception Area"
-until 600 "fedris hler"->GetDistance player < 400
+until 600 "fedris hler"->GetDistance player < 4000
 talk fedris hler
 ask goblin army
 expect GetJournalIndex TR_KillGoblins == 100

@@ -13,7 +13,8 @@
 # tar he lights the blade (80), and Almalexia sees it reforged (100).
 # Torasa's own script (MuseumScript) offers an artifact's topic once she sees it
 # in the player's inventory, so each visit waits for it to bind. The player
-# stands beside each wandering NPC, read off its position. Ref FormIDs
+# stands beside each wandering NPC, read off its position; at test speed the NPC
+# can walk on before the check, so it asks only for the same room. Ref FormIDs
 # carry Tribunal.esm's slot 06 and Morrowind.esm's 05.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_missing_hand --timeout 2400
 # See docs/commentary/headless_testing.md#quest-runs
@@ -41,7 +42,9 @@ player->SetPos x TestResult
 set TestResult to ( "barenziah"->GetPos y )
 set TestResult to ( TestResult + 100 )
 player->SetPos y TestResult
-until 600 "barenziah"->GetDistance player < 400
+set TestResult to ( ( "barenziah"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "barenziah"->GetDistance player < 2000
 talk barenziah
 ask pieces of the blade
 expect GetJournalIndex TR_Blade == 30
@@ -55,7 +58,9 @@ player->SetPos x TestResult
 set TestResult to ( "karrod"->GetPos y )
 set TestResult to ( TestResult + 100 )
 player->SetPos y TestResult
-until 600 "karrod"->GetDistance player < 400
+set TestResult to ( ( "karrod"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "karrod"->GetDistance player < 2000
 talk karrod
 ask pieces of the blade
 expect GetJournalIndex TR_Blade == 35
@@ -64,19 +69,18 @@ bye
 run
 player->PositionCell 4388 -2402 14640 0 "Mamaea, Shrine of Pitted Dreams"
 until 300 GetPCCell "Mamaea, Shrine of Pitted Dreams" == 1
-wait 300
+# The dreamer priest beside the blade attacks on arrival; the player fights back and takes the blade
+# at once, before a weaponless attacker can pick it up off the altar.
+defend
+wait 30
 activate 0535214A
 until 300 player->GetItemCount "dagger_fang_unique" == 1
 run
 player->PositionCell 1 211 -110 0 "Mournhold, Museum of Artifacts"
 until 300 GetPCCell "Mournhold, Museum of Artifacts" == 1
 wait 300
-set TestResult to ( "Torasa Aram"->GetPos x )
-player->SetPos x TestResult
-set TestResult to ( "Torasa Aram"->GetPos y )
-set TestResult to ( TestResult + 100 )
-player->SetPos y TestResult
-until 600 "Torasa Aram"->GetDistance player < 400
+# Torasa's ref (Tribunal slot 06): approach reaches her wherever she stands.
+approach 06D497DB
 talk Torasa Aram
 ask pieces of the blade
 ask one piece
@@ -99,7 +103,9 @@ player->SetPos x TestResult
 set TestResult to ( "yagak gro-gluk"->GetPos y )
 set TestResult to ( TestResult + 100 )
 player->SetPos y TestResult
-until 600 "yagak gro-gluk"->GetDistance player < 400
+set TestResult to ( ( "yagak gro-gluk"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "yagak gro-gluk"->GetDistance player < 2000
 talk yagak gro-gluk
 ask Dwemer Battle Shield
 expect GetJournalIndex TR_Blade == 50
@@ -113,7 +119,9 @@ player->SetPos x TestResult
 set TestResult to ( "yagak gro-gluk"->GetPos y )
 set TestResult to ( TestResult + 100 )
 player->SetPos y TestResult
-until 600 "yagak gro-gluk"->GetDistance player < 400
+set TestResult to ( ( "yagak gro-gluk"->GetPos z ) + 20 )
+player->SetPos z TestResult
+until 600 "yagak gro-gluk"->GetDistance player < 2000
 talk yagak gro-gluk
 ask forge the blade
 expect GetJournalIndex TR_Blade == 65

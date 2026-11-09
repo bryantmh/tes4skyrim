@@ -220,6 +220,15 @@ constexpr std::size_t kOffQuestCurrentStage = 0x228;
 // See: docs/commentary/morrowind_runtime.md#activation
 constexpr std::uint64_t kNpcVtable = 195816;
 
+// The hello evaluator (0x6f16d0 on 1.6.1170, run every AI update): when an
+// actor whose package allows "Hellos to player" notices the player within
+// 150, it calls the hello approach (0x66b410; (Actor*, int)) at +0x2bd, which
+// puts a created Follow package aimed at the player on it. That package has
+// no end of its own: only the hello line being spoken ends it.
+constexpr std::uint64_t kHelloEvaluator = 39632;
+constexpr std::uint64_t kHelloApproach = 37367;
+constexpr std::size_t kHelloEvaluatorScan = 0x400;
+
 // The Activate slot's byte offset in that vtable, read off the dispatch
 // `mov rcx,[ref+0x40] / mov rax,[rcx] / call [rax+0x1b8]`.
 constexpr std::size_t kActivateSlot = 0x1b8;
@@ -654,6 +663,8 @@ constexpr std::uint64_t kActorEvaluatePackage = 54672;
 constexpr std::uint64_t kActorHasLos = 54697;
 constexpr std::uint64_t kActorIsDetectedBy = 54706;
 constexpr std::uint64_t kActorCombatTarget = 54680;
+// TEMP (follower-freeze diag): int Actor.GetCombatState() 0x9e84e0 on 1.6.1170.
+constexpr std::uint64_t kActorCombatState = 54679;
 constexpr std::uint64_t kActorWeaponDrawn = 54957;
 constexpr std::uint64_t kActorIsSneaking = 54953;
 constexpr std::uint64_t kActorIsRunning = 54952;
@@ -662,11 +673,13 @@ constexpr std::uint64_t kRefDropObject = 56157;
 constexpr std::uint64_t kWeatherCurrent = 56803;
 constexpr std::uint64_t kWeatherClassification = 56775;
 
-// The two weather setters, found at their Weather registrations the same way:
+// The weather setters, found at their Weather registrations the same way:
+//   void Weather.ForceActive(bool override)                 0xa4b1f0  [0x9ec1b0]
 //   void Weather.SetActive(bool override, bool accelerate)  0xa4b210  [0x9ec1d0]
 //   void Weather.ReleaseOverride()                          0xa4c630  [0x9ed5f0]  global
 // Live-image RVAs (1.6.1170), GOG 1.6.659 in brackets.
 // See: docs/commentary/morrowind_runtime.md#region-weather
+constexpr std::uint64_t kWeatherForceActive = 56773;
 constexpr std::uint64_t kWeatherSetActive = 56774;
 constexpr std::uint64_t kWeatherReleaseOverride = 56807;
 
@@ -760,6 +773,22 @@ constexpr std::uint64_t kActorIsDead = 54705;
 // See: docs/commentary/headless_testing.md#speed
 constexpr std::uint64_t kFrameTimer = 410196;
 constexpr std::size_t kOffFrameClockMs = 0x20;
+// +0x10 the fixed game step per frame in MILLISECONDS, 1000/iFPSClamp, 0
+// unclamped: set once from the INI (1.6.1170 0x642ff6) and read by the timer
+// update (0xcc9538) every frame, which adds it to the ms clock and sets the
+// frame's delta to step * 0.001.
+constexpr std::size_t kOffFrameStep = 0x10;
+
+// The game-settings collection (a pointer; 0x30fd6f0 on 1.6.1170, as SKSE's
+// g_gameSettingCollection): its name -> Setting map sits at +0x118 (buckets
+// +0x10, bucket count +0x08; entry {next, name, Setting*}); a Setting holds its
+// value at +0x08 and its name at +0x10.
+constexpr std::uint64_t kGameSettings = 400782;
+constexpr std::size_t kOffSettingsMap = 0x118;
+constexpr std::size_t kOffMapBucketCount = 0x08;
+constexpr std::size_t kOffMapBuckets = 0x10;
+constexpr std::size_t kOffSettingValue = 0x08;
+constexpr std::size_t kOffSettingName = 0x10;
 
 // Actor.Kill(Actor akKiller) (0x9e90c0 on 1.6.1170), the r9 of its one
 // registration beside 'Kill', between 54719 and ModActorValue 54721.
@@ -852,6 +881,8 @@ constexpr std::size_t kVrOffTrainingMenuSkill = 0x50;
 //        (skse64's PlayerSkills::Data levelPoints, levelPointsMax).
 // See: docs/commentary/morrowind_runtime.md#skill-tooltips
 constexpr std::uint8_t kFormTypeNpc = 0x2B;
+// TESObjectDOOR's form type (skse64 GameForms.h kFormType_Door).
+constexpr std::uint8_t kFormTypeDoor = 0x1D;
 constexpr std::size_t kOffNpcSexFlags = 0x38;
 constexpr std::size_t kAdvanceSkillLoadAt = 0x10;
 constexpr std::size_t kLevelPoints = 0x00;
@@ -877,6 +908,10 @@ constexpr std::uint64_t kGameSetPlayerAIDriven = 55577;
 // void Game.ForceThirdPerson() (0xa12630 on 1.6.1170), found the same way: an
 // AI-driven player in first person never walks.
 constexpr std::uint64_t kGameForceThirdPerson = 55565;
+// void Game.ForceFirstPerson() (0xa12620 on 1.6.1170), registered beside its
+// name the same way: a steered player moves along its own facing only in first
+// person, as third person turns it to the camera.
+constexpr std::uint64_t kGameForceFirstPerson = 55564;
 constexpr std::uint64_t kGameDisableControls = 55454;
 constexpr std::uint64_t kGameEnableControls = 55455;
 
@@ -1014,6 +1049,29 @@ constexpr std::size_t kOffRefExtraList = 0x70;
 constexpr std::uint64_t kExtraListInventoryChanges = 11717;
 constexpr std::uint64_t kExtraListSoulLevel = 11707;
 constexpr std::uint64_t kExtraListCount = 11704;
+// The Follow procedure's spacing (0x4161f0 on 1.6.1170): float (follower,
+// leader), the room the leader's earlier followers take up -- the sum of
+// neighbouring bound radii plus 100 per place in the leader's ExtraFollower
+// list -- added to the package's radii. Called by the procedure's update
+// (0x468f10, call at +0x6f8) and an actor update (0x6f50a0, call at +0x580).
+constexpr std::uint64_t kFollowSpacing = 26378;
+constexpr std::uint64_t kFollowProcedureUpdate = 28644;
+constexpr std::size_t kFollowProcedureScan = 0x800;
+constexpr std::uint64_t kActorFollowUpdate = 39639;
+constexpr std::size_t kActorFollowScan = 0x700;
+// TEMP (follower-freeze diag): ExtraDataList's ExtraFollower (type 0x1D;
+// 0x15d770 on 1.6.1170): entries {handle, float} at +0x10, count at +0x20.
+constexpr std::uint64_t kExtraListFollower = 11651;
+// A door's lock. TESObjectREFR::GetLock (20223, 0x2fad60 on 1.6.1170) returns the ref's own ExtraLock
+// (type 0x2A, REFR_LOCK* at +0x10) and, when it has none, its LINKED door's (via ExtraTeleport 0x2B);
+// TESObjectDOOR::Activate (0x27da50) refuses the player while that lock's flags (+0x10) carry bit 0.
+// ExtraDataList::GetByType(list, type) (12329, 0x179250) finds the ref's own.
+constexpr std::uint64_t kExtraListGetByType = 12329;
+constexpr std::uint8_t kExtraLock = 0x2A;
+constexpr std::size_t kOffExtraLockData = 0x10;
+constexpr std::uint64_t kRefGetLock = 20223;
+constexpr std::size_t kOffLockFlags = 0x10;
+constexpr std::uint8_t kLockLocked = 0x01;
 constexpr std::size_t kOffEntryObject = 0x0;
 constexpr std::size_t kOffEntryExtraLists = 0x8;
 constexpr std::size_t kRefRemoveItemSlot = 86;
@@ -1111,6 +1169,13 @@ constexpr std::uint32_t kControllerNoSim = 1u << 17;
 // MovementHandler writes x at +0 and y at +4 -- on 1.7.104 too.
 constexpr std::size_t kOffPlayerControlsMoveX = 0x24;
 constexpr std::size_t kOffPlayerControlsMoveY = 0x28;
+// PlayerControlsData.autoMove, the Auto-Move key's toggle: AutoMoveHandler's
+// ProcessButton (0x79f360 on 1.6.1170) flips the byte at data+0x24, the data
+// being this+0x24 as above.
+constexpr std::size_t kOffPlayerControlsAutoMove = 0x48;
+// PlayerControlsData.running, the Always Run toggle: ToggleRunHandler's
+// ProcessButton (0x79f980 on 1.6.1170) flips the byte at data+0x25.
+constexpr std::size_t kOffPlayerControlsRunning = 0x49;
 
 // An actor's active effects, as Actor.HasMagicEffect (0x9e76b0) walks them on
 // 1.6.1170 and 1.7.104 alike: the MagicTarget base at actor+0xA0, its vtable

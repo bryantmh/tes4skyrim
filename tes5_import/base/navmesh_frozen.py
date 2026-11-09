@@ -13,6 +13,7 @@ nothing needs refilling, and the result is the human's mesh.
 See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
 """
 
+import numpy as np
 from shapely import STRtree, constrained_delaunay_triangles, get_parts
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
@@ -20,7 +21,7 @@ from shapely.ops import unary_union
 from tes5_import.navmesh.corridor import ccw_in_plan
 
 #: Bump when `apply_frozen` builds differently, so every patched cell re-caches.
-FROZEN_VERSION = 4
+FROZEN_VERSION = 5
 
 #: Plan area (u^2) below which an overlap or a refill piece is float noise.
 AREA_EPS = 1.0
@@ -358,6 +359,48 @@ def _open_edges(tris):
     return out
 
 
+def _on_edge(verts, a, b, opp, used):
+    """Vertices of `used` lying inside edge ab (SNAP_TOL in plan, STOREY_BAND in height), ordered along it;
+    a vertex standing on `opp` is not one, as fanning at it would make a flat triangle."""
+    pa, pb, po = verts[a], verts[b], verts[opp]
+    dx, dy, dz = pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]
+    span2 = dx * dx + dy * dy
+    if span2 <= 1e-9:
+        return []
+    p = used[1]
+    s = ((p[:, 0] - pa[0]) * dx + (p[:, 1] - pa[1]) * dy) / span2
+    off = np.abs((p[:, 0] - pa[0]) * dy - (p[:, 1] - pa[1]) * dx) / np.sqrt(span2)
+    gap = np.abs(p[:, 2] - (pa[2] + s * dz))
+    clear = np.hypot(p[:, 0] - po[0], p[:, 1] - po[1]) > SNAP_TOL
+    hit = (s > 1e-6) & (s < 1 - 1e-6) & (off <= SNAP_TOL) & (gap <= STOREY_BAND) & clear
+    return [int(used[0][i]) for i in np.argsort(s) if hit[i] and used[0][i] not in (a, b)]
+
+
+def close_t_junctions(verts, tris):
+    """`tris` with every open edge that a used vertex lies on fanned at it; new pieces appended.
+
+    A vertex part-way along another triangle's edge leaves the two sides
+    unlinked, and the engine does not path across. Nothing moves; the
+    triangle keeps its index as the first piece, so ledge indices hold.
+    See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
+    """
+    out = [tuple(t) for t in tris]
+    ids = np.array(sorted({v for t in out for v in t}), dtype=int)
+    used = (ids, np.asarray([verts[v] for v in ids], dtype=float).reshape(-1, 3))
+    counts = _edge_counts(out)
+    for i in range(len(out)):
+        for k in range(3):
+            a, b, opp = out[i][k], out[i][(k + 1) % 3], out[i][(k + 2) % 3]
+            mid = _on_edge(verts, a, b, opp, used) if counts.get(frozenset((a, b))) == 1 else []
+            if mid:
+                seq = [a] + mid + [b]
+                pieces = [(seq[m], seq[m + 1], opp) for m in range(len(seq) - 1)]
+                out[i] = pieces[0]
+                out += pieces[1:]
+                break
+    return out
+
+
 def centroid(pts):
     """Centroid of a triangle given as three points."""
     return tuple(sum(p[k] for p in pts) / 3.0 for k in range(3))
@@ -444,5 +487,5 @@ def apply_frozen(verts, tris, ledges, frozen, voids, links=()):
     out = kept_t + _stitch(pool.verts, frozen_t, kept_t, refill_t) + refill_t
     ledges = _carry_ledges(pool.verts, out, len(kept_t), keep, before, ledges,
                            links)
-    new_verts, new_tris = drop_unused_verts(pool.verts, out)
+    new_verts, new_tris = drop_unused_verts(pool.verts, close_t_junctions(pool.verts, out))
     return new_verts, new_tris, ledges

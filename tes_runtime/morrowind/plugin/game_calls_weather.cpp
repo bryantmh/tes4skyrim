@@ -29,10 +29,12 @@ namespace {
 
 using SetActiveFn = void (*)(void* vm, std::uint32_t stack, void* weather,
                              bool override, bool accelerate);
+using ForceActiveFn = void (*)(void* vm, std::uint32_t stack, void* weather, bool override);
 using ReleaseOverrideFn = void (*)(void* vm, std::uint32_t stack, void* tag);
 // Weather.GetCurrentWeather() is global, so its self is a tag.
 using CurrentWeatherFn = void* (*)(void* vm, std::uint32_t stack, void* tag);
 SetActiveFn g_setActive = nullptr;
+ForceActiveFn g_forceActive = nullptr;
 ReleaseOverrideFn g_releaseOverride = nullptr;
 CurrentWeatherFn g_currentWeather = nullptr;
 
@@ -111,23 +113,31 @@ void ExpireOnClock() {
     Log("weather: the set weathers expire");
 }
 
-void Apply(int type, bool hold) {
+// A forced weather shows at once, as OpenMW's forceWeather; otherwise the sky
+// transitions to it once any transition under way ends.
+void Apply(int type, bool hold, bool force) {
     void* weather = WeatherForm(type);
-    if (!weather || !g_setActive) {
+    if (!weather || !g_setActive || !g_forceActive) {
         Log("weather: no weather form for type %d", type);
         return;
     }
-    g_setActive(PapyrusVm(), 0, weather, hold, false);
-    Log("weather: type %d now%s", type, hold ? ", held" : "");
+    if (force) {
+        g_forceActive(PapyrusVm(), 0, weather, hold);
+    } else {
+        g_setActive(PapyrusVm(), 0, weather, hold, false);
+    }
+    Log("weather: type %d %s%s", type, force ? "forced" : "now", hold ? ", held" : "");
 }
 
 // Game thread: the player's region and what is set for it, onto the sky. A
 // held weather is released on the way out of its region, and once after a
-// load, which may have carried one out with it.
+// load, which may have carried one out with it. Arriving in a region forces
+// its weather (OpenMW's playerTeleported), as does a load that undid it.
 void UpdateWeather() {
     ExpireOnClock();
     const std::string region = PlayerRegion();
-    if (!g_sampled || region != g_region) {
+    const bool arrived = !g_sampled || region != g_region;
+    if (arrived) {
         const bool held = !g_sampled || HasChances(g_region);
         if (held && !HasChances(region) && g_releaseOverride) {
             g_releaseOverride(PapyrusVm(), 0, nullptr);
@@ -143,9 +153,8 @@ void UpdateWeather() {
         want = Roll(region);
         State().SetVar(kSet, region, static_cast<float>(want));
     }
-    // A weather set while a cell loads is undone by the load's own, so the sky is checked too.
     if (want < 0 || (want == g_applied && CurrentType() == want)) return;
-    Apply(want, hold);
+    Apply(want, hold, arrived || want == g_applied);
     g_applied = want;
 }
 
@@ -197,6 +206,7 @@ void ResetWeather() {
 
 void InstallWeatherCalls(GameHooks& hooks) {
     g_setActive = Native<SetActiveFn>("Weather.SetActive", ids::kWeatherSetActive);
+    g_forceActive = Native<ForceActiveFn>("Weather.ForceActive", ids::kWeatherForceActive);
     g_releaseOverride = Native<ReleaseOverrideFn>("Weather.ReleaseOverride",
                                                   ids::kWeatherReleaseOverride);
     g_currentWeather = Native<CurrentWeatherFn>("Weather.GetCurrentWeather",

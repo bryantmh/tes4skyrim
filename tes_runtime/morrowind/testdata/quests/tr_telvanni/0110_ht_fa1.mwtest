@@ -20,7 +20,7 @@ end
 
 case ht_fa1_faruna
 run
-player->PositionCell 7390 4300 16170 0 "Tel Oren, Tower"
+player->PositionCell 7390 4400 16170 0 "Tel Oren, Tower"
 until 600 "TR_m1_T_Faruna"->GetDistance player < 600
 wait 120
 talk TR_m1_T_Faruna

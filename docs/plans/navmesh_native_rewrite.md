@@ -2,8 +2,9 @@
 
 **Goal.** The whole per-cell corridor build runs in C++. One process runs every
 cell on a thread pool and shares one read-only copy of the collision data. The
-output must stay bit-identical to the Python reference, which stays switchable
-(`TES_NAVMESH_IMPL=python`) until it is removed.
+output must stay bit-identical to the Python reference, which stayed switchable
+(`TES_NAVMESH_IMPL=python`) until it was removed
+([cell-baseline](../commentary/tes5_import_navmesh.md#cell-baseline)).
 
 **Why.** The converter runs on any mod, so every end-user navmesh build is cold.
 Kernel-by-kernel ports top out at about 5x because the remaining Python
@@ -54,7 +55,6 @@ complete (`cache_audit.init_context` loads collision, door centers and
 activators before `prepare`), so threads need no initializer. The collector
 is paused for the run, as it always was in a pool worker: with the whole
 plugin's records alive, every container burst would trip a full traversal.
-`TES_NAVMESH_IMPL=python` keeps the old process pool.
 
 ## <a id="exactness-model"></a>Exactness model
 
@@ -85,8 +85,7 @@ plugin's records alive, every container burst would trip a full traversal.
 | 7 | driver | thread pool, `pool.py` integration | **done** (`pool._pool`) |
 | 8 | NVNM packing | `_compute_water_flags`, `compute_adjacency`, `build_door_links`, `_resolve_ledge_links`, `pack_nvnm`, `lookup_grid`, NVMI center | **done** (`navm.cpp`, `from_pgrd.packed_nvnm`) |
 
-Verify with `tools/navmesh/native_ab.py` on the 8 Oblivion and 2 Nehrim
-reference cells (`--mode stress` adds obstacles, water and a split pathgrid;
-`--mode flood` the seed flood), and with `tools/navmesh/job_trace.py --ab` on
-real pipeline jobs, which compares the packed NAVM bytes
-([native-port-ab](../commentary/tes5_import_navmesh.md#native-port-ab)).
+Each stage was verified with `native_ab.py` (since deleted) on the 8 Oblivion and
+2 Nehrim reference cells and with `job_trace.py --ab` on real pipeline jobs.
+A change now is checked with `tools/navmesh/cell_baseline.py` against builds
+saved before it ([cell-baseline](../commentary/tes5_import_navmesh.md#cell-baseline)).

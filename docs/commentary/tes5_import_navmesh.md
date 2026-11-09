@@ -1053,6 +1053,49 @@ triangles span hundreds of units of depth.
 `seeding.py` is outside the cache tag: its output is the synthetic pathgrid,
 which every seeded cell's geometry hash already covers.
 
+#### <a id="door-reach"></a>An interior's navmesh reaches its doors
+
+**Code:** `navmesh/door_reach.py`, native `doorreach.cpp`, `pool.py::_emit_interior`.
+**Status: not yet confirmed in game.**
+
+A pathgrid often stops short of a door (at the foot of its stairs, or never in
+the room it opens into), and an interior with no pathgrid got no navmesh at
+all, so no actor could walk to the door and a follower could not follow
+through it. Measured on Arktwend: 321 of 403 interiors had no pathgrid; in
+Naremar the mesh ended 2,800 units short of the airship's door; the Crystal
+Hall's and Arpk's doors stood up stairs 170-270 above the mesh's end.
+
+Each interior job carries seeds: its teleport doors' positions and the XTEL
+landing points of the doors that lead into it (masters' included), one per 64
+units. A seed is first set on open floor: a door's frame stands in a wall or
+past a ledge and a landing marker floats, so it takes the nearest unblocked
+floor within 192 units in plan and 256 below. A seed with no pathgrid edge
+within 256 units in plan at its height floods a 64-unit, 8-direction lattice
+over the walkable floor, at most 3,000 nodes, and the shortest walkable path
+to a pathgrid node joins the graph, string-pulled so it keeps only its turns.
+An interior of this plugin with no pathgrid but with doors gets a synthetic
+pathgrid of everything its doors flood, keyed by the cell's own FormID, and
+builds like any other.
+
+Each lattice step is its own walk test, not seeding's `Ground::walk`, which
+exteriors keep unchanged: a sample every 16 units, each one's floor taken
+nearest half a climb above the last, and a sample in a hairline gap between
+treads nudged 4 units. Arktwend's dock stairs failed each of the coarser
+tests in turn. The fine spacing is what fits a node between a stair's rails;
+the plain `Ground` walk at 32 units stepped over treads, and its floor search
+found the dock plate running on under the stairs.
+
+A pathgrid-less flood is thinned before it is built: one node per 256-unit
+block and storey, linked to neighboring blocks where an actor walks straight
+between them, plus the string-pulled tree path wherever those links leave two
+parts of the flood apart. Unthinned, a 3,000-node graph took 149 s to build
+one cell. Thinned, it takes 8 s, and the import's navmesh stage took 20.9 s
+cold (Arktwend, 1,164 cells, 29 workers). On the same pool, the 857 cells
+that already had navmesh went from 5.3 s to 6.0 s, and the 307 new interior
+navmeshes added about 14 s. The new NAVMs moved one existing FormID: a BPTD
+was rehashed off the slot a new NAVM took first. The user accepted both the
+slowdown and that FormID move.
+
 #### <a id="exterior-water-height"></a>A watered exterior cell with no XCLW still has water
 
 **Code:** `navmesh/pool.py::_with_water`, `record_types/world.py::cell_water_height`.
@@ -1318,8 +1361,8 @@ uncovered** (was 2.5% uncovered / 2452 broken pathgrid edges with contours).
   and reports UNCOV%/BROKEN/STEEP/FLOOR/ISL/TINY/SLIV%/MICRO per cell (UNCOV
   measures the EDGE's z-range, not the chord — the generator follows the
   surface, and a long cave edge's chord cuts open air two storeys up).
-  `tools/navmesh/perf.py --cell X` cProfiles one cell's build (how the
-  shadowed()/plane_err hotspots were found).
+  (`tools/navmesh/perf.py`, which cProfiled the Python build, was deleted with
+  the Python reference: see [cell-baseline](#cell-baseline).)
 - **NVNM binary layout** (validated byte-exact against Skyrim.esm via
   `tools/navmesh/dump.py`): all arrays use U32 count prefixes; CRC of
   "PathingCell" = `0xA5E9A03C`; parent union decided by (Parent Worldspace==0)
@@ -4769,7 +4812,8 @@ cell had been re-pinned as a frozen patch, the pinned points, the welds, and
 the `pins`/`welds` parameters of both generators were deleted.
 
 **The key is plugin plus cell name.** One committable file per source plugin,
-`navmesh_pins/<plugin>.json`, keyed by cell EditorID — or, for an exterior cell,
+`navmesh_pins/<plugin>.json` (`TR_Mainland.esm`, never the mod folder — see
+[pins key on the plugin](#pins-key-on-the-plugin)). Keyed by cell EditorID — or, for an exterior cell,
 by the `"<worldspace> X Y"` grid reference cellview opens it with, since an
 exterior CELL has no EditorID. Lookup is case-insensitive: the name is one a
 human typed.
@@ -5156,9 +5200,28 @@ cells plus ~1.2 GB of job records pickled out to workers. An edit to one of the
 seven used to pay a full rebuild for zero change in output.
 
 
+### <a id="pins-key-on-the-plugin"></a>Pins key on the plugin, never its export folder
+
+**Code:** `navmesh_pins.use_plugin`, `core.navmesh_options.navmesh_plugin`.
+
+Pins used to be keyed by the folder holding the geometry cache. For an imported
+mod that holds one plugin, that folder is the mod's own (`export/Tamriel
+Rebuilt 25.08.12/`), so TR's pins were saved as `Tamriel Rebuilt 25.08.12.json`
+— a name no other machine has, and one the next TR release changes. Cellview
+offered the folder beside `TR_Mainland.esm` in its plugin list, and pins saved
+under whichever was picked.
+
+The import now names the plugin outright: `use_plugin` sets
+`TESCONV_NAVMESH_PLUGIN` (the pool workers inherit it, so no worker signature
+changes) before navmesh generation. A pin file still named for the folder, in the
+shipped or the user's pin folder, is renamed to the plugin's name on that run and
+logged `DEPRECATED`; if both exist, the plugin's file wins. Cellview no longer
+lists a registered mod's folder as a plugin.
+
 ### <a id="mixed-separators-lost-the-pins"></a>Mixed separators made every pin a no-op
 
-**Code:** `navmesh_pins.plugin_of`.
+**Code:** the removed `navmesh_pins.plugin_of`, replaced by
+[pins key on the plugin](#pins-key-on-the-plugin).
 
 Pins are looked up by plugin, and the plugin is derived from the geometry cache
 directory rather than threaded through every navmesh worker's signature. That
@@ -5215,8 +5278,37 @@ treated as unpinned and keeps its pinned geometry through an adopt.
 
 **Code:** `native/src/navgrow/` (`sampler.cpp`, `sheets.cpp`, `decimate.cpp`,
 `cull.cpp`, `refine.cpp`, `meshflip.cpp`, `welds.cpp`, `stack.cpp`,
-`geos_bind.cpp`, `trigrid.h`, `clip_area.h`, `pymath.h`), `native_loader.NATIVE`,
-`tools/navmesh/native_ab.py`, `tests/test_navmesh_native.py`.
+`geos_bind.cpp`, `trigrid.h`, `clip_area.h`, `pymath.h`),
+`tools/navmesh/cell_baseline.py`, `tests/test_navmesh_native.py`.
+
+<a id="cell-baseline"></a>**The Python reference is gone (2026-11-01).** Once
+the whole per-cell build ran natively, every Python twin of a kernel was dead
+code that only the A/B tools ran, and keeping it in step with each C++ change
+was pure cost. The `TES_NAVMESH_IMPL` / `native_loader.NATIVE` switch, the
+process pool it selected, `native_ab.py`, `perf.py`, `job_trace.py --ab` and
+nine modules (`corridor_union`, `union_sheets`, `union_cdt`, `union_geom`,
+`union_mesh`, `corridor_clean`, `clean_decimate`, `corridor_doors`,
+`door_routes`) were deleted, about 300 functions in all; the tunables the C++
+reads moved into `params.py` unchanged (99 names, every value equal). Before
+the deletion, `cell_baseline.py` saved 6 real Oblivion cells in normal, stress
+and flood modes with the old code and the same `.pyd`, and all 18 builds
+matched after it. A native change is now checked against EARLIER NATIVE
+BUILDS, never against a second implementation:
+
+- `tools/navmesh/cell_baseline.py <file> <cells>` saves the cells' builds on
+  first use and requires identical verts, tris and ledges afterwards;
+- `test_navmesh_native.py` holds golden digests of a synthetic seeded flood and
+  a synthetic corridor cell (update them only for an intended output change),
+  and still checks the native NVNM packer against the Python `pack_nvnm` the
+  Fallout NV path and `navm_patch.py` use;
+- `test_navmesh_quality.py` calls the native `decimate` and `cull_slivers`
+  kernels directly.
+
+The C++ module still exports kernels only the deleted parity code called
+(`flip2d`, `hex_refine`, `bad_welds`, `stacked_pairs`, `notch_overlaps`,
+`candidate_pairs`, `pair_gaps`, `same_surface_pieces`, `refine_land`,
+`refine_steep`, `simplify`, `union_mesh`, `levels_at`); removing those entry
+points is a C++-side cleanup.
 
 **Status: the whole per-cell corridor build is now native** -- one
 `corridor_cell` call from the collision gather to the cleaned mesh,
@@ -5266,14 +5358,14 @@ Nehrim `010024D9` went from 2.1s to 57s natively (161s in Python), and
 cell got no navmesh at all (1,014 triangles at the 160 cap). The 160 job
 sample went from 44s to 764s single-threaded.
 
-The generator is moving into C++ one kernel at a time. Every kernel keeps its
-Python original as the REFERENCE: `TES_NAVMESH_IMPL=python` (or flipping
-`native_loader.NATIVE`) runs the Python path, and `native_ab.py` builds a cell
-both ways in one process and demands identical verts, tris and ledges. "Close"
-is a failure: the output is byte-reproducible and cached, so a kernel either
-matches bit for bit or it is wrong.
+The generator moved into C++ one kernel at a time. While it did, every kernel
+kept its Python original as the REFERENCE: `TES_NAVMESH_IMPL=python` ran the
+Python path, and `native_ab.py` built a cell both ways in one process and
+demanded identical verts, tris and ledges. "Close" was a failure: the output is
+byte-reproducible and cached, so a kernel either matched bit for bit or it was
+wrong. (The references are now deleted; see [above](#cell-baseline).)
 
-Ported so far, each matching on 8 Oblivion + 2 Nehrim reference cells:
+Ported, each matching on 8 Oblivion + 2 Nehrim reference cells:
 
 | kernel | Python original | how it stays exact |
 |---|---|---|
@@ -5303,9 +5395,8 @@ anything nearer goes to GEOS. A convex-only fast path was tried and dropped:
 **An index may change, the visit order may not.** `walk_sample` in the grow
 march now reads a 32-unit fine index instead of scanning the 3x3 window of
 128-unit buckets, and breaks a distance tie by the (first window bucket,
-triangle index) the window scan would have met first. The grow kernel runs on
-BOTH paths, so a change to it is checked with `native_ab.py --baseline`
-against builds saved before the change, not against the Python path.
+triangle index) the window scan would have met first. A change like this is
+checked with `cell_baseline.py` against builds saved before the change.
 
 **Memory: the navmesh code is not where a worker's memory goes.** One cell
 build adds 5-18 MB. A pool worker's commit charge is the BLAS thread buffers

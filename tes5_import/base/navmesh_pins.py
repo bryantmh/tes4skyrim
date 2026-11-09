@@ -19,7 +19,7 @@ See: docs/commentary/tes5_import_navmesh.md#pinned-navmesh-floor
 import json
 import os
 
-from core.navmesh_options import navmesh_pins_dir
+from core.navmesh_options import navmesh_pins_dir, set_navmesh_plugin
 from tes5_import.base.navmesh_frozen import (
     FROZEN_VERSION, SNAP_TOL, STOREY_BAND, apply_frozen, centroid,
     drop_unused_verts, plane_z,
@@ -123,13 +123,24 @@ def _section(plugin, part, key):
     return got or []
 
 
-def plugin_of(geom_cache_dir):
-    """Plugin owning a `<export>/<plugin>/navmesh_geom_cache` dir, any spelling.
+def use_plugin(plugin, folder):
+    """Read `plugin`'s pins this import, renaming a file keyed by its export `folder`.
 
-    See: docs/commentary/tes5_import_navmesh.md#mixed-separators-lost-the-pins
+    See: docs/commentary/tes5_import_navmesh.md#pins-key-on-the-plugin
     """
-    flat = str(geom_cache_dir or '').replace('\\', '/').rstrip('/')
-    return flat.rsplit('/', 2)[-2] if '/' in flat else ''
+    set_navmesh_plugin(plugin)
+    if not folder or folder == plugin:
+        return
+    for where in filter(None, (PINS, user_dir())):
+        old, new = pins_path(folder, where), pins_path(plugin, where)
+        if not os.path.isfile(old):
+            continue
+        print('    DEPRECATED: navmesh pins keyed by folder %r: %s'
+              % (folder, 'ignored, %s wins' % new if os.path.isfile(new)
+                 else 'renamed to %s' % new))
+        if not os.path.isfile(new):
+            os.replace(old, new)
+    _CACHE.pop(plugin, None)
 
 
 def cell_key(cell_rec, wrld_fid=0, grid=None):

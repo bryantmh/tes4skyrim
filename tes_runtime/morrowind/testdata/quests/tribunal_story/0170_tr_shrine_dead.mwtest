@@ -39,7 +39,9 @@ console 069E7CBC.kill
 until 600 GetJournalIndex TR_ShrineDead == 50
 run
 player->PositionCell -1107 312 -226 0 "Mournhold Temple: Office of the Lord Archcanon"
-until 600 "urvel dulni"->GetDistance player < 400
+until 300 GetPCCell "Mournhold Temple: Office of the Lord Archcanon" == 1
+# He wanders the room (AiWander 512); `talk` reaches him wherever he stands.
+until 600 "urvel dulni"->GetDistance player < 3000
 talk urvel dulni
 bye
 walk 768 1600 -128
@@ -58,20 +60,55 @@ walk 3367 -2050 -97
 activate 068040CD
 until 300 GetPCCell "Old Mournhold: Temple Sewers East" == 1
 until 900 "urvel dulni"->GetDistance player < 600
+walk 6354 7683 11954
 walk 5649 10940 11938
 activate 06BE8D86
 until 300 GetPCCell "Old Mournhold: Temple Gardens" == 1
 until 900 "urvel dulni"->GetDistance player < 600
-walk 1217 -3260 13
+walk 1217 -3200 -106
 activate 067EEA5A
 until 300 GetPCCell "Old Mournhold: Temple Shrine" == 1
 until 900 "urvel dulni"->GetDistance player < 600
 walk 2000 -2300 -170
 until 900 MenuMode == 1
 bye
+# The player steps back down the approach out of Urvel's way while he walks to the shrine.
+walk 1276 -2349 -211
+wait 300
 until 1800 GetJournalIndex TR_ShrineDead == 60
-run
-player->PositionCell -1120 100 -229 0 "Mournhold Temple: Office of the Lord Archcanon"
+# Urvel follows again (dulniScript's AiFollow at 60), so the player walks the same doors back.
+walk -487 -1851 -538
+walk -446 -728 90
+until 900 "urvel dulni"->GetDistance player < 500
+activate 06221034
+until 300 GetPCCell "Old Mournhold: Temple Gardens" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk -1173 5997 -50
+until 900 "urvel dulni"->GetDistance player < 500
+activate 06411409
+until 300 GetPCCell "Old Mournhold: Temple Sewers East" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk 6869 6658 11928
+walk 2185 5854 12560
+until 900 "urvel dulni"->GetDistance player < 500
+activate 066BB68A
+until 300 GetPCCell "Old Mournhold: Temple Sewers" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk -255 -2783 -160
+until 900 "urvel dulni"->GetDistance player < 500
+activate 06EE3381
+until 300 GetPCCell "Mournhold Temple: Basement" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk -523 12 86
+until 900 "urvel dulni"->GetDistance player < 500
+activate 0624A2E4
+until 300 GetPCCell "Mournhold Temple: Hall of Ministry" == 1
+until 900 "urvel dulni"->GetDistance player < 600
+walk -500 1663 -176
+until 900 "urvel dulni"->GetDistance player < 500
+activate 066AED51
+until 300 GetPCCell "Mournhold Temple: Office of the Lord Archcanon" == 1
+walk -1120 100 -229
 until 600 "gavas drin"->GetDistance player < 400
 talk gavas drin
 ask Shrine of the Dead

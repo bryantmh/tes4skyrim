@@ -20,7 +20,8 @@ namespace tesruntime::mw {
 struct TestStep {
     enum class Kind {
         kRun, kWait, kExpect, kTalk, kAsk, kChoose, kBye, kButton, kActivate, kUntil, kPick, kClose,
-        kTake, kConsole, kPersuade, kSleep, kWalk, kFollow, kDefend, kPunch, kRest
+        kTake, kConsole, kPersuade, kSleep, kWalk, kFollow, kDefend, kPunch, kRest, kSteer, kApproach,
+        kPace
     };
     Kind kind = Kind::kRun;
     std::string text;   // the script, condition, NPC id or topic
@@ -53,14 +54,19 @@ void SetTestConversation(const TestConversation& conversation);
 
 // The cases in a case file:
 //   case <name> / actor <id> / run, then MWScript lines / wait <ticks> /
-//   expect <condition> / talk <npc> / ask <topic> / choose <n> / bye /
+//   expect <condition> / talk <npc> / ask <topic or service row> / choose <n>
+//   (a choice, or row n of an open Travel or Persuasion list) / bye /
 //   button <n> / activate <ref> / until <ticks> <condition> / pick <class or
 //   sign> / close <menu> / take <ref> / console <Skyrim console command> /
 //   persuade <admire|intimidate|taunt|bribe10|bribe100|bribe1000> /
 //   follow <npc> (keeps the player on the NPC's trail; a bare `follow` stops) /
 //   defend (the player kills whatever attacks it, as `follow` also does, for
 //   the rest of the case) / punch <n> <npc> (up to n bare-fisted punches; a
-//   greeting ends it) /
+//   greeting ends it) / approach <npc> (the player is put in front of the NPC,
+//   wherever it stands, when out of reach -- NPCs move; never with a follower
+//   along; name a FormID for an NPC that is not loaded) / pace <speed> (a
+//   --fast game is steered to <speed>x real time for the rest of the case, for
+//   an authored game-time window or a climb the default speed outruns) /
 //   end. `#` starts a comment line. Steps run in file
 //   order, and an action not followed by a `wait` settles for 2 ticks. `until`
 //   fails the case when its condition does not hold within the ticks; `button`,

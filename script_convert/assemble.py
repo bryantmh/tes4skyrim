@@ -809,11 +809,49 @@ def poll(conv, tree, extends: str) -> list:
     sc.poll_return_prefix = ''
     sc.glide_secs = ''
     out = _walk_guard(sc, out)
-    arm = _arm(conv, interval, load_gated)
+    out, body, done = _pass_guard(sc, out, body, passes)
+    arm = done + _arm(conv, interval, load_gated)
     if not passes:
         return out + body + arm + ['EndEvent', '']
     return (out + [f'  {_POLL_PASS}()'] + arm + ['EndEvent', '', f'Function {_POLL_PASS}()']
             + body + ['EndFunction', ''] + _menu_pass_loop(interval))
+
+
+#: When the pass now running started (real seconds), 0 between passes.
+_PASS_VAR = 'TES4_PassAt'
+
+#: Seconds after which a pass still marked running is taken for one an error aborted.
+_PASS_STALE_SECS = '60.0'
+
+
+def _pass_guard(sc, head: list, body: list, passes: bool) -> tuple:
+    """(head, body, end) of a box-showing poll whose insurance pass waits out a running one.
+
+    A pass parked in a latent call (SayLine) let the insurance arm start more
+    passes, and each woke to repeat the same stage step: a `stage + 1` ran
+    several times and skipped the stage that shows the box.
+    See: docs/commentary/script_convert.md#one-box-at-a-time
+    """
+    if not sc.uses_msg_buttons:
+        return head, body, []
+    clear = f'{_PASS_VAR} = 0.0'
+    head = [f'Float {_PASS_VAR} = 0.0'] + head + [
+        '  Float TES4_passNow = Utility.GetCurrentRealTime()',
+        f'  If {_PASS_VAR} > 0.0 && TES4_passNow >= {_PASS_VAR} && TES4_passNow - {_PASS_VAR} < {_PASS_STALE_SECS}',
+        '    Return', '  EndIf', f'  {_PASS_VAR} = TES4_passNow']
+    if not passes:
+        body = [_clear_before_returns(line, clear) for line in body]
+    return head, body, [f'  {clear}']
+
+
+def _clear_before_returns(text: str, clear: str) -> str:
+    """`text` with `clear` before each bare `Return` line, at that line's indent."""
+    lines = []
+    for line in text.split('\n'):
+        if line.strip() == 'Return':
+            lines.append(line[:len(line) - len(line.lstrip())] + clear)
+        lines.append(line)
+    return '\n'.join(lines)
 
 
 def _walk_guard(sc, head: list) -> list:

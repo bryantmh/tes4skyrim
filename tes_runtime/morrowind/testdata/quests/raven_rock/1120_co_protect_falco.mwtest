@@ -5,7 +5,9 @@
 # 100. Falco closes it (110); his death would fail it (200). The player stands
 # at Falco's side and follows him through the fight: he charges the assassins,
 # ColonyFalco force-greets a player more than 512 units off, and ColonyAssassin
-# waits out the menu. The kills stand in for the fight.
+# waits out the menu. Falco can outrun the player when Baslod strikes, so a
+# greeting he forces then is closed after the kills. The kills stand in for
+# the fight.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_hiring_guards --timeout 2400
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -47,12 +49,25 @@ until 900 "Capiton Popillius"->GetDisabled == 0
 until 900 "Cimber Valerius"->GetDisabled == 0
 console 067BC8FB.kill
 console 063BD04C.kill
+bye if open
+run
+set TestResult to ( "Falco Galenus"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos y ) + 60 )
+player->SetPos y TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos z ) + 20 )
+player->SetPos z TestResult
 until 600 GetJournalIndex CO_12 == 100
 console 0654C18C.kill
 follow
 expect "Falco Galenus"->GetHealth > 0
 run
-player->Position -199700 160300 1000 0
+set TestResult to ( "Falco Galenus"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "Falco Galenus"->GetPos z ) + 20 )
+player->SetPos z TestResult
 until 600 "Falco Galenus"->GetDistance player < 400
 talk Falco Galenus
 ask assassinated

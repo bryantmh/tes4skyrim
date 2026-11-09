@@ -47,7 +47,7 @@ end
 
 case nm_wake_ethaso
 run
-player->PositionCell 6911 300 14990 0 "Necrom, Docks Administration"
+player->PositionCell 6911 400 14990 0 "Necrom, Docks Administration"
 until 600 "TR_m2_Ethaso Athones"->GetDistance player < 600
 wait 120
 talk TR_m2_Ethaso Athones
@@ -55,7 +55,9 @@ ask Orphaned Dancer
 expect GetJournalIndex TR_m2_Nm_Wake == 30
 choose 2
 expect GetJournalIndex TR_m2_Nm_Wake == 40
+bye
 run
+ShowRestMenu
 sleep 24
 until 600 GetJournalIndex TR_m2_Nm_Wake == 50
 talk TR_m2_Ethaso Athones

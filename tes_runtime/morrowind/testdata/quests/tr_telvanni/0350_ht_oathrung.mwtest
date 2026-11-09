@@ -8,7 +8,7 @@
 
 case ht_oathrung_start
 run
-player->PositionCell 7390 4300 16170 0 "Tel Oren, Tower"
+player->PositionCell 7390 4400 16170 0 "Tel Oren, Tower"
 until 600 "TR_m1_T_Faruna"->GetDistance player < 2500
 wait 120
 talk TR_m1_T_Faruna
@@ -36,7 +36,7 @@ end
 
 case ht_oathrung_done
 run
-player->PositionCell 7390 4300 16170 0 "Tel Oren, Tower"
+player->PositionCell 7390 4400 16170 0 "Tel Oren, Tower"
 until 600 "TR_m1_T_Faruna"->GetDistance player < 2500
 wait 120
 talk TR_m1_T_Faruna

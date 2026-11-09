@@ -26,7 +26,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from asset_convert.collision import collision_extract as ce
-from tes5_import.navmesh import build, corridor_clean
+from tes5_import.navmesh import build, clean_validate
 from tools.navmesh.probe import load_cell
 
 
@@ -77,7 +77,7 @@ def main():
         doors=ctx.get('doors'))
     v = [tuple(map(float, p)) for p in verts]
     tris = [tuple(t) for t in tris]
-    comps = corridor_clean.components(tris)
+    comps = clean_validate.components(tris)
     comps.sort(key=len, reverse=True)
     print('%s: %d tris, components %s'
           % (a.cell, len(tris), [len(c) for c in comps[:10]]))

@@ -28,6 +28,9 @@ REFR_DONT_HAVOK_SETTLE = 0x20000000
 #: Placement record flag: the ref stays in memory while its cell is unloaded.
 REFR_PERSISTENT = 0x400
 
+#: How far OpenMW lifts a placed actor before tracing it down onto its floor (World::adjustPosition).
+ACTOR_DROP_LIFT = 20.0
+
 #: The record types a placement exports as.
 _PLACEMENT_TYPES = ('REFR', 'ACHR', 'ACRE')
 
@@ -143,6 +146,11 @@ def tes3_refr_flags(flags: int) -> int:
     See: docs/commentary/tes5_import_world.md#tes3-dont-havok-settle
     """
     return flags | REFR_DONT_HAVOK_SETTLE if is_tes3_source() else flags
+
+
+def actor_placement_z(z: float) -> float:
+    """A placed actor's Z: a Morrowind source's lifted so it drops onto its floor."""
+    return z + ACTOR_DROP_LIFT if is_tes3_source() else z
 
 
 def lock_is_exit_only(rec: dict) -> bool:

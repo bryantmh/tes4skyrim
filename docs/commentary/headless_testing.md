@@ -43,6 +43,35 @@ folder; `build --steam-exe` switches to Steam's. Both reach the main menu
 identically. `steam_appid.txt` plus `SteamAppId`/`SteamGameId` keep the
 Steam API from relaunching through Steam.
 
+### <a id="parallel-instances"></a>Parallel instances
+
+`--instance N` (before the subcommand) selects another instance:
+`C:\Other Games\Skyrim Test N`, with its own profile, bridge pipe
+(`tes_test_bridgeN`) and hidden desktop (`TESConversionTestN`), so two runs
+go side by side. Each is built separately (`--instance 2 build --mod ...`) and
+may hold a different plugin set. Instance N's `Saves` is a **junction** to
+instance 1's, so a checkpoint saved by one loads in the other. Never run the
+same folder with `--checkpoints` in both at once (same checkpoint names), and
+never `rmtree` an instance profile: it follows the junction into instance 1's saves.
+
+```bash
+python -m tools.live.test_instance --instance 2 build --mod Morrowind.esm --mod TESGameSelect
+python -m tools.live.test_instance --instance 2 mwtest --cases <folder> --fast --from <case>
+```
+
+### <a id="repeat-a-case"></a>Repeat a case
+
+One pass proves nothing for a case that has failed intermittently: a fix
+counts only after several passes **in a row** from its checkpoint.
+`tools/live/repeat_case.py` runs one case (`--case X`, i.e. `--from X --to X`)
+or a range `--times N` times on `--instance`, keeps each run's runner output
+and runtime log as `<out>/<label>_<n>.out/.log`, stops at the first failure,
+and exits 0 only when all N passed.
+
+```bash
+python -m tools.live.repeat_case --cases <folder> --case co_report --instance 2 --out temp/rc
+```
+
 ## <a id="hidden-launch"></a>Hidden launch
 
 `hidden_launch.launch` is skse64_loader's shape (create suspended, load DLLs

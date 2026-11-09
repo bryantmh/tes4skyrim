@@ -93,6 +93,7 @@ from asset_convert.havok.hkx_skeleton import BONE_RENAMES
 from asset_convert.character import wearable_plan as wp
 from asset_convert.collision.clutter_plan import latch_clutter_mass
 from asset_convert.nif.door_anim_morrowind import latch_source_hinge
+from asset_convert.collision.collision_original import latch_original
 from asset_convert.nif.door_plan import latch_door_model
 from asset_convert.nif.fixture_plan import latch_fixture_model
 from asset_convert.character.body_wrap import morph_converted_to_weight1
@@ -1212,6 +1213,7 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
     _worn, _biped_flags = _authored_wear(src_path, src_meshes_dir, wearable_plan,
                                          creature, hair)
     latch_source_hinge(data)
+    latch_original(src_path, src_meshes_dir)
 
     stats = _convert_nif(data, fix_textures=fix_textures,
                          src_path=str(src_path), creature=creature,

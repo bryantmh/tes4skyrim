@@ -410,6 +410,17 @@ class TestNativeGrowGuards:
         return np.array([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, -1.0]],
                         dtype=np.float64)
 
+    def _params(self):
+        """The march tunables grow_strips reads, with no LAND."""
+        from tes5_import.navmesh import params as p
+        return {'land_from': float(2 ** 31 - 1), 'land_ox': 0.0, 'land_oy': 0.0,
+                'step': p.RIBBON_GROW_STEP, 'min_half': p.RIBBON_GROW_MIN_HALF,
+                'half_width': p.RIBBON_HALF_WIDTH, 'slab_half_w': p.RIBBON_GROW_SLAB_HALF_WIDTH,
+                'slab_depth': p.RIBBON_GROW_SLAB_DEPTH, 'slab_z_bottom': p.RIBBON_GROW_SLAB_Z_BOTTOM,
+                'agent_height': p.AGENT_HEIGHT, 'max_climb': p.MAX_CLIMB,
+                'ztol': p.SEED_Z_TOLERANCE, 'cap': p.RIBBON_GROW_MAX_HALF,
+                'bisect': p.RIBBON_GROW_BISECT}
+
     def _tri(self, np, y):
         return np.array([[[0.0, y, 0.0], [10.0, y, 0.0], [0.0, y, 10.0]]],
                         dtype=np.float64)
@@ -423,7 +434,7 @@ class TestNativeGrowGuards:
                                    self._tri(np, 8.936455989415117e+17)])
         with pytest.raises(ValueError):
             cg._native.grow_strips(
-                blocking, None, self._stations(np), cg._native_params())
+                blocking, None, self._stations(np), self._params())
 
     def test_non_finite_coordinate_raises(self):
         """NaN/Inf propagate through the extent maths, so reject them up front."""
@@ -434,7 +445,7 @@ class TestNativeGrowGuards:
             blocking = np.concatenate([self._tri(np, 0.0), self._tri(np, bad)])
             with pytest.raises(ValueError):
                 cg._native.grow_strips(
-                    blocking, None, self._stations(np), cg._native_params())
+                    blocking, None, self._stations(np), self._params())
 
     def test_normal_soup_still_grows(self):
         """The guards must not reject legitimate cell-sized geometry."""
@@ -444,7 +455,7 @@ class TestNativeGrowGuards:
         # A 4096-unit exterior cell is 33x33 buckets -- far under the ceiling.
         blocking = np.concatenate([self._tri(np, 0.0), self._tri(np, 4096.0)])
         out = cg._native.grow_strips(
-            blocking, None, self._stations(np), cg._native_params())
+            blocking, None, self._stations(np), self._params())
         assert len(out) == 1
         assert out[0] >= 0.0
 
@@ -469,42 +480,3 @@ class TestPlacementSanity:
         assert not _finite_placement(ok, float('nan'))
         assert not _finite_placement(
             np.array([MAX_PLACEMENT * 2, 0.0, 0.0]), 1.0)
-
-
-class TestStoreyGroupsDoorGrouping:
-    """group_polys must stay index-aligned with the group list it mirrors."""
-
-    def test_unmatched_door_strips_do_not_desync_group_polys(self):
-        """A door that matches no group appends to `out`; group_polys must grow too.
-
-        Without that, the NEXT door's group_polys[gi] ran off the end and raised
-        IndexError -- which run_job swallowed, so the cell silently shipped with
-        no navmesh at all (measured on Nehrim cells 012217C1 and 01193F44).
-        """
-        pytest.importorskip("numpy")
-        pytest.importorskip("shapely")
-        from tes5_import.navmesh import corridor_union as cu
-
-        def ribbon(x, y, z, edge):
-            half = 20.0
-            return {
-                'edge': edge,
-                'a': (x, y, z), 'b': (x + 100.0, y, z),
-                'na': (x, y, z), 'nb': (x + 100.0, y, z),
-                'poly': [(x, y - half), (x + 100.0, y - half),
-                         (x + 100.0, y + half), (x, y + half)],
-            }
-
-        # The failure needs a specific ORDER. Door 1 matches nothing (far from
-        # the ribbon in plan), so it self-appends as a new group. Door 2 then
-        # OVERLAPS door 1 in plan and height, so the `enumerate(out)` scan
-        # reaches that newly-appended index and reads group_polys[gi] -- which,
-        # unless group_polys grew in step, is off the end of the list.
-        strips = [
-            ribbon(0.0, 0.0, 0.0, (0, 1)),              # real ribbon
-            ribbon(50000.0, 50000.0, 9000.0, (-1, -1)),  # door 1: no match
-            ribbon(50010.0, 50000.0, 9000.0, (-1, -1)),  # door 2: overlaps it
-        ]
-        groups = cu._storey_groups(strips)
-        placed = sum(len(g) for g in groups)
-        assert placed == len(strips), 'every strip must land in exactly one group'

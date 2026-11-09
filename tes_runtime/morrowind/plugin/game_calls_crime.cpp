@@ -12,7 +12,14 @@
 // the Morrowind conversation opened with the same guard.
 // See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
 
+#include <windows.h>
+
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <string>
+
+#include "hook.h"
 
 #include "activation.h"
 #include "addresses.h"
@@ -164,7 +171,93 @@ void CrimeTick() {
     ServeSentence();
 }
 
+// TESFaction::SetPlayerEnemy (24505, 0x3ada80 on 1.6.1170): the faction-wide flag that makes every member treat
+// the player as an Enemy.
+using SetPlayerEnemyFn = void (*)(void* faction, bool enemy);
+SetPlayerEnemyFn g_setPlayerEnemy = nullptr;
+
+// The alarm reaction (40076, 0x71ab20) calls SetPlayerEnemy on the reacting actor's crime faction at +0x4FE
+// when its target is NOT the player -- no crime, no gold.
+constexpr std::uint64_t kAlarmReaction = 40076;
+constexpr std::uintptr_t kAlarmPlayerEnemyCall = 0x4FE;
+constexpr std::uint64_t kSetPlayerEnemy = 24505;
+
+// Skyrim.esm, Update.esm and the three DLCs always hold load-order slots 0..4; 0xFE is light plugins.
+constexpr std::uint32_t kLastSkyrimMasterSlot = 4;
+constexpr std::uint32_t kLightSlot = 0xFE;
+
+// A faction from a converted plugin: a full slot after Skyrim's own masters.
+bool ConvertedForm(std::uint32_t formId) {
+    const std::uint32_t slot = formId >> 24;
+    return slot > kLastSkyrimMasterSlot && slot < kLightSlot;
+}
+
+// Neither TES3 nor TES4 has a faction-wide alarm: a household fighting a creature never turns its house on the
+// player. Skyrim's own factions keep the engine's rule.
+void AlarmPlayerEnemyHook(void* faction, bool enemy) {
+    if (faction && ConvertedForm(FormIdOf(faction))) return;
+    g_setPlayerEnemy(faction, enemy);
+}
+
+// Repoints the alarm reaction's non-player call, after checking it is `call SetPlayerEnemy`.
+void InstallAlarmPlayerEnemy() {
+    const std::uintptr_t setter = Resolve("TESFaction::SetPlayerEnemy", kSetPlayerEnemy, nullptr);
+    const std::uintptr_t alarm = Resolve("AlarmReaction", kAlarmReaction, nullptr);
+    if (!setter || !alarm) return;
+    g_setPlayerEnemy = reinterpret_cast<SetPlayerEnemyFn>(setter);
+    const std::uintptr_t call = alarm + kAlarmPlayerEnemyCall;
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(call);
+    const std::int32_t rel = *reinterpret_cast<const std::int32_t*>(call + 1);
+    if (bytes[0] != 0xE8 || call + 5 + rel != setter) {
+        Log("crime: alarm reaction's SetPlayerEnemy call not found -- converted factions keep Skyrim's alarm");
+        return;
+    }
+    if (PatchCall(call, reinterpret_cast<void*>(&AlarmPlayerEnemyHook), "alarm player enemy")) {
+        Log("crime: an alarm against someone else no longer makes a converted faction the player's enemy");
+    }
+}
+
+void TempSetPlayerEnemyHook(void* faction, bool enemy) {
+    void* frames[6] = {};
+    const USHORT n = CaptureStackBackTrace(1, 6, frames, nullptr);
+    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    char where[128] = {};
+    for (USHORT i = 0; i < n; ++i) {
+        const std::size_t used = std::strlen(where);
+        std::snprintf(where + used, sizeof where - used, " %llX",
+                      static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(frames[i]) - base));
+    }
+    Log("crime: TEMP faction %08X player enemy -> %d; stack%s", faction ? FormIdOf(faction) : 0, enemy, where);
+    g_setPlayerEnemy(faction, enemy);
+}
+
+void TempInstallSetPlayerEnemyLog() {
+    const std::uintptr_t fn = Resolve("TESFaction::SetPlayerEnemy", kSetPlayerEnemy, nullptr);
+    if (!fn) return;
+    g_setPlayerEnemy = reinterpret_cast<SetPlayerEnemyFn>(fn);
+    Log("crime: TEMP %d calls of SetPlayerEnemy logged",
+        PatchAllCalls(fn, reinterpret_cast<void*>(&TempSetPlayerEnemyHook), "set player enemy"));
+}
+
 }  // namespace
+
+std::string TempCrimeNote(void* actor) {
+    void* faction = actor && g_getCrimeFaction ? g_getCrimeFaction(PapyrusVm(), 0, actor) : nullptr;
+    const int gold = faction && g_getCrimeGold ? g_getCrimeGold(PapyrusVm(), 0, faction) : -1;
+    void* hostile = DispositionForm("hostile");
+    void* disposition = DispositionForm("disposition");
+    void* aggression = DispositionForm("aggression");
+    char out[256];
+    std::snprintf(out, sizeof out,
+                  "crime faction %08X gold %d (flags %08X, enemy since %g, alarm %g), hostile rank %d, relationship "
+                  "to player %d, disposition rank %d, aggression rank %d",
+                  faction ? FormIdOf(faction) : 0, gold, faction ? At<std::uint32_t>(faction, 0x58) : 0,
+                  faction ? At<float>(faction, 0xFC) : 0.0f, faction ? At<float>(faction, 0xF8) : 0.0f,
+                  hostile ? FactionRank(actor, hostile) : -9,
+                  TempRelationRank(actor, PlayerRef()), disposition ? FactionRank(actor, disposition) : -9,
+                  aggression ? FactionRank(actor, aggression) : -9);
+    return out;
+}
 
 void InstallCrimeCalls(GameHooks& hooks) {
     g_getCrimeFaction = Native<GetCrimeFactionFn>("Actor.GetCrimeFaction",
@@ -184,6 +277,8 @@ void InstallCrimeCalls(GameHooks& hooks) {
                                         ids::kGetSpeaker);
     g_topicManager = Native<void**>("MenuTopicManager singleton",
                                     ids::kMenuTopicManagerSingleton);
+    InstallAlarmPlayerEnemy();
+    TempInstallSetPlayerEnemyLog();
     hooks.crimeGold = CrimeGold;
     hooks.factionCrimeGold = FactionCrimeGold;
     hooks.setCrimeGold = SetCrimeGold;

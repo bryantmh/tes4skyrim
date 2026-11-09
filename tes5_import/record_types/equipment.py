@@ -297,20 +297,22 @@ def _slot_mgef(rec: dict, i: int, code: str, writer, spell_type: int,
 
 def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
                   delivery: int = 0, writer=None, spell_type: int = -1,
-                  owner: tuple = OWNER_CONSUMED) -> bytes:
+                  owner: tuple = OWNER_CONSUMED, self_only: bool = False) -> bytes:
     """EFID/EFIT pairs for every effect on a record that has a TES5 MGEF.
 
     A null EFID crashes the menu, so an empty list (or one short of
     ``pad_to``) takes zero-magnitude fillers.  Every slot is fitted to
     ``owner`` and ``spell_type`` (see _slot_mgef); a filler takes
     ``delivery`` when the owner fixes none, and carries no hit visuals on an
-    Ability.
+    Ability.  ``self_only`` keeps only Self-range effects.
     See: docs/commentary/tes5_import_magic.md#aimed-ench-null-projectile
     """
     effects = []
     for i in range(get_int(rec, count_key)):
         if pad_to and len(effects) >= pad_to:
             break
+        if self_only and get_str(rec, f'Effect[{i}].Type') not in ('', 'Self'):
+            continue
         code = get_str(rec, f'Effect[{i}].EFID')
         mgef_fid = _slot_mgef(rec, i, code, writer, spell_type, owner) if code else 0
         if mgef_fid:
@@ -972,7 +974,8 @@ def convert_ENCH(rec: dict, writer=None) -> bytes:
     subs += pack_subrecord('ENIT', bytes(enit))
 
     subs += _pack_effects(rec, delivery=target_type, writer=writer,
-                          owner=(MGEF_CAST_FOR_OWNER.get(cast_type, 1), fixed))
+                          owner=(MGEF_CAST_FOR_OWNER.get(cast_type, 1), fixed),
+                          self_only=cast_type == 0)
 
     return pack_record('ENCH', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 

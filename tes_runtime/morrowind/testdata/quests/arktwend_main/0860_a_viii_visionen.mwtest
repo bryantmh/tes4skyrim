@@ -108,11 +108,48 @@ expect GetJournalIndex A_VIII_ZwergenKrieg == 1
 end
 
 # Mert at the smelter sends everyone to work.
+# The landing's pathgrid ends short of the boulder beside it, so the player steps around it onto the
+# cave's navmesh; the upper floor is reached through the cave's own pair of Dwemer doors.
 case dwarves_mert
-walk 7060 9212 757
+# Steered round the boulder by the landing and over the rails: big governor steps push the player into them.
+pace 10
+steer 5790 1630 968
+steer 6091 1630 984
+steer 6200 1620 980
+# Down the mine along its pathgrid, over the rails: the travel package stalls on this navmesh.
+steer 6350 1550 973
+steer 6593 1481 921
+steer 6848 1429 861
+steer 7003 1498 808
+steer 6951 1755 733
+steer 7003 2218 765
+steer 7049 2558 691
+steer 7012 2814 632
+steer 7113 3220 583
+steer 7149 3576 535
+steer 7150 3880 535
+steer 7136 4148 534
+steer 7232 4288 512
+steer 7264 4320 512
+steer 7296 4352 513
+steer 7296 4416 513
+steer 7200 4672 512
+steer 7168 4704 513
+activate 05D29EAF
+until 300 player->GetPos y > 5600
+# Up the gallery along its pathgrid: the travel package stands still while the gallery's attackers fight on.
+steer 7049 6339 676
+steer 7052 7017 667
+steer 7044 7638 672
+steer 7051 8416 668
+steer 7051 9109 664
+steer 7065 9170 660
 activate 0563B701
 until 600 GetPCCell "Dwarven Smelter Cave" == 1
-walk 4086 100 11330
+# Along the navmesh: the travel package stands still at the door here.
+steer 4061 -1356 11286
+steer 4066 -1253 11286
+steer 4086 100 11330
 until 600 MenuMode == 1
 wait 60
 bye
@@ -124,6 +161,20 @@ case dwarves_picks
 walk 3063 -576 11357
 activate 05605F11
 until 600 GetPCCell "Dwarven Storage Cave" == 1
+# Up the Dwemer stair corridor along the pathgrid: the travel package circles at its foot.
+steer 855 1956 -1202
+steer 595 1951 -1011
+steer 333 1961 -818
+steer 198 1950 -713
+steer -53 1831 -745
+steer -133 1754 -726
+steer -281 1754 -742
+steer -400 1766 -757
+steer -433 1828 -784
+steer -519 1890 -767
+steer -757 1988 -806
+steer -907 1919 -804
+steer -963 1800 -789
 walk -1000 1750 -700
 take 058A1D3E
 take 05ED31CF
@@ -138,13 +189,15 @@ end
 
 # Back through the smelter to the lift down the shaft.
 case dwarves_shaft
+# Daras follows: the player walks to each door and to the lift.
 walk 1966 2454 -1148
 activate 055E7346
 until 600 GetPCCell "Dwarven Smelter Cave" == 1
 walk 4088 8127 11365
 activate 054F19F2
 until 600 GetPCCell "Dwarven Shaft" == 1
-walk 4448 4100 124029
+# To the lift operator (VAufzugfuhrerScript boxes within 200 of him).
+walk 4448 4170 124029
 button 0
 until 600 player->GetPos z < 10000
 end
@@ -154,23 +207,83 @@ end
 # leaves it does Daras's own script, which returns in menu mode, write journal
 # 4 and greet again.
 case dwarves_mao
-walk 3175 3145 69
+# From the lift's foot up the slope to the canyon door, along the shaft's pathgrid.
+steer 3462 4024 -102
+steer 3239 3977 -100
+steer 3140 3904 -102
+steer 3107 3762 -97
+steer 3111 3596 -104
+steer 3128 3327 9
+steer 3113 3216 13
 activate 05D7D816
 until 600 GetPCCell "Subterranean Canyon of Grul" == 1
 walk 5303 6700 12673
 until 600 MenuMode == 1
 wait 30
 bye
-until 300 GetJournalIndex A_VIII_ZwergenKrieg == 4
+# Daras greets on the way. He is the second of three followers, which trail the player about 230
+# apart, so he stands about 340 behind; the player goes round Mao onto the planks past him to bring
+# Daras within the 300 of Mao his script waits for.
+walk 5303 6700 12673
+steer 5303 6720 12673 walk
+steer 5180 6740 12660 walk
+steer 5180 6850 12660 walk
+steer 5290 6850 12660 walk
+steer 5300 6900 12660 walk
+until 3000 GetJournalIndex A_VIII_ZwergenKrieg == 4
 until 600 MenuMode == 1
 wait 60
 bye
 end
 
 # The Demon King in the Arpk temple; the vision moves to the Emperor's galleon.
+# Daras stays above ("go on down"). The temple's only door opens from a Daedric hall 2000 below the
+# canyon ledge: down the mine rails past Mao, west through the boulder cave, down the Daedric stair to
+# the hall and its door; then north through the temple until the king, within 800, sends the vision.
 case dwarves_demon_king
-run
-player->PositionCell -101 2400 -1314 0 "Arpk Temple"
+pace 10
+# A dwarf captain greets on the way down; a greeting ends a walk, so each walk is followed by closing it.
+walk 5300 6900 12660
+bye if open
+walk 4825 8037 12350
+bye if open
+walk 2880 7744 12114
+bye if open
+walk 2845 7276 12127
+bye if open
+walk 2736 6786 12265
+bye if open
+walk 2712 6480 12245
+bye if open
+walk 2752 5568 11908
+bye if open
+walk 2944 5250 11760
+bye if open
+walk 2816 4736 11489
+bye if open
+walk 2816 4224 11221
+bye if open
+walk 2752 1024 11221
+bye if open
+walk 2690 900 11221
+bye if open
+activate 05B1D225
+until 600 GetPCCell "Arpk Temple" == 1
+# The dwarf king greets on the way in; a greeting ends a walk, so each walk is retried after it.
+walk -441 653 -1329
+bye if open
+walk -441 653 -1329
+bye if open
+walk -177 1447 -1324
+bye if open
+walk -177 1447 -1324
+bye if open
+walk -121 2451 -1357
+bye if open
+walk -121 2451 -1357
+bye if open
+walk -100 2800 -1357
+bye if open
 button 0
 until 300 GetPCCell "Emperor's Galleon, Crew's Quarters" == 1
 end

@@ -6,7 +6,8 @@
 # printing lies (1), Trels takes a 3000-gold donation to the Widows and Orphans
 # Fund instead (7: 60), and Tienius, told to cover the expenses (5), pays 8000
 # (100).
-# Bribes, repeated until they land, raise Ten-Tongues. The donation needs the
+# SetDisposition stands in for persuading Ten-Tongues (persuasion is tested elsewhere); it comes after his
+# greeting, whose result script sets his disposition to 40. The donation needs the
 # 3000 gold Evidence of Conspiracy pays. Ref FormIDs carry Tribunal.esm's slot 06.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr08_hlaalu --timeout 2400
 # See docs/commentary/headless_testing.md#quest-runs
@@ -25,7 +26,9 @@ run
 player->PositionCell -29 203 -365 0 "Mournhold, Pawnbroker"
 until 600 "Ten-Tongues_Weerhat"->GetDistance player < 400
 talk Ten-Tongues_Weerhat
-persuade bribe100 until "Ten-Tongues_Weerhat"->GetDisposition >= 80
+run
+"Ten-Tongues_Weerhat"->SetDisposition 80
+expect "Ten-Tongues_Weerhat"->GetDisposition >= 80
 ask anonymous writer
 expect GetJournalIndex TR09_Journalist == 20
 bye

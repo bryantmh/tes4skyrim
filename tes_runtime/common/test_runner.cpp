@@ -487,12 +487,20 @@ void RunSteps(const TestCase& test, bool held) {
         const bool needsWorld = step.kind == Kind::kRun || step.kind == Kind::kActivate ||
                                 step.kind == Kind::kUntil || step.kind == Kind::kWalk ||
                                 (step.kind == Kind::kTalk && g_case.ticksLeft < 0);
-        if (held && !Talking() && needsWorld) {
+        std::string left = "null";
+        const bool heldTrue = held && !Talking() && step.kind == Kind::kUntil &&
+                              Judge(test.actor, step.text, &left) == 1;
+        if (held && !Talking() && needsWorld && !heldTrue) {
             if (++g_case.heldTicks > kHeldTicks) g_case.error = "a menu holds the game";
             return;
         }
         g_case.heldTicks = 0;
-        if (!Advance(test, step)) return;
+        if (heldTrue) {
+            g_case.deadline = -1;
+            Record(step.text, 1, left);
+        } else if (!Advance(test, step)) {
+            return;
+        }
         ++g_case.step;
         if (IsAction(step.kind) || g_awaitedAck) return;
     }

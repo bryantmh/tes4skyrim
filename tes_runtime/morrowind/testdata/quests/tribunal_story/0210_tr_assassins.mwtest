@@ -8,8 +8,8 @@
 # marker in Barenziah's Chambers until nightfall on a later day logs 85
 # (barAssScript) and brings the three assassins (helsAssScript); their deaths
 # log 90, and Helseth gives his collar (100).
-# The player waits an hour at a time on the spot, as the Wait key does. Bribes,
-# repeated until they land, raise Bakh. The fight is `defend`'s. Ref FormIDs
+# The player waits an hour at a time on the spot, as the Wait key does. SetDisposition
+# stands in for persuading Bakh (persuasion is tested elsewhere). The fight is `defend`'s. Ref FormIDs
 # carry Tribunal.esm's slot 06.
 # Drafted, not yet run.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_tr_bamz --timeout 2400
@@ -30,8 +30,10 @@ bye
 run
 player->PositionCell -480 -74 -357 0 "Mournhold, The Winged Guar"
 until 600 "bakh gro-sham"->GetDistance player < 400
+run
+"bakh gro-sham"->SetDisposition 60
 talk bakh gro-sham
-persuade bribe100 until "bakh gro-sham"->GetDisposition >= 60
+expect "bakh gro-sham"->GetDisposition >= 60
 ask uncle's farm
 expect GetJournalIndex TR_Assassins == 40
 ask what you should know

@@ -17,7 +17,7 @@ from ..base.text_reader import get_float, get_formid, get_hex_bytes, get_int
 from . import native_loader, params
 from .corridor_grow import walkable_sampler, wall_slab_sampler
 from .edge_links import CELL_SIZE, border_edges, exterior_views, master_view
-from .world import gather_cell_geometry, land_field, open_water_z, placements
+from .world import land_field, open_water_z, placements
 
 #: Spacing of the flood lattice; the terrain grow widens each ribbon to the walls between nodes.
 LATTICE_SPACING = 512.0
@@ -307,64 +307,6 @@ def _lattice(ground, ox, oy):
     return nodes
 
 
-def _lattice_edges(ground, nodes):
-    """Walkable links between orthogonal lattice neighbours."""
-    out = []
-    for (i, j) in sorted(nodes):
-        for nb in ((i + 1, j), (i, j + 1)):
-            if nb in nodes and ground.walk(nodes[(i, j)], nodes[nb]):
-                out.append(((i, j), nb))
-    return out
-
-
-def _seed_links(ground, seeds, nodes):
-    """(seed points on the ground, [(seed index, lattice key)]) for seeds an actor can walk in from."""
-    placed, links = [], []
-    for sx, sy, sz in seeds:
-        z = ground.floor(sx, sy, sz)
-        if z is None:
-            continue
-        seed = (sx, sy, z)
-        near = sorted(nodes, key=lambda k: (math.hypot(nodes[k][0] - sx, nodes[k][1] - sy), k))
-        reach = [k for k in near[:4] if math.hypot(nodes[k][0] - sx, nodes[k][1] - sy)
-                 <= LATTICE_SPACING * 1.5 and ground.walk(seed, nodes[k])]
-        if reach:
-            links += [(len(placed), k) for k in reach]
-            placed.append(seed)
-    return placed, links
-
-
-def _flooded(seed_links, lattice_edges):
-    """The lattice keys reachable from any seed."""
-    adj = {}
-    for a, b in lattice_edges:
-        adj.setdefault(a, []).append(b)
-        adj.setdefault(b, []).append(a)
-    reached = {k for _s, k in seed_links}
-    todo = sorted(reached)
-    while todo:
-        for nb in adj.get(todo.pop(), ()):
-            if nb not in reached:
-                reached.add(nb)
-                todo.append(nb)
-    return reached
-
-
-def seed_graph(seeds, walkable, blocking, land, ox, oy):
-    """(points, edges) of the synthetic pathgrid flooded from `seeds`; ([], []) when none walks in."""
-    ground = Ground(walkable, blocking, land)
-    nodes = _lattice(ground, ox, oy)
-    placed, links = _seed_links(ground, seeds, nodes)
-    lattice_edges = _lattice_edges(ground, nodes)
-    reached = _flooded(links, lattice_edges)
-    keys = sorted(reached)
-    index = {k: len(placed) + n for n, k in enumerate(keys)}
-    points = placed + [nodes[k] for k in keys]
-    edges = [(s, index[k]) for s, k in links]
-    edges += [(index[a], index[b]) for a, b in lattice_edges if a in reached and b in reached]
-    return (points, edges) if edges else ([], [])
-
-
 def pathgrid_order(points, edges):
     """(points, edges) as a pathgrid record reads back: float points, edges by node then neighbour."""
     nbrs = [[] for _ in points]
@@ -391,16 +333,8 @@ def seeded_graph(job, base_model_by_fid, door_fids, get_collision):
     oy = float(cell.get('XCLC.Y') or 0) * CELL_SIZE
     bases = set(door_fids.keys()) if isinstance(door_fids, dict) else set(door_fids or ())
     land = land_field(job['land_rec'], ox, oy)
-    if native_loader.NATIVE:
-        points, edges = native_loader.native_core().seed_graph(
-            *placements(job['refr_recs'], base_model_by_fid, get_collision, bases),
-            None if land is None else land.grid, ox, oy, open_water_z(cell, True),
-            np.asarray(job['seeds'], dtype=np.float64).reshape(-1, 3))
-    else:
-        walkable, blocking = gather_cell_geometry(job['refr_recs'], base_model_by_fid,
-                                                  get_collision, job['land_rec'], ox, oy,
-                                                  skip_bases=bases,
-                                                  water_z=open_water_z(cell, True))
-        points, edges = seed_graph(job['seeds'], np.asarray(walkable), np.asarray(blocking),
-                                   land, ox, oy)
+    points, edges = native_loader.native_core().seed_graph(
+        *placements(job['refr_recs'], base_model_by_fid, get_collision, bases),
+        None if land is None else land.grid, ox, oy, open_water_z(cell, True),
+        np.asarray(job['seeds'], dtype=np.float64).reshape(-1, 3))
     return pathgrid_order(points, edges) if edges else None

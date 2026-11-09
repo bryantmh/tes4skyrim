@@ -11,6 +11,8 @@
 case herbert_meet
 run
 player->Position -85092 4567 323 180
+# He hails the player within 400 (HerbertScript State 1 -> 2), wherever he has wandered: approach him.
+approach 054CBD39
 until 900 "Herbert".State == 2
 wait 30
 ask travel with me
@@ -28,23 +30,30 @@ expect GetJournalIndex A_IV_Herbert == 1
 end
 
 # In sight of Gor, Herbert tells of the goods he stored there. Rats near the
-# meeting place attack, and a player in combat runs no walk. Position stands in
-# for the road past the Gor lake, whose bank an AI-driven player slides off;
-# Herbert follows on his own legs, and the last stretch is walked together.
+# meeting place attack, and a player in combat runs no walk. Herbert follows,
+# so the player walks the whole road with him; past the dock it is steered at
+# the controls in straight runs along the navmesh over the rocks, as the
+# engine's route for an AI-driven player turns down into the Gor lake.
 case herbert_gor
 defend
-player->Position -71250 6474 288 60
-walk -68693 7482 163
-until 600 "Herbert".State == 3
+walk -72441 5203 54
+steer -71950 5454 124
+steer -71692 6250 139
+steer -70167 6988 468
+steer -68870 7262 167
+steer -68693 7482 163
+until 1800 "Herbert".State == 3
 wait 30
 bye
 expect GetJournalIndex A_IV_Herbert == 2
 end
 
-# At the house on the hillside he goes in alone.
+# At the house on the hillside he goes in alone; Herbert follows, so the player walks there: to the
+# GorScript02 marker, which moves the quest on once Herbert is within 300 of it.
 case herbert_house
-walk -66699 621 685
-until 600 "Herbert".State == 5
+defend
+walk -66699 421 685
+until 1800 "Herbert".State == 5
 wait 30
 bye
 expect GetJournalIndex A_IV_Herbert == 3
@@ -64,10 +73,16 @@ end
 # dead's own script sets Herbertvar back to 3 whenever one is near the player,
 # so the cells, not Herbertvar, say how far the escape got.
 case herbert_escape
+defend
+walk -66775 308 660
+until 900 "Herbert"->GetDistance player < 600
 activate 05EF6AC6
 until 600 GetPCCell "Gor, Old House" == 1
+walk -8 68 -103
 activate 05DB3087
 until 600 GetPCCell "Gor, Passage" == 1
+walk 2414 -2757 -197
+until 900 "Herbert"->GetDistance player < 600
 activate 05B9E22B
 until 600 GetPCCell "Gor, Passage" == 0
 end
@@ -76,6 +91,12 @@ end
 # hunt the player, and Herbert's companion script returns while his weapon is
 # drawn, so the fight is fought first; damage stands in for it.
 case herbert_gron
+defend
+walk -62594 -2424 2620
+walk -62181 516 1755
+walk -64892 5544 1377
+walk -62385 11683 891
+walk -51438 11075 544
 walk -47046 9735 128
 wait 120
 console 05984D48.damageav health 10000

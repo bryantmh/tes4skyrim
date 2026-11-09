@@ -44,10 +44,14 @@ void* ItemForm(const std::string& item);
 void* OwnerRef(const std::string& owner);
 void* PlayerRef();
 void* RefByRuntimeId(std::uint32_t runtimeFormId);
+// The reference a player action names: its id, or its live FormID in hex.
+void* PlayerTarget(const std::string& id);
 // `Actor.IsDead`; false for a null or non-actor reference.
 bool IsDead(void* ref);
 // Whether `ref` has its 3D now: false for a disabled reference in a loaded cell.
 bool Has3D(void* ref);
+// Whether `ref` is a placed door; false for null.
+bool IsDoor(void* ref);
 // World units between two references, or -1 when either cannot be measured.
 // The string form `Distance` resolves ids; this one takes what the caller
 // already holds.
@@ -64,6 +68,8 @@ void PlaceAt(void* ref, float x, float y, float z, float zRot);
 // Puts `ref` at a spot inside `place`, a CELL or a WORLDSPACE form, in ONE
 // engine move; false when `place` is neither. Game thread only.
 bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot);
+// While the player's last MoveInto has not landed: where it lands. game_calls_move.cpp.
+bool PlayerLandingSpot(void** place, float* at);
 // A TES3 exterior cell's width, and the grid index a coordinate falls in.
 constexpr float kTes3CellSize = 8192.0f;
 int Tes3GridIndex(float v);
@@ -94,13 +100,21 @@ void SendToCell(const std::vector<void*>& refs, const std::string& cell,
 void SendToMarker(const std::vector<void*>& refs, const FormRef& marker);
 // The actors in a follow slot aimed at the player. game_calls_ai.cpp.
 std::vector<void*> PlayerFollowers();
+// The followers in the player's place within `radius`. Along: OpenMW's teleport/travel range (800).
+// Party: within one exterior cell (4096), so a current quest's lagging follower still counts and a
+// follower left by an old quest elsewhere does not. game_calls_move.cpp.
+std::vector<void*> PlayerFollowersWithin(float radius);
+std::vector<void*> PlayerFollowersAlong();
+std::vector<void*> PlayerParty();
+// The TES3 id the stat store keeps an actor under: "player", or its base
+// NPC_'s id; "" for an actor no Morrowind record made. game_calls_attributes.cpp.
+std::string ActorKey(void* ref);
 // After a script moved `actor` there: an `AiWander 0` package's marker follows
 // it, and a Travel or Escort goal left in another cell or out of OpenMW's range
 // stops walking it, as TES3 AI never leaves the actor's cell. An authored
 // package left behind in another TES3 cell (`leftCell`) idles at the new spot
 // too. Game thread only.
 void AiAfterScriptMove(void* actor, void* place, float x, float y, float z, bool leftCell);
-
 // Each file resolves its own natives and supplies its own hooks.
 void InstallMoveCalls(GameHooks& hooks);
 void InstallAiCalls(GameHooks& hooks);
@@ -132,6 +146,9 @@ bool ActorInCombat(void* actor);
 void ForEachHighActor(const std::function<void(void*)>& fn);
 // `Actor.GetCombatTarget`, or null. game_calls_query.cpp.
 void* CombatTargetOf(void* actor);
+// TEMP (Vaerin hostility diag): the actor's crime faction and the player's crime gold there.
+std::string TempCrimeNote(void* actor);
+int TempRelationRank(void* actor, void* other);
 // PC Crime Level on the engine's crime gold, and the fine and jail opcodes.
 // See: docs/commentary/morrowind_runtime.md#crime-is-the-engines
 void InstallCrimeCalls(GameHooks& hooks);
@@ -170,6 +187,8 @@ void ApplyCure(void* ref, int index);
 void InstallFlightCalls(GameHooks& hooks);
 // An actor's character controller, or null. game_calls_flight.cpp.
 void* CharController(void* actor);
+// The PlayerControls singleton, or null. game_calls_flight.cpp.
+void* PlayerControls();
 // OpenMW keeps an actor no AI is moving where it stands: the InAir and
 // OnGround steps hold each still non-player controller, and the tick names
 // the nearby actors that are not Morrowind's. game_calls_still.cpp.
@@ -216,6 +235,13 @@ constexpr std::uint32_t kUnarmedWeapon = 0x000001F4;
 // Keeps the player's and each watched actor's Sanctuary faction rank at its
 // summed Sanctuary. game_calls_sanctuary.cpp.
 void TickSanctuary(void* player);
+// Game thread: notes which actors our follow slots have following the player,
+// for the Follow procedure's spacing hook, and resumes a paused follow once the
+// player is back near that follower. game_calls_ai.cpp.
+void TickPlayerFollowers();
+// Game thread, BEFORE a script move puts the player at (x, y, z) in `place`:
+// every follower not already near there pauses its follow and stays put.
+void LeaveFollowersBehind(void* place, float x, float y, float z);
 // `PlayGroup` / `LoopGroup`: the object animation queue on the mesh's own
 // sequences, and the tick that advances it. game_calls_anim.cpp.
 void InstallAnimCalls(GameHooks& hooks);

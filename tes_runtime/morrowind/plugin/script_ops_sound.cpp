@@ -86,9 +86,10 @@ void Start(const std::string& ref, const std::string& sound, bool loop,
         return;
     }
     const int instance = Hooks().playSound(ref, sound, loop, volume);
+    if (!instance) return;
     Log("sound: %s '%s'%s -> instance %d", loop ? "loop" : "play",
         sound.c_str(), ref.empty() ? "" : " at a ref", instance);
-    if (instance) Sounds().Started(ref, sound, instance);
+    Sounds().Started(ref, sound, instance);
 }
 
 // `PlaySound sound [volume] [pitch]`: on the listener, so no reference.

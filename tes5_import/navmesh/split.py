@@ -204,20 +204,16 @@ def pack_component_nvnm(nv, comp_tris, tri_local, comp_fid_of_tri, root_fid):
             {fid: ti for (ti, fid) in doors})
 
 
-def split_disconnected_interiors(navm_cache: dict, writer,
-                                 door_xtel_target: dict = None) -> int:
+def split_disconnected_interiors(navm_cache: dict, writer) -> int:
     """Split multi-component interior NAVMs that need it; returns the count.
 
     Mutates navm_cache in place: the root entry keeps its (bytes, meta) shape
     and gains meta['extra_navms'] = [(bytes, meta)...] for the siblings, which
     the group builders emit alongside it.  Exteriors are skipped.
 
-    door_xtel_target maps a door REFR FormID to its XTEL teleport-target door.
-
     See: docs/commentary/tes5_import_navmesh.md#split-only-the-meshes-that-need-it
     """
     split_count = 0
-    door_xtel_target = door_xtel_target or {}
     for key in sorted(navm_cache):
         navm_bytes, meta = navm_cache[key]
         if not navm_bytes or not meta or meta.get('is_exterior'):
@@ -228,27 +224,19 @@ def split_disconnected_interiors(navm_cache: dict, writer,
         comp, ncomp = components(nv.tris)
         if ncomp <= 1:
             continue
-        if not _has_cross_component_door_pair(nv, comp, door_xtel_target):
+        if not _doors_in_several_components(nv, comp):
             continue
         navm_cache[key] = _split_one_mesh(nv, comp, ncomp, key, meta, writer)
         split_count += 1
     return split_count
 
 
-def _has_cross_component_door_pair(nv, comp, door_xtel_target) -> bool:
-    """True when a same-cell teleport pair has its two ends in different components.
-
-    That is the only disconnection the engine cannot route around, so it is the
-    only one worth splitting; unrelated rooms that never teleport to each other
-    are left as one mesh.
+def _doors_in_several_components(nv, comp) -> bool:
+    """True when door triangles lie in two or more disconnected components.
 
     See: docs/commentary/tes5_import_navmesh.md#split-only-the-meshes-that-need-it
     """
-    door_comp = {fid: comp[ti] for (ti, fid) in nv.doors}
-    return any(
-        (target := door_xtel_target.get(fid)) is not None
-        and target in door_comp and door_comp[target] != c
-        for fid, c in door_comp.items())
+    return len({comp[ti] for (ti, _fid) in nv.doors}) > 1
 
 
 def _component_fids(nv, comp_tris, ncomp, key, root_fid, writer) -> list:

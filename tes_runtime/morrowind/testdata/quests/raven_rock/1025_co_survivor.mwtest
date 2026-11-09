@@ -3,9 +3,9 @@
 # player, and on coming within 1,024 units of Falco she settles and greets
 # (CO_3b 20). CO_5 needs her: she holds Elberoth's saber. Only her rescue
 # greeting teaches "go with you", and from CO_4 on another greeting wins, so
-# this runs before the choice. Kills stand in for the fight. The player moves
-# in hops along the navmesh path and waits for her each time; she follows on
-# her own. An AI-driven player walk left the navmesh by the shore twice.
+# this runs before the choice. Kills stand in for the fight. The player steers
+# off the shore and on to Falco along the navmesh, and she follows on her own;
+# an AI-driven player walk left the navmesh by the shore twice.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_co_supply_ship --timeout 2400
 # See docs/commentary/headless_testing.md#quest-runs
 
@@ -29,17 +29,29 @@ ask go with you
 choose 1
 expect GetJournalIndex CO_3b == 10
 bye
-run
-player->Position -213000 174500 200 0
-until 900 "Apronia Alfena"->GetDistance player < 600
-run
-player->Position -209000 172500 300 0
-until 900 "Apronia Alfena"->GetDistance player < 600
-run
-player->Position -206848 169984 400 0
-until 900 "Apronia Alfena"->GetDistance player < 600
-run
-player->Position -197200 160250 870 0
-until 1800 GetJournalIndex CO_3b == 20
+# She follows now, so the player walks to Falco along the navmesh, off the shore first; `defend` takes
+# the beasts that attack on the way.
+defend
+steer -216553 178664 235
+steer -214229 176941 501
+steer -210328 173583 342
+steer -209206 172663 398
+steer -208341 171888 385
+steer -208076 170844 393
+steer -207391 170347 421
+steer -207118 169862 478
+steer -206325 168613 861
+steer -206137 168382 1025
+steer -205525 167792 1413
+steer -203700 166734 1323
+steer -202667 165983 1259
+steer -201195 164912 1113
+steer -200140 163883 1561
+steer -199232 163061 1525
+steer -197986 162489 1018
+steer -197836 161752 908
+steer -197601 160689 856
+steer -197200 160250 810
+until 6000 GetJournalIndex CO_3b == 20
 bye
 end

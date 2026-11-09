@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -20,6 +21,7 @@
 #include "pyconv.h"
 #include "pybuf.h"
 #include "pymath.h"
+#include "seal.h"
 #include "stitch.h"
 
 namespace navgrow {
@@ -640,6 +642,86 @@ void plain_floats(std::vector<Vert>& V) {
     for (Vert& v : V) v.znp = false;
 }
 
+// Twice the plan area of `t`, signed by which side of edge a-b its third corner lies.
+double side_of(const std::vector<Vert>& V, const Tri& t, const Key& e) {
+    const int c = t[0] != e.first && t[0] != e.second ? t[0]
+                : t[1] != e.first && t[1] != e.second ? t[1] : t[2];
+    const Vert &A = V[(size_t)e.first], &B = V[(size_t)e.second], &C = V[(size_t)c];
+    return (B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x);
+}
+
+// Whether triangle `t` lies on `others` within a step of its height: its
+// centroid and each corner drawn a tenth of the way in.
+bool lies_on(const std::vector<Vert>& V, const Tri& t, const std::vector<Tri>& others) {
+    const Vert &A = V[(size_t)t[0]], &B = V[(size_t)t[1]], &C = V[(size_t)t[2]];
+    const double cx = (A.x + B.x + C.x) / 3.0, cy = (A.y + B.y + C.y) / 3.0,
+                 cz = (A.z + B.z + C.z) / 3.0;
+    std::vector<Sample> probes{{cx, cy, cz, 0.0, 0.0}};
+    for (const Vert* p : {&A, &B, &C})
+        probes.push_back({0.9 * p->x + 0.1 * cx, 0.9 * p->y + 0.1 * cy, 0.9 * p->z + 0.1 * cz,
+                          0.0, 0.0});
+    for (const Sample& s : probes) {
+        const CellGrid<Sample> one = bucket_samples({s}, kWalkedCell);
+        if (std::none_of(others.begin(), others.end(),
+                         [&](const Tri& o) { return covers_any_sample(V, o, one); }))
+            return false;
+    }
+    return true;
+}
+
+// `T` without triangle `ti` and whatever that cuts off the mesh, when each of
+// them lies on the rest: a duplicate layer, not coverage.
+bool drop_with_layer(const std::vector<Vert>& V, std::vector<Tri>& T, size_t ti) {
+    std::vector<Tri> rest;
+    for (size_t i = 0; i < T.size(); ++i) if (i != ti) rest.push_back(T[i]);
+    if (!lies_on(V, T[ti], rest)) return false;
+    const auto comps = components(rest);
+    if (comps.size() <= component_count(T)) {
+        T.swap(rest);
+        return true;
+    }
+    std::vector<char> gone(rest.size(), 0);
+    for (const auto& comp : comps) {
+        if (comp.size() > 8) continue;
+        std::vector<char> mine(rest.size(), 0);
+        for (int i : comp) mine[(size_t)i] = 1;
+        const std::vector<Tri> others = without(rest, mine);
+        bool layer = true;
+        for (int i : comp) layer = layer && lies_on(V, rest[(size_t)i], others);
+        if (layer) for (int i : comp) gone[(size_t)i] = 1;
+    }
+    std::vector<Tri> out = without(rest, gone);
+    if (component_count(out) > component_count(T) || !lies_on(V, T[ti], out)) return false;
+    for (size_t i = 0; i < rest.size(); ++i)
+        if (gone[i] && !lies_on(V, rest[i], out)) return false;
+    T.swap(out);
+    return true;
+}
+
+// Two triangles sharing an edge with both third corners on one side of it lie
+// folded over each other, sheets welded where they overlap; the seam linker
+// reads that edge as interior, so an exterior drops one of each pair, the
+// smaller first, wherever that splits nothing off the mesh but a duplicate layer.
+// See: docs/commentary/tes5_import_navmesh.md#folded-sheet-welds
+void drop_folds(const std::vector<Vert>& V, std::vector<Tri>& T) {
+    std::set<Key> kept;
+    for (int step = 0; step < 64; ++step) {
+        const EdgeOwners owners(T);
+        const EdgeOwners::Entry* fold = nullptr;
+        for (const auto& e : owners.order)
+            if (e.tris.size() == 2 && !kept.count(e.key)
+                && side_of(V, T[(size_t)e.tris[0]], e.key) * side_of(V, T[(size_t)e.tris[1]], e.key) > 0.0) {
+                fold = &e;
+                break;
+            }
+        if (!fold) return;
+        const size_t a = (size_t)fold->tris[0], b = (size_t)fold->tris[1];
+        const bool small_a = plan_area(V, T[a]) < plan_area(V, T[b]);
+        if (!drop_with_layer(V, T, small_a ? a : b) && !drop_with_layer(V, T, small_a ? b : a))
+            kept.insert(fold->key);
+    }
+}
+
 CleanOutput finalize_impl(CleanInput in, CellGeo& G) {
     const NavParams& N = P();
     std::vector<Vert>& V = in.V;
@@ -665,6 +747,11 @@ CleanOutput finalize_impl(CleanInput in, CellGeo& G) {
     compact(V, T);
     drop_attach_scraps(V, T, in.keep_xy);
     drop_degenerate_guarded(V, T);
+    if (bounds) {
+        drop_folds(V, T);
+        compact(V, T);
+    }
+    seal_mesh(V, T, G);
     ccw_in_plan(V, T);
     CleanOutput out;
     out.ledges = resolve_ledges(V, T, marks);

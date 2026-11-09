@@ -22,7 +22,7 @@ case tt_curingtouch_lette
 run
 player->AddItem "p_cure_common_s" 1
 player->Position 109901 121700 82 0
-until 900 "lette"->GetDistance player < 600
+until 900 "lette"->GetDistance player < 4000
 wait 120
 talk lette
 ask Swamp Fever

@@ -27,13 +27,15 @@ std::vector<std::vector<double>> levels_at_points(const std::vector<Strip>& stri
 
 // corridor_grow.grow_batch: each march station's grown half-width.  `walk`
 // needs its walk index built; nodes_xy / edges (pairs) / node_z feed the
-// crossing stop; on_land flags the stations that follow `land`.
+// crossing stop; on_land flags the stations that follow `land`; the discs of
+// `exact_nodes` (actor spawns) count only what stands inside a wall slab.
 std::vector<double> grow_widths(const TriGrid& wall, const TriGrid* walk,
                                 const std::vector<double>& nodes_xy,
                                 const std::vector<int>& edges,
                                 const std::vector<double>& node_z, const Land* land,
                                 const std::vector<double>& stations,
-                                const std::vector<double>& on_land, int land_from);
+                                const std::vector<double>& on_land, int land_from,
+                                const std::set<int>* exact_nodes = nullptr);
 
 // --- meshflip.cpp (xy: interleaved plan points) ----------------------------
 // union_cdt._flip2d.

@@ -86,6 +86,7 @@ PyObject* py_set_params(PyObject*, PyObject*);           // params.cpp
 PyObject* py_union_mesh(PyObject*, PyObject*);           // union.cpp
 PyObject* py_corridor_cell(PyObject*, PyObject*);        // pycell.cpp
 PyObject* py_seed_graph(PyObject*, PyObject*);           // pycell.cpp
+PyObject* py_door_reach(PyObject*, PyObject*);           // pycell.cpp
 PyObject* py_pack_nvnm(PyObject*, PyObject*);            // navm.cpp
 
 namespace {
@@ -201,7 +202,7 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
                        const NeighbourField& field, const Land* land,
                        double cx, double cy, double floor_z,
                        double dirx, double diry, double tanx, double tany,
-                       int ex_a, int ex_b, double lo, const Params& P) {
+                       int ex_a, int ex_b, double lo, const Params& P, bool exact) {
 
     // A terrain-standing rail keeps its height ABOVE THE LAND, not its height.
     const double land_c = land ? land->z(cx, cy) : 0.0;
@@ -222,7 +223,7 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
         const double z_lo = level(mid) + P.slab_z_bottom;
         const double z_hi = level(mid) + P.agent_height;
         if (wall_hit(wall, cx + dirx * mid, cy + diry * mid, dirx, diry,
-                     tanx, tany, z_lo, z_hi, sweep, P.slab_half_w)) {
+                     tanx, tany, z_lo, z_hi, sweep, P.slab_half_w, exact)) {
             // Bisect so the rail ends AT the wall, not a step short of it.
             double lo_d = prev, hi_d = d;
             for (int b = 0; b < P.bisect; ++b) {
@@ -230,7 +231,7 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
                 const double mm = 0.5 * (lo_d + md);
                 if (wall_hit(wall, cx + dirx * mm, cy + diry * mm, dirx, diry,
                              tanx, tany, z_lo, z_hi,
-                             0.5 * (md - lo_d) + P.slab_depth, P.slab_half_w))
+                             0.5 * (md - lo_d) + P.slab_depth, P.slab_half_w, exact))
                     hi_d = md;
                 else
                     lo_d = md;
@@ -275,10 +276,11 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
 
 // Every station's grown half-width into `out` (stations: (N, 9) rows of cx,
 // cy, cz, dirx, diry, tanx, tany, lo, edge_index; on_land per station or null).
+// The discs of `exact_nodes` (actor spawns) test walls by what stands in the slab.
 void grow_march(const TriGrid& wall, const TriGrid* walk, const double* nodesp,
                 size_t nnode, const int* edgesp, size_t nedge, const double* nzp,
                 const Land* land, const double* stp, size_t nst, const double* onlandp,
-                const Params& P, double* out) {
+                const Params& P, double* out, const std::set<int>* exact_nodes = nullptr) {
     NeighbourField field;
     if (nedge) field.build(nodesp, nnode, edgesp, nedge, nzp);
     for (size_t s = 0; s < nst; ++s) {
@@ -295,9 +297,11 @@ void grow_march(const TriGrid& wall, const TriGrid* walk, const double* nodesp,
         } else if (ei < 0) {
             ex_a = ex_b = (int)(-1 - ei);
         }
+        const bool exact = ei < 0 && exact_nodes && exact_nodes->count((int)(-1 - ei));
         out[s] = grow_half_width(wall, walk, field,
                                  (onlandp && onlandp[s] > 0.0 && land->g) ? land : nullptr,
-                                 r[0], r[1], r[2], r[3], r[4], r[5], r[6], ex_a, ex_b, r[7], P);
+                                 r[0], r[1], r[2], r[3], r[4], r[5], r[6], ex_a, ex_b, r[7], P,
+                                 exact);
     }
 }
 
@@ -459,7 +463,8 @@ std::vector<double> navgrow::grow_widths(const TriGrid& wall, const TriGrid* wal
                                          const std::vector<int>& edges,
                                          const std::vector<double>& node_z, const Land* land,
                                          const std::vector<double>& stations,
-                                         const std::vector<double>& on_land, int land_from) {
+                                         const std::vector<double>& on_land, int land_from,
+                                         const std::set<int>* exact_nodes) {
     const NavParams& N = P();
     Params G;
     G.step = N.RIBBON_GROW_STEP;
@@ -478,7 +483,7 @@ std::vector<double> navgrow::grow_widths(const TriGrid& wall, const TriGrid* wal
     std::vector<double> out(stations.size() / 9);
     grow_march(wall, walk, nodes_xy.data(), nodes_xy.size() / 2, edges.data(), edges.size() / 2,
                node_z.data(), land ? land : &none, stations.data(), out.size(),
-               land ? on_land.data() : nullptr, G, out.data());
+               land ? on_land.data() : nullptr, G, out.data(), exact_nodes);
     return out;
 }
 
@@ -730,6 +735,8 @@ PyMethodDef methods[] = {
      "One cell's whole corridor build, collision gather included (build_corridors)."},
     {"seed_graph", py_seed_graph, METH_VARARGS,
      "A seeded cell's flooded pathgrid (seeding.seed_graph)."},
+    {"door_reach", py_door_reach, METH_VARARGS,
+     "Walkable paths from door seeds into a cell's pathgrid (door_reach.door_reach)."},
     {"pack_nvnm", py_pack_nvnm, METH_VARARGS,
      "A built cell's NVNM bytes, door triangles and center (convert_PGRD's tail)."},
     {"union_mesh", py_union_mesh, METH_VARARGS,

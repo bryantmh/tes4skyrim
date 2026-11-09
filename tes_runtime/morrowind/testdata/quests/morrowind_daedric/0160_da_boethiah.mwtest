@@ -4,7 +4,8 @@
 # already carrying both hands them over at once (60, StartScript ShrineBoethiah), as the line for 60 comes first. After twenty days of work the new statue stands on Khartag Point and
 # gives Goldbrand (70, DaedraBoethiah2).
 # PositionCell and Position stand in for the travel, the AddItem of gold for money the player earned, take for buying
-# the book at Jobasha's, waiting for the days passing. FormIDs carry Morrowind.esm's slot 05: 0537637E the ruined
+# the book at Jobasha's, waiting in Jobasha's shop for the days passing (the global ShrineBoethiah enables the
+# statue after twenty days and stops; outdoors, shore creatures and bandits forbid the wait). FormIDs carry Morrowind.esm's slot 05: 0537637E the ruined
 # statue, 05ABDC44 the book, 053DD7C8 the rebuilt statue.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_da_mephala_done --timeout 3600
 # See docs/commentary/headless_testing.md#quest-runs
@@ -37,10 +38,12 @@ bye
 end
 
 case da_boethiah_build
+defend
 run
-player->Position -60692 26800 303 0
+player->PositionCell 644 -250 -385 0 "Vivec, Jobasha's Rare Books"
+until 300 GetPCCell "Vivec, Jobasha's Rare Books" == 1
 wait 60
-rest 600 - "Ex_DAE_Boethiah_fixed"->GetDisabled == 0
+rest 600 - ScriptRunning ShrineBoethiah == 0
 end
 
 case da_boethiah_done

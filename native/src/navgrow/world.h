@@ -60,4 +60,10 @@ int bridge_obstacles(const std::vector<P3>& points, std::vector<std::pair<int, i
 void seed_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
                 std::vector<P3>& points, std::vector<std::pair<int, int>>& edges);
 
+// door_reach.door_reach: per seed, the walkable lattice path to the nearest anchor it
+// reaches (joins: (point, anchor)); with no anchors, the whole flood from the seeds.
+void door_reach(const std::vector<P3>& seeds, const std::vector<P3>& anchors, Ground& ground,
+                std::vector<P3>& points, std::vector<std::pair<int, int>>& edges,
+                std::vector<std::pair<int, int>>& joins);
+
 }  // namespace navgrow

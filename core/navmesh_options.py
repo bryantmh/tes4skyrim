@@ -41,3 +41,20 @@ def navmesh_pins_dir() -> str:
     See: docs/commentary/tes5_import_navmesh.md#user-pin-folder
     """
     return os.environ.get(NAVMESH_PINS_ENV_VAR, "").strip()
+
+
+#: Carries the plugin being imported to the pool workers, which read its pin file.
+NAVMESH_PLUGIN_ENV_VAR = "TESCONV_NAVMESH_PLUGIN"
+
+
+def set_navmesh_plugin(name) -> None:
+    """Name the plugin whose pins this process and its children read."""
+    os.environ[NAVMESH_PLUGIN_ENV_VAR] = name or ""
+
+
+def navmesh_plugin() -> str:
+    """The plugin whose pins apply, e.g. `TR_Mainland.esm`; '' when none is set.
+
+    See: docs/commentary/tes5_import_navmesh.md#pins-key-on-the-plugin
+    """
+    return os.environ.get(NAVMESH_PLUGIN_ENV_VAR, "").strip()

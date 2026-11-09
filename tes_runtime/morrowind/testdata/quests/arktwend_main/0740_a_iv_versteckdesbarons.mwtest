@@ -6,11 +6,43 @@
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from baron_house
 # See docs/commentary/headless_testing.md#quest-runs
 
-# The abandoned house by the harbor; its door is no longer sealed.
+# Jarko leads the player from the guild, out through its secret door and
+# across the city to the abandoned house by the harbor; he walks, so the
+# player does too. He stays outside as lookout. His own companion script
+# warps him up behind a moving player, so only the yard legs wait for him.
 case baron_house
-run
-player->Position 6480 59100 160 0
+defend
+walk -22 1825 328
+walk -41 -57 724
+bye if open
+walk -41 -57 724
+until 3000 "DIEBJarkoderGaukler"->GetDistance player < 400
+activate 05E9C307
+until 300 GetPCCell "Stormwend, Thieves Guild" == 0
+# Off the door's landing before waiting: Jarko comes out of the door onto it and shoves a player
+# still standing there into the yard wall.
+walk -5771 41306 224
+bye if open
+until 3000 "DIEBJarkoderGaukler"->GetDistance player < 600
+# At the harbor gate the guard may greet the player; the pole swings up
+# once the player is within 400, and only while no menu is open.
+walk 20 53150 224
+bye if open
+walk 20 53150 224
+wait 60
+bye if open
+until 900 "einlass_gate_pole".State == 30
+walk 6480 59100 160
+bye if open
+walk 6480 59100 160
+bye if open
+walk 6480 59100 160
+bye if open
+until 3000 "DIEBJarkoderGaukler"->GetDistance player < 600
 until 300 GetJournalIndex A_IV_VersteckdesBarons == 1
+until 600 "DIEBJarkoderGaukler"->GetCurrentAIPackage != 3
+bye if open
+expect "DIEBJarkoderGaukler"->GetDistance player < 1000
 activate 05EB5A42
 until 300 GetPCCell "Stormwend, Abandoned House" == 1
 end
@@ -56,8 +88,15 @@ close Book Menu
 until 300 GetJournalIndex A_IV_VersteckdesBarons == 5
 end
 
-# The Old Forest hideout: the Baron and the Masterthief.
+# The Old Forest hideout: the Baron and the Masterthief. Outside the house
+# Jarko, the lookout, asks what the player learned; there is no time, and he
+# describes the way.
 case baron_hideout
+run
+player->Position 6480 59100 160 0
+until 600 MenuMode == 1
+choose 99
+bye if open
 run
 player->Position 76700 -28500 2531 0
 until 300 "DerBaron01"->GetDisabled == 0

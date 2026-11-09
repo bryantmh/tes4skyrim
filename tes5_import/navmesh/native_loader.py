@@ -5,11 +5,8 @@ build script, and committed there) rather than inside `tes5_import/navmesh/`, so
 the Python tree holds no build artifacts.  That means a plain `from . import
 _navgrow_native` cannot find it and the module has to be loaded by path.
 
-The extension is REQUIRED.  Falling back to a Python implementation when it is
-missing would make navmesh output depend on whether a build artifact happened to
-be present, which breaks the pipeline's byte-reproducibility contract -- so a
-missing or mismatched .pyd raises with instructions instead.  `NATIVE` is an
-explicit switch, never a fallback: both paths produce identical output.
+The extension is REQUIRED: the navmesh kernels exist only in C++, so a missing
+or mismatched .pyd raises with build instructions.
 """
 
 import importlib.machinery
@@ -24,9 +21,6 @@ _DIST = os.path.join(
     'native', 'dist')
 
 _cached = {}
-
-#: True runs the native navmesh kernels, False the Python reference they mirror (TES_NAVMESH_IMPL=python).
-NATIVE = os.environ.get('TES_NAVMESH_IMPL', 'native').strip().lower() != 'python'
 
 
 def _not_found(mod, path):
@@ -80,24 +74,10 @@ def native_geos():
 
 
 #: Module-level constants of the corridor modules the native stages read, beside params.py's.
-_MODULE_PARAMS = (('clean_decimate', ('CONCAVE_CUT_FRAC',)),
-                  ('corridor', ('LIP_MARCH_STEP', 'DISC_RAY_TRIM', 'DISC_LEVEL_TOL',
-                                'FAR_WIDTH_WINDOW')),
-                  ('corridor_doors', ('DOOR_BRIDGE_RADIUS', 'DOOR_LINE_HALF',
-                                      'DOOR_LINE_HALF_MAX', 'DOOR_TRI_MIN_DEPTH',
-                                      'DOOR_SELF_CLEARANCE', 'DOOR_MIN_DEPTH', 'DOOR_OVERLAP')),
-                  ('door_routes', ('ROUTE_STEP', 'ROUTE_REACH')),
-                  ('clean_validate', ('LIP_STANDOFF',)),
-                  ('union_geom', ('FLAP_EDGE_DROP', 'SAME_SURFACE_Z', 'STOREY_GAP_Z',
-                                  'REACH_TOL', 'WALL_SLOPE_COS')),
-                  ('union_cdt', ('DOOR_SNAP_PERP', 'RIBBON_SEED_STEP', 'STEEP_REFINE_EDGE',
-                                 'LAND_RELIEF_TOL', 'LAND_MIN_EDGE')),
-                  ('corridor_union', ('DOOR_CLAIM_MIN_FRAC', 'LAND_MAX_EDGE_RATIO',
-                                      'LAND_SLIT_HALF', 'NOTCH_MAX_MOUTH',
-                                      'NOTCH_MIN_DEPTH_RATIO', 'NOTCH_NEAR_LINE')),
-                  ('union_mesh', ('TSPLIT_TOL', 'TSPLIT_CRACK_TOL', 'TSPLIT_Z_TOL', 'WELD_R',
-                                  'SAME_PART_WELD_XY', 'PG_CELL')),
-                  ('seeding', ('WALK_STEP', 'LATTICE_SPACING')))
+_MODULE_PARAMS = (('clean_validate', ('LIP_STANDOFF',)),
+                  ('seeding', ('WALK_STEP', 'LATTICE_SPACING')),
+                  ('door_reach', ('DOOR_REACH_SPACING', 'DOOR_REACH_MAX_NODES',
+                                  'DOOR_SEED_SEARCH', 'DOOR_SEED_DROP', 'DOOR_REACH_THIN_SPACING')))
 
 
 def native_params():

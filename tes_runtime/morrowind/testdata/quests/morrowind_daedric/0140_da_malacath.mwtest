@@ -29,6 +29,7 @@ expect GetJournalIndex DA_Malacath == 30
 bye
 run
 player->Position -60692 26800 303 0
+approach 053E05E5
 until 600 "nadene rotheran"->GetDistance player < 1000
 wait 60
 talk nadene rotheran

@@ -16,13 +16,19 @@ once from disk in the pool initializer.  Without this, every cell would voxelize
 an empty world and emit no navmesh at all.
 """
 
+import math
 import os
 
 from asset_convert.collision.collision_extract import get_collision
 
-from .from_pgrd import cached_geometry, convert_PGRD, geom_cache_path, geom_equal
+from .door_reach import flood_graph, join_missing_doors
+from .edge_links import CELL_SIZE
+from .from_pgrd import cached_geometry, collect_doors, convert_PGRD, geom_cache_path, geom_equal, record_graph
 from .lattice.build import set_activators
 from .seeding import seeded_graph
+
+#: A landing this close in plan to a door with no Door Triangle seeds that door's flood and stands in for it.
+DOOR_LANDING_REACH = 512.0
 
 # Per-worker read-only carving context, populated by _init in each child.
 _BASE_MODEL_BY_FID: dict = {}
@@ -112,13 +118,55 @@ def _verify_against_cache(job: dict, result: tuple) -> tuple:
 def convert_job(job: dict, base_model_by_fid: dict, door_fids, geom_cache=None):
     """(navm_bytes, meta) for one gathered job; a seeded job floods its pathgrid first.
 
+    An interior's door seeds join walkable paths from its doors into the graph.
     See: docs/commentary/tes5_import_navmesh.md#seeded-cells
+    See: docs/commentary/tes5_import_navmesh.md#door-reach
     """
     graph = None
     if job.get('seeds'):
         graph = seeded_graph(job, base_model_by_fid, door_fids, get_collision)
         if graph is None:
             return None, None
+    if job.get('door_seeds'):
+        graph = flood_graph(job, base_model_by_fid, door_fids, get_collision)
+        if not graph[1]:
+            return None, None
+    args = (job, base_model_by_fid, door_fids, geom_cache)
+    built = _build(*args, graph)
+    missing = _doors_without_triangle(job, built[1], door_fids)
+    base = graph or record_graph(job['pgrd_rec'])
+    joined = (join_missing_doors(job, base, missing, base_model_by_fid, door_fids, get_collision)
+              if missing and base[0] is not None else None)
+    if joined:
+        rebuilt = _build(*args, joined)
+        if _linked(rebuilt) > _linked(built):
+            built, graph = rebuilt, joined
+    return _at_landings(args, built, graph)
+
+
+def _at_landings(args, built, graph):
+    """`built`, or its rebuild with each door still lacking a Door Triangle linked at its nearest landing
+    when that links more doors: the landing is where the game puts an actor coming through it.
+    See: docs/commentary/tes5_import_navmesh.md#door-reach
+    """
+    spots = {}
+    for x, y, _z, fid in _unlinked_doors(args[0], built[1], args[2]):
+        near = [p for p in args[0].get('landings') or () if math.dist(p[:2], (x, y)) <= DOOR_LANDING_REACH]
+        if near:
+            spots[fid] = tuple(min(near, key=lambda p: math.dist(p[:2], (x, y))))
+    if not spots:
+        return built
+    moved = _build(*args, graph, spots)
+    return moved if _linked(moved) > _linked(built) else built
+
+
+def _linked(result) -> int:
+    """How many doors a build gave a Door Triangle."""
+    return len((result[1] or {}).get('door_refs') or ()) if result else 0
+
+
+def _build(job, base_model_by_fid, door_fids, geom_cache, graph, door_spots=None):
+    """(navm_bytes, meta) for one job over `graph` (None: its pathgrid record's own graph)."""
     return convert_PGRD(
         job['pgrd_rec'],
         land_rec=job['land_rec'],
@@ -132,7 +180,33 @@ def convert_job(job: dict, base_model_by_fid: dict, door_fids, geom_cache=None):
         spawns=job.get('spawns'),
         obstacles=job.get('obstacles'),
         graph=graph,
+        door_spots=door_spots,
     )
+
+
+def _doors_without_triangle(job, meta, door_fids) -> list:
+    """Seeds for the job's teleport doors, standing in its own cell, that the built mesh gave no Door Triangle:
+    each door's point, and per landing within DOOR_LANDING_REACH of it (authored on the floor) the landing
+    and the door at the landing's height, since a flipped or hung door's origin stands far above its floor.
+    """
+    doors = [d[:3] for d in _unlinked_doors(job, meta, door_fids)]
+    seeds = list(doors)
+    for d in doors:
+        for p in job.get('landings') or ():
+            if math.dist(p[:2], d[:2]) <= DOOR_LANDING_REACH:
+                seeds += [tuple(p), (d[0], d[1], p[2])]
+    return seeds
+
+
+def _unlinked_doors(job, meta, door_fids) -> list:
+    """(x, y, z, ref) of the job's teleport doors, standing in its own cell, that `meta` gave no Door Triangle."""
+    have = set((meta or {}).get('door_refs') or ())
+    cell = job['cell_rec']
+    gx, gy = cell.get('XCLC.X'), cell.get('XCLC.Y')
+    rows = collect_doors((job['refr_recs'] or []) + (job.get('extra_door_refrs') or []), door_fids)
+    return [(x, y, z, fid) for (x, y, z, _r, fid, teleport, _w) in rows
+            if teleport and fid not in have
+            and (gx in (None, '') or (int(x // CELL_SIZE), int(y // CELL_SIZE)) == (int(gx), int(gy)))]
 
 
 def _convert(job: dict, geom_cache):

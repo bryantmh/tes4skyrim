@@ -373,6 +373,19 @@ void erode_run(std::vector<double>& w, const std::vector<size_t>& idx, long long
         }
         w[idx[(size_t)k]] = std::min(src[(size_t)k], std::max(cap, m));
     }
+    // A run's end sees neighbours on one side only, so a lone far step can
+    // survive the window: one standing a cap past both eroded neighbours is cut.
+    for (long long k = 0; k < n; ++k) src[(size_t)k] = w[idx[(size_t)k]];
+    for (long long k = 0; n > 1 && k < n; ++k) {
+        double m = 0.0;
+        for (long long q : {k - 1, k + 1}) {
+            if (wrap) q = ((q % n) + n) % n;
+            else if (q < 0 || q >= n) continue;
+            m = std::max(m, src[(size_t)q]);
+        }
+        const double bound = std::max(cap, m);
+        if (src[(size_t)k] > bound + cap) w[idx[(size_t)k]] = bound;
+    }
 }
 
 void erode_far_widths(Grow& G) {
@@ -702,7 +715,7 @@ Group build_corridor_strips(CellCtx& C) {
         C.geo.ensure_walk_index();
         G.widths = grow_widths(C.geo.wall, C.geo.has_walkable ? &C.geo.walk : nullptr,
                                C.edges.empty() ? std::vector<double>() : nodes_xy, eg, nz, C.land,
-                               G.rows, G.on_land, C.land_from);
+                               G.rows, G.on_land, C.land_from, &C.lone);
         bridge_blocked_stations(G);
         erode_far_widths(G);
     }

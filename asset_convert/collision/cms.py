@@ -25,17 +25,30 @@ PyFFI 2.2.3 field-name quirks: chunk welding array is `indices_2`
 (NumWeldingInfo/WeldingInfo in newer nif.xml); big-tri welding is
 `unknown_short_1`.
 """
+import struct
+
+
+def f32(value):
+    """`value` rounded to the float32 precision a NIF float field stores."""
+    return struct.unpack('<f', struct.pack('<f', value))[0]
+
+
+#: The CMS `error` field (one 0.001 hu quantization step) as the float32 the engine multiplies by.
+ERROR_F32 = f32(0.001)
+
+
+def chunk_vertex(base, quant):
+    """A chunk vertex as Havok decodes it: float32(q) * error + base, in float32."""
+    return tuple(f32(f32(q * ERROR_F32) + f32(base[i])) for i, q in enumerate(quant))
 
 
 def _quat_rotate(q, v):
-    """Rotate vector v by quaternion q=(x,y,z,w)."""
+    """Rotate vector v by quaternion q=(x,y,z,w): t = 2 cross(q.xyz, v), v' = v + w t + cross(q.xyz, t)."""
     x, y, z, w = q
     vx, vy, vz = v
-    # t = 2 * cross(q.xyz, v)
     tx = 2.0 * (y * vz - z * vy)
     ty = 2.0 * (z * vx - x * vz)
     tz = 2.0 * (x * vy - y * vx)
-    # v' = v + w*t + cross(q.xyz, t)
     return (
         vx + w * tx + (y * tz - z * ty),
         vy + w * ty + (z * tx - x * tz),
@@ -48,64 +61,59 @@ def _is_identity_rot(q, eps=1e-6):
     return abs(x) < eps and abs(y) < eps and abs(z) < eps and abs(abs(w) - 1.0) < eps
 
 
-def decode_cms(cms_data):
+def decode_cms(cms_data, engine=False):
     """Decode a bhkCompressedMeshShapeData block (PyFFI object).
 
     Returns a list of (shape_key, (v0, v1, v2)) with vertices as xyz tuples
-    in havok units, ordered big tris first, then chunks in order.
+    in havok units, ordered big tris first, then chunks in order. `engine`
+    decodes unrotated chunk vertices in the engine's float32 steps.
     """
-    bpw = cms_data.bits_per_w_index
-    bpi = cms_data.bits_per_index
-    out = []
-
     big_verts = [(v.x, v.y, v.z) for v in cms_data.big_verts]
+    out = []
     for bi in range(cms_data.num_big_tris):
         bt = cms_data.big_tris[bi]
         tri = (big_verts[bt.triangle_1], big_verts[bt.triangle_2],
                big_verts[bt.triangle_3])
         out.append((bi, tri))
-
-    transforms = []
-    for ti in range(cms_data.num_transforms):
-        t = cms_data.chunk_transforms[ti]
-        transforms.append(((t.translation.x, t.translation.y, t.translation.z),
-                           (t.rotation.x, t.rotation.y, t.rotation.z,
-                            t.rotation.w)))
-
     for ci in range(cms_data.num_chunks):
         ch = cms_data.chunks[ci]
-        t_trans, t_rot = transforms[ch.transform_index]
-        base = (ch.translation.x + t_trans[0],
-                ch.translation.y + t_trans[1],
-                ch.translation.z + t_trans[2])
-        offs = list(ch.vertices)
-        verts = []
-        rotate = not _is_identity_rot(t_rot)
-        for n in range(ch.num_vertices // 3):
-            v = (base[0] + offs[3 * n] / 1000.0,
-                 base[1] + offs[3 * n + 1] / 1000.0,
-                 base[2] + offs[3 * n + 2] / 1000.0)
-            if rotate:
-                v = _quat_rotate(t_rot, v)
-            verts.append(v)
+        t = cms_data.chunk_transforms[ch.transform_index]
+        verts = _chunk_verts(ch, t, engine)
+        part = (ci + 1) << cms_data.bits_per_w_index
+        out += [(part | key, tuple(verts[i] for i in idx))
+                for key, idx in _chunk_triples(ch, cms_data.bits_per_index)]
+    return out
 
-        indices = list(ch.indices)
-        strips = list(ch.strips)
-        part = (ci + 1) << bpw
-        offset = 0
-        for slen in strips:
-            for j in range(slen - 2):
-                a, b, c = (indices[offset + j], indices[offset + j + 1],
-                           indices[offset + j + 2])
-                key = part | ((j & 1) << bpi) | (offset + j)
-                out.append((key, (verts[a], verts[b], verts[c])))
-            offset += slen
-        while offset + 2 < ch.num_indices:
-            a, b, c = indices[offset], indices[offset + 1], indices[offset + 2]
-            key = part | offset
-            out.append((key, (verts[a], verts[b], verts[c])))
-            offset += 3
 
+def _chunk_verts(ch, t, engine):
+    """A chunk's vertices in havok units, moved by its transform `t`."""
+    t_rot = (t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w)
+    base = (ch.translation.x + t.translation.x,
+            ch.translation.y + t.translation.y,
+            ch.translation.z + t.translation.z)
+    offs = list(ch.vertices)
+    rotate = not _is_identity_rot(t_rot)
+    verts = []
+    for n in range(ch.num_vertices // 3):
+        quant = offs[3 * n:3 * n + 3]
+        v = (chunk_vertex(base, quant) if engine and not rotate
+             else tuple(base[i] + quant[i] / 1000.0 for i in range(3)))
+        verts.append(_quat_rotate(t_rot, v) if rotate else v)
+    return verts
+
+
+def _chunk_triples(ch, bpi):
+    """(key within the chunk, vertex index triple) per triangle: strips, then free triples."""
+    indices = list(ch.indices)
+    out = []
+    offset = 0
+    for slen in list(ch.strips):
+        for j in range(slen - 2):
+            out.append((((j & 1) << bpi) | (offset + j), indices[offset + j:offset + j + 3]))
+        offset += slen
+    while offset + 2 < ch.num_indices:
+        out.append((offset, indices[offset:offset + 3]))
+        offset += 3
     return out
 
 

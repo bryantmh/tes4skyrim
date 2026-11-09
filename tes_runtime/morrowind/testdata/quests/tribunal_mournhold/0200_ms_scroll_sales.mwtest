@@ -6,7 +6,7 @@
 # her greeting. Her death logs 40 (AhniaDead).
 # Ten-Tongues then hands over Elbert Nermarc's stolen notes (60), and Elbert,
 # given them back, logs 100.
-# Bribes, repeated until they land, raise Ten-Tongues from her base 50; the kill
+# SetDisposition stands in for persuading Ten-Tongues (persuasion is tested elsewhere) from her base 50; the kill
 # stands in for the fight. Ref FormIDs carry Tribunal.esm's slot 06.
 # Run: python -m tools.live.test_instance mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_ms_job_hunt --timeout 2400
 # See docs/commentary/headless_testing.md#quest-runs
@@ -15,8 +15,10 @@ case ms_scroll_sales
 run
 player->PositionCell -29 203 -365 0 "Mournhold, Pawnbroker"
 until 600 "Ten-Tongues_Weerhat"->GetDistance player < 400
+run
+"Ten-Tongues_Weerhat"->SetDisposition 85
 talk Ten-Tongues_Weerhat
-persuade bribe100 until "Ten-Tongues_Weerhat"->GetDisposition >= 85
+expect "Ten-Tongues_Weerhat"->GetDisposition >= 85
 ask Special Offers
 expect GetJournalIndex MS_ScrollSales >= 10
 ask Special Offers

@@ -20,11 +20,13 @@ ask looks like Tarvus
 choose 1
 expect GetJournalIndex MS_Performers == 10
 bye
+# On the stage first: the 15 s start once the greeting closes, under a second
+# of real time at test speed.
+run
+player->PositionCell -1689 -30 116 0 "Mournhold, Great Bazaar"
 talk meryn othralas
 expect GetJournalIndex MS_Performers == 30
 bye
-run
-player->PositionCell -1689 -30 116 0 "Mournhold, Great Bazaar"
 button 0
 button 2
 button 1

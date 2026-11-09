@@ -36,4 +36,8 @@ void PushListModal();
 void ListModalHover(double x, double y);
 void ListModalClick(double x, double y);
 
+// Clicks row `row` (0-based) as the player would; false when the modal is
+// closed or the row is missing or disabled.
+bool ListModalChoose(int row);
+
 }  // namespace tesruntime::mw

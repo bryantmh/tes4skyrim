@@ -2,7 +2,8 @@
 # answered with its first choice (a combat answer), so the script's Player.SetClass names Warrior and the class menu
 # opens on it. Starts from morroblivion_main's save after the dock.
 # Socucius reads each question aloud (even ClassQuizStage), then its box shows (the odd stage after). The box holds
-# the game, so each answer hears the question, lets him finish, and clicks; a button step waits for its box.
+# the game, so each answer hears the question, lets him finish, and clicks; a button step waits for its box. The
+# script tallies a click on its next pass, so a score is waited for.
 # Run: python -m tools.live.test_instance questtest --cases <this folder> --load mwtest_mb_chargen_dock --fast --checkpoints --stop-on-fail --timeout 3600
 # See docs/commentary/morrowind_runtime.md#a-script-names-the-class
 
@@ -32,6 +33,7 @@ button 0
 hear 1800 mwSocuciusErgallaRef Your mother sends you to the market
 wait 600
 button 0
+until 300 fbmwChargen.quizScoreCombat >= 5
 expect fbmwChargen.quizScoreCombat == 5
 end
 
@@ -51,6 +53,7 @@ button 0
 hear 1800 mwSocuciusErgallaRef Entering town
 wait 600
 button 0
+until 300 fbmwChargen.quizScoreCombat >= 10
 expect fbmwChargen.quizScoreCombat == 10
 end
 

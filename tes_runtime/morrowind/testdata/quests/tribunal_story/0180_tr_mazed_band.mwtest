@@ -2,8 +2,10 @@
 # Lady, sends the player to Fedris Hler (10), who wants Barilzar's ring found
 # ("service to our Lady", then "Barilzar's Mazed Band": 20). The lich Barilzar
 # in the Abandoned Crypt force-greets once the player is within 512
-# (barilzarScript), refuses (60) and fights. The player walks in from the
-# crypt's inner door after his script has bound, as a player would arrive.
+# (barilzarScript), refuses (60) and fights. The player arrives from the
+# crypt's inner door after his script has bound; SetPos stands in for the
+# walk up to his ledge, where AI-driven walks stall (audit: player walks stall
+# in reachable interiors).
 # Holding the ring logs 70 (mazedbandScript); Gavas sends the player on to Almalexia (90), who takes it
 # in the High Chapel ("It is my pleasure to serve you." 2: 100).
 # The kill stands in for the fight, and taking his things for looting him. Ref
@@ -21,7 +23,8 @@ expect GetJournalIndex TR_MazedBand == 10
 bye
 run
 player->PositionCell -116 483 -684 0 "Mournhold Temple: Reception Area"
-until 600 "fedris hler"->GetDistance player < 400
+# He wanders round his spot (-116 383), up to 512 away; `talk` needs him loaded, not near.
+until 3000 "fedris hler"->GetDistance player < 4000
 talk fedris hler
 ask service to our Lady
 ask Barilzar's Mazed Band
@@ -31,7 +34,9 @@ run
 player->PositionCell -2411 336 -12 0 "Old Mournhold: Abandoned Crypt"
 until 300 GetPCCell "Old Mournhold: Abandoned Crypt" == 1
 wait 300
-walk -5030 1603 471
+player->SetPos x -4790
+player->SetPos y 1566
+player->SetPos z 480
 until 600 MenuMode == 1
 bye
 expect GetJournalIndex TR_MazedBand == 60

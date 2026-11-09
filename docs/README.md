@@ -145,6 +145,7 @@ A dated sweep over a corpus, with counts. Frozen once written; a re-audit is a N
 | [morrowind_opcode_testplan.md](audits/morrowind_opcode_testplan.md) | The fewest TR_Mainland quests that exercise every MWScript opcode, with quest giver and `coc` target |
 | [morrowind_opcode_testplan_morrowind.md](audits/morrowind_opcode_testplan_morrowind.md) | The same opcode test plan over Morrowind.esm's journal quests |
 | [morrowind_opcode_testplan_merged.md](audits/morrowind_opcode_testplan_merged.md) | One opcode test plan over Morrowind.esm and TR_Mainland.esm's quests together |
+| [mwscript_full_runs.md](audits/mwscript_full_runs.md) | The mwscript full-run worklog: standing rules, generic mechanisms, every quest's status and failed attempts |
 | [mwscript_opcodes.md](audits/mwscript_opcodes.md) | Which of MWScript's 298 commands MorrowindRuntime implements, by call-site cost |
 | [wiring.md](audits/wiring.md) | Script-to-record wiring in converted plugins: unbound/dangling/mistyped properties, hosts, conditions, coverage, verified findings |
 | [script_command_fidelity.md](audits/script_command_fidelity.md) | How each TES4 command converts to Papyrus (native, inline, polyfill, partial, dropped), by call site, from real converter runs |

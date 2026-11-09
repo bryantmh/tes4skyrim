@@ -94,6 +94,9 @@ class CellCtx(object):
         graph = (_cell_graph(pg, rec) if pg is not None
                  else (None, None, 0.0, 0.0, False))
         nodes, edges, self.origin_x, self.origin_y, self.exterior = graph
+        if not self.exterior and rec.get('XCLC.X') not in (None, ''):
+            self.exterior = True
+            self.origin_x, self.origin_y = float(rec['XCLC.X']) * 4096.0, float(rec['XCLC.Y']) * 4096.0
         self.nodes, self.edges = nodes or [], edges or []
         self.doors = collect_doors(self.refrs, index.door_fids)
         self.land = index.land_for(rec, land) if self.exterior else None

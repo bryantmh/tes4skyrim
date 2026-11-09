@@ -58,7 +58,7 @@ expect GetJournalIndex CO_3 == 60
 bye
 run
 player->PositionCell 3504 4553 16407 0 "Fort Frostmoth, Imperial Cult Shrine"
-until 600 "Carnius Magius"->GetDistance player < 400
+approach 06223A46
 talk Carnius Magius
 ask assignment
 expect GetJournalIndex CO_3 == 70

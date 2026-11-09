@@ -997,12 +997,10 @@ completes — 26,865 records, 197 MB.
 
 Corridor navmesh generation was **9.8x** faster after four fixes, all
 **byte-identical output** (13 cells A/B'd on (verts, tris) hashes; large
-interiors 11-14x, small cells 1.3-2.5x). Profile with
-`python tools/navmesh/perf.py --cells <A,B> --stages` (its stage timers now
-wrap the CORRIDOR path; they used to wrap the deleted voxel/region/spanmesh and
-so reported everything as "(other)"). Sub-stage rows are INDENTED because they
-nest inside `build_union_mesh` — only top-level rows may be subtracted, or
-"(other)" goes negative.
+interiors 11-14x, small cells 1.3-2.5x). Those measurements were taken on the
+Python build with `tools/navmesh/perf.py`, deleted with the Python reference
+([cell-baseline](tes5_import_navmesh.md#cell-baseline)); the build is now one
+native call per cell, timed with `job_trace.py --no-cache`.
 
 - **Never recompute a whole-mesh property inside a per-node loop.**
   `_merge_at_pathgrid_nodes` called `_tri_components` (full-mesh union-find) once

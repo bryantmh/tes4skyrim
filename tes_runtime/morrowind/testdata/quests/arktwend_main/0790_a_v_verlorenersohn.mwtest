@@ -25,11 +25,19 @@ end
 
 # The guard at the northern edge saw Mauragin pass, and a group after him. He
 # stands on a steep slope where a dropped player can slide out of his range
-# and into the child's, whose greeting skips ahead, so the player stands on a
-# measured footing 100 units above him.
+# and into the child's, whose greeting skips ahead, so once the cell loads the
+# player stands just above him, read off his position.
 case sohn_guard
 run
 player->Position 136538 -35112 722 180
+until 300 "NordrandWache01"->GetDistance player < 4000
+run
+set TestResult to ( "NordrandWache01"->GetPos x )
+player->SetPos x TestResult
+set TestResult to ( ( "NordrandWache01"->GetPos y ) + 100 )
+player->SetPos y TestResult
+set TestResult to ( ( "NordrandWache01"->GetPos z ) + 20 )
+player->SetPos z TestResult
 until 600 MenuMode == 1
 wait 60
 ask into the mountains
@@ -43,21 +51,116 @@ end
 
 # A child wants to be an adventurer too, and runs off after a wolf.
 case sohn_child
+# Steered up the cliff path with the child following: big governor steps stick the player and lose the child.
+pace 10
 run
 player->Position 135607 -37130 74 0
 until 600 MenuMode == 1
 wait 60
 bye
 expect GetJournalIndex A_V_VerlorenerSohn == 5
-run
-player->Position 121700 -37350 5523 0
-until 300 GetJournalIndex A_V_VerlorenerSohn == 6
+# The child follows (AIFollow) from journal 5 to 6, so the player walks her up to the wolf along the
+# navmesh; the wolf comes down to meet them, and at 6 (its death) she greets, hands over the diary
+# page and is disabled, which ends the waits for her wherever on the route that happens.
+defend
+steer 135653 -37587 76
+bye if open
+steer 134063 -37586 76
+bye if open
+steer 134021 -37651 76
+bye if open
+steer 133963 -37658 76
+bye if open
+until 3000 "NordrandKind"->GetDistance player < 600 + 100000 * "NordrandKind"->GetDisabled
+steer 133663 -37567 83
+bye if open
+steer 132774 -37774 249
+bye if open
+steer 132690 -37596 372
+bye if open
+steer 132699 -37562 381
+bye if open
+until 3000 "NordrandKind"->GetDistance player < 600 + 100000 * "NordrandKind"->GetDisabled
+steer 132667 -37519 417
+bye if open
+steer 132597 -37576 441
+bye if open
+steer 132390 -37523 575
+bye if open
+steer 132335 -37540 599
+bye if open
+until 3000 "NordrandKind"->GetDistance player < 600 + 100000 * "NordrandKind"->GetDisabled
+steer 131684 -38120 972
+bye if open
+steer 131186 -38209 1248
+bye if open
+steer 131061 -38235 1325
+bye if open
+steer 130779 -38161 1482
+bye if open
+until 3000 "NordrandKind"->GetDistance player < 600 + 100000 * "NordrandKind"->GetDisabled
+steer 130643 -38212 1561
+bye if open
+steer 130084 -38305 1915
+bye if open
+steer 129119 -37966 2731
+bye if open
+steer 127222 -37818 3727
+bye if open
+until 3000 "NordrandKind"->GetDistance player < 600 + 100000 * "NordrandKind"->GetDisabled
+steer 126886 -37906 3824
+bye if open
+steer 126445 -37864 4028
+bye if open
+steer 126079 -37867 4202
+bye if open
+steer 125948 -37856 4232
+bye if open
+until 3000 "NordrandKind"->GetDistance player < 600 + 100000 * "NordrandKind"->GetDisabled
+steer 125714 -37851 4310
+bye if open
+steer 125005 -37775 4560
+bye if open
+steer 124646 -37689 4703
+bye if open
+steer 124489 -37667 4752
+bye if open
+until 3000 "NordrandKind"->GetDistance player < 600 + 100000 * "NordrandKind"->GetDisabled
+steer 124119 -37565 4853
+bye if open
+steer 123088 -37267 5259
+bye if open
+steer 123031 -37329 5241
+bye if open
+steer 122967 -37331 5254
+bye if open
+until 3000 "NordrandKind"->GetDistance player < 600 + 100000 * "NordrandKind"->GetDisabled
+steer 122805 -37215 5324
+bye if open
+steer 121700 -37350 5523
+bye if open
+until 3000 "NordrandKind"->GetDistance player < 600 + 100000 * "NordrandKind"->GetDisabled
+until 3000 GetJournalIndex A_V_VerlorenerSohn == 6
+until 600 "NordrandKind"->GetDisabled == 1
+bye if open
 end
 
 # On through the mountains to the astronomer's tower.
 case sohn_tower
-run
-player->Position 113720 -44300 5027 0
+# Over the ridge along the navmesh from where sohn_child's route ends: a Position onto the mountain
+# landed before its ground loaded, and the player slid 5000 down into the valley.
+steer 120473 -37314 5685
+steer 120025 -37269 5748
+steer 119254 -37355 5848
+steer 118816 -37271 5911
+steer 118720 -37266 5922
+steer 116830 -38786 6400
+steer 115897 -40437 6794
+steer 115338 -40548 6766
+steer 115136 -41472 6225
+steer 114589 -42536 5341
+steer 114000 -43446 5275
+steer 113720 -44300 5027
 until 300 GetJournalIndex A_V_VerlorenerSohn == 7
 run
 player->Position 112252 -27330 14110 0
@@ -225,17 +328,23 @@ end
 # Out of the crystal hall through the ancient temple to the gorges, where the
 # star key opens the lift up to Naremar.
 case sohn_lift
-walk -199 -2885 38
+# Mauragin follows: the player walks to each door and on to the airship hall.
+defend
+walk -150 -2790 -200
+until 3000 "Mauragin01"->GetDistance player < 600
 activate 0533CB28
 until 600 GetPCCell "Arpk, Ancient Temple" == 1
-walk -183 377 22
+walk -137 478 -160
+until 3000 "Mauragin01"->GetDistance player < 600
 activate 054BEC3A
 until 600 GetPCCell "Subterranean Gorges of Grul" == 1
-walk 448 1600 -2174
+walk 300 1700 -2176
+until 3000 "Mauragin01"->GetDistance player < 600
 activate 052D74DF
 until 300 GetJournalIndex A_V_VerlorenerSohn == 36
 until 300 GetPCCell "Naremar" == 1
 walk 4425 -1269 12792
+until 3000 "Mauragin01"->GetDistance player < 600
 until 300 GetJournalIndex A_V_VerlorenerSohn == 37
 until 600 MenuMode == 1
 wait 60
@@ -245,15 +354,23 @@ end
 # The old airship: Mauragin wonders whether it runs, then three cranks and
 # the launch lever.
 case sohn_airship
-walk 3738 -4783 12805
+defend
+# Mauragin follows: the player walks to the gangway door, aboard, and to the cranks.
+walk 3985 -4739 12620
+# He comes aboard only from close by.
+until 3000 "Mauragin01"->GetDistance player < 600
 activate 05931B03
 until 600 GetPCCell "Old Airship" == 1
 walk -384 -1029 1150
 until 300 GetJournalIndex A_V_VerlorenerSohn == 38
+# Mauragin greets once he is within 500 of the player.
+until 3000 "Mauragin01"->GetDistance player < 500
 until 600 MenuMode == 1
 wait 60
 bye
-walk -270 -2980 1212
+# The cranks stand past the end of the deck's navmesh; the walk goes to its end.
+walk -238 -2771 1152
+until 3000 "Mauragin01"->GetDistance player < 600
 activate 05E29AEF
 until 300 Zwergenvar == 3
 activate 05A4C1FC
@@ -262,6 +379,7 @@ activate 05465FD3
 until 300 Zwergenvar == 5
 activate 05ACE2F2
 until 300 GetJournalIndex A_V_VerlorenerSohn == 39
+until 3000 "Mauragin01"->GetDistance player < 500
 until 600 MenuMode == 1
 wait 60
 bye
@@ -270,6 +388,9 @@ end
 
 # Below deck the ship cannot be steered; Mauragin cannot stop the crash.
 case sohn_crash
+# Mauragin stays at the helm once the ship is up (his greeting sets AiWander 0), so
+# nobody follows; the player walks the deck by the game's own pathing, which steps
+# round him in the narrow walkway.
 walk -368 950 1154
 until 300 GetJournalIndex A_V_VerlorenerSohn == 40
 talk Mauragin01
@@ -284,24 +405,161 @@ end
 
 # Landed in the far north; Grignir knows the way home.
 case sohn_worldend
+defend
 walk -768 -64 1216
 activate 0569E9C6
 until 600 GetPCCell "Old Airship" == 0
 until 300 Zwergenvar == 8
-walk 167317 81800 1222
+# Down from the wreck to the shore, then a swim to Grignir's island.
+steer 204608 87279 1377
+steer 204907 86255 1349
+steer 205461 85061 1197
+steer 207075 83360 -373
+steer 207637 82770 -805
+steer 208037 81629 -938
+steer 208463 80226 -434
+steer 208764 78904 -367
+steer 209067 76440 -694
+steer 209472 73913 -1221
+steer 209685 71960 -1855
+steer 210160 69486 -2048
+steer 210019 62640 -1937
+steer 208725 57041 -2048
+steer 207696 53627 -1943
+steer 207504 53368 -1717
+steer 207451 53203 -1568
+steer 207412 52988 -1365
+steer 206966 52350 -861
+steer 206656 51628 -1055
+steer 206473 51126 -1436
+steer 206251 50261 -2017
+steer 205611 48862 -1938
+steer 205291 47646 -1301
+steer 204864 47038 -1174
+steer 204576 45973 -1605
+steer 204406 45148 -1366
+steer 204038 43913 -771
+steer 204026 43193 -1084
+steer 203691 42348 -1588
+steer 203493 40148 -2048
+steer 203415 38194 -1878
+steer 203414 36792 -1281
+steer 203395 35706 -1068
+steer 203535 34018 -792
+steer 204079 32624 -1246
+steer 204686 31301 -961
+steer 205406 29908 -1391
+steer 205312 29189 -1669
+steer 205029 27995 -1080
+steer 204736 27462 -1220
+steer 204340 26603 -1977
+steer 202283 26350 -1942
+steer 200299 26921 -899
+steer 195743 27328 -370
+steer 193457 27738 -433
+steer 192405 28025 -439
+steer 191275 28528 -691
+steer 190010 29883 202
+steer 189300 30478 220
+steer 187541 32696 -386
+steer 186703 34773 -735
+steer 186085 36500 -1961
+steer 184832 40707 -2041
+steer 183408 45020 -1841
+steer 183040 46091 -1883
+steer 182779 54530 -2032
+steer 176499 84281 -1941
+steer 176328 84967 -1395
+steer 178491 85725 -476
+steer 179574 85813 35
+steer 180504 86768 31
+walk 180064 86899 4
+walk 178111 86830 4
+walk 177594 87196 5
+walk 177385 87440 10
+walk 174334 87086 4
+steer 173030 86649 486
+until 3000 "Mauragin01"->GetDistance player < 600
+steer 172174 86761 640
+until 3000 "Mauragin01"->GetDistance player < 600
+steer 172117 86784 648
+until 3000 "Mauragin01"->GetDistance player < 600
+steer 170999 86213 774
+until 3000 "Mauragin01"->GetDistance player < 600
+steer 170406 85643 913
+until 3000 "Mauragin01"->GetDistance player < 600
+steer 168884 85185 1198
+until 3000 "Mauragin01"->GetDistance player < 600
+steer 167982 84189 1121
+until 3000 "Mauragin01"->GetDistance player < 600
+steer 167909 84100 1138
+until 3000 "Mauragin01"->GetDistance player < 600
+steer 167399 82903 1217
+until 3000 "Mauragin01"->GetDistance player < 600
+steer 167317 81800 1222
+# Grignir force-greets within 800 of the player, which may come before Mauragin closes in.
+until 3000 "Mauragin01"->GetDistance player - 100000 * MenuMode < 500
 until 600 MenuMode == 1
 wait 60
 ask remote area
 choose 2
 bye
+until 3000 "Mauragin01"->GetDistance player < 500
 end
 
-# Home to Northron by the frozen waterfall: the king has his son back.
+# Home to Northron by the frozen waterfall (Grignir's route): the crevice at its foot, through the Ice
+# Flow and the Slate Cavern, then down the mountain. Mauragin follows, so the player walks to each cave
+# door and takes it; a greeting on the way ends a walk, so the walk is taken up again.
 case sohn_home
-walk 119258 -5831 1387
+defend
+walk 164391 76285 840
+bye if open
+walk 164391 76285 840
+until 3000 "Mauragin01"->GetDistance player < 600
+activate 0578DEC7
+until 600 GetPCCell "Ice Flow" == 1
+walk 3298 17989 -1408
+bye if open
+walk 3298 17989 -1408
+until 3000 "Mauragin01"->GetDistance player < 600
+activate 05DDBAB8
+until 600 GetPCCell "Slate Cavern" == 1
+walk 16224 3030 -1032
+bye if open
+walk 16224 3030 -1032
+until 3000 "Mauragin01"->GetDistance player < 600
+activate 05B23937
+until 600 GetPCCell "Slate Cavern" == 0
+# Down the mountain, a long way over several cells: legs at the descent's turns keep the walk off the
+# side pockets of the slope.
+walk 125453 54502 5028
+bye if open
+walk 125453 54502 5028
+walk 120864 51537 3974
+bye if open
+walk 120864 51537 3974
+walk 96068 8603 1326
+bye if open
+walk 96068 8603 1326
+walk 94960 8289 1116
+bye if open
+walk 94960 8289 1116
+walk 95936 5759 168
+bye if open
+walk 95936 5759 168
+walk 96650 4180 52
+walk 97560 4122 43
+walk 98304 4352 344
+bye if open
+walk 98304 4352 344
+walk 119050 -5831 975
+bye if open
+walk 119050 -5831 975
+bye if open
+walk 119050 -5831 975
+until 3000 "Mauragin01"->GetDistance player < 600
 activate 05CFB21C
 until 600 GetPCCell "Great Hall of Northron" == 1
-walk -4095 -170 458
 talk ZwergenKonigOlim01
 bye
 expect Zwergenvar == 9

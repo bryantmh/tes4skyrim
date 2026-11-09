@@ -104,17 +104,26 @@ void BeginFeud(const std::string& name, void* actor, void* foe) {
 // An empty `target` means StopCombat, which takes no target at all. As in
 // OpenMW (OpStartCombat, MechanicsManager::startCombat), a dead attacker or
 // target starts nothing: Arktwend's battle scripts call it every frame on the
-// fallen, and each call began and ended a feud.
+// fallen, and each call began and ended a feud. Nor does one already fighting
+// that target (isInCombat): Skyrim's StartCombat restarts the fight, and a
+// script calling it every frame kept the pair from ever landing a blow.
 void SetCombat(const std::string& attacker, const std::string& target) {
     void* actor = OwnerRef(attacker);
     void* foe = target.empty() ? nullptr : OwnerRef(target);
     if (!actor || (!target.empty() && !foe)) return;
     if (foe && (IsDead(actor) || IsDead(foe))) return;
-    if (foe) Log("combat: %s attacks %s", attacker.c_str(), target.c_str());
     const std::string name = FeudName(attacker, target);
     const std::string prefix = Lower(attacker) + "|";
+    if (foe && Hooks().actorValue) {
+        Log("combat: TEMP %s health %g (base %g), %s health %g", attacker.c_str(),
+            Hooks().actorValue(attacker, "Health"),
+            Hooks().baseActorValue ? Hooks().baseActorValue(attacker, "Health") : -1.0f, target.c_str(),
+            Hooks().actorValue(target, "Health"));
+    }
     PostToMainThread([actor, foe, name, prefix]() {
         if (foe) {
+            if (CombatTargetOf(actor) == foe) return;
+            Log("combat: %s attacks", name.c_str());
             BeginFeud(name, actor, foe);
             if (g_startCombat) g_startCombat(PapyrusVm(), 0, actor, foe);
             return;
@@ -168,10 +177,15 @@ void GuardsEngage() {
 // OpenMW's AiCombat lasts until a death or StopCombat; Skyrim's gives up on a
 // target it cannot find: of the two Tribunal assassins left standing behind
 // screens, one dropped the player within a second, a different one each run.
-// A live feud whose attacker has no target is started again. Game thread.
+// A live feud whose attacker has no target is started again -- only while
+// both stand in the same place: OpenMW runs no actor outside the active
+// cells, and Arktwend's gallery attackers, renewed every second against a
+// player gone through the door, held the player's travel package still.
+// Game thread.
 void RenewFeuds() {
     ForEachFeud([](const std::string& name, void* actor, void* foe) {
         if (!g_startCombat || !Has3D(actor) || CombatTargetOf(actor)) return;
+        if (PlaceOf(actor) != PlaceOf(foe)) return;
         g_startCombat(PapyrusVm(), 0, actor, foe);
         Log("combat: %s -- target dropped, fight renewed", name.c_str());
     });
@@ -189,6 +203,10 @@ void CombatTick() {
 }
 
 }  // namespace
+
+int TempRelationRank(void* actor, void* other) {
+    return g_getRank && actor && other ? g_getRank(PapyrusVm(), 0, actor, other) : -9;
+}
 
 void InstallCombatCalls(GameHooks& hooks) {
     g_startCombat = Native<StartCombatFn>("Actor.StartCombat", ids::kActorStartCombat);

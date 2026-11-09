@@ -16,6 +16,9 @@ std::vector<Tri> stitch_shared_nodes(std::vector<Vert>& V, std::vector<Tri> T);
 // sheet's vertex lies on them.
 std::vector<Tri> split_t_junctions(const std::vector<Vert>& V, std::vector<Tri> T);
 
+// The same with a vertex allowed `ztol` above or below the edge.
+std::vector<Tri> split_t_junctions(const std::vector<Vert>& V, std::vector<Tri> T, double ztol);
+
 // union_geom._tri_components: a component id per triangle, joined over every
 // shared edge (three owners included).
 std::vector<int> tri_components(const std::vector<Tri>& T);

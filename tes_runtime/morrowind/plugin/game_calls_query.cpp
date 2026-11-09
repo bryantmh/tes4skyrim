@@ -3,6 +3,7 @@
 
 #include "game_calls_internal.h"
 
+#include <algorithm>
 #include <cstring>
 #include <map>
 #include <set>
@@ -444,6 +445,125 @@ std::uint32_t FrameClockMs() {
     return *reinterpret_cast<const std::uint32_t*>(g_frameTimer + ids::kOffFrameClockMs);
 }
 
+// The game speed a clamped (--fast) run is steered to, in game seconds per
+// real second: under the tick's 30x catch-up limit. A case's `pace` step can
+// lower it for an authored game-time window the default outruns.
+constexpr float kPaceDefaultTarget = 25.0f;
+float g_paceTarget = kPaceDefaultTarget;
+// The step's bounds, in ms: 1/10 s is the largest a 38-degree ramp is still climbed at.
+constexpr float kPaceMinStep = 1.0f;
+constexpr float kPaceMaxStep = 100.0f;
+// Real seconds measured before each adjustment, and between log lines. One
+// adjustment at most halves or doubles the step, so a load's burst of game
+// time cannot stall the game.
+constexpr float kPaceWindow = 0.5f;
+constexpr float kPaceMaxChange = 2.0f;
+constexpr float kPaceLogEvery = 10.0f;
+
+float g_paceGame = 0.0f;
+float g_paceReal = 0.0f;
+float g_paceTicks = 0.0f;
+float g_paceLogReal = 0.0f;
+float g_paceSinceLog = kPaceLogEvery;
+// The step and speed of the window before, and the step a raise was last seen
+// to slow the game at; the ceiling creeps back up so a new cell is retried.
+float g_pacePrevStep = 0.0f;
+float g_pacePrevSpeed = 0.0f;
+float g_paceCeiling = kPaceMaxStep;
+constexpr float kPaceCeilingRelax = 1.02f;
+
+// The next step: the last one when raising it to this one slowed the game,
+// which also caps later raises; otherwise rescaled toward g_paceTarget.
+float NextPaceStep(float step, float speed) {
+    const bool raised = step > g_pacePrevStep * 1.05f;
+    float next;
+    if (g_pacePrevSpeed > 0.0f && raised && speed < g_pacePrevSpeed * 0.9f) {
+        g_paceCeiling = next = g_pacePrevStep;
+    } else {
+        const float change = speed > 0.0f ? g_paceTarget / speed : kPaceMaxChange;
+        next = std::clamp(step * std::clamp(change, 1.0f / kPaceMaxChange, kPaceMaxChange), kPaceMinStep,
+                          g_paceCeiling);
+    }
+    g_pacePrevStep = step;
+    g_pacePrevSpeed = speed;
+    g_paceCeiling = std::min(kPaceMaxStep, g_paceCeiling * kPaceCeilingRelax);
+    return next;
+}
+
+std::uintptr_t g_gameSettings = 0;
+
+// The float setting `name` in the game's settings, or null. The map's hash is
+// the engine's, so every bucket is scanned; done once per setting.
+float* GameSettingFloat(const char* name) {
+    void* collection = g_gameSettings ? *reinterpret_cast<void**>(g_gameSettings) : nullptr;
+    if (!collection) return nullptr;
+    const auto* map = static_cast<const char*>(collection) + ids::kOffSettingsMap;
+    const auto count = *reinterpret_cast<const std::uint32_t*>(map + ids::kOffMapBucketCount);
+    void* const* buckets = *reinterpret_cast<void* const* const*>(map + ids::kOffMapBuckets);
+    for (std::uint32_t i = 0; buckets && i < count; ++i) {
+        for (void* entry = buckets[i]; entry; entry = *static_cast<void**>(entry)) {
+            char* setting = static_cast<char**>(entry)[2];
+            const char* own = setting ? *reinterpret_cast<const char**>(setting + ids::kOffSettingName) : nullptr;
+            if (own && _stricmp(own, name) == 0) return reinterpret_cast<float*>(setting + ids::kOffSettingValue);
+        }
+    }
+    return nullptr;
+}
+
+// How long an NPC stays in dialogue with an idle player, in game seconds. The
+// speed-up would end a conversation in a few real seconds that a person has a
+// minute to answer, so a paced run keeps it at its real-time length.
+constexpr const char* kDialogueIdleTimer = "fAIInDialogueModewithPlayerTimer";
+float* g_dialogueIdle = nullptr;
+float g_dialogueIdleVanilla = 0.0f;
+bool g_dialogueIdleSought = false;
+
+void KeepDialogueIdleRealTime() {
+    if (!g_dialogueIdleSought) {
+        g_dialogueIdleSought = true;
+        g_dialogueIdle = GameSettingFloat(kDialogueIdleTimer);
+        if (g_dialogueIdle) g_dialogueIdleVanilla = *g_dialogueIdle;
+        Log("pace: %s %s", kDialogueIdleTimer, g_dialogueIdle ? "scales with the speed-up" : "NOT FOUND");
+    }
+    if (g_dialogueIdle) *g_dialogueIdle = g_dialogueIdleVanilla * g_paceTarget;
+}
+
+// Speed is frames per second times the fixed step, but a longer step also
+// costs each frame more (Arktrand: 5.6x at 33 ms, 0.8x at 100 ms), so the step
+// is steered toward g_paceTarget under a learned ceiling. An unclamped game
+// (normal play) has no step and is left alone.
+// See: docs/commentary/headless_testing.md#speed
+void PaceFrames(float gameSeconds, float realSeconds, float tickSeconds) {
+    float& step = *reinterpret_cast<float*>(g_frameTimer + ids::kOffFrameStep);
+    if (step <= 0.0f) return;
+    KeepDialogueIdleRealTime();
+    g_paceGame += gameSeconds;
+    g_paceReal += realSeconds;
+    g_paceTicks += tickSeconds;
+    g_paceLogReal += realSeconds;
+    if (g_paceReal < kPaceWindow) return;
+    const float speed = g_paceGame / g_paceReal;
+    step = NextPaceStep(step, speed);
+    g_paceSinceLog += g_paceReal;
+    if (g_paceSinceLog >= kPaceLogEvery) {
+        Log("pace: %.1fx real time, step now %.1f ms, runtime ticks %.0f%% of real time", speed, step,
+            100.0f * g_paceTicks / g_paceLogReal);
+        g_paceSinceLog = g_paceTicks = g_paceLogReal = 0.0f;
+    }
+    g_paceGame = g_paceReal = 0.0f;
+}
+
+// Takes effect at once: the step is rescaled by the change, as speed is frame
+// rate times step, so a short authored window never runs at the old speed.
+void SetPaceTarget(float speed) {
+    const float target = speed > 0.0f ? speed : kPaceDefaultTarget;
+    if (target == g_paceTarget) return;
+    float& step = *reinterpret_cast<float*>(g_frameTimer + ids::kOffFrameStep);
+    if (step > 0.0f) step = std::clamp(step * target / g_paceTarget, kPaceMinStep, kPaceMaxStep);
+    Log("pace: target now %.1fx real time, step %.1f ms", target, step);
+    g_paceTarget = target;
+}
+
 // `GetCurrentWeather`: the global native hands back a Weather form, whose
 // classification is then read off it. The TES3 mapping is the opcode's.
 int WeatherClassification() {
@@ -526,7 +646,12 @@ void InstallQueryCalls(GameHooks& hooks) {
     hooks.setClockGlobal = SetClockGlobal;
     hooks.advanceHours = AdvanceHours;
     g_frameTimer = Resolve("frame timer", ids::kFrameTimer, nullptr);
-    if (g_frameTimer) hooks.frameClockMs = FrameClockMs;
+    g_gameSettings = Resolve("game settings", ids::kGameSettings, nullptr);
+    if (g_frameTimer) {
+        hooks.frameClockMs = FrameClockMs;
+        hooks.paceFrames = PaceFrames;
+        hooks.setPaceTarget = SetPaceTarget;
+    }
 }
 
 }  // namespace gamecalls

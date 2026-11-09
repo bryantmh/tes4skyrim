@@ -244,7 +244,7 @@ def _pins_since(job: dict, geom_cache, old_tag: str) -> str:
     the stored hash.  See: docs/commentary/tes5_import_navmesh.md#adopt-and-pins
     """
     from .from_pgrd import cell_pins
-    if not cell_pins(job['pgrd_rec'], job['cell_rec'], geom_cache)[1]:
+    if not cell_pins(job['pgrd_rec'], job['cell_rec'])[1]:
         return ''
     return _job_key(job, (geom_cache[0], old_tag)) if old_tag else '-'
 

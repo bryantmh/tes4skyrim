@@ -43,6 +43,8 @@ constexpr int kByeSettleTicks = 30;
 // How long `rest` lets a sleep's aftermath (a wake-up, an attacker) land, or a
 // bed's menu open, before it activates the bed again.
 constexpr int kRestSettleTicks = 30;
+// Tries in a row the game may refuse a rest (an enemy nearby) before `rest` fails.
+constexpr int kRestRefusals = 10;
 // `persuade <kind> until <condition>`: the word that splits it, and how many
 // attempts the player makes before the case fails.
 constexpr const char* kUntilWord = " until ";
@@ -50,6 +52,12 @@ constexpr int kPersuadeTries = 30;
 // How long a menu other than the conversation may hold a step that needs the
 // world before the case fails naming it, rather than the run hanging.
 constexpr int kHeldTicks = 300;
+
+// The farthest from a door's ORIGIN a player can use it. The reach itself is the
+// INI's fActivatePickLength (180), but an origin can sit deep in the wall: the
+// player stands 259 from Ald Daedroth's at the rock face; plus a `walk`'s arrival slack (128), as
+// a walk to a door's own landing may stop that short (Trun Telur's inner gate: landing 472 away).
+constexpr float kDoorReach = 512.0f + 128.0f;
 // The Sleep/Wait menu may hold that many times longer: a 24-hour sleep at 1x.
 constexpr int kSleepHeldFactor = 20;
 // How long a `walk` may take: room for crossing a region on foot.
@@ -83,6 +91,8 @@ constexpr float kFollowSlack = 150.0f;
 constexpr float kTrailStep = 40.0f;
 // Ticks (one second) a dialogue step waits for a posted conversation to open.
 constexpr int kTalkWaitTicks = 30;
+// Ticks a MessageBox must have been up before a `button` press.
+constexpr int kBoxSettleTicks = 2;
 constexpr std::size_t kTrailPoints = 24;
 constexpr float kFollowBehind = 120.0f;
 
@@ -105,9 +115,11 @@ struct Progress {
     std::string follow;        // the NPC `follow` keeps the player behind, or empty
     std::deque<Spot> trail;    // where that NPC has stood, oldest first
     int talkWait = 0;          // ticks a dialogue step has waited for the menu to open
+    int boxUp = 0;             // ticks a `button` step has seen its MessageBox open
     bool defend = false;       // the player kills whatever attacks it
     int punches = 0;           // punches the current `punch` step has thrown
     int rests = 0;             // hours the current `rest` step has slept
+    int restTries = 0;         // tries since its last sleep that opened no Sleep/Wait menu
 };
 
 // Ticks between a `punch` step's swings: room for one unarmed attack to land.
@@ -228,6 +240,12 @@ bool Waited(int ticks) {
     return true;
 }
 
+// The failure for a reference that never became usable, saying where it is.
+std::string NeverLoaded(const std::string& id) {
+    const std::string where = Hooks().whereIs ? Hooks().whereIs(id) : "";
+    return "'" + id + "' never loaded" + (where.empty() ? "" : " -- " + where);
+}
+
 // The player activating `id`, once it is in the world: no player clicks what
 // has not loaded, and an activation posted while its cell still loads can
 // deadlock on the reference's extra data. True when done or failed.
@@ -238,12 +256,40 @@ bool Activated(const std::string& id) {
     }
     // A load door activated while the player's own move is landing goes nowhere.
     if (MoveLanding()) return false;
+    // A player uses a door from beside it; one used from afar teleports past the
+    // follower, which the door then carries in mid-route.
+    const float door = Hooks().doorDistance ? Hooks().doorDistance(id) : -1.0f;
+    const std::string who = door > kDoorReach && Hooks().followerNames ? Hooks().followerNames() : "";
+    if (!who.empty()) {
+        g_case.error = "'" + id + "' used from " + std::to_string(static_cast<int>(door)) +
+                       " units with a follower along (" + who + "); walk to it";
+        return true;
+    }
     if (Hooks().playerActivate(id)) {
         g_case.loadTicks = 0;
         return true;
     }
     if (++g_case.loadTicks <= kHeldTicks) return false;
-    g_case.error = "'" + id + "' never loaded";
+    g_case.error = NeverLoaded(id);
+    return true;
+}
+
+// `approach`: once `npc` resolves, the player is put in front of it if out of
+// reach, and the step ends when the move has landed. True when done or failed.
+bool Approached(const std::string& npc) {
+    if (!Hooks().playerToSpeaker) {
+        g_case.error = "no approach hook";
+        return true;
+    }
+    if (MoveLanding()) return false;
+    const int moved = Hooks().playerToSpeaker(npc);
+    if (moved > 0) return false;
+    if (moved == 0) {
+        g_case.loadTicks = 0;
+        return true;
+    }
+    if (++g_case.loadTicks <= kHeldTicks) return false;
+    g_case.error = NeverLoaded(npc);
     return true;
 }
 
@@ -302,8 +348,10 @@ bool MenuUp(const std::string& name) { return !Hooks().menuOpen || Hooks().menuO
 bool Answered(const TestStep& step) {
     if (step.kind == Kind::kButton) {
         if (!Hooks().pressButton) return Retried(false, "no button hook");
-        const bool up = MenuUp("MessageBoxMenu");
+        // Pressed only once the box has been up for kBoxSettleTicks: a click in its opening frame is lost.
+        const bool up = MenuUp("MessageBoxMenu") && ++g_case.boxUp > kBoxSettleTicks;
         if (up) Hooks().pressButton(step.number);
+        if (up) g_case.boxUp = 0;
         return Retried(up, "no MessageBox opened");
     }
     if (step.kind == Kind::kPick) {
@@ -323,6 +371,22 @@ bool Answered(const TestStep& step) {
 // Whether the game reports menu `name` open; false when it cannot say.
 bool MenuReported(const char* name) { return Hooks().menuOpen && Hooks().menuOpen(name); }
 
+// The menus a held game is reported with, so a failure names what held it.
+constexpr const char* kHoldingMenus[] = {
+    "MessageBoxMenu", "TutorialMenu", "Loading Menu", "Sleep/Wait Menu", "Dialogue Menu",
+    "Journal Menu", "Console", "Tween Menu", "MorrowindDialogueMenu", "MorrowindClassMenu",
+    "MorrowindBirthMenu", "MorrowindRaceMenu", "MorrowindListMenu", "RaceSex Menu", "Book Menu",
+    "ContainerMenu", "InventoryMenu", "LevelUp Menu", "StatsMenu", "Lockpicking Menu"};
+
+// "a menu holds the game" plus the open ones among kHoldingMenus.
+std::string HeldMenuError() {
+    std::string open;
+    for (const char* name : kHoldingMenus) {
+        if (MenuReported(name)) open += (open.empty() ? "" : ", ") + std::string(name);
+    }
+    return "a menu holds the game (" + (open.empty() ? std::string("none of the known menus") : open) + ")";
+}
+
 // `rest <max> <bed> <condition>`: the player sleeps an hour in the bed, again
 // and again, until the condition holds -- as a player sleeps until something
 // happens. A message box between sleeps (a wake-up notice) is dismissed. A bed
@@ -333,10 +397,17 @@ bool Rested(const TestCase& test, const TestStep& step) {
     const std::string condition = Trim(step.text.substr(std::min(step.text.size(), gap)));
     if (MoveLanding() || Talking()) return false;
     const bool held = Judge(test.actor, condition) == 1;
-    if (held || g_case.rests >= step.number) {
+    const bool refused = g_case.restTries > kRestRefusals;
+    if (held || refused || g_case.rests >= step.number) {
         Expect(test.actor, condition);
-        if (!held) g_case.error = "rest: not true after " + std::to_string(step.number) + " sleeps";
+        if (refused) {
+            g_case.error = "rest: the game refused the player's rest " + std::to_string(kRestRefusals) +
+                           " times in a row";
+        } else if (!held) {
+            g_case.error = "rest: not true after " + std::to_string(step.number) + " sleeps";
+        }
         g_case.rests = 0;
+        g_case.restTries = 0;
         g_case.ticksLeft = -1;
         return true;
     }
@@ -349,7 +420,11 @@ bool Rested(const TestCase& test, const TestStep& step) {
     if (MenuReported(ids::kSleepWaitMenu) && Hooks().sleepFor) {
         Hooks().sleepFor(1);
         ++g_case.rests;
-    } else if (bed == "-") {
+        g_case.restTries = 0;
+        return false;
+    }
+    ++g_case.restTries;
+    if (bed == "-") {
         if (Hooks().playerWait) Hooks().playerWait();
     } else if (Hooks().playerActivate) {
         Hooks().playerActivate(bed);
@@ -374,9 +449,10 @@ void PersuadedUntil(const TestCase& test, const TestStep& step) {
     Expect(test.actor, condition);
 }
 
+// `bye if open` closes a greeting the fight may or may not have forced.
 void Click(const TestStep& step) {
     if (!Talking()) {
-        g_case.error = "no conversation is open";
+        if (step.kind != Kind::kBye || step.text != "if open") g_case.error = "no conversation is open";
     } else if (step.kind == Kind::kAsk && !g_talk.ask(step.text)) {
         g_case.error = "topic '" + step.text + "' not listed; listed: " +
                        Joined(g_talk.topics());
@@ -415,15 +491,23 @@ bool Punched(const TestStep& step) {
 // `walk x y z`: the player walks to the point in the current cell, as a player
 // would, so what follows or watches the player sees a walk and not a jump. A
 // greeting that opens on the way ends it there, as a player stops to talk.
+// `steer x y z` goes there at the controls instead, straight over open water;
+// `steer x y z walk` at a walk, as a player edges along a narrow ledge.
 bool Walked(const TestStep& step) {
     float x = 0.0f, y = 0.0f, z = 0.0f;
-    if (!Hooks().playerWalk || !Hooks().playerWalkDone ||
-        std::sscanf(step.text.c_str(), "%f %f %f", &x, &y, &z) != 3) {
+    char pace[8] = {};
+    const bool steer = step.kind == Kind::kSteer;
+    const int got = std::sscanf(step.text.c_str(), "%f %f %f %7s", &x, &y, &z, pace);
+    const bool hooked = steer ? Hooks().playerSteer != nullptr : Hooks().playerWalk != nullptr;
+    if (!hooked || !Hooks().playerWalkDone || got < 3) {
         g_case.error = "walk needs x y z and the walk hooks";
         return true;
     }
     if (g_case.ticksLeft < 0) {
-        Hooks().playerWalk(x, y, z);
+        // A walk issued while a door's move is landing starts from the old cell's spot.
+        if (MoveLanding()) return false;
+        if (steer) Hooks().playerSteer(x, y, z, std::strcmp(pace, "walk") == 0);
+        else Hooks().playerWalk(x, y, z);
         g_case.ticksLeft = kWalkTicks;
         return false;
     }
@@ -436,11 +520,26 @@ bool Walked(const TestStep& step) {
         if (Hooks().playerWalkStop) Hooks().playerWalkStop();
         return true;
     }
-    if (--g_case.ticksLeft > 0) return false;
+    const bool stuck = Hooks().playerWalkStuck && Hooks().playerWalkStuck();
+    if (--g_case.ticksLeft > 0 && !stuck) return false;
     g_case.ticksLeft = -1;
     if (Hooks().playerWalkStop) Hooks().playerWalkStop();
-    g_case.error = "walk: the player never reached " + step.text;
+    g_case.error = (stuck ? "steer: the player is stuck short of " : "walk: the player never reached ") +
+                   step.text + (Hooks().whereIs ? " -- the player " + Hooks().whereIs("player") : "");
     return true;
+}
+
+// `pace <speed>`: the --fast speed from here on; 0 is the default.
+void SetPace(float speed) {
+    if (Hooks().setPaceTarget) Hooks().setPaceTarget(speed);
+    else if (speed > 0.0f) g_case.error = "no pace hook";
+}
+
+// A case's speed from its start: its leading `pace` step's, else the default (0), so a
+// window the case before opened at that speed is never run at the default in between.
+float LeadingPace(const TestCase& test) {
+    const bool leads = !test.steps.empty() && test.steps.front().kind == Kind::kPace;
+    return leads ? std::strtof(test.steps.front().text.c_str(), nullptr) : 0.0f;
 }
 
 // `console <command>`: the harness runs a Skyrim console command -- one that
@@ -478,6 +577,7 @@ bool Advance(const TestCase& test, const TestStep& step) {
             AskHarness(step.text);
             return true;
         case Kind::kWalk:
+        case Kind::kSteer:
             return Walked(step);
         case Kind::kPunch:
             return Punched(step);
@@ -487,6 +587,11 @@ bool Advance(const TestCase& test, const TestStep& step) {
             return true;
         case Kind::kDefend:
             g_case.defend = true;
+            return true;
+        case Kind::kApproach:
+            return Approached(step.text);
+        case Kind::kPace:
+            SetPace(std::strtof(step.text.c_str(), nullptr));
             return true;
         case Kind::kButton:
         case Kind::kPick:
@@ -597,17 +702,32 @@ bool Acknowledged() {
     return in >> done && done >= g_awaitedAck;
 }
 
+// A leg of a route: a walk or steer, or the `bye if open` that closes a greeting met on the way.
+bool OnRoute(const TestStep& step) {
+    return step.kind == Kind::kWalk || step.kind == Kind::kSteer ||
+           (step.kind == Kind::kBye && step.text == "if open");
+}
+
 // Steps the case on: after an action it yields the tick, so the game sees it.
 void RunSteps(const TestCase& test, bool held) {
     while (g_case.step < test.steps.size() && g_case.error.empty()) {
         const TestStep& step = test.steps[g_case.step];
         const bool needsWorld = step.kind == Kind::kRun || step.kind == Kind::kActivate ||
                                 step.kind == Kind::kUntil || step.kind == Kind::kWalk ||
+                                step.kind == Kind::kSteer ||
                                 (step.kind == Kind::kTalk && g_case.ticksLeft < 0);
-        if (held && !Talking() && needsWorld) {
+        if (held && !Talking() && OnRoute(step)) {
+            // A message that opens on the way ends the route there, as a player stops to read it.
+            if (g_case.ticksLeft >= 0 && Hooks().playerWalkStop) Hooks().playerWalkStop();
+            g_case.ticksLeft = -1;
+            while (g_case.step < test.steps.size() && OnRoute(test.steps[g_case.step])) ++g_case.step;
+            continue;
+        }
+        if (held && !Talking() && needsWorld &&
+            !(step.kind == Kind::kUntil && Judge(test.actor, step.text) == 1)) {
             // A sleep runs its hours in real time at 1x, far past what any other menu may hold.
             const int limit = MenuUp(ids::kSleepWaitMenu) ? kHeldTicks * kSleepHeldFactor : kHeldTicks;
-            if (++g_case.heldTicks > limit) g_case.error = "a menu holds the game";
+            if (++g_case.heldTicks > limit) g_case.error = HeldMenuError();
             return;
         }
         g_case.heldTicks = 0;
@@ -625,7 +745,7 @@ const std::vector<std::string>& TestStepNames() {
     static const std::vector<std::string> kNames = {
         "run",  "wait",  "expect", "talk", "ask",     "choose",   "bye",   "button", "activate",
         "until", "pick", "close",  "take", "console", "persuade", "sleep", "walk",   "follow", "defend",
-        "punch", "rest"};
+        "punch", "rest",  "steer", "approach", "pace"};
     return kNames;
 }
 
@@ -722,6 +842,7 @@ void TickTestRunner(bool held) {
         g_case = Progress{};
         g_case.started = true;
         g_case.unportedBefore = UnportedCommandsSeen();
+        SetPace(LeadingPace(test));
     }
     // A player defending itself, or walking behind a guide, kills its attackers.
     if (!held && !Talking() && (g_case.defend || !g_case.follow.empty()) &&

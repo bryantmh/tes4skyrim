@@ -1,6 +1,7 @@
 #include "object_tick.h"
 
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 #include <map>
 #include <mutex>
@@ -301,6 +302,7 @@ void RunOneTick() {
     if (Hooks().effectTick) Hooks().effectTick();
     if (Hooks().werewolfTick) Hooks().werewolfTick();
     if (Hooks().animTick) Hooks().animTick();
+    if (Hooks().moveTick) Hooks().moveTick();
     const bool cellChanged = PlayerCellChanged();
     DiscoverLoaded(cellChanged);
     TickNpcAnims(cellChanged);
@@ -386,6 +388,7 @@ void TickObjectScripts(float frameSeconds) {
 namespace {
 
 std::uint32_t g_lastClockMs = 0;
+std::chrono::steady_clock::time_point g_lastWake;
 
 // Each fixed-rate wake runs ONE tick covering the game time since the last
 // wake, so a game sped up by iFPSClamp ticks its scripts at its own pace and
@@ -397,9 +400,17 @@ void OnWake() {
     const std::uint32_t now = Hooks().frameClockMs ? Hooks().frameClockMs() : 0;
     const std::uint32_t passedMs = g_lastClockMs ? now - g_lastClockMs : 0;
     g_lastClockMs = now;
+    const auto wake = std::chrono::steady_clock::now();
+    const float realSeconds = std::chrono::duration<float>(wake - g_lastWake).count();
+    g_lastWake = wake;
     const bool timed = now && passedMs && SessionLive() && !GameHeldByMenu();
     g_tickDelta = timed ? std::min(static_cast<float>(passedMs) / 1000.0f, kMaxCatchUp) : kTickDelta;
     RunOneTick();
+    // Paced even when no game time passed: a stalled clock is what it must undo.
+    if (now && SessionLive() && !GameHeldByMenu() && realSeconds < kMaxCatchUp && Hooks().paceFrames) {
+        const float busy = std::chrono::duration<float>(std::chrono::steady_clock::now() - wake).count();
+        Hooks().paceFrames(static_cast<float>(passedMs) / 1000.0f, realSeconds, busy);
+    }
 }
 
 }  // namespace
