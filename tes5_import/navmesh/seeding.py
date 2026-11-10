@@ -149,16 +149,30 @@ def _seam_points(view, side, gx, gy):
     return out
 
 
-def seam_seeds(views: dict, targets) -> dict:
+def _unmet(points, own_views, side, gx, gy):
+    """The seed points no border edge of the target's own meshes already meets across one side."""
+    axis, upper = side[2], side[3]
+    coord = (((gx if axis == 0 else gy) + 1) if upper else (gx if axis == 0 else gy)) * CELL_SIZE
+    edges = [e for view in own_views for e in border_edges(view, axis, coord)]
+    along = 1 if axis == 0 else 0
+    return [p for p in points
+            if not any(abs(e[2] - p[along]) <= e[4] + RUN_GAP and abs(e[3] - p[2]) <= params.MAX_CLIMB * 2
+                       for e in edges)]
+
+
+def seam_seeds(views: dict, targets, own=None) -> dict:
     """{(wrld, gx, gy): {neighbour square: seed points}} for every `targets` cell a view's seam reaches.
 
-    `views` is {(wrld, gx, gy, fid): NavMeshView}.
+    `views` is {(wrld, gx, gy, fid): NavMeshView}; a target in `own` ({square: [its views]}) is offered
+    only the points its own mesh does not already meet on that seam.
     """
-    out = {}
+    out, own = {}, own or {}
     for (wrld, gx, gy, fid) in sorted(views):
         for side in _SIDES:
             target = (wrld, gx + side[0], gy + side[1])
             points = _seam_points(views[(wrld, gx, gy, fid)], side, gx, gy) if target in targets else ()
+            if points and target in own:
+                points = _unmet(points, own[target], side, gx, gy)
             if points:
                 out.setdefault(target, {}).setdefault((wrld, gx, gy), []).extend(points)
     return out
@@ -222,33 +236,63 @@ def _wave_jobs(offers, seedable, sides, sea, meshed) -> list:
     return jobs
 
 
-def grow_into_empty(cache, seedable, sources, derive_fid, run) -> list:
+def _own_views(sources, regrow) -> dict:
+    """{square: [views]} of the `regrow` cells' own meshes among `sources`."""
+    out = {}
+    for key, view in sources.items():
+        if key[:3] in regrow and key[3] == regrow[key[:3]]['navm_fid']:
+            out.setdefault(key[:3], []).append(view)
+    return out
+
+
+def _settle(results, jobs, built, meshed, regrow) -> None:
+    """Record which seeded cells built a mesh; a regrown pathgrid cell that built none keeps its old one."""
+    for square, job in jobs:
+        ok = (results.get(job['key']) or (None,))[0]
+        if square in regrow:
+            if not ok:
+                results.pop(job['key'], None)
+        elif ok:
+            built.setdefault(square, job['pgrd_rec'])
+            meshed.add(square)
+        else:
+            built.pop(square, None)
+            meshed.discard(square)
+
+
+def _prepare(jobs, regrow, derive_fid) -> None:
+    """A seeded cell gets its FormID; a pathgrid cell keeps its own and takes its seeds as `edge_seeds`."""
+    for square, job in jobs:
+        if square in regrow:
+            job['edge_seeds'] = job.pop('seeds')
+        else:
+            job['navm_fid'] = derive_fid(job['key'])
+
+
+def grow_into_empty(cache, seedable, sources, derive_fid, run, regrow=None) -> list:
     """Build seeded cells wave by wave into `cache`; return the pathgrids that built a mesh.
 
-    `seedable` maps (wrld, gx, gy) to a job template. The first wave seeds from `sources`, each
-    later one from the wave before; a cell rebuilds, from every seed it was offered, whenever a
-    neighbour it has not built from offers seeds, so at most once per side. `run(jobs)` builds jobs.
+    `seedable` maps (wrld, gx, gy) to a job template, `regrow` a pathgrid cell's square to its job,
+    rebuilt with the seeds its own mesh does not meet. A cell rebuilds from every seed it was offered
+    when a new neighbour offers some, at most once per side. `run(jobs)` builds jobs.
     See: docs/commentary/tes5_import_navmesh.md#seeded-cells
     """
+    regrow = regrow or {}
+    targets = {**seedable, **regrow}
     built, sides, sea = {}, {}, {}
     meshed = {key[:3] for key in sources}
+    own = _own_views(sources, regrow)
     while True:
-        jobs = _wave_jobs(seam_seeds(sources, seedable), seedable, sides, sea, meshed)
+        jobs = _wave_jobs(seam_seeds(sources, targets, own), targets, sides, sea, meshed)
         if not jobs:
             return list(built.values())
-        for _square, job in jobs:
-            job['navm_fid'] = derive_fid(job['key'])
+        _prepare(jobs, regrow, derive_fid)
         results = run([job for _square, job in jobs])
+        _settle(results, jobs, built, meshed, regrow)
         cache.update(results)
         sources = exterior_views(results)[0]
-        for square, job in jobs:
-            if (results.get(job['key']) or (None,))[0]:
-                built.setdefault(square, job['pgrd_rec'])
-                meshed.add(square)
-            else:
-                built.pop(square, None)
-                meshed.discard(square)
-        print(f"    Seeded {len(jobs)} cells with no pathgrid; "
+        own.update(_own_views(sources, regrow))
+        print(f"    Seeded {len(jobs)} cells ({sum(1 for s, _j in jobs if s in regrow)} with a pathgrid); "
               f"{sum(1 for v in results.values() if v[0])} built a navmesh")
 
 

@@ -29,13 +29,16 @@ std::vector<std::vector<double>> levels_at_points(const std::vector<Strip>& stri
 // needs its walk index built; nodes_xy / edges (pairs) / node_z feed the
 // crossing stop; on_land flags the stations that follow `land`; the discs of
 // `exact_nodes` (actor spawns) count only what stands inside a wall slab.
+// Nodes [flood_lo, flood_hi) are a flood's: an authored station's crossing
+// stop ignores the flood's lines (they must not narrow the author's ribbons).
 std::vector<double> grow_widths(const TriGrid& wall, const TriGrid* walk,
                                 const std::vector<double>& nodes_xy,
                                 const std::vector<int>& edges,
                                 const std::vector<double>& node_z, const Land* land,
                                 const std::vector<double>& stations,
                                 const std::vector<double>& on_land, int land_from,
-                                const std::set<int>* exact_nodes = nullptr);
+                                const std::set<int>* exact_nodes = nullptr,
+                                int flood_lo = 0, int flood_hi = 0);
 
 // --- meshflip.cpp (xy: interleaved plan points) ----------------------------
 // union_cdt._flip2d.

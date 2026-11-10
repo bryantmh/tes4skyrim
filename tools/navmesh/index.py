@@ -29,7 +29,8 @@ from tes5_import.navmesh.from_pgrd import (
     _cell_graph, collect_doors, load_door_centroids,
 )
 from tes5_import.base.text_reader import get_formid, get_int, parse_export_file
-from tes5_import.navmesh.pool import navmesh_land_at
+from tes5_import.navmesh.pool import navmesh_land_at, with_water
+from tes5_import.navmesh.world import open_water_z
 from tes5_import.record_types.items import load_furniture_models
 from tools.navmesh.audit import cell_index, master_dirs
 from tools.navmesh.cell_index import index_map, shift_fid
@@ -108,15 +109,16 @@ class CellCtx(object):
     def build(self, ledges_out=None, lattice=False, obstacles=(), water_z=None, edges=None):
         """Regenerate this cell's RAW navmesh exactly as the pipeline's generator would.
 
-        `ledges_out` collects `(upper_tri, lower_tri, drop)` drop-down links,
-        which production returns out-of-band so `(verts, tris)` stays intact.
+        `ledges_out` collects `(upper_tri, lower_tri, drop)` drop-down links.
         Hand corrections apply after this (`navmesh_pins.apply_hand_edits`).
-        `lattice` picks the lattice generator, else the corridor one, whatever
-        the pipeline's setting.  `obstacles` (placement, model key) pairs are
-        bridged across on a copy of `edges` (default: the pathgrid's).
+        `lattice` picks the lattice generator, else the corridor one.  `obstacles`
+        (placement, model key) pairs are bridged across on a copy of `edges`
+        (default: the pathgrid's).  `water_z` defaults to the import's for an exterior.
         """
         if lattice:
             return self._build_lattice(ledges_out)
+        if water_z is None and self.exterior:
+            water_z = self.index.water_z(self.rec)
         verts, tris, ledges = corridor.build_corridors(
             self.refrs, self.index.base_model, ce.get_collision,
             self.nodes, list(self.edges if edges is None else edges), land_rec=self.land,
@@ -124,7 +126,7 @@ class CellCtx(object):
             doors=[(x, y, z, r, tp, w)
                    for (x, y, z, r, _f, tp, w) in self.doors],
             door_bases=set(self.index.door_fids.keys()),
-            obstacles=obstacles, water_z=water_z)
+            obstacles=obstacles, water_z=water_z, flood=((),) if self.exterior else ())
         if ledges_out is not None:
             ledges_out.extend(ledges)
         return verts, [tuple(int(i) for i in tri[:3]) for tri in tris]
@@ -209,6 +211,15 @@ class NavIndex(object):
         self._lookup = None
         self._acti = None
         self._land_at = None
+        self._worlds = None
+
+    def water_z(self, rec):
+        """Exterior cell `rec`'s open water height as the import builds it (pool.with_water), or None."""
+        if self._worlds is None:
+            dirs = list(reversed(master_dirs(self.export))) + [self.export]
+            self._worlds = {get_formid(w, 'FormID'): w for d in dirs for w in wrld_records(d)}
+        wrld = self._worlds.get(get_formid(rec, 'ParentWRLD'))
+        return open_water_z(with_water(rec, wrld) if wrld else rec, True)
 
     def land_for(self, rec, own):
         """The LAND the game draws under exterior cell `rec`; `own` is its own LAND.

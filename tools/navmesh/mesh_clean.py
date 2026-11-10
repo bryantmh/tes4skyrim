@@ -14,6 +14,7 @@ import math
 import os
 import sys
 
+from shapely import make_valid
 from shapely.geometry import LineString, Polygon
 from shapely.ops import polygonize, unary_union
 
@@ -59,9 +60,9 @@ def holes(verts, tris, local, polys):
         for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
             edges.setdefault(tuple(sorted((a, b))), []).append(i)
     rings = polygonize([LineString([verts[a][:2], verts[b][:2]]) for (a, b), own in edges.items() if len(own) == 1])
-    covered = unary_union(list(polys.values()))
+    covered = make_valid(unary_union(list(polys.values())))
     return [(round(r.area), [round(c) for c in r.centroid.coords[0]]) for r in rings
-            if r.area > 4.0 and covered.intersection(r).area < 0.5 * r.area]
+            if r.area > 4.0 and covered.intersection(make_valid(r)).area < 0.5 * r.area]
 
 
 def defects(verts, tris, local):

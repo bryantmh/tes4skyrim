@@ -504,7 +504,7 @@ def navmesh_land_at(by_type: dict, master_export: dict = None):
     return land_at
 
 
-def _with_water(cell_rec, wrld_rec) -> dict:
+def with_water(cell_rec, wrld_rec) -> dict:
     """The cell for its navmesh: a watered cell with no height takes its world's.
 
     See: docs/commentary/tes5_import_navmesh.md#exterior-water-height
@@ -515,26 +515,32 @@ def _with_water(cell_rec, wrld_rec) -> dict:
 
 
 def _gather_cell(jobs, seedable, cell_rec, wrld_rec, indexes, extras) -> None:
-    """One exterior cell's jobs; a land cell with no pathgrid becomes a seedable template."""
+    """One exterior cell's jobs; a land cell with no pathgrid becomes a seedable template, one with a
+    single pathgrid has its job in extras[2] (regrow) too."""
     wrld_fid = get_formid(wrld_rec, 'FormID')
     square = (wrld_fid, get_int(cell_rec, 'XCLC.X'), get_int(cell_rec, 'XCLC.Y'))
-    cell_rec = _with_water(cell_rec, wrld_rec)
+    cell_rec = with_water(cell_rec, wrld_rec)
     land_rec = indexes[1](square)
     here = (extras[0].get(square, []), extras[1].get(square, []))
-    if not _emit_jobs(jobs, cell_rec, land_rec, indexes, *here) and land_rec:
+    count = _emit_jobs(jobs, cell_rec, land_rec, indexes, *here)
+    if not land_rec:
+        return
+    if not count:
         seedable[square] = _job(seeded_record(cell_rec), cell_rec, land_rec, indexes, *here)
+    elif count == 1:
+        extras[2][square] = jobs[-1]
 
 
 def _gather_exteriors(jobs, by_type, cells, indexes, pers_doors,
-                      overhang=None, seedable=None) -> None:
+                      overhang=None, seedable=None, regrow=None) -> None:
     """Append exterior jobs, per worldspace, in _build_world_groups order.
 
     A land cell with no pathgrid goes to `seedable` as a job template keyed
-    (wrld, gx, gy), for grow_into_empty.
+    (wrld, gx, gy), one with a pathgrid to `regrow` as its job, for grow_into_empty.
     """
     if seedable is None:
         seedable = {}
-    extras = (pers_doors, overhang or {})
+    extras = (pers_doors, overhang or {}, {} if regrow is None else regrow)
     ext_by_wrld = defaultdict(list)
     for cell in cells:
         wrld_fid = get_formid(cell, 'ParentWRLD')
@@ -582,13 +588,14 @@ def drop_leveled_placements(by_type: dict, ctx_master_export=None) -> int:
 
 
 def gather_navm_jobs(by_type: dict, door_fids: set = None,
-                     master_export: dict = None, seedable: dict = None) -> list:
+                     master_export: dict = None, seedable: dict = None, regrow: dict = None) -> list:
     """Enumerate PGRD->NAVM jobs in the order the group builders visit them.
 
     Interiors first (block/sub-block), then exteriors per worldspace, matching
     the builders so allocated FormIDs match the serial path.  Geometry inputs
     merge the masters in; the jobs themselves stay driven by the plugin's OWN
-    pathgrids, so no id moves.  `seedable` collects the land cells with none.
+    pathgrids, so no id moves.  `seedable` collects the land cells with none,
+    `regrow` the land cells' pathgrid jobs.
 
     See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
     """
@@ -614,7 +621,7 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
         for sub in sorted(blocks[block]):
             for cell_rec in blocks[block][sub]:
                 _emit_interior(jobs, by_type, cell_rec, indexes, landings, master_cells)
-    _gather_exteriors(jobs, by_type, cells, indexes, pers_doors, overhang, seedable)
+    _gather_exteriors(jobs, by_type, cells, indexes, pers_doors, overhang, seedable, regrow)
     _attach_landings(jobs, landings, {get_formid(c, 'FormID') for c in cells if get_formid(c, 'ParentWRLD')})
     return jobs
 
@@ -666,7 +673,7 @@ def _emit_interior(jobs, by_type, cell_rec, indexes, landings, master_cells) -> 
 #: Cannot reach the cached payload; see #the-tag-hashes-geometry-only.
 _TAG_EXCLUDE = frozenset({
     'edge_links.py', 'navi.py', 'split.py', 'cache_audit.py', 'pool.py',
-    'worker.py', '__init__.py', 'lookup_grid.py', 'seeding.py',
+    'worker.py', '__init__.py', 'lookup_grid.py', 'seeding.py', 'phase.py',
 })
 
 #: Native source directory deciding cell geometry; its .cpp/.h are hashed with the Python, never the .pyd.
@@ -926,27 +933,35 @@ def _adopt_master_navm_fids(jobs: list, master_index) -> int:
 
 
 def _seed_empty_cells(by_type, writer, masters, cache, seedable, run) -> None:
-    """Grow navmesh into the land cells with no pathgrid; their pathgrids join by_type['PGRD'].
+    """Grow navmesh into the land cells with no pathgrid (their pathgrids join by_type['PGRD']) and into
+    the pathgrid cells' gaps; `seedable` is (seedable, regrow) for grow_into_empty.
 
     `masters` is (master_index, master_navms): a cell its master navmeshed is left to it.
     See: docs/commentary/tes5_import_navmesh.md#seeded-cells
     """
     master_index, master_navms = masters
+    seedable, regrow = seedable
     for square in [s for s in seedable if s in (master_navms or {})]:
         del seedable[square]
-    if not seedable:
+    if not seedable and not regrow:
         return
     sources = exterior_views(cache)[0]
     sources.update(master_views(master_index, master_navms, seedable))
     built = grow_into_empty(cache, seedable, sources,
-                            lambda key: writer.derive_formid('NAVM', key), run)
+                            lambda key: writer.derive_formid('NAVM', key), run, regrow)
     by_type.setdefault('PGRD', []).extend(built)
+
+
+def playable_seedable(seedable, by_type, master_export) -> None:
+    """Drop the seedable cells outside the authored playable area."""
+    drop_unplayable(seedable, _merged(by_type, master_export, 'WRLD'), _merged(by_type, master_export, 'REGN'))
+    _MERGED.clear()
 
 
 def _generate(jobs, seedable, n_workers, seeding) -> dict:
     """Build the pathgrid jobs, then the seeded cells, on one pool; return {key: result}.
 
-    `seeding` is (by_type, writer, masters) for _seed_empty_cells.
+    `seeding` is (by_type, writer, masters) for _seed_empty_cells; `seedable` is (seedable, regrow).
     """
     print(f"  Generating {len(jobs)} navmeshes (PGRD->NAVM, {navmesh_generator()} "
           f"generator) across {n_workers} threads...")
@@ -981,11 +996,9 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
     if fallout is not None:
         return fallout
 
-    seedable = {}
-    jobs = gather_navm_jobs(by_type, door_fids, master_export, seedable)
-    drop_unplayable(seedable, _merged(by_type, master_export, 'WRLD'),
-                    _merged(by_type, master_export, 'REGN'))
-    _MERGED.clear()
+    seedable, regrow = {}, {}
+    jobs = gather_navm_jobs(by_type, door_fids, master_export, seedable, regrow)
+    playable_seedable(seedable, by_type, master_export)
     if not jobs:
         return {}
 
@@ -1008,7 +1021,7 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
     navm_verify.prepare(jobs, geom_cache,
                         pooled_prover(n_workers))
 
-    cache = _generate(jobs, seedable, n_workers,
+    cache = _generate(jobs, (seedable, regrow), n_workers,
                       (by_type, writer, (master_index, master_navms)))
 
     navm_verify.report_verification(cache, geom_cache)

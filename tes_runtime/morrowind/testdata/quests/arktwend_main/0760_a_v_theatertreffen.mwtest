@@ -16,8 +16,9 @@ player->Position -343 47700 220 0
 wait 120
 # Walked in, not placed: Wache02 greets within 500 and Wache01 within 400, so an approaching player meets Wache02
 # first ("we will accompany you", journal 2 -> 3 and both follow). The walk stops on its own route inside
-# Wache02's range only (446 from him, 515 from Wache01): ending inside both is a race between the two scripts.
-walk -727 48903 208
+# Wache02's range only (388 from him, 451 from Wache01): ending inside both is a race between the two scripts.
+# A walk may stop up to 128 short; along this route that still leaves the player within ~485 of Wache02.
+walk -690 48955 208
 until 300 MenuMode == 1
 wait 60
 bye
@@ -52,6 +53,14 @@ steer 2018 25584 580
 steer 1987 25499 596
 steer 1729 24498 1015
 pace 25
+# A long walk round the PastureLand mountains (several cells): legs at the north valley's turns, since the
+# engine otherwise takes the newly meshed slopes over the hill east and slides back on them.
+walk 9960 28811 450
+bye if open
+walk 11602 31869 450
+bye if open
+walk 14089 34673 450
+bye if open
 walk 33300 37150 123
 bye if open
 walk 33300 37150 123

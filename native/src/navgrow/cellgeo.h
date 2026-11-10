@@ -3,6 +3,7 @@
 // walkable_sampler and wall_slab_sampler).
 #pragma once
 
+#include <algorithm>
 #include <vector>
 
 #include "trigrid.h"
@@ -40,6 +41,17 @@ struct CellGeo {
     // corridor_grow.walkable_sampler; false for None.
     bool walk_at(double x, double y, double near_z, double* z) {
         return walk_nearest_py(walk, x, y, near_z, stamp, epoch, z);
+    }
+
+    // Every distinct walkable height at (x, y), ascending, 2u dedupe.
+    std::vector<double> layers(double x, double y) const {
+        std::vector<double> zs, out;
+        if (!has_walkable) return out;
+        bucket_heights(walk, x, y, zs);
+        std::sort(zs.begin(), zs.end());
+        for (double z : zs)
+            if (out.empty() || z - out.back() > 2.0) out.push_back(z);
+        return out;
     }
 
     // corridor_grow.wall_slab_sampler.

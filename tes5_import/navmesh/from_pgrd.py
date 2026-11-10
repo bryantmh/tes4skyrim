@@ -93,9 +93,9 @@ import pickle
 import struct
 import logging
 
-from core.navmesh_options import navmesh_plugin
+from core.navmesh_options import edge_pins_only, keep_flood, navmesh_plugin
 from ..base.navmesh_pins import (apply_hand_edits, cell_key, digest,
-                                 hand_edits_for)
+                                 hand_edits_for, reaches_edge)
 from ..base.text_reader import get_int, get_float, get_str, get_formid
 from . import native_loader
 from .lookup_grid import build_navmesh_grid
@@ -413,7 +413,6 @@ def collect_doors(refr_recs, door_fids):
     is_map = isinstance(door_fids, dict)
     out = []
     for refr in refr_recs:
-        name = refr.get('NAME', '')
         is_teleport = bool(refr.get('XTEL.Door'))
         base = base_fid(refr)
         base_is_door = base is not None and base in door_fids
@@ -749,7 +748,7 @@ def pack_navm_record(form_id: int, subrecords: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 def geom_hash(tag, points, edges, refr_recs, base_model_by_fid, doors,
-              land_rec, origin_x, origin_y, pin_digest='', water_z=None):
+              land_rec, origin_x, origin_y, pin_digest='', water_z=None, flood=()):
     """Hash of everything the geometry build consumes.
 
     The `geom-vN` literal is bumped when the CACHED PAYLOAD's shape changes,
@@ -764,7 +763,7 @@ def geom_hash(tag, points, edges, refr_recs, base_model_by_fid, doors,
     from asset_convert.collision.collision_extract import collision_digest
     h = hashlib.sha1()
     h.update(b'geom-v4-permesh-collision')
-    h.update(repr((tag, origin_x, origin_y, water_z)).encode())
+    h.update(repr((tag, origin_x, origin_y, water_z) + (('flood-gaps', flood[0]) if flood else ())).encode())
     h.update(repr(points).encode())
     h.update(repr(edges).encode())
     base_model_by_fid = base_model_by_fid or {}
@@ -949,7 +948,10 @@ def cell_pins(rec, cell_rec):
     key = cell_key(cell_rec, wrld_fid, grid)
     if not key:
         return {}, ''
-    return hand_edits_for(plugin, key), digest(plugin, key)
+    edits = hand_edits_for(plugin, key)
+    if edge_pins_only() and not reaches_edge(edits, grid):
+        return {}, ''
+    return edits, digest(plugin, key)
 
 
 def cell_geom_key(rec, land_rec, cell_rec, refr_recs, base_model_by_fid,
@@ -980,7 +982,7 @@ def cell_geom_key(rec, land_rec, cell_rec, refr_recs, base_model_by_fid,
                      base_model_by_fid, doors,
                      land_rec if is_exterior else None, origin_x, origin_y,
                      pin_digest=cell_pins(rec, cell_rec)[1],
-                     water_z=open_water_z(cell_rec, is_exterior))
+                     water_z=open_water_z(cell_rec, is_exterior), flood=((),) if is_exterior else ())
 
 
 def geom_cache_path(geom_cache, cell_fid, pgrd_fid):
@@ -1039,13 +1041,14 @@ def _cell_frame(rec, cell_rec):
 
 def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
                    is_exterior, land_rec, refr_recs, base_model_by_fid,
-                   door_fids, doors, geom_cache, cell_rec=None, lone=(), obstacles=()):
+                   door_fids, doors, geom_cache, cell_rec=None, lone=(), obstacles=(), flood=(), pins=True,
+                   flood_out=None):
     """(verts, tris, ledges, geom_cached, geom_key) from real Havok collision.
 
-    Serves a cache hit matching this cell's input hash, else bridges the
-    pathgrid across `obstacles` and builds the corridor mesh and stores it.
-    `lone` are the edgeless spawn nodes in `points`. `geom_key` is the hash
-    VALUE; `geom_hash` is the module FUNCTION -- never name a local after it.
+    Serves a cache hit for this cell's input hash, else bridges the pathgrid across
+    `obstacles`, builds the mesh and stores it.  `lone`: edgeless spawn nodes; `flood`:
+    () or (neighbour mesh points,) floods gaps; `pins` false: no pins.  `flood_out`
+    (cache unused) gets the flood's (points, edges).  `geom_key` is the hash VALUE.
 
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
     See: docs/commentary/tes5_import_navmesh.md#a-removed-obstacle-is-bridged
@@ -1053,13 +1056,13 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
     geom_key = cache_path = None
     verts3d = tris = None
     ledges = []
-    edits, pin_digest = cell_pins(rec, cell_rec)
+    edits, pin_digest = cell_pins(rec, cell_rec) if pins else ({}, '')
     water_z = open_water_z(cell_rec, is_exterior)
-    if geom_cache is not None:
+    if geom_cache is not None and flood_out is None:
         geom_key = geom_hash(geom_cache[1], points, edges, refr_recs,
                              base_model_by_fid, doors,
                              land_rec if is_exterior else None,
-                             origin_x, origin_y, pin_digest=pin_digest, water_z=water_z)
+                             origin_x, origin_y, pin_digest=pin_digest, water_z=water_z, flood=flood)
         cache_path = geom_cache_path(geom_cache, cell_fid,
                                      get_formid(rec, 'FormID'))
         cached = _geom_cache_load(cache_path, geom_key)
@@ -1081,7 +1084,7 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
         doors=[(x, y, z, r, tp, w) for (x, y, z, r, _f, tp, w) in doors],
         ledges_out=ledges,
         door_bases=door_bases,
-        lone=lone, water_z=water_z, obstacles=obstacles)
+        lone=lone, water_z=water_z, obstacles=obstacles, flood=flood, flood_out=flood_out)
     if verts3d:
         verts3d = [tuple(v) for v in
                    np.asarray(verts3d, dtype=np.float32).tolist()]
@@ -1107,11 +1110,14 @@ def convert_PGRD(rec: dict, writer=None,
                  spawns: list = None,
                  obstacles: list = None,
                  graph: tuple = None,
-                 door_spots: dict = None) -> tuple:
+                 door_spots: dict = None,
+                 seeded: bool = False,
+                 edge_seeds: list = None,
+                 pins: bool = True) -> tuple:
     """One TES4 PGRD as a TES5 NAVM: (navm_bytes, meta), or (None, None) when the pathgrid is too
-    sparse for a ribbon or the build has under 3 verts.  `spawns`: points the pathgrid must reach;
-    `obstacles`: (placement, model key) pairs to bridge; `graph`: a seeded cell's (points, edges);
-    `door_spots`: {door ref: (x, y, z)} where a door's triangle is picked instead.
+    sparse or the build has under 3 verts.  `spawns`: points to reach; `obstacles`: pairs to bridge;
+    `graph`: the (points, edges) to build over; `door_spots`: {door ref: point} for its triangle;
+    `seeded`: no gap flood; `edge_seeds`: neighbour mesh points; `pins` false: no pins.
 
     See: docs/commentary/tes5_import_navmesh.md#convert-pgrd-arguments
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
@@ -1134,10 +1140,15 @@ def convert_PGRD(rec: dict, writer=None,
     if extra_door_refrs:
         doors += collect_doors(extra_door_refrs, door_fids)
 
+    flood_graph = [] if keep_flood() else None
+    if seeded and flood_graph is not None:
+        flood_graph.append((list(points), list(edges)))
     verts3d, tris, ledges, geom_cached, geom_key = _cell_geometry(
         rec, cell_fid, points, edges, origin_x, origin_y, is_exterior,
         land_rec, refr_recs, base_model_by_fid, door_fids, doors, geom_cache,
-        cell_rec=cell_rec, lone=lone, obstacles=obstacles)
+        cell_rec=cell_rec, lone=lone, obstacles=obstacles,
+        flood=(tuple(map(tuple, edge_seeds or ())),) if is_exterior and not seeded else (), pins=pins,
+        flood_out=None if seeded else flood_graph)
     if verts3d is None or len(verts3d) < 3 or not tris:
         return None, None
 
@@ -1162,6 +1173,7 @@ def convert_PGRD(rec: dict, writer=None,
         'geom_cached': geom_cached,
         'geometry': (verts3d, tris, ledges),
         'geom_hash': geom_key,
+        'flood': flood_graph[-1] if flood_graph else None,
         # NVMI Door Links mirror the mesh's own door triangles EXACTLY —
         # verified on all 15,462 vanilla NVMI entries (the engine joins the two
         # sides of a load door through the door refs' XTEL pairing, so each

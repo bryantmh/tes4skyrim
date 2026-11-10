@@ -31,6 +31,7 @@ struct CellCtx {
     std::vector<double> node_z;
     std::vector<Edge2> edges;
     std::set<int> lone;              // edgeless spawn nodes
+    int flood_lo = 0, flood_hi = 0;  // nodes [lo, hi) a flood added, not authored
     std::vector<DoorRef> doors;
     bool has_clip = false;
     double clip[4] = {0, 0, 0, 0};
@@ -54,9 +55,10 @@ struct CellCtx {
 // --- ccell.cpp ----------------------------------------------------------------
 // corridor.build_corridors after the collision gather.
 CleanOutput build_corridor_cell(CellCtx& C);
-// Gather `refs`, bridge the pathgrid across `obstacles`, then build_corridor_cell.
-CleanOutput build_cell(CellCtx& C, const std::vector<PlacedRef>& refs,
-                       const std::vector<PlacedRef>& obstacles, const double* water_z);
+// Gather `refs`, bridge the pathgrid across `obstacles`, then build_corridor_cell; `flood_gaps` (an
+// exterior) also floods the open LAND the pathgrid's mesh leaves, from its nodes and `seeds`.
+CleanOutput build_cell(CellCtx& C, const std::vector<PlacedRef>& refs, const std::vector<PlacedRef>& obstacles,
+                       const double* water_z, bool flood_gaps, const std::vector<P3>& seeds);
 
 // --- cstrips.cpp --------------------------------------------------------------
 // corridor._build_corridor_strips: the corridor ribbons and node discs.

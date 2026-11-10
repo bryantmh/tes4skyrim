@@ -36,7 +36,7 @@ from asset_convert.lod.esm_scan import plugin_masters
 from core.chargen_source import candidates
 from core.subprocess_flags import POPEN_FLAGS
 from source_paths import find_game_path
-from tools.live import hidden_launch, tes4_cases
+from tools.live import crash_capture, hidden_launch, tes4_cases
 from tools.live.game_bridge import Bridge, BridgeError
 from tools.release.package_runtime_dll import (EXPORT_ROOT, MOD_NAME, MODS, chargen_table,
                                                configured_choice, morrowind_menus)
@@ -654,12 +654,18 @@ def handle_lines(bridge: Bridge, results: str, lines: list, handled: int, checkp
     return len(lines)
 
 
+#: Seconds the runtime log may stay unchanged before the game counts as hung (passing lanes' longest gap: 74 s).
+HUNG_SECONDS = 180
+
+
 def wait_results(path: str, seconds: float, bridge: Bridge, checkpoints: bool, game) -> list:
-    """The result lines in `path` once its `done` line lands, the game exits, or
-    `seconds` pass, answering the runner's requests on the way (`game.respond`)."""
+    """The result lines in `path` once its `done` line lands, the game exits or hangs (its runtime log
+    unchanged for HUNG_SECONDS), or `seconds` pass, answering the runner's requests (`game.respond`)."""
     deadline = time.time() + seconds
     lines, handled = [], 0
     respond = game.respond(bridge) if game.respond else None
+    log_path = os.path.join(MY_GAMES, 'SKSE', game.log)
+    log_state, log_moved = file_state(log_path), time.time()
     while time.time() < deadline:
         lines = [json.loads(l) for l in tail(path, 10000, game.encoding) if l.strip()]
         handled = handle_lines(bridge, path, lines, handled, checkpoints, respond)
@@ -667,6 +673,12 @@ def wait_results(path: str, seconds: float, bridge: Bridge, checkpoints: bool, g
             break
         if not running_pid():
             print('GAME EXITED after %d result line(s)' % len(lines))
+            break
+        if file_state(log_path) != log_state:
+            log_state, log_moved = file_state(log_path), time.time()
+        elif time.time() - log_moved > HUNG_SECONDS:
+            print('GAME HUNG after %d result line(s): %s unchanged for %d s' % (len(lines), game.log, HUNG_SECONDS))
+            crash_capture.snapshot(running_pid(), tag='hang_%s' % time.strftime('%m%d_%H%M%S'))
             break
         time.sleep(game.poll)
     return lines

@@ -152,6 +152,25 @@ def attach(pid: str, out_dir: str, tag: str = 'crash', first: str = '') -> int:
     return 0
 
 
+#: --snapshot: every thread's stack and a full dump of a process that is already hung, then let go.
+_SNAPSHOT = """.echo MARKER_THREADS
+~*kb 40
+.dump /ma "{dump}"
+.echo MARKER_DUMPED
+qd
+"""
+
+
+def snapshot(pid, out_dir: str = _OUT, tag: str = 'hang') -> str:
+    """One non-invasive stack walk and full dump of a HUNG `pid` (never a running game); the log path."""
+    log, dump = _prepare(out_dir, tag)
+    with open(log, 'w', encoding='utf-8') as handle:
+        subprocess.run([_CDB, '-pv', '-p', str(pid)], input=_SNAPSHOT.format(dump=dump), stdout=handle,
+                       stderr=subprocess.STDOUT, text=True, timeout=900, **POPEN_FLAGS)
+    print('hang snapshot %s / %s' % (log, dump), flush=True)
+    return log
+
+
 def pids_under(image: str, folder: str) -> list:
     """Pids of running `image` processes whose executable lies under `folder`."""
     script = ("Get-Process -Name %s -ErrorAction SilentlyContinue | "

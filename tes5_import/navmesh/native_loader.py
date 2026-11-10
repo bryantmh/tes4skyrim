@@ -77,7 +77,8 @@ def native_geos():
 _MODULE_PARAMS = (('clean_validate', ('LIP_STANDOFF',)),
                   ('seeding', ('WALK_STEP', 'LATTICE_SPACING')),
                   ('door_reach', ('DOOR_REACH_SPACING', 'DOOR_REACH_MAX_NODES',
-                                  'DOOR_SEED_SEARCH', 'DOOR_SEED_DROP', 'DOOR_REACH_THIN_SPACING')))
+                                  'DOOR_SEED_SEARCH', 'DOOR_SEED_DROP', 'DOOR_REACH_THIN_SPACING')),
+                  ('edge_links', ('SEAM_BAND',)))
 
 
 def native_params():

@@ -532,9 +532,6 @@ activate 05B23937
 until 600 GetPCCell "Slate Cavern" == 0
 # Down the mountain, a long way over several cells: legs at the descent's turns keep the walk off the
 # side pockets of the slope.
-walk 125453 54502 5028
-bye if open
-walk 125453 54502 5028
 walk 120864 51537 3974
 bye if open
 walk 120864 51537 3974

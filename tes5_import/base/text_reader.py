@@ -9,6 +9,7 @@ import math
 import mmap
 import os
 import sys
+import time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
@@ -19,6 +20,10 @@ _WORKER_COUNT = worker_count()
 
 #: Byte size of one parse job; small so a worker's pickled result never strains the pipe's kernel pool.
 _PARSE_CHUNK_BYTES = 4 * 1024 * 1024
+
+#: Windows' "insufficient system resources" error, and how often / how long a parse waits it out.
+_WINERROR_NO_RESOURCES = 1450
+_LOW_RESOURCE_TRIES, _LOW_RESOURCE_WAIT = 3, 20.0
 
 
 def unescape_value(value: str) -> str:
@@ -180,6 +185,26 @@ def _export_files(export_dir: str, type_filter: set, exclude: set) -> list:
     return tasks
 
 
+def _parse_jobs(jobs: list) -> list:
+    """Each job's records, in job order, over a process pool; a pool that runs out of system resources
+    (WinError 1450, a worker's result pipe write under load) is waited out and retried.
+    See: docs/commentary/performance.md#import-once-per-run
+    """
+    workers = min(_WORKER_COUNT, len(jobs))
+    if workers <= 1:
+        return [parse_file_range(job) for job in jobs]
+    for attempt in range(_LOW_RESOURCE_TRIES):
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as ex:
+                return list(ex.map(parse_file_range, jobs))
+        except OSError as err:
+            if getattr(err, 'winerror', None) != _WINERROR_NO_RESOURCES or attempt == _LOW_RESOURCE_TRIES - 1:
+                raise
+            print('  export parse ran out of system resources (WinError 1450); retrying', flush=True)
+            time.sleep(_LOW_RESOURCE_WAIT)
+    return []
+
+
 def parse_export_directory(export_dir: str, type_filter: set = None,
                            exclude: set = None) -> list:
     """Parse all per-type export files from a directory in parallel.
@@ -211,15 +236,7 @@ def parse_export_directory(export_dir: str, type_filter: set = None,
         for start in range(0, size, _PARSE_CHUNK_BYTES):
             jobs.append((fp, start, min(start + _PARSE_CHUNK_BYTES, size)))
 
-    workers = min(_WORKER_COUNT, len(jobs))
-    if workers <= 1:
-        chunk_results = [parse_file_range(job) for job in jobs]
-    else:
-        with ProcessPoolExecutor(max_workers=workers) as ex:
-            # ex.map preserves job order -> deterministic record order.
-            chunk_results = list(ex.map(parse_file_range, jobs))
-
-    for chunk in chunk_results:
+    for chunk in _parse_jobs(jobs):
         all_records.extend(chunk)
 
     # Deduplicate by FormID (keep last occurrence).

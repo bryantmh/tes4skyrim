@@ -74,8 +74,53 @@ std::vector<double> land_tris(const Land& L) {
 
 }  // namespace
 
+// One object's walkable and blocking triangles joined, with their bounding box.
+static Solid solid_of(const std::vector<double>& w, const std::vector<double>& b) {
+    Solid s;
+    s.tris = w;
+    s.tris.insert(s.tris.end(), b.begin(), b.end());
+    for (size_t i = 0; i < s.tris.size(); ++i) {
+        const int k = (int)(i % 3);
+        const double v = s.tris[i];
+        s.box[k] = i < 3 ? v : std::min(s.box[k], v);
+        s.box[k + 3] = i < 3 ? v : std::max(s.box[k + 3], v);
+    }
+    return s;
+}
+
+// Generalised winding number of p against triangles (9 doubles each): 1 inside a closed shape, 0 outside;
+// an open-bottomed shape (a rock sunk into the ground) still reads well over 0.5 inside.
+static double winding(const std::vector<double>& t, double px, double py, double pz) {
+    double sum = 0.0;
+    for (size_t i = 0; i + 9 <= t.size(); i += 9) {
+        const double a[3] = {t[i] - px, t[i + 1] - py, t[i + 2] - pz};
+        const double b[3] = {t[i + 3] - px, t[i + 4] - py, t[i + 5] - pz};
+        const double c[3] = {t[i + 6] - px, t[i + 7] - py, t[i + 8] - pz};
+        const double la = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+        const double lb = std::sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+        const double lc = std::sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+        const double det = a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                           + a[2] * (b[0] * c[1] - b[1] * c[0]);
+        const double ab = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        const double bc = b[0] * c[0] + b[1] * c[1] + b[2] * c[2];
+        const double ca = c[0] * a[0] + c[1] * a[1] + c[2] * a[2];
+        sum += 2.0 * std::atan2(det, la * lb * lc + ab * lc + bc * la + ca * lb);
+    }
+    return sum / (4.0 * 3.14159265358979323846);
+}
+
+bool Ground::enclosed(double x, double y, double z) const {
+    if (!solids) return false;
+    for (const Solid& s : *solids)
+        if (s.box[0] <= x && x <= s.box[3] && s.box[1] <= y && y <= s.box[4] && s.box[2] <= z && z <= s.box[5]
+            && winding(s.tris, x, y, z) >= 0.5)
+            return true;
+    return false;
+}
+
 Soups gather_cell(const std::vector<PlacedRef>& refs, const Land* land, const double* water_z) {
     std::vector<double> walk_faces, block_faces, door_faces;
+    std::vector<Solid> solids;
     for (const PlacedRef& r : refs) {
         std::vector<double> w, b;
         place(r.w, r, w);
@@ -86,8 +131,10 @@ Soups gather_cell(const std::vector<PlacedRef>& refs, const Land* land, const do
         std::vector<double>& bd = r.door ? door_faces : block_faces;
         wd.insert(wd.end(), w.begin(), w.end());
         bd.insert(bd.end(), b.begin(), b.end());
+        if (!r.door) solids.push_back(solid_of(w, b));
     }
     Soups S;
+    S.solids = std::move(solids);
     walk_faces.insert(walk_faces.end(), block_faces.begin(), block_faces.end());
     split_by_slope(walk_faces, S.walk, &S.block);
     split_by_slope(door_faces, S.walk, nullptr);

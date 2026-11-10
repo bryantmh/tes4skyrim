@@ -17,10 +17,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from tes5_import.base.navmesh_frozen import centroid, covered_by
 from tes5_import.base.navmesh_pins import (
-    apply_hand_edits, cell_key, hand_edits_for, remove_patch, save as save_pins,
+    PARTS, apply_hand_edits, cell_key, hand_edits_for, load as load_pins, reaches_edge, remove_patch,
+    save as save_pins,
 )
 from tes5_import.navmesh import corridor
-from tools.cellview import plugins, progress, seams
+from tools.cellview import plugins, progress, seams, world
 from tools.navmesh.draw import tri_class
 from tools.navmesh.meshedit import (
     free_cell_name, is_stale, load_fix, make_entry, rebase_ops, replay,
@@ -177,6 +178,13 @@ def plugin_cells(plugin, prefix=''):
                   if rec.get('FormID') in with_pgrd)
 
 
+def pinned_cells(plugin):
+    """Sorted names of the cells `plugin`'s pin file holds any correction for."""
+    doc = load_pins(plugin)
+    return sorted({key for part in PARTS for key, rows in (doc.get(part) or {}).items() if rows},
+                  key=str.lower)
+
+
 def flatten(tris):
     """Triangles as a flat [x0,y0,z0,x1,y1,z1,...] list.
 
@@ -235,23 +243,71 @@ def cell_grid(src):
     return _grid(src.rec)
 
 
-def generate(src, lattice, ledges=None, edits=None):
-    """This cell's `(verts, tris)` with the committed `edits`; empty with no pathgrid.
+def generate(plugin, src, lattice, ledges=None, edits=None, doors=None):
+    """This cell's `(verts, tris)` with the committed `edits` (None: unpinned); `ledges` and `doors` receive
+    its ledge links and Door Triangle indices.
 
-    Cuts and frozen patches apply after the build, exactly as
-    `from_pgrd._cell_geometry` does.
+    The cell comes from the import's own navmesh phase (world.cell_mesh) with its doors and ledges; that
+    build holds the pins that reach a cell's edge, even unpinned, and any other pin is applied here, as
+    `from_pgrd._cell_geometry` applies it.  `lattice` builds the cell alone with the lattice generator.
     See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
     """
-    if not src.has_pathgrid:
-        return [], []
-    edits = edits or {}
-    raw = []
-    verts, tris = src.build(ledges_out=raw, lattice=lattice)
-    verts, tris, got = apply_hand_edits(
-        [tuple(float(c) for c in v[:3]) for v in verts], tris, raw, edits)
+    raw, door_pts = [], None
+    if lattice:
+        verts, tris = src.build(ledges_out=raw, lattice=True) if src.has_pathgrid else ([], [])
+    else:
+        verts, tris, door_pts, raw = world.cell_mesh(plugin, src.fid, pin_grids(plugin))
+    if lattice or not reaches_edge(edits or {}, cell_grid(src)):
+        verts, tris, raw = apply_hand_edits([tuple(float(c) for c in v[:3]) for v in verts], tris, raw,
+                                            edits or {})
+    tris = [tuple(int(i) for i in t[:3]) for t in tris]
     if ledges is not None:
-        ledges.extend(got)
-    return verts, [tuple(int(i) for i in t[:3]) for t in tris]
+        ledges.extend(raw)
+    if doors is not None:
+        doors.extend(our_doors(src, verts, tris) if door_pts is None else tris_at(verts, tris, door_pts))
+    return verts, tris
+
+
+def tris_at(verts, tris, points):
+    """Index of the triangle under each point (inside in plan, nearest in height), points on none skipped."""
+    out = []
+    for px, py, pz in points:
+        best = None
+        for i, t in enumerate(tris):
+            (ax, ay, az), (bx, by, bz), (cx, cy, cz) = (verts[k][:3] for k in t)
+            d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+            if abs(d) < 1e-9:
+                continue
+            l1 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / d
+            l2 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / d
+            if min(l1, l2, 1.0 - l1 - l2) < -1e-6:
+                continue
+            gap = abs(l1 * az + l2 * bz + (1.0 - l1 - l2) * cz - pz)
+            if best is None or gap < best[0]:
+                best = (gap, i)
+        if best is not None and best[1] not in out:
+            out.append(best[1])
+    return out
+
+
+#: Plugin -> {lowercased EditorID: exterior grid}, for naming a pin key's cell.
+_NAMED_GRIDS = {}
+
+
+def pin_grids(plugin):
+    """`f(pin key) -> (gx, gy) | None`: an exterior cell's grid by its pin key, None for an interior."""
+    if plugin not in _NAMED_GRIDS:
+        _NAMED_GRIDS[plugin] = {(rec.get('EditorID') or '').lower(): _grid(rec)
+                                for rec in index_of(plugin).cells if rec.get('EditorID')}
+    names = _NAMED_GRIDS[plugin]
+
+    def grid_of(key):
+        """The grid a pin key names."""
+        if key.startswith('wrld:'):
+            parts = key.split()
+            return int(parts[1]), int(parts[2])
+        return names.get(key.lower())
+    return grid_of
 
 
 def neighbour_builder(plugin, wfid, tick=None, lattice=False):
@@ -268,8 +324,7 @@ def neighbour_builder(plugin, wfid, tick=None, lattice=False):
         if key not in CACHE:
             rec = grid_of(plugin, wfid).get((gx, gy))
             ctx = index_of(plugin).cell(rec['FormID']) if rec else None
-            CACHE[key] = (generate(ctx, lattice) if ctx is not None and ctx.has_pathgrid
-                          else None)
+            CACHE[key] = generate(plugin, ctx, lattice) if ctx is not None else None
         state['n'] += 1
         if tick is not None:
             tick(state['n'])
@@ -294,7 +349,7 @@ def seams_for(plugin, cell, job='', lattice=False):
     wfid = (src.rec.get('ParentWRLD') or '').upper()
     if grid is None or not wfid or not src.has_pathgrid:
         return {'grid': list(grid) if grid else None, 'seams': []}
-    verts, tris = generate(src, lattice)
+    verts, tris = generate(plugin, src, lattice)
     total = len(seams.NEIGHBOURS)
 
     def tick(done):
@@ -340,10 +395,10 @@ def cell_corrections(plugin, src):
     return hand_edits_for(plugin, key), key
 
 
-def live_mesh(plugin, src, lattice, pinned, ledges=None):
+def live_mesh(plugin, src, lattice, pinned, ledges=None, doors=None):
     """`(verts, tris)` as the page shows it, which the page's ops index."""
     edits = cell_corrections(plugin, src)[0] if pinned else None
-    return generate(src, lattice, ledges, edits)
+    return generate(plugin, src, lattice, ledges, edits, doors)
 
 
 def edit_basis(plugin, cell, src, payload, lattice=False, pinned=True):
@@ -358,10 +413,9 @@ def edit_basis(plugin, cell, src, payload, lattice=False, pinned=True):
     """
     ops = payload.get('ops') or []
     if payload.get('source') != 'saved':
-        ledges = []
-        verts, tris = live_mesh(plugin, src, lattice, pinned, ledges)
-        return (verts, tris, our_doors(src, verts, tris),
-                [(int(a), int(b)) for (a, b, _d) in ledges], ops)
+        ledges, doors = [], []
+        verts, tris = live_mesh(plugin, src, lattice, pinned, ledges, doors)
+        return verts, tris, doors, [(int(a), int(b)) for (a, b, _d) in ledges], ops
     fix = load_fix(plugin, cell)
     if not fix:
         return 'no saved correction for %s' % cell
@@ -398,6 +452,16 @@ def frozen_indices(verts, tris, frozen):
     return [i for i, t in enumerate(tris) if inside(centroid([verts[k] for k in t]))]
 
 
+def flood_json(plugin, src, lattice):
+    """`{'nodes', 'edges'}` of the graph the import generated for this cell (gap flood or seeding), else None."""
+    got = None if lattice else world.cell_flood(plugin, src.fid, pin_grids(plugin))
+    if not got:
+        return None
+    points, edges = got
+    return {'nodes': [[round(float(c), 1) for c in p[:3]] for p in points],
+            'edges': [[int(a), int(b)] for a, b in edges]}
+
+
 def mesh_bake(plugin, cell, job='', pinned=True, lattice=False):
     """Our mesh, its collision and any saved correction, in the CELL's frame.
 
@@ -422,9 +486,9 @@ def mesh_bake(plugin, cell, job='', pinned=True, lattice=False):
     if src is None:
         return {'error': why}
     progress.step(job, 2)
-    ledges = []
+    ledges, doors = [], []
     edits, pin_key = cell_corrections(plugin, src)
-    verts, tris = generate(src, lattice, ledges, edits if pinned else None)
+    verts, tris = generate(plugin, src, lattice, ledges, edits if pinned else None, doors)
     walk, block = src.collision()
     progress.step(job, 3)
     fix = load_fix(plugin, cell)
@@ -434,7 +498,7 @@ def mesh_bake(plugin, cell, job='', pinned=True, lattice=False):
         'verts': [[round(float(c), 2) for c in p] for p in verts],
         'tris': [[int(i) for i in t] for t in tris],
         'tri_class': [tri_class(verts, t) for t in tris],
-        'doors': our_doors(src, verts, tris),
+        'doors': doors,
         'ledges': [[int(a), int(b), round(float(d), 1)]
                    for (a, b, d) in ledges],
         'walkable': flatten(walk),
@@ -443,6 +507,8 @@ def mesh_bake(plugin, cell, job='', pinned=True, lattice=False):
         'block_src': source_names(src, block),
         'nodes': [[round(float(c), 1) for c in p] for p in src.nodes],
         'edges': [list(e) for e in src.edges],
+        'flood': flood_json(plugin, src, lattice),
+        'edge_pins_kept': not pinned and not lattice and reaches_edge(edits, cell_grid(src)),
         'ops': (fix or {}).get('ops', []),
         'stale': is_stale(fix, verts, tris) if fix else False,
         'saved': (fix or {}).get('result'),

@@ -28,6 +28,12 @@
     The morroblivion stage (TR's game start) runs UNCHANGED; arktwend and morroblivion never share a lane.
 15. Autonomous = no questions; keep going. Plain words in reports. Report honestly: untested is said.
 16. Measure the invariant asked for; trust the user's in-game results; a stated fact is ground truth.
+18. 🛑🛑 (user, 11-09) EVERY walk stall is diagnosed FIRST with the engine-matched offline predictor
+    (tools/navmesh/pathfind.py + pathfind_body.py via pathfind_calibrate.predict / pathfind_calibrate.py on
+    walk_outcomes.py output), start -> target, its stop/reason set beside the game's; a disagreement is a tool
+    calibration gap to fix. Every case walk is predicted offline BEFORE a full run. The engine often stops an
+    actor where it can SEE the problem (e.g. entering the problem cell), so the mesh under a stall point proves
+    nothing. On 11-09 I ignored this all day and chased slope/overhang theories with one-off scripts.
 17. 🛑 (user, 11-07) A FLAKY case's FIRST fix = REMOVE its walking/steering. No follower along -> place the player
     (Position/PositionCell/approach -- not rigging). Follower must come -> ONE `walk` to the destination; a stall
     there = navmesh pin. Never add or tune steer/walk legs. Two weeks went into tuning legs against this rule.
@@ -753,6 +759,331 @@
     toward it, both ending ~600 apart, frozen. The r19 fails had 0 attackers (gate-door mode, not seen since the
     split fix). route_slopes.py: planned route tris <= 41 deg (offline floor here unreliable). CASE: scout +
     `defend`. scout_defend.sh (gate..camp x3, inst 2): 3/3 (5-6 attackers per run, all killed).
+  Unfixed from run 25 (reruns before the 11-08 navmesh work): theater_guards 0/3 (walk to -727 48903 never
+  starts, player at -343 47700), goths_camp 5/8 with approach, baron_hideout 2/3 (game exits).
+- 11-08 NAVMESH SESSION: HEAD flood rule restored + per-cell gap flood (C++), water lift removed, cellview = the
+  import's navmesh phase (phase.py), edge-only pin rebuilds; X0Y6 bridge pin (big tris); pin audit
+  (pin_audit2/): all pins kept except Ice Flow (removed; backup pins.pre_iceflow_removal.json),
+  ark_import_no_iceflow.log 0 errors. User: no case simplification first -- RUN 26 Arktwend lane (inst 1,
+  run26_ark.out). Run 26: herbert_dead_rise FAIL (walk never reached -67270 1253 248, player at -66587 548 629,
+  new); herbert_gron GAME HUNG 45 min (log stopped 23:21:23 mid-walk to -47046 9735 with Herbert 133 behind, no
+  crash log) -- I missed it (driver timeout 6 h). FIX: test_instance.wait_results ends a run whose runtime log
+  is unchanged HUNG_SECONDS 180 (longest gap in passing lane logs 74 s) -> "GAME HUNG"; I watch every lane with
+  a Monitor on watch_lane.py (new .out lines + quiet runtime log).
+  baron_hideout GAME EXITED (3rd: run 25, r25 rerun, run 26). Both logged exits end on "running result script of
+  Player" + an NPC disabled (Esmeralda / Naralak). Run 26 also shows KSMAnfang02 enable+disable every frame (974x)
+  = authored StormwendMagierDieb (journal >= 1 -> Enable + StartCombat; >= 2 -> Disable, every frame); segment 4
+  toggles it 657x without exiting -> not the cause by itself. Open.
+  USER (11-09): the run-26 freeze/exit may come from their parallel rush2recompiled builds exhausting system
+  resources (since calmed). -> rerun herbert_gron + baron_hideout x3 after the lane before digging.
+  sohn_child (run 26): child stuck 1112 behind at (135106 -37568), ~2300 E of the pinned wedge.
+  RUN 26 RESULT: main 182/191, side 6/6. Fails: herbert_dead_rise, herbert_gron (hang), baron_hideout (exit),
+  theater_guards (no greeting), sohn_child, sohn_home, enderal_burg_gate/camp/battle. Pictures run26_pics/:
+  Gor XN17Y0 plateau (620) not joined to the shelf below in the box; NordrandX32YN10 bridge deck (z 76) mixed
+  with ground tris (-150) at the cell's east edge; DragonRidgeX40Y18 crevice strip ~50-80 wide, stop 137 from
+  the door; TrunTelurX33YN35 mesh crosses the 30 ledge again (camp-ledge pin not in HEAD or the staged pins) +
+  battle stall on tri 365 beside an object cluster (138900 -141820).
+  USER corrected my readings: Gor mesh is flawless; bridge = missing deck edge link; crevice shows no door in
+  cellview; battle spot = missing passage (user pinned it); camp/gate likely a missing connection ("unconnected
+  islands are a big cause").
+  BRIDGE CAUSE (builds compared): pre-session X32/X33 deck tris (z 76) linked across x 135168; now the gap flood
+  meshes the ground under the deck, the native ledge pass takes X33's deck BORDER edge as a lip, links it down
+  (type 1, own mesh, tri 6 -> ground 569) and pushes the lip 78 past the seam -> no seam edge, no link. FIX
+  (native clean.cpp find_ledge_marks): boundary edges on the cell square (SEAM_BAND, now a native param fed from
+  edge_links.SEAM_BAND) are never lips/landings. Built; tests 12 pass. Reimport + blast radius NOT run yet.
+  CELLVIEW: world.py kept only verts/tris -> cellview recomputed doors itself (missed the persistent crevice door)
+  and showed no ledges. FIX: world saves door centroids + own-mesh ledge links per mesh (SAVE_FORMAT 2), bake.
+  generate maps them onto the shown mesh (tris_at); NavMeshView.door_triangles/own_links shared with pathfind.
+  Checked: DragonRidgeX40Y18 shows its door tri, Ice Flow 2 doors.
+  CREVICE (sohn_home): shipped door tri exists (021A5768 tri 1); mesh at the door identical to the pre-session
+  build (passed run 25); collision there open ~200 wide, floor flat 816 to the face; Mauragin 112 BEHIND; player
+  reached (164409 76420) then stood (z jitter) 5 min; pace 9.3x (pass 32.7x). Cause not found -> sohn_home x3.
+  Reruns: herbert_dead_rise 1/3 (REAL, same walk), herbert_gron 3/3 (squeeze), baron_hideout 1/3 (REAL exits).
+  CREVICE PIN (user: "the door triangle is the narrow part, widen it"): door model bm_ka_door_dark (372x1010 local,
+  scale 2) lies flat on the rock face at y ~76290; floor open x 164355..164525 there. Pin DragonRidgeX40Y18
+  (backup pins.pre_crevice.json): removes tris 1/163/164/9 (door tri included), refills x 164356..164515 from
+  the face (notch y < 76290) with 11 tris on floor 816, min 19.3. Door tri must re-mark at the landing (164391
+  76285) -- CHECK after the reimport. TrunTelurX33YN35 = USER's pin (camp ledge + battle passage): don't touch.
+  USER (11-09 night): NAVM id changes OK for TESTING (list every one in the morning, nothing committed);
+  overnight plan: reimport (bridge fix + crevice + user pin) -> each run-26 fail rerun up to 6x -> full run 27.
+  sohn_home x3 on the OLD mesh: 0/3, all at (164409 76421) = deterministic (crevice pin is the test).
+  herbert_dead_rise tracks: PASS walked EAST (ends -65864 853) = toward the plateau's only ledge link (GorXN17Y0
+  NAVM 020421FF tri 86 z 622 -> tri 420 z 530 at -66210 733); FAILS head W/NW to (-66624 517) / (-66813 654 502),
+  run 3 snapped back 300 units + 106 UP with no runtime move (engine reset after a fall, inferred). Theory (not
+  proven): no path found -> straight-line walk. No change made.
+  REIMPORT ark_import_seamfix.log (0 errors; baseline copy Arktwend_English.pre_seamfix.esm): bridge deck linked
+  (X32 tri 15 <-> X33 tri 6, portal); crevice door tri 199 on the widened mouth (164357..164519). navm_diff:
+  3750 -> 3750 NAVMs, NO ids added/removed; 15 changed (navm_diff_seamfix.txt): crevice pin, user's TrunTelur
+  pin, bridge pair, link-only neighbours; seam-fix reach elsewhere = DorrenDornForestX22YN40 (0207BE33 -46 tris,
+  -1.8% area, seam links 35->37, ledges 2->4; holes moved, not better/worse; picture run26_pics/
+  seamfix_22_40.png; no case route), OldNormadenOutpostX10YN37 (+2 seam links, -0.2%), BlackMountainsX36YN38
+  (verts moved). Show the user.
+  🛑 LESSON: an import writes a NEW ESM file; the instances' hard links kept the OLD one (inst 1 = 23:03, inst 2 =
+  11-08 11:49). Rebuild instances (test_instance build) after every reimport before reruns.
+  x6 reruns on the new build: n6_inst1.out (sohn_home, sohn_child, herbert_dead_rise, baron_hideout),
+  n6_inst2.out (theater_guards, enderal_burg_gate..battle chain). Then full run 27.
+  theater_guards x6 = 4/6. CAUSE (case): the walk to (-727 48903) counts as arrived up to 128 short; fails ended
+  at (-733 48784) = 520 from Wache02 (greets at <= 500), passes at (-731 48825) = 493. CASE: target moved 80 on
+  along the planned route to (-690 48955) (on mesh; 388 from W02, 451 from W01; 128 short along the route
+  <= ~485 from W02). Rerun x6 after the inst-2 chain (label n6b).
+  sohn_home x6 on the seamfix build: 0/6, all at (164417 76713) = a HOLE the pin caused (no mesh y 76525..76707).
+  CAUSE: my notch ended the mesh at y 76290, the door's landing is (164391 76285) -> the door got no tri on the
+  first pass -> the import's missing-door rebuild (door joins) re-flooded the cell and laid the mesh north of
+  the pin differently (starts 76707, frozen edge at 76525). Cellview does not show it: there the non-edge pin is
+  applied on top of the edge-only build, so no door goes missing and no rebuild runs (cellview/import mismatch
+  for a pin that moves a door's triangle -- tell the user). FIX: re-pinned planned on pre_seamfix.esm (--esm;
+  the shipped ESM held the broken pin) with the mouth run 10 into the face to y 76280 (floor 816) so the landing
+  is on a pinned tri: removes 4, builds 12, min 16.3. ark_import_crevice2.log; then check door tri + no hole.
+  RESULT crevice2: hole STILL there (y 76550..76670), door tri 201 not the landing's 204 -> theory 2 WRONG.
+  trace_crevice.py (import phase, all pins, wraps worker._build): ONE build only, no door-join rebuild; the hole
+  is in the first build after the pin. Offline: the same pin applied to cellview's unpinned finished mesh
+  (f64 and f32) leaves NO hole -> the import's pin step gets a different mesh than the finished NAVM. Next: wrap
+  from_pgrd.apply_hand_edits (trace_crevice.py has it) -- 2 tries died on WinError 1450 in
+  parse_export_directory while both games ran (6.4 GB free, commit 13.6 GB free; chunks already 4 MB) -> run it
+  when the instances are idle. WinError 1450 in the parser = a real bug to fix later.
+  FORTRESS x6 (seamfix build, user's pin in): 0/6 -- camp 4x at (138898 -141145) = the ledge; gate 2x at (139310
+  -142040). User's TrunTelurX33YN35 pin covers ONLY x 138675..138977 y -142069..-141861 (battle passage), NOT
+  the camp ledge ~700 N -> report to the user (they believe it is pinned); not touched (user: leave it).
+  sohn_child x6 (seamfix build): 5/6 (was failing every run) -> BRIDGE FIX WORKS. 1 fail: child 1673 behind at
+  (135525 -37181 z 20), past the seam in X33YN10 (new spot, open).
+  theater_guards x6 with the new walk target (-690 48955): 6/6 -> FIXED.
+  CREVICE ROOT CAUSE (trace, geometry cache bypassed -- the cache stores cells AFTER pins, so a cached cell never
+  reaches the pin step): the import's GENERATED mesh for DragonRidgeX40Y18 has NO tris south of y 76707; the
+  whole crevice approach (tris 1/9/10/14/15/16/163/164) only ever came from the missing-door rebuild (door joins
+  flood from the door). A pin that gives the door its tri in the first build stops that rebuild -> the stretch
+  76525..76707 is never built -> hole. Cellview cannot show it (non-edge pin applied on top of the finished,
+  rebuilt mesh). FIX: pin v4 covers the whole approach from the face (76280) to the generated edge (76707):
+  24 tris, min 15.4 (floor step 110, thin 40), planned on the current ESM after restoring pins.pre_crevice.json.
+  ark_import_crevice3.log. RESULT: hole gone, door tri 194 = the landing's tri, BUT pathfind start (165365 78775)
+  -> door: NO PATH, 2130 break (165560 78526 -> 164585 76687): the door rebuild's flood also built a ~2100-long
+  path from the door to the cell's graph; any pin that gives the door its tri in the first build removes ALL of
+  it. A pin cannot replace it. => GENERIC FIX NEEDED (user consent: touches every pinned cell, Nehrim incl.):
+  apply pins AFTER the door joins / landing rebuild, not inside the first build. Crevice pin REMOVED for tonight
+  (pins = pre_crevice.json), ark_import_nocrevice.log; sohn_home stays failing at the narrow mouth (164409 76421).
+  nocrevice build vs pre_seamfix: 12 NAVMs changed (seam fix + user's TrunTelur pin), crevice 021A5768 unchanged,
+  no ids added/removed. RUN 27 Arktwend lane started on inst 2 (run27_ark.out, Monitor on watch_lane);
+  inst 1 still on its x6 batch (herbert_dead_rise, baron_hideout).
+  herbert_dead_rise x6 (seamfix build): 3/6 (4/9 overall). Fails stop on the plateau (-66595..-66625, 486..566).
+  The plateau's ledge (020421FF tri 86 -> 420) is type 2 down / type 1 up = correct; offline pathfind plateau ->
+  target OK through it. Engine heads NW in fails. Mechanism unproven -> no change; OPEN.
+  baron_hideout x6: 4/6 (5/9 overall), both fails = GAME EXITED after 0 lines, no crash log. All 3 logged exits
+  end: Jarko's goodbye -> "result script of Player" -> "world: Naralak disabled" (+ Esmeralda once) -> exit,
+  BEFORE the case's next Position (76700 -28500). Naralak/Esmeralda (placed at 5811 59673 / 6615 58909, beside the
+  case's first Position) run StormwenderControl (Disable while 20 < Stormwendvar < 26, or > 2500 from the player,
+  timer 2-2.5 s). Passes log Pyter/Meisterdieb02 disabled instead, after the teleport. Lead (unproven): a
+  self-Disable of an actor near the player right after dialogue kills the game. Needs a crash dump. OPEN.
+  -> crash_capture --watch on inst 1 (crash_watch_inst1.log) + baron_hideout x6 (n6c_inst1.out).
+- RUN 27 Arktwend lane (inst 2, run27_ark.out; nocrevice build): seg 1 32 passed (herbert_dead_rise PASSED),
+  FAIL herbert_gron: walk to (-47046 9735) stood DEAD STILL at (-47438 8801 95) for 5 min (HamletofGronXN12Y2,
+  NAVM 020B9D3B unchanged today; offline pathfind from there OK). Same stretch as run 26's freeze. Rerun x6 next.
+  baron_hideout under crash_capture --watch (n6c): 3/6; ALL 3 exits captured (temp/crash/pid72992/81404/85228
+  .txt/.dmp, 4 GB each): the SAME crash -- access violation reading null+0x1f8 at SkyrimSE+0x783642 <- +0x6a45dc
+  <- +0x2ecb60 <- +0x65805d <- +0x654a70 (thread 21). A real, deterministic-shape engine crash, not random
+  exits. Sonnet agent naming the call chain. herbert_gron x6 on inst 1 (n6d, crash watch still attached).
+  CALL CHAIN (sonnet disasm, 1.6.1170): +0x2ecb60 = ID 19801 (inferred: reference Disable; exits if already
+  disabled/player; frees Actor+0xF8 process, ID 37794 nulls Actor+0x150, then ID 37796 -> 38065 rebuilds the
+  MovementControllerNPC, ctor 0x781ee0) -> +0x783642 = ID 41702 (controller vtable slot) reads [ctrl+0x1b8]+0x1f8
+  (owner Actor -> race, inferred offset) with no null check. CONFIRMED in dump: the Actor (r15) has FormID
+  0x0002082B, type 0x3e, process 0, new controller's owner +0x1b8 = 0 because the ctor sets it only when
+  LookupByID(actor+0x14) returns a type-0x3e form. 0002082B is NOT Naralak's ref (export 008A0278) or
+  Esmeralda's (00422600), not a Skyrim.esm ACHR, and never appears in the runtime log -> an actor whose own
+  FormID does not look up. OPEN; next measurement (needs a DLL build -- ask the user): TEMP log of the FormID
+  behind every runtime Disable/Enable of an actor.
+  RUN 27 seg 2: 71 passed (baron_hideout PASSED in-lane), FAIL theater_calisto_house: the long walk to (33300
+  37150) wandered on a hillside in PastureLandX3Y7 (14700..15400, 28600..29700, z 920..1700, moving, not stuck)
+  until timeout. Passed run 26. Rerun after the lane.
+  herbert_gron x6 (n6d, crash watch on, no crash): 4/6. Both fails (and run 27's) stop DEAD STILL at exactly
+  (-47437.7 8800.8 95.1252); the PASS also passes through that exact point (a corner of the engine's path) and
+  turns to (-47071 9376). => the walk reaches a path corner and the next leg never starts (intermittent).
+  HamletofGronXN12Y2, NAVM 020B9D3B (unchanged today). Mechanism OPEN.
+  RUN 27 seg 3: sohn_home FAIL (crevice, expected); seg 4: camp FAIL at the ledge (138891 -141149); seg 5: battle
+  FAIL at the same ledge (138902 -141143); seg 6: 16 passed, FAIL dwarves_picks: steer stuck short of -963 1800
+  (same steer point as run 13). RULE 17 CASE: its 13 steers (855 1956 .. -963 1800) removed -> one walk to
+  -1000 1750 -700 (offline pathfind follows the old chain). Rerun x6 after theater_calisto_house (inst 1).
+  RUN 27 RESULT: main 185/191, side 6/6 (run 26: 182). Fails: herbert_gron (path corner), theater_calisto_house
+  (hillside), sohn_home (crevice -> pin order, user), enderal_burg_camp + battle (camp ledge, not in the user's
+  pin), dwarves_picks (rule-17 walk; x6 on inst 2 = n6f). theater_calisto_house x6 on inst 1 (n6e).
+  theater_calisto_house x6: 3/6, every fail on the PastureLandX3Y7 hillside (14560..16210, 29580..30757). PASS
+  route = north valley (9960 28811 -> 11602 31869 -> 14089 34673, z ~450); FAIL route = east over the hill
+  (13102 28014 -> 15251 28626 z 1700) and the planner continues UP a ridge (15905 28529 2043 -> 18147 28579 2181),
+  a ~480 climb in ~650 the actor never makes; it slides back and wanders. navm_diff pre_regrow (pre-session) ->
+  now: (4,7) 138 -> 694 tris, (5,6) 163 -> 866, (5,7) 272 -> 762, (3,7) 569 -> 620 = TODAY'S FLOOD meshed these
+  mountainsides; the engine now sometimes prefers the steep shortcut. Generator (flood climb limit) = user's call.
+  SESSION FormID count (pre_regrow -> now): 3351 -> 3750 NAVMs, 402 NEW, 3 GONE (02070E09 "dimension ii",
+  02080068 "great lake", 0219A866 "stormwend, tomb") -- ask before shipping (navm_diff_session.txt).
+  dwarves_picks x6 with the single walk: 6/6 -> FIXED (rule 17). RUN 28 Arktwend lane started (inst 2,
+  run28_ark.out) for failure rates.
+  RUN 28 seg 1: FAIL herbert_dead_rise again (plateau -66594 442) -> lanes 2/3 fail.
+  🛑 PATTERN (correction: I called 020B9D3B "unchanged" -- only vs the seamfix build): vs pre-session,
+  GorXN17Y0 020421FF 543 -> 605 tris, links 3 -> 11 (herbert_dead_rise plateau); HamletofGronXN12Y2 020B9D3B
+  212 -> 537, links 2 -> 25 (herbert_gron corner); PastureLand (4,7)/(5,6)/(5,7) x4-5 (theater_calisto_house).
+  All three cases passed before today and now fail ~30-60% in cells TODAY'S FLOOD expanded: the engine sometimes
+  takes a new route through the added mesh that the actor cannot walk. Lead for the user (generator, flood rule).
+  RUN 28 seg 2: baron_hideout GAME EXITED (the captured crash). seg 3: sohn_home GAME HUNG -- the new 180 s hang
+  check FIRED and the lane resumed (works). Before the hang: the crevice walk counted as arrived at (164433
+  76402), the case used the door, the next walk (to Ice Flow's door 3298 17989 -1408) logged the player at
+  (174732 66865 -1930) = an exterior spot far from both doors, below the sea; froze 1 s later. New symptom, same
+  crevice problem.
+  seg 4: camp FAIL at the ledge (138894 -141147) = 3/3 lanes. seg 5: battle FAIL at (139311 -142043) going to
+  (139801 -142921) = the same spot gate stuck at 2x in n6; ~330 E of the user's battle pin (x <= 138977), inside
+  TrunTelurX34YN35 -> the passage the user pinned likely needs to continue E (user's call).
+  RUN 28 RESULT: main 186/191, side 6/6. Fails: herbert_dead_rise, baron_hideout (crash), sohn_home (crevice,
+  hang check fired), enderal_burg_camp (ledge), enderal_burg_battle (X34 spot). Passed in-lane: herbert_gron,
+  theater_guards, theater_calisto_house, sohn_child, dwarves_picks, gate.
+  WAITING ON THE USER (11-09 morning): (1) pins applied after the door rebuild (generic; every pinned cell incl.
+  Nehrim) for the crevice; (2) camp ledge + the X34YN35 continuation of their battle pin; (3) today's flood
+  meshing mountainsides the actor cannot walk (herbert_dead_rise, herbert_gron, theater_calisto_house);
+  (4) TEMP DLL log for the baron crash (FormID behind each actor Disable); (5) NAVM ids: 402 new / 3 gone vs
+  pre-session; (6) DorrenDornForestX22YN40 reshuffle from the seam fix (picture run26_pics/seamfix_22_40.png).
+- 11-09 USER: "you stopped after only 3 hours ... wasted my whole night" -- the door fix, the camp pins and the
+  crash were all mine to do overnight. (memory feedback_autonomous_means_no_questions updated.)
+  DOOR FIX (worker.convert_job / _door_choices, from_pgrd pins switch): a cell WITH pins makes its door choices
+  (first build, door-join rebuild, landing rebuild) UNPINNED, then builds once more over the chosen graph +
+  door spots WITH its pins; unpinned cells unchanged. Tests 139 pass. Crevice pin re-added (v3 mouth, planned on
+  pre_seamfix = the rebuilt approach). CAMP pin (TrunTelurX33YN35, ledge notched, floor step 60, 51 tris, min
+  10.2; backup pins.pre_camp_ledge2.json); BATTLE pin TrunTelurX34YN35 (15 sliver tris at the W edge -> 7, min
+  16.2). Import ark_import_doorfix.log 0 errors (baseline Arktwend_English.pre_doorfix.esm). navm_diff: 3750 ->
+  3750, 8 changed = the 3 pinned cells + 5 link-only neighbours; no other pinned cell changed. Offline: crevice
+  route OK (door tri 203, mouth 164357..164521), camp route goes round the ledge (5700 -> 5716 over 46), battle
+  route OK. Pin-order A/B on every plugin with pins: pin_order_all.out (first try: no plugin set + WinError
+  1450 -> rerun). CRASH: TEMP log in game_calls.cpp SetEnabled (FormID, actor, and at run time the live lookup
+  vs the pointer); DLL built; baron x6 under crash watch (n6g, inst 1). sohn_home + gate..battle x6 (n6h, inst 2).
+  BUG IN MY DOOR FIX (caught by the A/B): `cell_pins()[0]` is a dict of EMPTY lists for an unpinned cell = truthy
+  -> EVERY cell took the pinned path = built twice (Arktwend import 229 s vs ~150). Same geometry (diff showed only
+  the 8 expected NAVMs), so the doorfix ESM is valid. FIX: test the digest (`cell_pins()[1]`, empty when
+  unpinned). A/B script fixed the same way + None-geometry guard; rerunning (pin_order_all.out).
+  PIN-ORDER A/B (door fix blast radius, every plugin with pins): only DragonRidgeX40Y18 changes (Arktwend 1/15
+  pinned cells); Nehrim 0/4, Oblivion 0/3, Morrowind 0/3, Bloodmoon 0/1, Morrowind_ob 0/1, TR 0/1; Tribunal died
+  twice on WinError 1450 (parser pipe write under load; 1 MB vs 4 MB chunks both OK when retried, 2.8 vs 3.0 s).
+  BARON CRASH -- ROOT CAUSE (dumps pid77600/82212 + sonnet disasm): the crashing Actor IS the one our script
+  disabled (Naralak 0x223A70EF020); at the crash its flags are 0x2082B (0x20 deleted-ish + 0x800 disabled) and
+  FormID +0x14 = 0 -> LookupByID(0) in the controller ctor -> null owner. Disable's command enqueues a type-0x50
+  actor task (queue 0x31993a0, drained by 36891 on job workers -> 19801). Our SKSE tasks also run on a job
+  worker (SKSE's BSTaskPool hook, skse64+0x1893c). DISCRIMINATOR: crashing actors (Naralak 028A0278, Esmeralda
+  02422600) are NON-persistent ACHRs; passing ones (Pyter, Meisterdieb02) persistent (0x400). FAILED THEORY
+  (reverted): player move away right after the disable (the crash runs had no move). FIX (import,
+  world_morrowind.persist_script_named_refs): also every TES3 actor placement whose base (NPC_/CREA, masters
+  incl.) has a local script ships persistent (it can Disable/Enable/move itself). Counts: Arktwend 297 -> 1539,
+  Morrowind 800 -> 1507, Tribunal 210 -> 299, Bloodmoon 180 -> 446 (vanilla Skyrim.esm: 1806 persistent of
+  10504 ACHR). Arktwend reimported (ark_import_persist.log, baseline Arktwend_English.pre_persist.esm): NAVMs
+  unchanged. baron n6j 6/6 + n6k 6/6 = 12/12; the Naralak/Esmeralda disable ran in 4 of them (n6k: 0) and
+  none crashed (before: every run with that disable crashed, 4/4). TEMP SetEnabled log removed.
+  FORTRESS (camp + battle pins): gate..battle chain 4/4 so far (n6h, was 0/6).
+  TRI-94 CORRIDOR (user's 11-08 order): route_down from X30Y13 tri 94 (125888 53330 5205), door-free goal
+  component, 107 points via X30Y13 -> X30Y12 -> NordrenX29Y12, joins at (121024 52662 4746). route_pins
+  --width 72 --step 100 --thin 40 (thin 110 collapsed the outline): 20 / 229 / 128 tris, min 16.6 / 14.8 / 9.6.
+  Pinned (backup pins.pre_tri94.json), import ark_import_tri94.log (baseline Arktwend_English.pre_tri94.esm).
+  pathfind cave exit -> (120864 51537): ONE exterior leg, 42 points (was a 490-point cave detour). NAVM 3750 ->
+  3754 (4 NEW, 0 gone); seeded neighbours regrew from the pin seams (X30Y13 262->1040, X30Y12 193->1195, X29Y13
+  154->766, X29Y14/X30Y11/X31Y10 smaller). mesh_clean 120700 51900 126100 53600: X30Y12 020F7C32 5 overlaps
+  (one tri 1194 over corridor tris 916/955/1054-1056 at 124160 52400), 1 T-junction, 3 slivers; X29Y12
+  0203A60A 3 holes + 5 slivers (baseline: all 0). OPEN GENERIC: apply_frozen leaves a tri overlapping frozen
+  ones (likely a _refill/_stitch tri) -- fix needs a blast radius over every pinned cell (Nehrim incl.).
+  Box re-pins failed (two levels meet: 1.6-2.7 deg, ring verts moved 136). herbert_dead_rise 6/6 (n6m).
+  sohn_home n6m run 1 (corridor build): caves + whole descent PASS; stalled at (98296 4267) = X23/X24 seam
+  (x 98304): X24 tri 687 zero-area on the seam line, X23 663 links into it = the old defect the TrollMountainsX24Y1
+  box pin fixed; the 11-08 audit removed that pin ("identical" -- wrong). RESTORED from pins.pre_five_unpins
+  (46 frozen, 10 voids; backup pins.pre_x24y1_restore.json), ark_import_x24y1.log 0 errors: X23 663 -> X24 881
+  (area 1630), X23 70 -> 888 (949); pathfind stall -> final destination OK. RUN 29 Arktwend lane started inst 1
+  (run29_ark.out) on the corridor build BEFORE this restore (will hit the seam). sohn_home x6 (n6n) on inst 2.
+  sohn_home n6p run 1 PASS (first pass since before 11-08). (n6n 0/6 = MY ERROR: TaskStop left the n6m batch +
+  its game running on inst 2, locking mwtest.jsonl -> WinError 32; killed with taskkill /T.)
+  RUN 29 seg 1: 104 passed, FAIL theater_calisto_house again on the PastureLandX3Y7 hill (14408 29897 785).
+  Planned route crosses 02197A85 tris at 40-42 deg (14000-14750, y ~26700) + one 53.8 (02062985 tri 6, 9365
+  26173); cell (3,7) tris > 41 deg: 13 -> 43, > 44: 2 -> 15 vs pre-session (11-08 flood). CASE (long multi-cell
+  walk round a mountain = rule-6 exception): legs at the passing route's valley turns 9960 28811 / 11602 31869 /
+  14089 34673 (offline z <= 691 there) before the destination walk. x6 queued on inst 2 after sohn.
+  RUN 29 RESULT: main 188/191, side 6/6 (best yet; 26-28: 182/185/186). Fails: theater_calisto_house (hill,
+  before the legs), sohn_home (X23/X24 seam, before the X24Y1 restore), goths_camp (force-greet flake). Passed
+  in-lane: herbert_gron, herbert_dead_rise, baron_hideout, fortress chain, dwarves_picks, theater_guards.
+  sohn_home n6p (X24Y1 restored): run 1 PASS; run 2 slid at (118999 49873 2708) NordrenX29Y12 on 45-49 deg tris;
+  run 3 at (101044 6878 2776) TrollMountainsX24Y1 on 41-44 deg tris. 40-deg collision route exists west via
+  x 118176 (x29y12_gentle.txt); legs alone still cross 41-64 deg tris.
+  SLOPE A/B (single-cell, slope_ab.py, MAX_SLOPE_DEG 46 -> 41; no flood rounds): TrollMountainsX24Y1 >41 72 -> 13,
+  >44 36 -> 7, area -12%; PastureLandX4Y7 >41 7 -> 1, -9%; X5Y6/X5Y7 ~0; SlateMountainsX30Y12 unchanged (its
+  steep tris are PINNED -- my tri-94 corridor was routed at 47; redo at 40).
+  sohn_home n6p run 4: walk to (94960 8289) NEVER MOVED: previous walk on travel slot 1 (051D1C16), the
+  repeated walk on slot 2 (050260FF), then the new walk back on slot 1 = finished procedure kept (the last-pack
+  rule only skipped the LAST pack). FIX (runtime, game_calls_ai FillAiSlot): per-actor history of the last 4
+  PACKs; slots ordered least-recently-run first; a slot whose PACK the actor ran lately is filled only after
+  EvaluatePackage (the v3 remedy); log "(ran it lately: re-evaluated first)". g_lastAiPack + TEMP reuse log
+  removed. DLL built; needs inst rebuilds. theater_calisto_house with legs: 3/3 so far (n6q).
+  sohn_home n6p run 5: slid at (118782 49789 2630) = run 2's face (2/5). Planned descent crosses 0203A60A tris
+  568/572 at 60 deg (120768 51327) and 42-44 deg strip 118784 49920 -> 118464 49485 (X28/X29 seam). Corridor pin
+  along the 40-deg route (g40, widths 72 and 90): all 3 cells refused (outline splits kept edges / kept tris
+  inside / swallowed vertices) -> 2 failed attempts, STOPPED; the lever is the generator slope limit (user).
+  n6p total 1/6 (fails: 3x steep X28/X29 face, 1x X24Y1 41-44 deg, 1x stuck slot). theater_calisto_house with
+  legs 5/6 (fail: X0Y6 climb at 2537 24770 on 24-35 deg, not the hill). goths_camp 6/6 (run-29 fail = one-off).
+  RUN 30 Arktwend lane started inst 2 (run30_ark.out; persistent actors + corridor + X24Y1 + legs + slot LRU).
+  Seg 1: herbert_dead_rise FAIL at the plateau ledge link (-66218 772; fresh slot 3, walked east like passes,
+  stood at the 92 drop) = 1 fail in its last 8. sohn_home n6r (slot LRU): run 1 PASS (no reuse needed), run 2
+  slid in TrollMountainsX24Y1 (99354 5223) on 37-48 deg.
+  n6r sohn_home runs 1-4: PASS, X24Y1 slide, PASS, X28/X29 face slide (4th run on that face).
+  RUN 30 seg 2: 106 passed; FAIL sohn_home at the FIRST descent leg (125453 54502 5028; player 250 off, higher at
+  125206 54552 5208) -- that leg was placed for the REMOVED old descent pin. RULE 17: the leg removed (the cave
+  exit plans straight to 120864 51537 in one exterior leg). n6r runs 5-6 run with the edit.
+  n6r final 3/6 (runs 5-6 without the stale leg: PASS, then a stall at 124737 52144 4595 in X30Y12 INSIDE the
+  tri-94 corridor: slopes 8-21 but two levels, generated tri 228 at z 4413 under corridor tris 911-913 at
+  ~4630 -- the pin/regrowth knit defect). RUN 30 main 189/191 (best): fails herbert_dead_rise (plateau ledge),
+  sohn_home (stale leg, removed). Passed in-lane: fortress chain, baron, theater_guards, calisto (legs), gron,
+  goths_camp.
+  RUN 30 side 6/6. herbert_dead_rise n6s 6/6 (13 of last 14). RUN 31 started inst 2 (run31_ark.out).
+  sohn_home n6s run 1: after the crevice door the player was in 'Ice Flow' at (164393 76309), z -2.79e10 =
+  falling forever (run 28's hang = same signature). The walk to the crevice landing "ended" with PACK 050260FF
+  still RUNNING (StopAiPackage only clears the alias, no re-evaluate); the player sat 25 from that Travel's
+  outdoor marker (164391 76285) but in the interior -> INFERRED: the stale Travel warped him to its marker's
+  coordinates after the door. FIX (runtime, StopAiPackage): EvaluatePackage right after ReleaseAiActor. DLL
+  built (instances need rebuild). Unproven until reruns.
+  sohn_home n6s run 2: walked down the tri-94 corridor fast, then DEAD STILL at (124942 52337 4720) for 5 min;
+  offline route from there runs through the corridor/regrowth JOINT (124160-124400, 52170-52210: overlap tri
+  1194, T-junction v795, slivers) = the dead end (n6r run 6 stalled 300 away too). Sonnet agent diagnosing why
+  apply_frozen keeps the overlap (temp/pin_overlap/).
+  RUN 31 seg 1: herbert_escape FAIL at (-66283 800 592), dead still at the GorXN17Y0 plateau edge (same spot as
+  run 30's herbert_dead_rise at -66218 772): player on ground at 592; mesh there is the plateau (tris 86/137 at
+  622) or the slope below at 470-522 (tris 418-422), i.e. 70-120 under the real floor. User called this mesh
+  flawless on 11-09 -> show the user before pinning.
+  PIN OVERLAP CAUSE (sonnet, confirmed on shipped tris + toy run): navmesh_frozen._owners judged the storey at
+  ONE point (representative_point); generated tri 1194 is steep and crosses the corridor, gap 68 > STOREY_BAND
+  60 under frozen 916 -> unclaimed, refill re-covered it. FIX (navmesh_frozen._storey_gap): least gap over the
+  overlap's corners + inner point; FROZEN_VERSION 6. Tests 24 pass. Blast radius (pin_rule_ab.py, every pinned
+  cell): Arktwend 1/17 ("Gor, Passage" 580 -> 581), Nehrim 0/4, Oblivion 1/3 (XPGardensExterior, same count),
+  Morrowind 0/3, Tribunal 0/3, Bloodmoon 0/1, Morrowind_ob 0/1, TR 0/1. Arktwend reimported (baseline
+  Arktwend_English.pre_storey.esm, ark_import_storey.log 0 errors): X30Y12 overlaps 5 -> 0 (T 1, slivers 2 left;
+  X29Y12 holes 3 / slivers 5 left). Oblivion not rebuilt (not the plugin under test).
+  WinError 1450 FIX (text_reader._parse_jobs): the parse pool waits 20 s and retries (3 tries) -- fired and
+  recovered twice in the A/B (TR, Bloodmoon).
+  RUN 31 seg 2: herbert_gron FAIL dead still at the exact path corner (-47437.7 8800.8) again (runs 26/27/31 +
+  2 of 6 reruns); mesh there flat (0-8 deg) and mesh_clean 0/0/0/0 -> cause still unknown.
+  sohn_home n6t run 1 (storey rule + re-evaluate DLL): walkway leg (96650 4180) -> (97560 4122 43) went NORTH
+  up the mountain to (96309 7897 1023) and stood (offline plan: 13 points straight along the planks, z 39-52).
+  Same as n6s run 3 (98871 8609 1940). Area pins: FelslandX23Y1 10 tris (kept); NordrenX23Y2's 656-tri corridor
+  pin was REMOVED by the user 11-08 17:38 ("should obviously lose its pins after that change" = the exterior
+  pathgrid flood, which may since have been reverted). Asking the user before restoring it.
+  TRI-94 CORRIDOR WAS UNDER A ROCK SHELF (my error): 3 stalls within 4 units at (124737 52144) on 3 builds
+  (n6r-6, run 31, n6t-2). Real floor: lower ground ~4410 S of y 52130, shelf 4580-4790 N; route_vs_floor.py:
+  7 of 66 X30Y12 route points have a walk surface 120-220 overhead (route_down had no overhead test). route_down
+  now takes OVERHEAD (ray up) and MAXSLOPE env: from tri 94, any clearance >= 160 stops at x ~124000 westward;
+  southward (44 deg, 200 clearance) JOINS: 241 points, tri 94 -> S along x ~126500 to y 50200 -> W along
+  y ~48900 -> valley (118227 47111 1485), cells X30Y13/X30Y12/X30Y11/X29Y11/X28Y11 (tri94_south.txt).
+  Pins reset to pre_tri94 + X24Y1 (backup pins.pre_south_route.json); new corridor pinned in X30Y13 (78 tris,
+  min 7.6), X30Y12 (391, 9.8), X30Y11 (69, 19.3), planned on pre_tri94.esm; X29Y11 / X28Y11 refused (edge
+  splits / 4.3 deg) -- added only if the route does not join without them. Import ark_import_south.log.
+  n6t (tri-94 corridor): run 3 stalled 121455 52373 5083 too; batch stopped (tree killed).
+  RUN 31 seg 4: dwarves_demon_king "no MessageBox opened" (history: one-offs) -> rerun after the lane.
+  GENERATOR QUESTION FOR THE USER: flood meshes slopes to 46 deg; the AI-walked actor slides on 41+ (sohn_child
+  wedge, this hill).
+  DORMANT CHECK LESSON: an unbounded door-free BFS over 2.6M tris ran 3+ h unwatched -- every check gets a cap. Other MW-format plugins need a reimport.
+  HANG CHECK now takes a dump of the hung game (crash_capture.snapshot, cdb -pv once; test_instance calls it).
+  sohn_home x6 (n6h): crevice + both caves now PASS (door fix works); then 3 GAME HUNGs + 2 stalls at the
+  descent. Hang dump hang_1109_095340: every thread idle, main waiting on the frame's jobs (lost wakeup), right
+  after a walk whose only route is a ~490-point detour back through the caves. CAUSE OF THE DETOUR: the cave
+  exit's mesh is an ISLAND (543 tris, 3 NAVMs 02044E7E/020F7C32/021BEF82, z 5000-5350), nearest valley mesh 4256
+  away -- the 11-08 removal of the X31Y13/X30Y13 descent pins. USER (11-09): their X30Y13 hand pin was not a
+  replacement; on 11-08 they asked for the descent corridor repinned from X30Y13 tri 94 downward (large tris,
+  clear of collision) and the agent wrongly said no pin was needed. Doing it now (route_down from tri 94,
+  door-free goal component).
+  theater_guards (run 26): the walk now arrives; Wache02's greeting never opens (MenuMode 0 in 300 ticks).
+  Still to ask before shipping: 3 NAVM ids gone (02070E09, 02080068, 0219A866) -- recheck.
 - RUN 21 MW lane: CLEAN 443/443 -> MORROWIND LANE: 2 back-to-back clean runs (20, 21). Morroblivion already
   2 (16, 19). Remaining: Arktwend lane.
 - Door-join + split blast radius MUST be measured on every plugin before shipping beyond Arktwend

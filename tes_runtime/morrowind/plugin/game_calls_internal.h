@@ -67,8 +67,7 @@ void ReadBookFromInventory(void* book);
 void PlaceAt(void* ref, float x, float y, float z, float zRot);
 // Puts `ref` at a spot inside `place`, a CELL or a WORLDSPACE form, in ONE
 // engine move; false when `place` is neither. Game thread only.
-bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot);
-// While the player's last MoveInto has not landed: where it lands. game_calls_move.cpp.
+bool MoveInto(void* ref, void* place, float x, float y, float z, float zRot);// While the player's last MoveInto has not landed: where it lands. game_calls_move.cpp.
 bool PlayerLandingSpot(void** place, float* at);
 // A TES3 exterior cell's width, and the grid index a coordinate falls in.
 constexpr float kTes3CellSize = 8192.0f;

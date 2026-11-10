@@ -203,29 +203,41 @@ unsigned AiOrdersOf(void* ref) {
     return g_aiOrders[ref];
 }
 
-// The PACK each actor was last put on. Game thread only.
-std::unordered_map<void*, void*> g_lastAiPack;
+// The PACKs each actor was put on, oldest first, at most kAiPackHistory. Game thread only.
+std::unordered_map<void*, std::vector<void*>> g_recentAiPacks;
+constexpr std::size_t kAiPackHistory = 4;
 
-// Puts `ref` and `at` into the first EMPTY slot of `kind`; the engine picks the
-// PACK up from the actor's alias. Game thread.
-// 🛑 The slot whose PACK the actor is STILL running -- or, running none, was
-// last put on -- comes last, and if it must be reused the emptied actor
-// re-evaluates first: the engine keeps a package it re-picks along with its
-// procedure, so a finished Travel given a new marker stays finished instead of
-// starting afresh.
+// How recently `ref` ran `pack`: 0 never (in the kept history), higher = more recently.
+int PackRecency(void* ref, void* pack) {
+    const std::vector<void*>& recent = g_recentAiPacks[ref];
+    const auto at = std::find(recent.begin(), recent.end(), pack);
+    return at == recent.end() ? 0 : 1 + static_cast<int>(at - recent.begin());
+}
+
+void NotePackTaken(void* ref, void* pack) {
+    std::vector<void*>& recent = g_recentAiPacks[ref];
+    recent.erase(std::remove(recent.begin(), recent.end(), pack), recent.end());
+    recent.push_back(pack);
+    if (recent.size() > kAiPackHistory) recent.erase(recent.begin());
+}
+
+// Puts `ref` and `at` into an EMPTY slot of `kind`, the one whose PACK it ran least recently; the engine picks
+// the PACK up from the actor's alias. Game thread.
+// 🛑 A slot whose PACK the actor is running or ran lately is reused only after the emptied actor re-evaluates:
+// the engine keeps a package it re-picks along with its procedure, so a finished Travel given a new marker
+// stays finished instead of starting afresh (sohn_home: slot 1, slot 2, then slot 1 again stood still).
 void FillAiSlot(const char* kind, void* ref, void* at, void* where) {
     void* running = g_currentPackage ? g_currentPackage(PapyrusVm(), 0, ref) : nullptr;
-    if (!running) running = g_lastAiPack[ref];
+    if (running) NotePackTaken(ref, running);
     ReleaseAiActor(ref);
     const int slots = AiAliasIndex("slots");
-    std::vector<int> order;
-    for (int pass = 0; pass < 2; ++pass) {
-        for (int n = 0; n < slots; ++n) {
-            const FormRef* staged = FindAiPack(AiSlot(kind, n));
-            const bool same = running && staged && Form(staged) == running;
-            if (same == (pass == 1)) order.push_back(n);
-        }
-    }
+    std::vector<int> order(slots);
+    for (int n = 0; n < slots; ++n) order[n] = n;
+    const auto recency = [&](int n) {
+        const FormRef* staged = FindAiPack(AiSlot(kind, n));
+        return staged ? PackRecency(ref, Form(staged)) : 0;
+    };
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return recency(a) < recency(b); });
     for (const int n : order) {
         const std::string slot = AiSlot(kind, n);
         void* alias = AiAlias(slot + "Actor");
@@ -233,15 +245,8 @@ void FillAiSlot(const char* kind, void* ref, void* at, void* where) {
         void* holder = alias ? AiAliasHolds(alias) : nullptr;
         // A dead actor's package is over, so its slot serves the next order.
         if (!alias || !target || (holder && !IsDead(holder))) continue;
-        const FormRef* again = FindAiPack(slot);
-        if (running && again && Form(again) == running && g_evaluatePackage) {
-            g_evaluatePackage(PapyrusVm(), 0, ref);
-            for (int m = 0; m < slots; ++m) {
-                void* other = AiAlias(AiSlot(kind, m) + "Actor");
-                Log("ai: TEMP %08X reuses its running %s slot %d; slot %d holds %08X", FormIdOf(ref), kind, n, m,
-                    other && AiAliasHolds(other) ? FormIdOf(AiAliasHolds(other)) : 0);
-            }
-        }
+        const bool reused = recency(n) > 0;
+        if (reused && g_evaluatePackage) g_evaluatePackage(PapyrusVm(), 0, ref);
         g_forceRefTo(PapyrusVm(), 0, target, at);
         // 🛑 The destination is filled BEFORE the actor's alias, which is
         // what makes the engine evaluate packages: a package that starts
@@ -255,9 +260,9 @@ void FillAiSlot(const char* kind, void* ref, void* at, void* where) {
         if (ref == PlayerRef() && g_evaluatePackage) g_evaluatePackage(PapyrusVm(), 0, ref);
         const FormRef* staged = FindAiPack(slot);
         void* pack = staged ? Form(staged) : nullptr;
-        g_lastAiPack[ref] = pack;
-        Log("ai: %08X took %s slot %d, whose PACK is %08X",
-            FormIdOf(ref), kind, n, pack ? FormIdOf(pack) : 0);
+        if (pack) NotePackTaken(ref, pack);
+        Log("ai: %08X took %s slot %d, whose PACK is %08X%s",
+            FormIdOf(ref), kind, n, pack ? FormIdOf(pack) : 0, reused ? " (ran it lately: re-evaluated first)" : "");
         return;
     }
     Log("ai: no free %s slot of %d", kind, slots);
@@ -393,9 +398,13 @@ void StopAiPackage(const std::string& actor) {
     ForgetAiDestination(actor);
     void* ref = OwnerRef(actor);
     if (!ref) return;
+    // 🛑 Re-evaluated at once: an emptied slot's package otherwise keeps running until the engine re-picks,
+    // and a finished Travel then warps its actor back to the marker -- after a load door, into the new cell
+    // at the old cell's coordinates (sohn_home: the player fell through Ice Flow at the crevice's x/y).
     PostToMainThread([ref]() {
         if (PausedFollow(ref)) State().SetVar(kPausedFollowOwner, MarkerKey(ref), 0.0f);
         ReleaseAiActor(ref);
+        if (g_evaluatePackage) g_evaluatePackage(PapyrusVm(), 0, ref);
     });
 }
 

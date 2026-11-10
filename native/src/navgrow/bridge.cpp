@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <set>
 #include <tuple>
@@ -15,6 +16,10 @@ namespace navgrow {
 
 using Box = std::array<double, 6>;
 using Key = std::pair<int, int>;
+
+// How far above its floor a generated point is tested for lying inside an object: a point standing ON a
+// rock's top sits on that rock's surface, where the enclosure test reads half in.
+constexpr double kEnclosedLift = 8.0;
 
 bool Ground::blocked(double x, double y, double z, double ux, double uy) const {
     return geo.wall_at(x, y, ux, uy, -uy, ux, z + P().RIBBON_GROW_SLAB_Z_BOTTOM,
@@ -33,7 +38,8 @@ bool Ground::walk(const P3& a, const P3& b) {
         const double x = a[0] + dx * (double)k / (double)steps;
         const double y = a[1] + dy * (double)k / (double)steps;
         double nz;
-        if (!floor(x, y, z, &nz) || std::fabs(nz - z) > P().MAX_CLIMB || blocked(x, y, nz, ux, uy))
+        if (!floor(x, y, z, &nz) || std::fabs(nz - z) > P().MAX_CLIMB || blocked(x, y, nz, ux, uy)
+            || enclosed(x, y, nz + kEnclosedLift))
             return false;
         z = nz;
     }
@@ -150,7 +156,8 @@ int bridge_cluster(const std::vector<P3>& points, std::vector<std::pair<int, int
 
 // --- seeding flood --------------------------------------------------------------
 
-// seeding._lattice: lattice nodes standing on open walkable ground.
+// seeding._lattice: lattice nodes standing on open walkable ground, none inside a placed object's
+// collision (terrain buried under a rock).
 std::map<Key, P3> lattice(Ground& ground, double ox, double oy) {
     const int count = (int)py_floordiv(4096.0, P().LATTICE_SPACING);
     std::map<Key, P3> nodes;
@@ -160,7 +167,8 @@ std::map<Key, P3> lattice(Ground& ground, double ox, double oy) {
             const double y = oy + (j + 0.5) * P().LATTICE_SPACING;
             const double near_z = ground.land ? ground.land->z(x, y) : 0.0;
             double z;
-            if (ground.floor(x, y, near_z, &z) && !ground.blocked(x, y, z, 1.0, 0.0))
+            if (ground.floor(x, y, near_z, &z) && !ground.blocked(x, y, z, 1.0, 0.0)
+                && !ground.enclosed(x, y, z + kEnclosedLift))
                 nodes[{i, j}] = {x, y, z};
         }
     return nodes;
@@ -226,24 +234,10 @@ std::set<Key> flooded(const std::vector<std::pair<int, Key>>& links,
     return reached;
 }
 
-}  // namespace
-
-int bridge_obstacles(const std::vector<P3>& points, std::vector<std::pair<int, int>>& edges,
-                     const std::vector<PlacedRef>& obstacles, Ground& ground) {
-    std::vector<Box> boxes;
-    for (const PlacedRef& r : obstacles) {
-        Box b;
-        if (footprint(r, b.data())) boxes.push_back(b);
-    }
-    if (boxes.empty() || points.empty()) return 0;
-    int added = 0;
-    for (const Box& box : clusters(boxes)) added += bridge_cluster(points, edges, box, ground);
-    return added;
-}
-
-void seed_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
-                std::vector<P3>& points, std::vector<std::pair<int, int>>& edges) {
-    const std::map<Key, P3> nodes = lattice(ground, ox, oy);
+// The flood over `nodes` from `seeds`: the seeds that link in, then the reached nodes, with their links
+// and lattice edges (empty when nothing floods).
+void flood_lattice(const std::vector<P3>& seeds, Ground& ground, const std::map<Key, P3>& nodes,
+                   std::vector<P3>& points, std::vector<std::pair<int, int>>& edges) {
     std::vector<P3> placed;
     const auto links = seed_links(ground, seeds, nodes, placed);
     const auto ledges = lattice_edges(ground, nodes);
@@ -260,6 +254,49 @@ void seed_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double 
         if (reached.count(e.first) && reached.count(e.second))
             edges.emplace_back(index[e.first], index[e.second]);
     if (edges.empty()) points.clear();
+}
+
+// True when a face of `grid` lies over (x, y) above z and below an actor's height over it.
+bool covered_above(const TriGrid& grid, double x, double y, double z) {
+    std::vector<double> zs;
+    bucket_heights(grid, x, y, zs);
+    for (double h : zs)
+        if (h > z + 1.0 && h < z + P().AGENT_HEIGHT) return true;
+    return false;
+}
+
+}  // namespace
+
+bool Ground::open_land(double x, double y, double z) const {
+    return land && std::fabs(z - land->z(x, y)) <= 1.0 && !covered_above(geo.walk, x, y, z)
+           && !covered_above(geo.wall, x, y, z);
+}
+
+int bridge_obstacles(const std::vector<P3>& points, std::vector<std::pair<int, int>>& edges,
+                     const std::vector<PlacedRef>& obstacles, Ground& ground) {
+    std::vector<Box> boxes;
+    for (const PlacedRef& r : obstacles) {
+        Box b;
+        if (footprint(r, b.data())) boxes.push_back(b);
+    }
+    if (boxes.empty() || points.empty()) return 0;
+    int added = 0;
+    for (const Box& box : clusters(boxes)) added += bridge_cluster(points, edges, box, ground);
+    return added;
+}
+
+void seed_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
+                std::vector<P3>& points, std::vector<std::pair<int, int>>& edges) {
+    flood_lattice(seeds, ground, lattice(ground, ox, oy), points, edges);
+}
+
+void gap_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
+               const std::function<bool(const P3&)>& covered,
+               std::vector<P3>& points, std::vector<std::pair<int, int>>& edges) {
+    std::map<Key, P3> nodes = lattice(ground, ox, oy);
+    for (auto it = nodes.begin(); it != nodes.end();)
+        it = covered(it->second) ? nodes.erase(it) : std::next(it);
+    flood_lattice(seeds, ground, nodes, points, edges);
 }
 
 }  // namespace navgrow

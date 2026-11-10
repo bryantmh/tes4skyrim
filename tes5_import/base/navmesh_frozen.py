@@ -21,7 +21,7 @@ from shapely.ops import unary_union
 from tes5_import.navmesh.corridor import ccw_in_plan
 
 #: Bump when `apply_frozen` builds differently, so every patched cell re-caches.
-FROZEN_VERSION = 5
+FROZEN_VERSION = 6
 
 #: Plan area (u^2) below which an overlap or a refill piece is float noise.
 AREA_EPS = 1.0
@@ -97,10 +97,17 @@ def _owners(corners, region, tree):
         hit = poly.intersection(foot)
         if hit.area <= AREA_EPS:
             continue
-        c = hit.representative_point()
-        if abs(plane_z(corners, c.x, c.y) - plane_z(pts, c.x, c.y)) <= STOREY_BAND:
+        if _storey_gap(corners, pts, hit) <= STOREY_BAND:
             out.append(foot)
     return out
+
+
+def _storey_gap(a, b, overlap):
+    """Least height gap of `a` and `b` over their overlap's corners and an inner point."""
+    c = overlap.representative_point()
+    pts = [(c.x, c.y)] + [xy for p in get_parts(overlap) if p.geom_type == 'Polygon'
+                          for xy in p.exterior.coords[:-1]]
+    return min(abs(plane_z(a, x, y) - plane_z(b, x, y)) for x, y in pts)
 
 
 def _groups(tris, removed):

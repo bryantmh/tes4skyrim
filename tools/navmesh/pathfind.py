@@ -23,7 +23,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from core.plugin_masters import export_root, master_export_dir
 from output_layout import plugin_esm
 from tes5_import.base.tes5_reader import walk
-from tes5_import.navmesh.edge_links import DOOR_TRI_SIZE
 from tools.navmesh.engine_check import EDGE_LINK_BITS, Nav, barycentric, locate
 
 #: Skyrim's exterior cell width.
@@ -82,11 +81,9 @@ class World(object):
         else:
             self.by_cell[cell].append(nav)
             self.interior_of[nav.fid] = cell
-        tail = nav.view.tail
-        for i in range(struct.unpack_from('<I', tail, 0)[0]):
-            ti, _crc, ref = struct.unpack_from('<hII', tail, 4 + i * DOOR_TRI_SIZE)
-            self.door_tri[ref] = (nav.fid, int(ti))
-            self.tri_door[(nav.fid, int(ti))] = ref
+        for ti, ref in nav.view.door_triangles():
+            self.door_tri[ref] = (nav.fid, ti)
+            self.tri_door[(nav.fid, ti)] = ref
 
     def meshes_at(self, x, y, interior=None):
         """The interior's navmeshes, else the exterior grid square's."""
@@ -347,9 +344,10 @@ def main():
     ap.add_argument('--interior', help="the interior cell's name (exteriors need none)")
     ap.add_argument('--from', dest='a', required=True)
     ap.add_argument('--to', dest='b', required=True)
+    ap.add_argument('--esm', help='a built ESM to read instead of the plugin output (a baseline copy)')
     a = ap.parse_args()
     export = master_export_dir('export', a.plugin)
-    world = World(str(plugin_esm('output', a.plugin, export_root(export))))
+    world = World(a.esm or str(plugin_esm('output', a.plugin, export_root(export))))
     route, meshes, why = plan(world, [float(v) for v in a.a.split(',')], [float(v) for v in a.b.split(',')],
                               a.interior)
     print(why, 'via navmeshes', ' '.join('%08X' % f for f in meshes or ()))

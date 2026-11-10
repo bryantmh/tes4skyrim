@@ -83,6 +83,7 @@
            list="cellList" size="20">
     <datalist id="cellList"></datalist>
     <button id="openMesh" class="primary">Open</button>
+    <select id="pinnedCells" title="Cells this plugin has pins for: pick one to open it"></select>
   </div>
   <div class="grp">
     <button id="mSel" title="Q">Select</button>
@@ -102,6 +103,7 @@
       <label class="chk"><input type="checkbox" id="cWall" checked>walls</label>
       <label class="chk"><input type="checkbox" id="cFloor" checked>floor</label>
       <label class="chk"><input type="checkbox" id="cPath" checked>pathgrid</label>
+      <label class="chk" title="The graph the import GENERATED for this cell (gap flood, or seeding in a pathgrid-less cell)"><input type="checkbox" id="cFlood" checked>flood</label>
       <label class="chk"><input type="checkbox" id="cTri" checked>navmesh</label>
       <label class="chk"><input type="checkbox" id="cSeam" checked>edge links</label>
       <label class="chk"><input type="checkbox" id="cNbr" checked>adjacent cells</label>
@@ -174,6 +176,7 @@
     <div><i style="background:#4a5a6a"></i>adjacent cell mesh</div>
     <div><i style="background:#3ba0ff"></i>pathgrid / <i
         style="background:#b46cff"></i>in mesh mode</div>
+    <div><i style="background:#ff8c1a"></i>generated flood graph</div>
     <div><i style="background:#7ee0a0"></i>edited / added</div>
     <div><i style="background:#3fc8e0"></i>frozen (pinned) — <kbd>u</kbd> unpins</div>
     <div><i style="background:#e0a33c"></i>node off mesh</div>
@@ -426,6 +429,8 @@ function applyVisibility() {
   vis('gen_doors', !tri && $('cGen').checked);
   const path = $('cPath').checked;
   for (const o of [nodeMesh, edgeLines, badLines]) if (o) o.visible = path;
+  vis('flood', $('cFlood').checked);
+  vis('flood_nodes', $('cFlood').checked);
   const showTri = $('cTri').checked;
   for (const o of [mFill, mWire, mVertMesh, mLinkLines]) {
     if (o) o.visible = showTri;
@@ -614,6 +619,20 @@ function lineSet(pts, color) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color }));
+}
+
+/* The import's generated graph for the cell (gap flood / seeding), read-only, in its own colour. */
+const FLOOD_COLOR = 0xff8c1a;
+function buildFlood(flood) {
+  if (!flood || !flood.nodes.length) return;
+  const pts = [];
+  for (const [a, b] of flood.edges) pts.push(...flood.nodes[a], ...flood.nodes[b]);
+  layers.flood = lineSet(pts, FLOOD_COLOR);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(flood.nodes.flat(), 3));
+  layers.flood_nodes = new THREE.Points(g, new THREE.PointsMaterial(
+    { color: FLOOD_COLOR, size: 5, sizeAttenuation: false }));
+  scene.add(layers.flood); scene.add(layers.flood_nodes);
 }
 
 /* ------------------------------------------------------------- picking -- */
@@ -989,6 +1008,7 @@ async function loadMesh(plugin, cell, keepCamera) {
   dropped = new Set();
   S = { off_nodes: [], bad_edges: [] };
   buildPathgrid();
+  buildFlood(d.flood);
   applyScope();
   applyVisibility();
   setMode('tri');
@@ -1178,6 +1198,7 @@ async function meshPin() {
   } catch (err) { stopPoll(); showError('pin FAILED: ' + err); return;
   } finally { stopPoll(); }
   if (d.error) { showError(d.error); return; }
+  refreshPinned();
   /* With pins on, the edits are now part of what the generator produces, so
      the re-bake replaces this session's ops rather than stacking them twice. */
   if ($('cPin').checked) await loadMesh(M.plugin, M.cell, true);
@@ -1207,6 +1228,7 @@ async function meshUnpin(all) {
   } catch (err) { showError('unpin FAILED: ' + err); return; }
   if (d.error) { showError(d.error); return; }
   if (!d.frozen && !d.voids) { showError('No pinned area there.'); return; }
+  refreshPinned();
   await loadMesh(M.plugin, M.cell, true);
   $('busy').style.display = 'grid';
   $('busy').textContent = 'unpinned ' + d.frozen + ' frozen + ' + d.voids +
@@ -1615,6 +1637,10 @@ function pinTxt() {
     parts.push(`${M.pin_frozen} frozen tris over ${M.pin_voids} replaced`);
   if (M.pin_cuts) parts.push(`${M.pin_cuts} cut` + (M.pin_cuts > 1 ? 's' : ''));
   const what = parts.join(', ');
+  /* A pin reaching the cell's edge is part of the one saved build (it changes the neighbours too), so
+     unticking cannot take it out without a full rebuild -- say so rather than show it as disabled. */
+  if (!M.pinned && M.edge_pins_kept)
+    return ` · <span class="warn">${what} reach the cell edge: still shown (needs a full build to remove)</span>`;
   return M.pinned ? ` · ${what} APPLIED`
                   : ` · <span class="warn">${what} DISABLED</span>`;
 }
@@ -1862,7 +1888,23 @@ $('openMesh').onclick = async () => {
 
 /* Indexing on SELECT, not on Open: cell search needs the index, so deferring
    it would make the box silently match nothing on a fresh export. */
-$('plugin').onchange = () => ensureIndexed($('plugin').value);
+$('plugin').onchange = () => { ensureIndexed($('plugin').value); refreshPinned(); };
+
+/* Every cell the selected plugin has pins for; picking one opens it, so pinned
+   cells can be checked one after another. */
+async function refreshPinned() {
+  const names = await (await fetch('/pinned_cells?plugin=' +
+                                   encodeURIComponent($('plugin').value))).json();
+  const esc = s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  $('pinnedCells').innerHTML = `<option value="">pinned cells (${names.length})…</option>` +
+    names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+}
+$('pinnedCells').onchange = () => {
+  const c = $('pinnedCells').value;
+  if (!c) return;
+  $('cellSearch').value = c;
+  $('openMesh').click();
+};
 
 /* The Layers menu is remembered by the server, not the browser: the GUI
    serves this page on a new port each launch, and storage is per port. */
@@ -1960,7 +2002,7 @@ function genQ() {
          '&pinned=' + ($('cPin').checked ? '1' : '0');
 }
 $('cell').onchange = e => { if (e.target.value) loadCell(e.target.value, false); };
-for (const id of ['cWall', 'cFloor', 'cNav', 'cGen', 'cPath', 'cTri', 'cSeam',
+for (const id of ['cWall', 'cFloor', 'cNav', 'cGen', 'cPath', 'cFlood', 'cTri', 'cSeam',
                   'cNbr'])
   $(id).onchange = applyVisibility;
 
@@ -2103,6 +2145,7 @@ function pluginOption(p) {
                 plugs.find(p => p.collision && p.indexed) ||
                 plugs.find(p => p.collision);
   if (ready) $('plugin').value = ready.name;
+  refreshPinned();
   applyScope();
   status();
   resize();

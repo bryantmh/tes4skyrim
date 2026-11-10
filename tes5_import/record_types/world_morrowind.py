@@ -34,6 +34,9 @@ ACTOR_DROP_LIFT = 20.0
 #: The record types a placement exports as.
 _PLACEMENT_TYPES = ('REFR', 'ACHR', 'ACRE')
 
+#: The base record types of a placed actor.
+_ACTOR_BASE_TYPES = ('NPC_', 'CREA')
+
 #: Placed refs whose authored TES3 lock is exit-only; see register_tes3_locks.
 _EXIT_ONLY_LOCKS: set = set()
 
@@ -97,12 +100,19 @@ def register_tes3_locks(by_type: dict, export_dir: str,
     return len(_EXIT_ONLY_LOCKS)
 
 
-def persist_script_named_refs(by_type: dict, export_dir: str) -> int:
-    """Flag Persistent the placement each id this plugin's scripts name resolves
-    to (the refs table's, `first_placements`); returns how many changed.
+def _scripted_actor_bases(by_type: dict, master_export: dict) -> set:
+    """FormIDs of the actor bases, masters' included, with a local script."""
+    return {get_formid(rec, 'FormID') for sig in _ACTOR_BASE_TYPES
+            for rec in _scoped(by_type, master_export, sig) if get_formid(rec, 'SCRI')}
 
-    OpenMW reaches a named reference in any cell; Skyrim keeps only a
-    persistent one in memory while its cell is unloaded.
+
+def persist_script_named_refs(by_type: dict, export_dir: str, master_export: dict = None) -> int:
+    """Flag Persistent each placement a script can act on: the one each id this plugin's scripts name
+    resolves to (the refs table's, `first_placements`), and every actor whose base has a local script;
+    returns how many changed.
+
+    OpenMW reaches a named reference in any cell; Skyrim keeps only a persistent one in memory while its
+    cell is unloaded, and frees a disabled non-persistent actor under its own pending disable.
     See: docs/commentary/tes5_import_world.md#tes3-script-named-refs-persist
     """
     if not is_tes3_export(export_dir):
@@ -110,11 +120,13 @@ def persist_script_named_refs(by_type: dict, export_dir: str) -> int:
     own = len(masters_from_export_header(export_dir))
     named = first_placements(export_dir, own, script_named_ids(export_dir))
     targets = {ref.upper() for ref in named.values()}
+    scripted = _scripted_actor_bases(by_type, master_export)
     changed = 0
     for sig in _PLACEMENT_TYPES:
         for rec in by_type.get(sig, []):
             flags = get_int(rec, 'RecordFlags')
-            if rec.get('FormID', '').upper() in targets and not flags & REFR_PERSISTENT:
+            hit = rec.get('FormID', '').upper() in targets or get_formid(rec, 'NAME') in scripted
+            if hit and not flags & REFR_PERSISTENT:
                 rec['RecordFlags'] = str(flags | REFR_PERSISTENT)
                 changed += 1
     return changed

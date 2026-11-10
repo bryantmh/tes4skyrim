@@ -67,6 +67,8 @@ struct CleanOutput {
     std::vector<Vert> V;
     std::vector<Tri> T;
     std::vector<Ledge> ledges;
+    std::vector<P3> flood;                       // the gap flood's points, for viewing
+    std::vector<std::pair<int, int>> flood_edges;  // its edges, indices into `flood`
 };
 
 // corridor_clean.finalize plus the rest of corridor.build_corridors.

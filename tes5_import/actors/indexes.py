@@ -55,7 +55,7 @@ def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
     n_locks = register_tes3_locks(by_type, export_dir, master_export)
     if n_locks:
         print(f'  TES3 door locks: {n_locks} exit-only lock(s) dropped')
-    n_named = persist_script_named_refs(by_type, export_dir)
+    n_named = persist_script_named_refs(by_type, export_dir, master_export)
     if n_named:
         print(f'  TES3 script-named refs: {n_named} placement(s) made persistent')
     index_convertible_records(by_type, IMPORT_DISPATCH, SKIP_TYPES, master_export)

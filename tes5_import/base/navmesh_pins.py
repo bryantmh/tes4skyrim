@@ -205,6 +205,23 @@ def hand_edits_for(plugin, key):
             'links': links_for(plugin, key)}
 
 
+#: A pin point closer than this to its cell's edge can change what the neighbour across it is built from.
+EDGE_REACH = 64.0
+
+
+def reaches_edge(edits, grid) -> bool:
+    """True when an exterior cell's `edits` come within EDGE_REACH of its edge or cross it; a pin that
+    does not can change only its own cell. An interior (`grid` None) has no edge."""
+    if grid is None:
+        return False
+    x0, y0 = grid[0] * 4096.0 + EDGE_REACH, grid[1] * 4096.0 + EDGE_REACH
+    x1, y1 = x0 + 4096.0 - 2 * EDGE_REACH, y0 + 4096.0 - 2 * EDGE_REACH
+    pts = [p for _lo, _hi, poly in edits.get('cuts') or () for p in poly]
+    pts += [c for part in ('frozen', 'voids') for t in edits.get(part) or () for c in t]
+    pts += [c for pair in edits.get('links') or () for t in pair for c in t]
+    return any(not (x0 < p[0] < x1 and y0 < p[1] < y1) for p in pts)
+
+
 def apply_hand_edits(verts, tris, ledges, edits):
     """(verts, tris, ledges) after the post-build corrections: cuts, then frozen patches.
 

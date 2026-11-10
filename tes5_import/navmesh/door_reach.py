@@ -63,6 +63,7 @@ def join_missing_doors(job, graph, missing, base_model_by_fid, door_fids, get_co
     """`graph` plus a walkable path from each door point in `missing` to the graph, or None when none joins.
 
     A door the cell's mesh never reached gets no Door Triangle, and the engine routes nothing through it.
+    Anything after (points, edges) in `graph` (a flood's node range) comes back unchanged.
     See: docs/commentary/tes5_import_navmesh.md#door-reach
     """
     points, edges = list(graph[0]), list(graph[1])
@@ -92,7 +93,7 @@ def join_missing_doors(job, graph, missing, base_model_by_fid, door_fids, get_co
         added += [(base + p, mid)] + [(mid, end) for end in on_edge[a - base]]
     seen = set(edges)
     edges += [e for e in dict.fromkeys((min(a, b), max(a, b)) for a, b in added) if e not in seen]
-    return points, edges
+    return (points, edges) + tuple(graph[2:])
 
 
 def edge_anchors(points, edges):

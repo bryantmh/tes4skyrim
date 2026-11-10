@@ -32,7 +32,7 @@ from core.navmesh_options import set_navmesh_pins_dir
 from tes5_import.base.navmesh_pins import save_dir
 from tools.cellview import corpus, plugins, progress
 from tools.cellview.bake import (
-    mesh_bake, mesh_pin, mesh_save, mesh_to_esm, mesh_unpin, plugin_cells,
+    mesh_bake, mesh_pin, mesh_save, mesh_to_esm, mesh_unpin, pinned_cells, plugin_cells,
     seams_for,
 )
 
@@ -199,6 +199,7 @@ def _routes():
         '/plugins': lambda q: plugins.candidates(),
         '/plugin_cells': lambda q: plugin_cells(
             q.get('plugin', DEFAULT_PLUGIN), q.get('q', '')),
+        '/pinned_cells': lambda q: pinned_cells(q.get('plugin', DEFAULT_PLUGIN)),
         '/mesh': mesh_job,
         '/progress': lambda q: progress.poll(q.get('job', '')),
         '/seams': seams_job,

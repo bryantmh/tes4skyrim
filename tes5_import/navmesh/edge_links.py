@@ -142,6 +142,23 @@ class NavMeshView:
         tri[6] |= (1 << edge_slot)               # 'Edge N Link' flag
         self.dirty = True
 
+    def door_triangles(self) -> list:
+        """[(triangle index, door reference FormID)] of the mesh's Door Triangles."""
+        count = struct.unpack_from('<I', self.tail, 0)[0]
+        rows = (struct.unpack_from('<hII', self.tail, 4 + i * DOOR_TRI_SIZE) for i in range(count))
+        return [(int(ti), ref) for ti, _crc, ref in rows]
+
+    def own_links(self) -> list:
+        """[(triangle, linked triangle)] of every non-portal (ledge) link into this same mesh."""
+        out = []
+        for ti, t in enumerate(self.tris):
+            for slot in range(3):
+                if t[6] & (1 << slot):
+                    typ, fid, other = self.links[t[3 + slot]]
+                    if typ != LINK_TYPE_PORTAL and fid == self.fid:
+                        out.append((ti, int(other)))
+        return out
+
 
 def _prune_links(view: NavMeshView, live_fids: set) -> None:
     """Remove links whose target isn't live and renumber the survivors.

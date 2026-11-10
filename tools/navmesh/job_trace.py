@@ -81,8 +81,8 @@ def run_on_pool(sel, workers, no_cache):
     return 1 if failed else 0
 
 
-def load_export(export_dir, offset):
-    """(text_reader, by_type, door_fids, base_model_by_fid, jobs) for a plugin.
+def load_records(export_dir, offset):
+    """(by_type, master_export) for a plugin, read as the import reads them before its navmesh phase.
 
     Every step the import performs between parsing and gathering is repeated
     here -- namespace, index offset, the runtime-only exclusion, the deleted
@@ -92,7 +92,6 @@ def load_export(export_dir, offset):
     See: docs/commentary/tes5_import_navmesh.md#leveled-placements-never-carve
     """
     from asset_convert.game_paths import namespace_for, set_namespace
-    from tes5_import.base import text_reader as im
     from tes5_import.base.text_reader import (parse_export_directory,
                                          group_records_by_type,
                                          set_formid_index_offset)
@@ -118,8 +117,16 @@ def load_export(export_dir, offset):
               flush=True)
     load_mesh_bounds(asset_cache_chain(export_dir, 'mesh_bounds_cache.json'), quiet=True)
     register_tes3_locks(by_type, export_dir, master_export)
-    door_fids = navm_pool.build_door_fid_set(by_type, master_export)
     index_obstacles(by_type, master_export)
+    return by_type, master_export
+
+
+def load_export(export_dir, offset):
+    """(text_reader, by_type, door_fids, base_model_by_fid, jobs) for a plugin: load_records, then the
+    import's gather."""
+    from tes5_import.base import text_reader as im
+    by_type, master_export = load_records(export_dir, offset)
+    door_fids = navm_pool.build_door_fid_set(by_type, master_export)
     base_model_by_fid = navm_pool.build_base_model_index(by_type,
                                                          master_export)
     jobs = navm_pool.gather_navm_jobs(by_type, door_fids, master_export)

@@ -139,6 +139,22 @@ PyObject* cell_result(const CleanOutput& out) {
     return Py_BuildValue("(NNN)", pv, pt, pl);
 }
 
+PyObject* graph_result(const std::vector<P3>& points, const std::vector<std::pair<int, int>>& edges);
+
+// cell_result plus the gap flood's (points, edges) as a fourth item.
+PyObject* cell_result_with_flood(const CleanOutput& out) {
+    PyObject* base = cell_result(out);
+    PyObject* flood = base ? graph_result(out.flood, out.flood_edges) : nullptr;
+    if (!flood) {
+        Py_XDECREF(base);
+        return nullptr;
+    }
+    PyObject* got = Py_BuildValue("(OOON)", PyTuple_GET_ITEM(base, 0), PyTuple_GET_ITEM(base, 1),
+                                  PyTuple_GET_ITEM(base, 2), flood);
+    Py_DECREF(base);
+    return got;
+}
+
 PyObject* graph_result(const std::vector<P3>& points, const std::vector<std::pair<int, int>>& edges) {
     PyObject* pp = PyList_New((Py_ssize_t)points.size());
     for (size_t i = 0; pp && i < points.size(); ++i)
@@ -172,20 +188,29 @@ bool released(const char* what, F&& body) {
 }  // namespace
 
 // corridor_cell(nodes, edges, lone, doors, land, land_ox, land_oy, cell_clip,
-//               refs, soups, obstacles, obstacle_soups, water_z)
-//   -> (verts, tris, ledges)
+//               refs, soups, obstacles, obstacle_soups, water_z[, flood_gaps, seeds])
+//   -> (verts, tris, ledges, (flood points, flood edges))
 //
 // corridor.build_corridors for one cell, collision gather and obstacle bridge
 // included.  nodes (N, 3) and doors (D, 6: x, y, z, rot_z, is_teleport, width)
 // float64; edges (E, 2) int32; lone the spawn node indices; land the (33, 33)
 // LAND or None; refs / obstacles (R, 14) placement rows (world.placements)
-// with their (w, b) soups; water_z the open water height or None.
+// with their (w, b) soups; water_z the open water height or None; flood_gaps
+// nonzero floods the open LAND the pathgrid's mesh leaves, also from seeds (S, 3)
+// float64 or None, where a neighbour's navmesh meets the cell.
 PyObject* py_corridor_cell(PyObject*, PyObject* args) {
-    PyObject *o_n, *o_e, *o_lone, *o_d, *o_land, *o_clip, *o_r, *o_rs, *o_o, *o_os, *o_wz;
+    PyObject *o_n, *o_e, *o_lone, *o_d, *o_land, *o_clip, *o_r, *o_rs, *o_o, *o_os, *o_wz, *o_s = Py_None;
     double ox, oy;
-    if (!PyArg_ParseTuple(args, "OOOOOddOOOOOO", &o_n, &o_e, &o_lone, &o_d, &o_land, &ox, &oy,
-                          &o_clip, &o_r, &o_rs, &o_o, &o_os, &o_wz))
+    int flood_gaps = 0;
+    if (!PyArg_ParseTuple(args, "OOOOOddOOOOOO|iO", &o_n, &o_e, &o_lone, &o_d, &o_land, &ox, &oy,
+                          &o_clip, &o_r, &o_rs, &o_o, &o_os, &o_wz, &flood_gaps, &o_s))
         return nullptr;
+    std::vector<P3> seeds;
+    if (o_s != Py_None) {
+        BufView sv(o_s, 'd', 8);
+        if (!rows_of(3, sv)) return nullptr;
+        seeds = points_of(sv);
+    }
     if (!geos()) return nullptr;
     BufView nv(o_n, 'd', 8), ev(o_e, 'i', 4), dv(o_d, 'd', 8), lv(o_land, 'd', 8);
     Held held;
@@ -201,9 +226,10 @@ PyObject* py_corridor_cell(PyObject*, PyObject* args) {
         return nullptr;
     C.land = land.g ? &land : nullptr;
     CleanOutput out;
-    if (!released("corridor_cell", [&] { out = build_cell(C, refs, obstacles, has_wz ? &wz : nullptr); }))
+    if (!released("corridor_cell",
+                  [&] { out = build_cell(C, refs, obstacles, has_wz ? &wz : nullptr, flood_gaps != 0, seeds); }))
         return nullptr;
-    return cell_result(out);
+    return cell_result_with_flood(out);
 }
 
 // seed_graph(refs, soups, land, ox, oy, water_z, seeds) -> (points, edges)
@@ -231,7 +257,7 @@ PyObject* py_seed_graph(PyObject*, PyObject* args) {
             const Soups S = gather_cell(refs, L, has_wz ? &wz : nullptr);
             CellGeo geo;
             geo.build(S.walk.data(), S.walk.size() / 9, S.block.data(), S.block.size() / 9);
-            Ground ground{geo, L};
+            Ground ground{geo, L, &S.solids};
             seed_graph(seeds, ground, ox, oy, points, edges);
         }))
         return nullptr;

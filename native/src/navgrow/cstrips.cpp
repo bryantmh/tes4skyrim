@@ -619,15 +619,7 @@ Ring subtract_quads(const Ring& poly, double nx, double ny, const std::vector<Ri
 
 }  // namespace
 
-std::vector<double> CellCtx::layers(double x, double y) const {
-    std::vector<double> zs, out;
-    if (!geo.has_walkable) return out;
-    bucket_heights(geo.walk, x, y, zs);
-    std::sort(zs.begin(), zs.end());
-    for (double z : zs)
-        if (out.empty() || z - out.back() > 2.0) out.push_back(z);
-    return out;
-}
+std::vector<double> CellCtx::layers(double x, double y) const { return geo.layers(x, y); }
 
 Ring simplify_ring(const Ring& pts, double tol) {
     if (tol <= 0.0 || pts.size() < 3) return pts;
@@ -715,7 +707,7 @@ Group build_corridor_strips(CellCtx& C) {
         C.geo.ensure_walk_index();
         G.widths = grow_widths(C.geo.wall, C.geo.has_walkable ? &C.geo.walk : nullptr,
                                C.edges.empty() ? std::vector<double>() : nodes_xy, eg, nz, C.land,
-                               G.rows, G.on_land, C.land_from, &C.lone);
+                               G.rows, G.on_land, C.land_from, &C.lone, C.flood_lo, C.flood_hi);
         bridge_blocked_stations(G);
         erode_far_widths(G);
     }

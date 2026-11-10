@@ -23,7 +23,8 @@ from asset_convert.collision.collision_extract import get_collision
 
 from .door_reach import flood_graph, join_missing_doors
 from .edge_links import CELL_SIZE
-from .from_pgrd import cached_geometry, collect_doors, convert_PGRD, geom_cache_path, geom_equal, record_graph
+from .from_pgrd import (cached_geometry, cell_pins, collect_doors, convert_PGRD, geom_cache_path, geom_equal,
+                        record_graph)
 from .lattice.build import set_activators
 from .seeding import seeded_graph
 
@@ -132,21 +133,35 @@ def convert_job(job: dict, base_model_by_fid: dict, door_fids, geom_cache=None):
         if not graph[1]:
             return None, None
     args = (job, base_model_by_fid, door_fids, geom_cache)
-    built = _build(*args, graph)
+    if not cell_pins(job['pgrd_rec'], job['cell_rec'])[1]:
+        return _door_choices(args, graph, True)[0]
+    _built, graph, spots = _door_choices(args, graph, False)
+    return _build(*args, graph, spots)
+
+
+def _door_choices(args, graph, pins):
+    """(build, graph, door spots): the cell built over `graph`, rebuilt with paths from doors that got no
+    Door Triangle, then at their landings, each kept when it links more doors.  A pinned cell decides
+    these unpinned (`pins` false) and is built once more with its pins over the result.
+    See: docs/commentary/tes5_import_navmesh.md#door-reach
+    """
+    job, base_model_by_fid, door_fids = args[:3]
+    built = _build(*args, graph, pins=pins)
     missing = _doors_without_triangle(job, built[1], door_fids)
     base = graph or record_graph(job['pgrd_rec'])
     joined = (join_missing_doors(job, base, missing, base_model_by_fid, door_fids, get_collision)
               if missing and base[0] is not None else None)
     if joined:
-        rebuilt = _build(*args, joined)
+        rebuilt = _build(*args, joined, pins=pins)
         if _linked(rebuilt) > _linked(built):
             built, graph = rebuilt, joined
-    return _at_landings(args, built, graph)
+    built, spots = _at_landings(args, built, graph, pins)
+    return built, graph, spots
 
 
-def _at_landings(args, built, graph):
-    """`built`, or its rebuild with each door still lacking a Door Triangle linked at its nearest landing
-    when that links more doors: the landing is where the game puts an actor coming through it.
+def _at_landings(args, built, graph, pins=True):
+    """(`built`, None), or its rebuild with each door still lacking a Door Triangle linked at its nearest
+    landing, with those spots, when that links more doors: the landing is where the game puts an actor.
     See: docs/commentary/tes5_import_navmesh.md#door-reach
     """
     spots = {}
@@ -155,9 +170,9 @@ def _at_landings(args, built, graph):
         if near:
             spots[fid] = tuple(min(near, key=lambda p: math.dist(p[:2], (x, y))))
     if not spots:
-        return built
-    moved = _build(*args, graph, spots)
-    return moved if _linked(moved) > _linked(built) else built
+        return built, None
+    moved = _build(*args, graph, spots, pins=pins)
+    return (moved, spots) if _linked(moved) > _linked(built) else (built, None)
 
 
 def _linked(result) -> int:
@@ -165,7 +180,7 @@ def _linked(result) -> int:
     return len((result[1] or {}).get('door_refs') or ()) if result else 0
 
 
-def _build(job, base_model_by_fid, door_fids, geom_cache, graph, door_spots=None):
+def _build(job, base_model_by_fid, door_fids, geom_cache, graph, door_spots=None, pins=True):
     """(navm_bytes, meta) for one job over `graph` (None: its pathgrid record's own graph)."""
     return convert_PGRD(
         job['pgrd_rec'],
@@ -181,6 +196,9 @@ def _build(job, base_model_by_fid, door_fids, geom_cache, graph, door_spots=None
         obstacles=job.get('obstacles'),
         graph=graph,
         door_spots=door_spots,
+        seeded=bool(job.get('seeds')),
+        edge_seeds=job.get('edge_seeds'),
+        pins=pins,
     )
 
 

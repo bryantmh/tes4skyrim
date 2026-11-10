@@ -3,6 +3,7 @@
 // obstacle_bridge.bridge_obstacles and seeding.seed_graph.
 #pragma once
 
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -31,9 +32,16 @@ struct PlacedRef {
 };
 
 // The gathered soups: walkable rows [0, land_from) are placed, the rest LAND.
+// One placed object's collision, kept whole: its triangles (9 doubles each) and bounding box.
+struct Solid {
+    double box[6];                   // xmin, ymin, zmin, xmax, ymax, zmax
+    std::vector<double> tris;
+};
+
 struct Soups {
     std::vector<double> walk, block;
     size_t land_from = 0;            // triangles
+    std::vector<Solid> solids;       // each placed non-door object, for the enclosure test
 };
 
 // gather_cell_geometry(split_land=True) with the LAND rows appended after the
@@ -47,8 +55,13 @@ bool footprint(const PlacedRef& ref, double box[6]);
 struct Ground {
     CellGeo& geo;
     const Land* land;
+    const std::vector<Solid>* solids = nullptr;
+    // True when (x, y, z) lies inside a placed object's collision shape (winding number >= 0.5).
+    bool enclosed(double x, double y, double z) const;
     bool floor(double x, double y, double near_z, double* z) { return geo.walk_at(x, y, near_z, z); }
     bool blocked(double x, double y, double z, double ux, double uy) const;
+    // True when (x, y, z) stands on the LAND itself with an actor's height clear above it.
+    bool open_land(double x, double y, double z) const;
     bool walk(const P3& a, const P3& b);
 };
 
@@ -59,6 +72,11 @@ int bridge_obstacles(const std::vector<P3>& points, std::vector<std::pair<int, i
 // seeding.seed_graph: the flooded synthetic pathgrid (empty when none walks in).
 void seed_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
                 std::vector<P3>& points, std::vector<std::pair<int, int>>& edges);
+
+// The same flood over only the lattice ground `covered` rejects: an authored mesh's gaps.
+void gap_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
+               const std::function<bool(const P3&)>& covered,
+               std::vector<P3>& points, std::vector<std::pair<int, int>>& edges);
 
 // door_reach.door_reach: per seed, the walkable lattice path to the nearest anchor it
 // reaches (joins: (point, anchor)); with no anchors, the whole flood from the seeds.

@@ -161,20 +161,7 @@ case dwarves_picks
 walk 3063 -576 11357
 activate 05605F11
 until 600 GetPCCell "Dwarven Storage Cave" == 1
-# Up the Dwemer stair corridor along the pathgrid: the travel package circles at its foot.
-steer 855 1956 -1202
-steer 595 1951 -1011
-steer 333 1961 -818
-steer 198 1950 -713
-steer -53 1831 -745
-steer -133 1754 -726
-steer -281 1754 -742
-steer -400 1766 -757
-steer -433 1828 -784
-steer -519 1890 -767
-steer -757 1988 -806
-steer -907 1919 -804
-steer -963 1800 -789
+# Up the Dwemer stair corridor to the picks: one walk (the old steer chain stuck at -963 1800).
 walk -1000 1750 -700
 take 058A1D3E
 take 05ED31CF

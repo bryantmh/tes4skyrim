@@ -53,8 +53,7 @@ from .base.owned_records import (
 )
 from .navmesh.navi import NAVI_SINGLETON_FID, build_navi_record
 from .navmesh import pool as navm_pool
-from .navmesh.edge_links import build_edge_links
-from .navmesh.lattice.build import set_activators
+from .navmesh.phase import build_navmeshes
 from .actors.lava_placement import LavaPlanner
 from .record_types.region import record_default_water
 from asset_convert.sources.skyrim_assets import find_skyrim_data
@@ -84,8 +83,7 @@ from .base.text_reader import (
 from .base.writer import PluginWriter, pack_group
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from output_layout import asset_cache_chain, assets_for
-from .base.navmesh_pins import use_plugin as use_navmesh_pins
+from output_layout import asset_cache_chain
 
 
 
@@ -360,44 +358,11 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
 
     set_teleport_grid(*navm_pool.build_teleport_grid(
         st.by_type, st.ctx.master_export if st.ctx else None))
-
-
-    _navm_master_export = st.ctx.master_export if st.ctx else None
-    st.base_model_by_fid = navm_pool.build_base_model_index(st.by_type,
-                                                         _navm_master_export)
-    st.door_fids = navm_pool.build_door_fid_set(st.by_type, _navm_master_export)
-    acti_fids = navm_pool.build_activator_fid_set(st.by_type, _navm_master_export)
-    set_activators(acti_fids)
     st.navm_metas = []
-
-    _mi = getattr(st.ctx, 'master_index', None) if st.ctx else None
-    _mx = getattr(st.ctx, 'master_export', None) if st.ctx else None
-    master_navms = navm_pool.master_navm_grid(_mx, _mi)
-    use_navmesh_pins(os.path.basename(st.output_path),
-                     os.path.basename(str(assets_for(export_dir))))
-    st.navm_cache = navm_pool.precompute_navmeshes(
-        st.by_type, st.writer, st.base_model_by_fid, st.door_fids,
-        collision_cache=navm_pool.collision_cache_chain(export_dir),
-        master_index=_mi, master_export=_mx, activator_fids=acti_fids,
-        master_navms=master_navms)
-
-    _dump_to = os.environ.get('TESCONV_DUMP_NAVM_CACHE', '').strip()
-    if _dump_to:
-        import pickle as _pickle
-        with open(_dump_to, 'wb') as _fh:
-            _pickle.dump(st.navm_cache, _fh, protocol=_pickle.HIGHEST_PROTOCOL)
-        print(f"  [debug] navm_cache dumped to {_dump_to} "
-              f"({len(st.navm_cache)} entries)")
-
-    _link_navmeshes(st, _mi, master_navms if st.navm_cache else {})
-
-    from .navmesh.split import split_disconnected_interiors
-    _t_sp = time.time()
-    n_split = split_disconnected_interiors(st.navm_cache, st.writer) if st.navm_cache else 0
-    print(f"    Interior split: {time.time() - _t_sp:.1f}s")
-    if n_split:
-        print(f"  Navmesh split: {n_split} interior meshes split into "
-              f"per-component NAVMs")
+    st.navm_cache, st.base_model_by_fid, st.door_fids, relinked = build_navmeshes(
+        st.by_type, st.writer, st.ctx, export_dir, os.path.basename(st.output_path))
+    if st.ctx is not None:
+        st.ctx.relinked_master_navms = relinked
 
     door_xndp = {}
     for _key, (_bytes, _meta) in st.navm_cache.items():
@@ -407,17 +372,6 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
     print(f"  Navmesh door links: {len(door_xndp)} doors bound to a "
           f"navmesh triangle (XNDP)")
     phase_done('navmesh generation')
-
-
-def _link_navmeshes(st, master_index, master_navms) -> None:
-    """Stitch the built exterior navmeshes across cell seams, masters' included."""
-    t0 = time.time()
-    relinked = []
-    build_edge_links(st.navm_cache, master_index=master_index,
-                     master_navms=master_navms, relinked_masters=relinked)
-    if st.ctx is not None:
-        st.ctx.relinked_master_navms = relinked
-    print(f"    Edge links: {time.time() - t0:.1f}s")
 
 
 def run_record_phases(st, export_dir: str, phase_done,

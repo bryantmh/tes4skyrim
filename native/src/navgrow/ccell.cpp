@@ -7,9 +7,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <limits>
+#include <set>
 
 namespace navgrow {
 
@@ -94,19 +93,75 @@ Sample point_sample(const P3& p) {
     return {p[0], p[1], p[2], nan, nan};
 }
 
+// The pathgrid a cell's first build ran over, restored for its rebuild.
+struct Authored {
+    std::vector<P3> nodes;
+    std::vector<Edge2> edges;
+    std::set<int> lone;
+    std::vector<DoorRef> doors;
+};
+
+// True when `p` stands on mesh M: inside one of its triangles in plan, within a step of its height.
+bool on_mesh(const CleanOutput& M, const P3& p) {
+    for (const Tri& t : M.T) {
+        const Vert &a = M.V[(size_t)t[0]], &b = M.V[(size_t)t[1]], &c = M.V[(size_t)t[2]];
+        const double d = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+        if (std::fabs(d) < 1e-9) continue;
+        const double l1 = ((b.y - c.y) * (p[0] - c.x) + (c.x - b.x) * (p[1] - c.y)) / d;
+        const double l2 = ((c.y - a.y) * (p[0] - c.x) + (a.x - c.x) * (p[1] - c.y)) / d;
+        const double l3 = 1.0 - l1 - l2;
+        if (l1 < 0 || l2 < 0 || l3 < 0) continue;
+        if (std::fabs(l1 * a.z + l2 * b.z + l3 * c.z - p[2]) <= P().MAX_CLIMB) return true;
+    }
+    return false;
+}
+
+// M, or the cell rebuilt over its pathgrid plus a flood of the ground M leaves, started from `seeds`
+// (where a neighbour's navmesh meets the cell) and from the pathgrid's nodes that stand on open LAND;
+// the flood's nodes are C's flood range.
+CleanOutput with_gaps(CellCtx& C, const Authored& A, CleanOutput M, Ground& ground, const std::vector<P3>& seeds) {
+    std::vector<P3> starts = seeds, points;
+    for (const P3& n : A.nodes) {
+        double z;
+        if (ground.floor(n[0], n[1], n[2], &z) && ground.open_land(n[0], n[1], z)) starts.push_back(n);
+    }
+    std::vector<std::pair<int, int>> edges;
+    gap_graph(starts, ground, C.land->ox, C.land->oy, [&](const P3& p) { return on_mesh(M, p); }, points, edges);
+    if (edges.empty()) return M;
+    C.nodes = A.nodes;
+    C.edges = A.edges;
+    C.lone = A.lone;
+    C.doors = A.doors;
+    C.node_z.clear();
+    C.store.clear();
+    const int base = (int)C.nodes.size();
+    C.nodes.insert(C.nodes.end(), points.begin(), points.end());
+    for (const auto& e : edges) C.edges.push_back({e.first + base, e.second + base});
+    C.flood_lo = base;
+    C.flood_hi = (int)C.nodes.size();
+    CleanOutput out = build_corridor_cell(C);
+    out.flood = std::move(points);
+    out.flood_edges = std::move(edges);
+    return out;
+}
+
 }  // namespace
 
 // The cell's collision gathered and indexed, the pathgrid bridged across its
-// obstacles (obstacle_bridge), then the corridor build.
-CleanOutput build_cell(CellCtx& C, const std::vector<PlacedRef>& refs,
-                       const std::vector<PlacedRef>& obstacles, const double* water_z) {
+// obstacles (obstacle_bridge), then the corridor build; `flood_gaps` then
+// floods the ground that mesh leaves (with_gaps).
+CleanOutput build_cell(CellCtx& C, const std::vector<PlacedRef>& refs, const std::vector<PlacedRef>& obstacles,
+                       const double* water_z, bool flood_gaps, const std::vector<P3>& seeds) {
     if (C.nodes.empty() || (C.edges.empty() && obstacles.empty())) return CleanOutput();
     const Soups S = gather_cell(refs, C.land, water_z);
     C.land_from = (int)std::min<size_t>(S.land_from, 0x7fffffff);
     C.geo.build(S.walk.data(), S.walk.size() / 9, S.block.data(), S.block.size() / 9);
-    Ground ground{C.geo, C.land};
+    Ground ground{C.geo, C.land, &S.solids};
     bridge_obstacles(C.nodes, C.edges, obstacles, ground);
-    return build_corridor_cell(C);
+    const Authored authored{C.nodes, C.edges, C.lone, C.doors};
+    CleanOutput out = build_corridor_cell(C);
+    if (flood_gaps && C.land && !out.T.empty()) out = with_gaps(C, authored, std::move(out), ground, seeds);
+    return out;
 }
 
 // corridor.build_corridors from the samplers on.
@@ -128,20 +183,6 @@ CleanOutput build_corridor_cell(CellCtx& C) {
     std::copy(C.clip, C.clip + 4, A.bounds);
     A.land = C.land;
     A.geo = C.land ? &C.geo : nullptr;
-    if (const char* dbg = std::getenv("NAVGROW_TEMP_STRIPS")) {
-        double dx = 0, dy = 0, dr = 0;
-        std::sscanf(dbg, "%lf,%lf,%lf", &dx, &dy, &dr);
-        for (size_t k = 0; k < A.strips.size(); ++k) {
-            const UStrip& s = *A.strips[k];
-            const double ux = s.b[0] - s.a[0], uy = s.b[1] - s.a[1];
-            const double L2 = ux * ux + uy * uy;
-            const double t = L2 > 0 ? std::max(0.0, std::min(1.0, ((dx - s.a[0]) * ux + (dy - s.a[1]) * uy) / L2)) : 0.0;
-            if (std::hypot(s.a[0] + t * ux - dx, s.a[1] + t * uy - dy) > dr) continue;
-            std::fprintf(stderr, "TEMP strip %zu (%s) edge %d-%d a (%.0f %.0f %.0f) b (%.0f %.0f %.0f) half %.1f poly %d land %d\n",
-                         k, k < b.corridors.size() ? "corridor" : "door", s.ei, s.ej, s.a[0], s.a[1], s.a[2],
-                         s.b[0], s.b[1], s.b[2], s.half, (int)s.has_poly, (int)s.land);
-        }
-    }
     UMesh M = b.corridors.empty() ? UMesh() : build_union_mesh(A);
     if (M.t.empty()) return none;
     CleanInput in;

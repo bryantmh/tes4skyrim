@@ -280,9 +280,18 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
 void grow_march(const TriGrid& wall, const TriGrid* walk, const double* nodesp,
                 size_t nnode, const int* edgesp, size_t nedge, const double* nzp,
                 const Land* land, const double* stp, size_t nst, const double* onlandp,
-                const Params& P, double* out, const std::set<int>* exact_nodes = nullptr) {
-    NeighbourField field;
+                const Params& P, double* out, const std::set<int>* exact_nodes = nullptr,
+                int flood_lo = 0, int flood_hi = 0) {
+    auto flooded = [&](int n) { return n >= flood_lo && n < flood_hi; };
+    NeighbourField field, authored;
     if (nedge) field.build(nodesp, nnode, edgesp, nedge, nzp);
+    std::vector<int> own;
+    for (size_t e = 0; flood_hi > flood_lo && e < nedge; ++e)
+        if (!flooded(edgesp[e * 2]) && !flooded(edgesp[e * 2 + 1])) {
+            own.push_back(edgesp[e * 2]);
+            own.push_back(edgesp[e * 2 + 1]);
+        }
+    if (!own.empty()) authored.build(nodesp, nnode, own.data(), own.size() / 2, nzp);
     for (size_t s = 0; s < nst; ++s) {
         const double* r = &stp[s * 9];
         // Exclude the station's OWN centerline(s) from the crossing test.
@@ -298,7 +307,8 @@ void grow_march(const TriGrid& wall, const TriGrid* walk, const double* nodesp,
             ex_a = ex_b = (int)(-1 - ei);
         }
         const bool exact = ei < 0 && exact_nodes && exact_nodes->count((int)(-1 - ei));
-        out[s] = grow_half_width(wall, walk, field,
+        const bool by_author = flood_hi > flood_lo && ex_a >= 0 && !flooded(ex_a) && !flooded(ex_b);
+        out[s] = grow_half_width(wall, walk, by_author ? authored : field,
                                  (onlandp && onlandp[s] > 0.0 && land->g) ? land : nullptr,
                                  r[0], r[1], r[2], r[3], r[4], r[5], r[6], ex_a, ex_b, r[7], P,
                                  exact);
@@ -464,7 +474,8 @@ std::vector<double> navgrow::grow_widths(const TriGrid& wall, const TriGrid* wal
                                          const std::vector<double>& node_z, const Land* land,
                                          const std::vector<double>& stations,
                                          const std::vector<double>& on_land, int land_from,
-                                         const std::set<int>* exact_nodes) {
+                                         const std::set<int>* exact_nodes,
+                                         int flood_lo, int flood_hi) {
     const NavParams& N = P();
     Params G;
     G.step = N.RIBBON_GROW_STEP;
@@ -483,7 +494,7 @@ std::vector<double> navgrow::grow_widths(const TriGrid& wall, const TriGrid* wal
     std::vector<double> out(stations.size() / 9);
     grow_march(wall, walk, nodes_xy.data(), nodes_xy.size() / 2, edges.data(), edges.size() / 2,
                node_z.data(), land ? land : &none, stations.data(), out.size(),
-               land ? on_land.data() : nullptr, G, out.data(), exact_nodes);
+               land ? on_land.data() : nullptr, G, out.data(), exact_nodes, flood_lo, flood_hi);
     return out;
 }
 

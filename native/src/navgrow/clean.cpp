@@ -442,14 +442,28 @@ P3 centroid(const std::vector<Vert>& V, const Tri& t) {
     return {(a.x + b.x + c.x) / 3.0, (a.y + b.y + c.y) / 3.0, (a.z + b.z + c.z) / 3.0};
 }
 
+// True when edge a-b lies on a side of the cell square `cell` (x0 y0 x1 y1): the neighbour cell's mesh
+// continues it across the seam, so it is never a lip or a landing.
+bool on_cell_border(const Vert& a, const Vert& b, const double* cell) {
+    const double s = P().SEAM_BAND;
+    auto near = [s](double u, double v, double c) { return std::fabs(u - c) <= s && std::fabs(v - c) <= s; };
+    return near(a.x, b.x, cell[0]) || near(a.x, b.x, cell[2]) || near(a.y, b.y, cell[1]) || near(a.y, b.y, cell[3]);
+}
+
 std::vector<LedgeMark> find_ledge_marks(std::vector<Vert>& V, const std::vector<Tri>& T,
-                                        CellGeo& G) {
+                                        CellGeo& G, const double* cell) {
     std::vector<LedgeMark> marks;
     if (T.empty()) return marks;
     const auto comps = components(T);
     if (comps.size() < 2) return marks;
     std::vector<std::vector<Key>> bounds;
-    for (const auto& c : comps) bounds.push_back(boundary_edges(T, c));
+    for (const auto& c : comps) {
+        bounds.push_back(boundary_edges(T, c));
+        if (cell)
+            bounds.back().erase(std::remove_if(bounds.back().begin(), bounds.back().end(), [&](const Key& e) {
+                return on_cell_border(V[(size_t)e.first], V[(size_t)e.second], cell);
+            }), bounds.back().end());
+    }
     std::vector<LedgePair> pairs;
     for (size_t i = 0; i < comps.size(); ++i)
         for (size_t j = i + 1; j < comps.size(); ++j) link_pair(V, T, comps, bounds, i, j, pairs);
@@ -738,7 +752,7 @@ CleanOutput finalize_impl(CleanInput in, CellGeo& G) {
     decimate_mesh(V, T, pins, bounds, 2, false, cell_oracles(G, false));
     cull_slivers(V, T, pins, in, N.CULL_SLIVER_AREA_FRAC * 0.4);
     cull_open_flaps(V, T, in.pin_xy, bounds);
-    const std::vector<LedgeMark> marks = find_ledge_marks(V, T, G);
+    const std::vector<LedgeMark> marks = find_ledge_marks(V, T, G, bounds);
     make_manifold(V, T, in.pin_xy);
     plain_floats(V);
     T = split_t_junctions(V, stitch_shared_nodes(V, T));
