@@ -27,6 +27,7 @@ and a loose .esp but no manifest, so it still satisfies neither test and is
 never mistaken for a converted plugin.
 """
 
+import os
 import zipfile
 from pathlib import Path
 
@@ -242,6 +243,36 @@ class PluginPaths:
 def paths(plugin: str, export_root=None, out_root=None) -> PluginPaths:
     """The path handle for `plugin`. The one entry point worth memorising."""
     return PluginPaths(plugin, export_root, out_root)
+
+
+def record_dirs_for_assets(asset_dir) -> list:
+    """The RECORD folders whose plugins keep their assets in `asset_dir`.
+
+    The inverse of `asset_root`: a registered mod folder answers the record dir
+    of each plugin whose `asset_root` it is and that was exported, in name
+    order; any other folder (a flat plugin, a record dir) answers itself. The
+    folder above a nested mod's `meshes/` holds no `STAT.txt` of its own.
+    See: docs/commentary/asset_convert_nif.md#flame-stats-from-the-masters
+    """
+    d = Path(os.path.normpath(str(asset_dir)))
+    reg = _registry()
+    out = []
+    if reg is not None and (d.parent / REGISTRY_FILENAME).is_file():
+        for name in reg.plugins(d.parent):
+            if not _same_dir(reg.asset_root(d.parent, name), d):
+                continue
+            rec = Path(reg.record_dir(d.parent, name))
+            if rec.is_dir():
+                out.append(rec)
+    return out or [d]
+
+
+def _same_dir(a, b) -> bool:
+    """True when `a` and `b` name one folder (normalised, platform case rule)."""
+    def norm(p):
+        """`p` absolute, normalised and case-folded as the platform folds it."""
+        return os.path.normcase(os.path.abspath(str(p)))
+    return norm(a) == norm(b)
 
 
 def asset_cache_chain(export_subdir, filename: str) -> tuple:

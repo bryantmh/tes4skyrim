@@ -16,7 +16,7 @@ Two carriers, because a mod declares its base in two different ways:
 """
 import os
 
-from core.plugin_masters import masters_from_export_header
+from core.plugin_masters import master_dirs, masters_from_export_header
 
 FILE_NAME = '.base_plugins'
 
@@ -55,6 +55,23 @@ def export_dirs(own_dir):
         if os.path.isdir(p) and p not in out:
             out.append(p)
     return out
+
+
+def record_chain_for_assets(asset_dir):
+    """Every RECORD folder serving the assets in `asset_dir`, nearest first.
+
+    The plugins' own (`output_layout.record_dirs_for_assets`), then each one's
+    exported masters, last master first, then the recorded bases
+    (`export_dirs`). A first-match reader lets the own record win.
+    See: docs/commentary/asset_convert_nif.md#flame-stats-from-the-masters
+    """
+    from output_layout import record_dirs_for_assets
+    own = [os.path.abspath(str(r)) for r in record_dirs_for_assets(asset_dir)]
+    chain = list(own)
+    for rec in own:
+        chain += [os.path.abspath(m) for m in reversed(master_dirs(rec))]
+    chain += export_dirs(asset_dir)
+    return list(dict.fromkeys(chain))
 
 
 def subdirs(own_dir, sub):
