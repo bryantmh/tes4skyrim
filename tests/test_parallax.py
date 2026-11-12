@@ -1015,7 +1015,7 @@ class TestTexturesOnly:
         dst = tmp_path / 'out' / 'meshes' / 'tes4' / 'a.nif'
         r = nc.convert_nif(str(src), str(dst), parallax=True,
                            textures_only=textures_only)
-        height = (tmp_path / 'out' / 'Textures' / 'tes4' / 'rocks'
+        height = (tmp_path / 'out' / 'textures' / 'tes4' / 'rocks'
                   / 'stone_p.dds')
         return r, dst, height
 

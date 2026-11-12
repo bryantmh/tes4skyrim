@@ -100,6 +100,12 @@ game AND in NifSkope, whose EffectFloatController is supported where NiPSys
 chains are not. When the frames cannot be resolved the shape falls back to a
 static first-frame texture.
 
+The atlas is written under the plugin's lowercase `textures` folder whatever
+case the shader path's first folder has (`_texture_out_path`; the parallax
+height maps go through it too): the texture copy writes that folder and
+`bsa_pack` packs only it, so on a case-sensitive filesystem a `Textures\`
+path joined as spelled opened a second folder that no archive took.
+
 pyffi defaults UV Scale to (0,0), which collapses every UV to the texture's
 top-left texel — usually transparent on a flame texture — and renders the
 geometry invisible. Vanilla is offset (0,0), scale (1,1).

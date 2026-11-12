@@ -260,6 +260,12 @@ def _check_height_dds(p: Path):
     return None
 
 
+def _height_map_file(root: Path, rel: str) -> Path:
+    """The file slot-3 path `rel` names under `root`, matched ignoring case."""
+    from asset_convert.game_paths import find_nocase
+    return find_nocase(root, rel) or root.joinpath(*rel.replace('\\', '/').split('/'))
+
+
 def verify(plugin, output_dir, subdir, mx, workers, show_all):
     from output_layout import plugin_out_root
     root = plugin_out_root(output_dir, plugin, export_dir='export')
@@ -310,7 +316,7 @@ def verify(plugin, output_dir, subdir, mx, workers, show_all):
             named.setdefault(slot3.lower(), slot3)
     bad_tex = {}
     for low, rel in sorted(named.items()):
-        why = _check_height_dds(root / rel.replace('\\', os.sep))
+        why = _check_height_dds(_height_map_file(root, rel))
         if why:
             bad_tex[rel] = why
     print(f'height maps named: {len(named)}, '
@@ -379,6 +385,38 @@ def _regen_one(job):
     return dst, written, rng
 
 
+def _regen_sources(plugin, output_dir, only):
+    """(the maps' folder, [(source diffuse, shipped map)], [(map, missing source)]).
+
+    The maps are read from every top folder named `textures` in any case: the
+    texture passes write the lowercase one, and a tree an older build wrote on
+    a case-sensitive filesystem also holds them under `Textures`. A map's path
+    below that folder is `tes4/folder/name_p.dds`.
+    """
+    from asset_convert.lod.lod_gen import textures_root
+    from output_layout import asset_root, plugin_out_root
+    root = plugin_out_root(output_dir, plugin, export_dir='export')
+    tops = [d for d in root.iterdir() if d.name.lower() == 'textures'
+            and d.is_dir()] if root.is_dir() else []
+    src_root = asset_root('export', plugin) / 'textures'
+    maps = sorted((m, top) for top in tops for m in top.rglob('*_p.dds'))
+    if only:
+        maps = [(m, top) for m, top in maps if only.lower() in str(m).lower()]
+    found, missing = [], []
+    for m, top in maps:
+        rel = m.relative_to(top)
+        parts = list(rel.parts)
+        if parts and parts[0].lower() == 'tes4':
+            parts = parts[1:]
+        parts[-1] = parts[-1][:-len('_p.dds')] + '.dds'
+        src = src_root.joinpath(*parts)
+        if src.is_file():
+            found.append((src, m))
+        else:
+            missing.append((rel, src))
+    return textures_root(root), found, missing
+
+
 def regen(plugin, output_dir, strength, max_range, target_range, only,
           blur=None, workers=None, depth=None):
     """Rewrite the shipped height maps from their source diffuse.
@@ -394,31 +432,13 @@ def regen(plugin, output_dir, strength, max_range, target_range, only,
     1906 maps single-threaded is hours rather than the "seconds" this was
     originally written for on Nehrim's 38.
     """
-    from output_layout import asset_root, plugin_out_root
-    root = plugin_out_root(output_dir, plugin, export_dir='export')
-    tex_root = root / 'Textures'
-    src_root = asset_root('export', plugin) / 'textures'
-    maps = sorted(tex_root.rglob('*_p.dds'))
-    if only:
-        maps = [m for m in maps if only.lower() in str(m).lower()]
-    if not maps:
+    tex_root, found, missing = _regen_sources(plugin, output_dir, only)
+    if not found and not missing:
         print(f'no height maps under {tex_root}'
               + (f' matching {only!r}' if only else ''))
         return 1
-
-    jobs, missing = [], []
-    for m in maps:
-        rel = m.relative_to(tex_root)          # tes4/folder/name_p.dds
-        parts = list(rel.parts)
-        if parts and parts[0].lower() == 'tes4':
-            parts = parts[1:]
-        parts[-1] = parts[-1][:-len('_p.dds')] + '.dds'
-        src = src_root.joinpath(*parts)
-        if not src.is_file():
-            missing.append((rel, src))
-            continue
-        jobs.append((str(src), str(m), strength, max_range, target_range,
-                     blur, depth))
+    jobs = [(str(src), str(m), strength, max_range, target_range, blur, depth)
+            for src, m in found]
 
     n_workers = workers or max(1, cpu_count() - 1)
     shown_blur = px.BLUR_RADIUS_PER_1000 if blur is None else blur
