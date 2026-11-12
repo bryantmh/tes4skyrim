@@ -319,14 +319,14 @@ def _land_shader(tile_x: int, tile_y: int, level: int, edid: str):
 
 
 def _build_land_shape(heights: np.ndarray, tile_x: int, tile_y: int,
-                      level: int, edid: str, solid_mask):
+                      level: int, edid: str, solid_mask, allow_empty=False):
     """The land NiTriShape for a tile, or None when no cell in it draws."""
     src_tv = level * 32 + 1
     assert heights.shape == (src_tv, src_tv), \
         f"Expected heights shape ({src_tv},{src_tv}), got {heights.shape}"
 
     tris = _land_triangles(level, solid_mask)
-    if not tris:
+    if not tris and not allow_empty:
         return None
 
     shape = NifFormat.NiTriShape()
@@ -352,10 +352,13 @@ def _skyrim_le_nif():
     return nif_data
 
 
-def _chunk_root(heights: np.ndarray, level: int):
+def _chunk_root(heights: np.ndarray, level: int, water_quads=None):
     """The BSMultiBoundNode "chunk" root, which Skyrim LOD culling requires."""
     z_min = float(heights.min())
     z_max = float(heights.max())
+    if water_quads:
+        z_min = min(z_min, min(wh for _, _, wh in water_quads))
+        z_max = max(z_max, max(wh for _, _, wh in water_quads))
     world_half = CELL_SIZE * level / 2.0
 
     aabb = NifFormat.BSMultiBoundAABB()
@@ -383,17 +386,19 @@ def build_terrain_nif(heights: np.ndarray, tile_x: int, tile_y: int,
 
     `heights` is the full-res (level*32+1)^2 grid.  `solid_mask` marks which of
     the level*level cells carry drawable ground; a tile whose every cell lies
-    past the coastline yields None and must not be written.  Water, when
+    past the coastline with no water yields None. Water-only tiles retain an
+    empty land shape at child[0], keeping WATER at the engine's child[1]. Water
     present, becomes child[1] and the engine textures it from WRLD NAM3.
     """
     if not PYFFI_AVAILABLE:
         raise RuntimeError("pyffi not available")
 
-    shape = _build_land_shape(heights, tile_x, tile_y, level, edid, solid_mask)
+    shape = _build_land_shape(heights, tile_x, tile_y, level, edid, solid_mask,
+                              allow_empty=bool(water_quads))
     if shape is None:
         return None
 
-    root = _chunk_root(heights, level)
+    root = _chunk_root(heights, level, water_quads)
     children = [shape]
     if water_quads:
         children.append(_build_water_node(water_quads, level))
