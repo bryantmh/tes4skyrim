@@ -761,7 +761,6 @@ def fill_missing(h: np.ndarray, c: np.ndarray, default_height=0.0):
             h[:, empty] = h[:, nearest[empty]]
             c[:, empty] = c[:, nearest[empty]]
 
-    # A tile without any authored heightmap uses the world's fallback plane.
     nan_mask = np.isnan(h)
     if nan_mask.any():
         h[nan_mask] = default_height
@@ -793,13 +792,15 @@ def _tile_water_quads(lands, cell_water, tile_x, tile_y, level, default_wh,
             wh = _cell_water_height(cell_water, key, default_wh)
             if wh is None:
                 continue
-            land = lands.get(key)
-            if land is not None and float(land['heights'].min()) >= wh:
-                continue   # terrain entirely above water in this cell
-            if land is None and default_lh is not None and default_lh >= wh:
-                continue   # the world fallback ground is above the water
-            quads.append((cx, cy, wh))
+            lowest = _lowest_ground(lands.get(key), default_lh)
+            if lowest is None or lowest < wh:
+                quads.append((cx, cy, wh))
     return quads
+
+
+def _lowest_ground(land, default_lh):
+    """A cell's lowest ground: its LAND's, else the world's fallback, or None."""
+    return float(land['heights'].min()) if land is not None else default_lh
 
 
 # ---------------------------------------------------------------------------
@@ -1188,22 +1189,24 @@ def _queue_tiles(lands, bounds, worldspace_edid, only_cells,
         tx_end   = (max_x // level + 1) * level
         ty_end   = (max_y // level + 1) * level
 
-        n_level = 0
-        for ty in range(ty_start, ty_end, level):
-            for tx in range(tx_start, tx_end, level):
-                cells = [(tx + cx, ty + cy)
-                         for cy in range(level) for cx in range(level)]
-                if only_cells is not None and not any(c in only_cells
-                                                      for c in cells):
-                    continue
-                if not any(c in lands for c in cells):
-                    if cell_water is None or not _tile_water_quads(
-                            lands, cell_water, tx, ty, level, default_wh, default_lh):
-                        continue
-                work.append((tx, ty, level, worldspace_edid))
-                n_level += 1
-        print(f"  LOD {level}: {n_level} tiles queued")
+        tiles = [(tx, ty) for ty in range(ty_start, ty_end, level)
+                 for tx in range(tx_start, tx_end, level)
+                 if _tile_wanted(lands, tx, ty, level, only_cells,
+                                 cell_water, default_wh, default_lh)]
+        work += [(tx, ty, level, worldspace_edid) for tx, ty in tiles]
+        print(f"  LOD {level}: {len(tiles)} tiles queued")
     return work
+
+
+def _tile_wanted(lands, tx, ty, level, only_cells, cell_water, default_wh, default_lh):
+    """True when the tile is in scope and has ground or visible water to draw."""
+    cells = [(tx + cx, ty + cy) for cy in range(level) for cx in range(level)]
+    if only_cells is not None and not any(c in only_cells for c in cells):
+        return False
+    if any(c in lands for c in cells):
+        return True
+    return cell_water is not None and bool(_tile_water_quads(
+        lands, cell_water, tx, ty, level, default_wh, default_lh))
 
 
 def generate_terrain_lod(esm_path: Path, output_dir: Path,
@@ -1265,7 +1268,6 @@ def generate_terrain_lod(esm_path: Path, output_dir: Path,
     print(f"  Found {len(lands)} LAND records; {n_water} water cells "
           f"(default water height {default_wh}).")
 
-    # Include water-only CELLs and fill ocean gaps inside this finite extent.
     all_x = [k[0] for k in extent]
     all_y = [k[1] for k in extent]
     min_x, max_x = min(all_x), max(all_x)
