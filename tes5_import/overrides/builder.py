@@ -462,18 +462,11 @@ _reg('LAND', 'DATA.Flags', _RB_LAND_DATA)
 for _scripted in SCRIPTED_TYPES:
     _reg(_scripted, 'SCRI', _RB_SCRI_VMAD)
 
-# Authored changes to a spell's EFFECT LIST cannot be spliced into the
-# master's converted bytes: effect conversion may synthesize aimed-MGEF clone
-# companions, which an override must not silently inherit or re-mint. The
-# author rewrote the record's magic payload, so the record is RECONVERTED
-# from the plugin's export through the normal path instead (its FormID still
-# lands on the master's, so it stays an override). The handful of clone
-# companions a reconversion mints are ordinary new records in the plugin.
+#: (signature, export key) whose authored change reconverts the whole record from the plugin's export.
+# See: docs/commentary/tes5_import_override.md#effect-lists-are-reconverted
 RECONVERT_KEYS = frozenset({
-    ('SPEL', 'Effect[]'),
-    ('SPEL', 'ScriptEffect[]'),
-    ('ENCH', 'Effect[]'),
-    ('ENCH', 'ScriptEffect[]'),
+    *((sig, key) for sig in ('SPEL', 'ENCH', 'ALCH', 'INGR', 'SGST')
+      for key in ('Effect[]', 'ScriptEffect[]')),
     *((sig, f'{gender}.BipedModel.MODL') for sig in ('ARMO', 'CLOT')
       for gender in ('Male', 'Female')),
 })

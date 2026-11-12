@@ -206,10 +206,18 @@ NPCs.
   because unchanged fields are identical in both exports), and run rebuilds
   for repeated-subrecord families (CNTO/SPLO/PKID) that preserve
   converter-ADDED entries (vendor gold, quest-package filtering) by deriving
-  them from master-export-vs-master-output. Effect-list changes (SPEL/ENCH)
-  RECONVERT the whole record instead — clone companions can't be spliced —
-  and so do worn-model changes (ARMO/CLOT `BipedModel`): the model lives in
-  the ARMA companion, which the reconversion mints anew in the plugin.
+  them from master-export-vs-master-output. <a id="effect-lists-are-reconverted"></a>Effect-list
+  changes (SPEL / ENCH / ALCH / INGR / SGST) RECONVERT the whole record
+  instead, for two reasons. Clone companions can't be spliced: the override
+  pass converts without a writer, so a substituted `EFID` names the base
+  effect, not the clone fitted to the owner's casting type and delivery.
+  And the effect list is a repeating struct, `EFID EFIT` per effect: the
+  convert-and-diff substitution replaces each signature as one run at its
+  first position, so a spliced list comes out regrouped (`EFID EFIT EFIT
+  EFID` for a two-effect potion whose second magnitude changed, `EFID EFID
+  EFIT EFIT` for a one-effect potion that gained a second).
+  Worn-model changes (ARMO/CLOT `BipedModel`) reconvert too: the model lives
+  in the ARMA companion, which the reconversion mints anew in the plugin.
 - <a id="script-swap"></a>**A script swap rebinds a master record to a child
   of its script.** `VMAD.ScriptSwap=<parent>><child>` on an override renames
   every length-prefixed occurrence of the parent in the master's VMAD -- the
