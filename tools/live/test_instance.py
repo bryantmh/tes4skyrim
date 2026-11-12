@@ -36,8 +36,9 @@ from asset_convert.lod.esm_scan import plugin_masters
 from core.chargen_source import candidates
 from core.subprocess_flags import POPEN_FLAGS
 from source_paths import find_game_path
-from tools.live import crash_capture, hidden_launch, tes4_cases
+from tools.live import crash_capture, hidden_launch, obs_record, tes4_cases
 from tools.live.game_bridge import Bridge, BridgeError
+from tools.navmesh import navmesh_rescue
 from tools.release.package_runtime_dll import (EXPORT_ROOT, MOD_NAME, MODS, chargen_table,
                                                configured_choice, morrowind_menus)
 
@@ -84,13 +85,16 @@ ROOT_FILES = ('steam_api64.dll', 'bink2w64.dll', 'd3dcompiler_46.dll', 'tbb.dll'
 DATA_FILES = ('Skyrim.esm', 'Update.esm', 'Dawnguard.esm', 'HearthFires.esm',
               'Dragonborn.esm', '_ResourcePack.esl', '_ResourcePack.bsa',
               'MarketplaceTextures.bsa')
-#: Tick unfocused, no intro, no Bethesda.net (its AE reply opens a game-pausing "Thanks for buying" box).
+#: Tick unfocused, no intro, no Bethesda.net "Thanks for buying" box, no idle camera orbit around the player.
 SKYRIM_INI = (('General', 'bAlwaysActive', '1'), ('General', 'sIntroSequence', ''),
-              ('Bethesda.net', 'bEnablePlatform', '0'), ('Bethesda.net', 'bAutoSkipMainMenuLogin', '1'))
+              ('Bethesda.net', 'bEnablePlatform', '0'), ('Bethesda.net', 'bAutoSkipMainMenuLogin', '1'),
+              ('Camera', 'fAutoVanityModeDelay', '1000000'))
 #: Over the Low preset: a small hidden window; silence (volume 0 keeps sound-timed lines real).
 PREFS_INI = (('Display', 'bFull Screen', '0'), ('Display', 'bBorderless', '1'),
              ('Display', 'iSize W', '640'), ('Display', 'iSize H', '360'),
              ('AudioMenu', 'fAudioMasterVolume', '0.0000'), ('General', 'bUpsellOwned', '1'))
+#: The window size of a recorded run (`--record`), width then height.
+RECORD_SIZE = (('Display', 'iSize W', '2560'), ('Display', 'iSize H', '1440'))
 
 
 def use_instance(slot: int) -> None:
@@ -186,13 +190,18 @@ def apply_ini(name: str, settings, base: str = None) -> None:
         f.write(set_ini(base, settings))
 
 
+def write_prefs(root: str, preset: str, extra=()) -> None:
+    """SkyrimPrefs.ini from graphics preset file `preset`, PREFS_INI and `extra`."""
+    with open(os.path.join(root, preset), encoding='utf-8', errors='replace') as f:
+        apply_ini('SkyrimPrefs.ini', PREFS_INI + tuple(extra), f.read())
+
+
 def write_profile(root: str, plugins) -> None:
     """Writes the sandbox profile: Skyrim.ini, SkyrimPrefs.ini and Plugins.txt."""
     os.makedirs(MY_GAMES, exist_ok=True)
     with open(os.path.join(root, 'Skyrim_Default.ini'), encoding='utf-8', errors='replace') as f:
         apply_ini('Skyrim.ini', SKYRIM_INI, f.read())
-    with open(os.path.join(root, 'Low.ini'), encoding='utf-8', errors='replace') as f:
-        apply_ini('SkyrimPrefs.ini', PREFS_INI, f.read())
+    write_prefs(root, 'Low.ini')
     plugin_dir = os.path.join(LOCAL_APPDATA, 'Skyrim Special Edition')
     os.makedirs(plugin_dir, exist_ok=True)
     with open(os.path.join(plugin_dir, 'Plugins.txt'), 'w', encoding='utf-8') as f:
@@ -271,7 +280,21 @@ def unlink_plugins(data: str) -> None:
             os.remove(path)
 
 
-def build(steam_exe: bool, plugins, mods=()) -> None:
+def link_extra_skse(data: str, dlls) -> None:
+    """Links third-party SKSE plugin `dlls` into `data`, first removing those an earlier build linked."""
+    listed = os.path.join(PROFILE, 'extra_skse_plugins.txt')
+    folder = os.path.join(data, 'SKSE', 'Plugins')
+    old = open(listed, encoding='utf-8').read().split() if os.path.exists(listed) else []
+    for name in old:
+        if os.path.exists(os.path.join(folder, name)):
+            os.remove(os.path.join(folder, name))
+    for dll in dlls:
+        link(dll, os.path.join(folder, os.path.basename(dll)))
+    with open(listed, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(os.path.basename(dll) for dll in dlls))
+
+
+def build(steam_exe: bool, plugins, mods=(), skse_plugins=()) -> None:
     """Links the vanilla game, SKSE, the bridge and each converted mod, and writes the profile."""
     root = steam_dir()
     data = os.path.join(INSTANCE, 'Data')
@@ -290,6 +313,7 @@ def build(steam_exe: bool, plugins, mods=()) -> None:
         link(os.path.join(root, 'Data', name), os.path.join(data, name))
     link(os.path.join(root, 'Data', ADDRESS_LIBRARY), os.path.join(data, ADDRESS_LIBRARY))
     link(BRIDGE_DLL, os.path.join(data, 'SKSE', 'Plugins', 'TESGameBridge.dll'))
+    link_extra_skse(data, skse_plugins)
     link_skse_scripts(data)
     with open(os.path.join(INSTANCE, 'steam_appid.txt'), 'w') as f:
         f.write(APP_ID)
@@ -310,16 +334,16 @@ def running_pid() -> int:
     return pid if hidden_launch.process_image(pid) else 0
 
 
-def launch(extra_env=None) -> None:
+def launch(extra_env=None, prefs=()) -> None:
     """Starts the instance hidden, muted, sandboxed and under SKSE; refuses a second copy.
 
     The INI settings are re-applied first, because the game rewrites
-    SkyrimPrefs.ini on every run. `extra_env` adds variables for the game.
+    SkyrimPrefs.ini on every run. `extra_env` adds variables for the game; `prefs` overrides PREFS_INI.
     """
     if running_pid():
         sys.exit('test instance already running (pid %d)' % running_pid())
     apply_ini('Skyrim.ini', SKYRIM_INI)
-    apply_ini('SkyrimPrefs.ini', PREFS_INI)
+    apply_ini('SkyrimPrefs.ini', PREFS_INI + tuple(prefs))
     env = {'SteamAppId': APP_ID, 'SteamGameId': APP_ID, 'TES_BRIDGE_PIPE': PIPE,
            'TES_SANDBOX_MUTE': '1',
            'TES_SANDBOX_DOCUMENTS': DOCUMENTS, 'TES_SANDBOX_LOCALAPPDATA': LOCAL_APPDATA,
@@ -795,8 +819,24 @@ class CaseGame:
     encoding: str = 'utf-8'
 
 
-#: MorrowindRuntime runs MWScript itself; the harness only runs console lines.
-MW_GAME = CaseGame('TES_MW_TEST_', '.mwtest', 'MorrowindRuntime.log', 0.5)
+def mw_respond(_bridge: Bridge):
+    """The line handler for one MorrowindRuntime run: answers a stalled walk's `onmesh` request.
+    See: docs/commentary/headless_testing.md#quest-runs"""
+    plugins = tes4_cases.load_order(os.path.join(LOCAL_APPDATA, 'Skyrim Special Edition', 'Plugins.txt'))
+    worlds = {}
+
+    def reply(line: dict):
+        """The rescue point for an `onmesh` line, None for every other line."""
+        if 'onmesh' not in line:
+            return None
+        answer = navmesh_rescue.harness_reply(plugins, line, worlds)
+        print('onmesh %s -> %s' % (line['onmesh'], answer))
+        return answer
+    return reply
+
+
+#: MorrowindRuntime runs MWScript itself; the harness runs console lines and answers stalled walks.
+MW_GAME = CaseGame('TES_MW_TEST_', '.mwtest', 'MorrowindRuntime.log', 0.5, mw_respond)
 
 
 def tes4_game() -> CaseGame:
@@ -850,15 +890,32 @@ def run_cases(args, game: CaseGame) -> int:
            game.prefix + 'RESULTS': results}
     flags = {game.prefix + 'STOP_ON_FAIL': args.stop_on_fail, game.prefix + 'CHECKPOINTS': args.checkpoints}
     env.update({name: '1' for name, on in flags.items() if on})
-    launch(env)
-    try:
-        with connect(120) as bridge:
-            enter_game(bridge, args, cases)
-            lines = wait_results(results, args.timeout, bridge, args.checkpoints, game)
-    finally:
-        if not args.keep:
-            stop()
+    with recording(args.record):
+        launch(env, RECORD_SIZE if args.record else ())
+        try:
+            with connect(120) as bridge:
+                enter_game(bridge, args, cases)
+                lines = wait_results(results, args.timeout, bridge, args.checkpoints, game)
+        finally:
+            if not args.keep:
+                stop()
     return report(lines, results, game)
+
+
+@contextlib.contextmanager
+def recording(out_dir: str):
+    """With `out_dir`: the game at RECORD_SIZE on the High preset, recorded by OBS on its hidden desktop; Low
+    preset again afterwards. Without it: nothing."""
+    if not out_dir:
+        yield
+        return
+    write_prefs(INSTANCE, 'High.ini', RECORD_SIZE)
+    rec = obs_record.start(DESKTOP, out_dir, *(int(v) for _s, _k, v in RECORD_SIZE))
+    try:
+        yield
+    finally:
+        obs_record.stop(rec)
+        write_prefs(INSTANCE, 'Low.ini')
 
 
 def report(lines: list, results: str, game: CaseGame) -> int:
@@ -929,6 +986,7 @@ def _case_options(parser) -> None:
     parser.add_argument('--from', dest='from_case', help='load the save of the case before this one and resume')
     parser.add_argument('--to', dest='to_case', help='stop after this case (`--from X --to X` runs just X)')
     parser.add_argument('--load', help='start from this sandbox save (e.g. mwtest_chargen_class)')
+    parser.add_argument('--record', metavar='DIR', help='record the run with OBS at 1440p60, High preset, into DIR')
 
 
 def parse_args():
@@ -942,6 +1000,8 @@ def parse_args():
     b.add_argument('--plugin', action='append', default=[], help='plugin to link and enable')
     b.add_argument('--mod', action='append', default=[],
                    help='converted output/ folder to link, plugins enabled, with the runtime DLLs')
+    b.add_argument('--skse-plugin', action='append', default=[], metavar='DLL',
+                   help='third-party SKSE plugin DLL to link for this build only (e.g. a recording run)')
     s = sub.add_parser('shot', help='screenshot the hidden game window')
     s.add_argument('--out', help="PNG path; the instance profile's shot.png by default")
     _launched_parsers(sub)
@@ -963,7 +1023,7 @@ def main() -> int:
 
 def run(args) -> int:
     """Runs the parsed subcommand; its exit code."""
-    actions = {'build': lambda: build(args.steam_exe, args.plugin, args.mod), 'launch': launch,
+    actions = {'build': lambda: build(args.steam_exe, args.plugin, args.mod, args.skse_plugin), 'launch': launch,
                'shot': lambda: shot(args.out or os.path.join(PROFILE, 'shot.png')), 'menus': menus, 'stop': stop,
                'close': lambda: close_named(args.menu),
                'speed': lambda: speed(args.cell, args.settle, args.console, args.seconds)}

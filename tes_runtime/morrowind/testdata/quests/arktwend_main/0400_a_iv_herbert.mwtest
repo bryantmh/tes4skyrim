@@ -9,6 +9,8 @@
 
 # Herbert hails the player in the wasteland and offers to travel together.
 case herbert_meet
+# ~9 creatures attack on arrival and knock the player out of Herbert's 400 before he greets: fought off.
+defend
 run
 player->Position -85092 4567 323 180
 # He hails the player within 400 (HerbertScript State 1 -> 2), wherever he has wandered: approach him.
@@ -89,7 +91,8 @@ end
 
 # Gron at last; Herbert takes his leave by the inn. The wolves on the road
 # hunt the player, and Herbert's companion script returns while his weapon is
-# drawn, so the fight is fought first; damage stands in for it.
+# drawn, so the fight is fought first; damage stands in for it. The last walk goes to the leave-taking
+# marker itself (MarkerPatriarchenhof01, Herbertvar 7 within 150): a walk ends up to 128 short.
 case herbert_gron
 defend
 walk -62594 -2424 2620
@@ -97,7 +100,7 @@ walk -62181 516 1755
 walk -64892 5544 1377
 walk -62385 11683 891
 walk -51438 11075 544
-walk -47046 9735 128
+walk -47046 9635 128
 wait 120
 console 05984D48.damageav health 10000
 console 0534E741.damageav health 10000

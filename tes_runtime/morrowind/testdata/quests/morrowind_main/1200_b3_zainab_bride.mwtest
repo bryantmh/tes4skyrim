@@ -116,77 +116,8 @@ defend
 # leg away jammed.
 steer 124554 49596 868
 until 3000 "falura llervu"->GetDistance player < 600
-walk 124782 50745 505
-until 3000 "falura llervu"->GetDistance player < 600
-# To the sea along the navmesh's own route (mesh_route.py), so she can follow: the direct slope north
-# has no navmesh link and she stuck on it. Then the swim clear of the rocks (swim_route.py).
-steer 124852 49612 919
-steer 125311 49272 1004
-until 3000 "falura llervu"->GetDistance player < 600
-steer 127189 49735 856
-until 3000 "falura llervu"->GetDistance player < 600
-steer 127979 50506 328
-steer 128201 52336 -143
-until 3000 "falura llervu"->GetDistance player < 600
-steer 127680 53829 -312
-until 3000 "falura llervu"->GetDistance player < 600
-steer 126656 55488 0
-until 3000 "falura llervu"->GetDistance player < 600
-steer 124928 59328 0
-until 3000 "falura llervu"->GetDistance player < 600
-# The rest of the escort: the swim clear of the rocks (swim_route.py), then the navmesh route
-# (mesh_route.py) to the yurt, so she can follow every leg.
-steer 120896 65856 0
-steer 120768 67520 0
-until 3000 "falura llervu"->GetDistance player < 600
-steer 118875 67926 -77
-steer 117033 68371 -129
-steer 115061 68862 865
-steer 112906 69081 787
-until 3000 "falura llervu"->GetDistance player < 600
-steer 111027 69299 1220
-steer 109547 69897 1181
-steer 109497 69860 1178
-steer 109167 70089 1229
-until 3000 "falura llervu"->GetDistance player < 600
-steer 109155 70150 1233
-steer 109115 70193 1233
-steer 109058 70235 1230
-steer 109000 70266 1225
-until 3000 "falura llervu"->GetDistance player < 600
-steer 108523 70113 1166
-steer 107456 70112 1051
-steer 106336 70685 1244
-steer 103360 71590 960
-until 3000 "falura llervu"->GetDistance player < 600
-steer 102571 72026 708
-steer 100862 72738 1064
-steer 98242 73910 1498
-steer 97247 74375 1413
-until 3000 "falura llervu"->GetDistance player < 600
-steer 95839 74890 805
-steer 91499 77238 1056
-steer 89498 77542 1395
-steer 88106 77990 1329
-until 3000 "falura llervu"->GetDistance player < 600
-steer 86987 79190 1430
-steer 86333 79727 1350
-steer 85660 80447 1077
-steer 84598 81163 1355
-until 3000 "falura llervu"->GetDistance player < 600
-steer 82325 81848 1634
-steer 81451 81776 2083
-steer 80629 81775 1836
-steer 79066 82847 1314
-until 3000 "falura llervu"->GetDistance player < 600
-steer 77961 83824 863
-steer 77916 83995 836
-steer 77642 84144 780
-steer 77605 84182 773
-until 3000 "falura llervu"->GetDistance player < 600
-steer 77530 84207 774
-steer 76739 83931 776
-steer 76766 83714 776
+# One walk to the yurt door; she follows (rule 17: the old 60-leg steer chain flaked).
+walk 76766 83714 776
 until 3000 "falura llervu"->GetDistance player < 500
 activate 05AB7B01
 until 600 GetPCCell "Zainab Camp, Ashkhan's Yurt" == 1

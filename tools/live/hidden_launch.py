@@ -251,8 +251,8 @@ def inject(process, dll_path: str, entry_ordinal: int = None) -> None:
         _K32.CloseHandle(thread)
 
 
-def launch(exe: str, cwd: str, desktop: str, dlls: list, env: dict) -> int:
-    """Starts `exe` on desktop `desktop`, injects `dlls` in order, resumes it; its pid.
+def launch(exe: str, cwd: str, desktop: str, dlls: list, env: dict, args: str = '') -> int:
+    """Starts `exe` (with command-line `args`) on desktop `desktop`, injects `dlls` in order, resumes it; its pid.
 
     Each of `dlls` is a path, or (path, entry ordinal) for a DLL that must be
     started by an export, as SKSE is by ordinal 1 (StartSKSE).
@@ -266,8 +266,9 @@ def launch(exe: str, cwd: str, desktop: str, dlls: list, env: dict) -> int:
     info = StartupInfo(cb=ctypes.sizeof(StartupInfo), lpDesktop='WinSta0\\' + desktop)
     proc = ProcessInformation()
     block = _environment_block(env)
+    command = ctypes.create_unicode_buffer('"%s" %s' % (exe, args)) if args else None
     try:
-        _check(_K32.CreateProcessW(exe, None, None, None, False,
+        _check(_K32.CreateProcessW(exe, command, None, None, False,
                                    CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT, block, cwd,
                                    ctypes.byref(info), ctypes.byref(proc)), 'CreateProcessW')
         kept = wintypes.HANDLE()

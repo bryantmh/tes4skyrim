@@ -53,7 +53,7 @@ def test_a_missing_file_is_empty_not_an_error(tmp_path, monkeypatch):
     """A conversion must never abort because nobody has pinned anything."""
     _store(tmp_path, monkeypatch)
     assert pins.hand_edits_for('Nope.esm', 'Cell') == {
-        'cuts': [], 'frozen': [], 'voids': [], 'links': []}
+        'cuts': [], 'frozen': [], 'voids': [], 'links': [], 'nodes': []}
 
 
 def test_unpinned_cell_has_an_empty_digest(tmp_path, monkeypatch):

@@ -4,10 +4,12 @@
 #pragma once
 
 #include <functional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "cellgeo.h"
+#include "trigrid.h"
 #include "mesh.h"
 #include "strip.h"
 
@@ -32,16 +34,33 @@ struct PlacedRef {
 };
 
 // The gathered soups: walkable rows [0, land_from) are placed, the rest LAND.
-// One placed object's collision, kept whole: its triangles (9 doubles each) and bounding box.
+// One placed object's collision, kept whole: its triangles (9 doubles each), bounding box, and an index
+// of them for "is any face of it right above this point".
 struct Solid {
     double box[6];                   // xmin, ymin, zmin, xmax, ymax, zmax
     std::vector<double> tris;
+    TriGrid grid;
 };
+
+// Every placed object of a cell, indexed by plan area.
+struct SolidSet {
+    std::vector<Solid> items;
+    std::unordered_map<long long, std::vector<int>> cells;  // plan bucket -> items whose box touches it
+    // Build each object's face index and the plan buckets; call once, after `items` is filled.
+    void index();
+    // True when (x, y, z) lies inside an object: one of its faces is right above it and its winding
+    // number there is >= 0.5.  The face test skips the costly winding beside an object.
+    bool enclosed(double x, double y, double z) const;
+};
+
+// How far above a floor point the enclosure test samples: a point standing ON an object's top sits on
+// its surface, where the test reads half in.
+constexpr double kEnclosedLift = 8.0;
 
 struct Soups {
     std::vector<double> walk, block;
     size_t land_from = 0;            // triangles
-    std::vector<Solid> solids;       // each placed non-door object, for the enclosure test
+    SolidSet solids;                 // each placed non-door object, for the enclosure test
 };
 
 // gather_cell_geometry(split_land=True) with the LAND rows appended after the
@@ -55,8 +74,9 @@ bool footprint(const PlacedRef& ref, double box[6]);
 struct Ground {
     CellGeo& geo;
     const Land* land;
-    const std::vector<Solid>* solids = nullptr;
-    // True when (x, y, z) lies inside a placed object's collision shape (winding number >= 0.5).
+    const SolidSet* solids = nullptr;
+    // True when (x, y, z) lies inside a placed object's collision shape (winding number >= 0.5); exteriors
+    // only -- an interior's room shell is one object, so its floor always reads as inside something.
     bool enclosed(double x, double y, double z) const;
     bool floor(double x, double y, double near_z, double* z) { return geo.walk_at(x, y, near_z, z); }
     bool blocked(double x, double y, double z, double ux, double uy) const;

@@ -30,10 +30,13 @@ PINS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))), 'navmesh_pins')
 
 #: Every section of a pin file, each `{cell key: [row, ...]}`.
-PARTS = ('cuts', 'frozen', 'voids', 'links')
+PARTS = ('cuts', 'frozen', 'voids', 'links', 'nodes')
 
 #: Floats per `frozen` / `voids` row: three corners of (x, y, z).
 TRI_WIDTH = 9
+
+#: Floats per `nodes` row: one (x, y, z) point the cell's gap flood also starts from.
+NODE_WIDTH = 3
 
 #: Floats per `links` row: the upper triangle's three corners, then the lower's.
 LINK_WIDTH = 2 * TRI_WIDTH
@@ -197,12 +200,19 @@ def links_for(plugin, key):
             for r in _section(plugin, 'links', key) if len(r) >= LINK_WIDTH]
 
 
+def nodes_for(plugin, key):
+    """`[(x, y, z), ...]` pinned nodes one cell's gap flood also starts from."""
+    return [tuple(float(c) for c in r[:NODE_WIDTH]) for r in _section(plugin, 'nodes', key)
+            if len(r) >= NODE_WIDTH]
+
+
 def hand_edits_for(plugin, key):
     """Every correction a human committed for one cell, by section name."""
     return {'cuts': cuts_for(plugin, key),
             'frozen': tris_for(plugin, 'frozen', key),
             'voids': tris_for(plugin, 'voids', key),
-            'links': links_for(plugin, key)}
+            'links': links_for(plugin, key),
+            'nodes': nodes_for(plugin, key)}
 
 
 #: A pin point closer than this to its cell's edge can change what the neighbour across it is built from.
@@ -220,6 +230,17 @@ def reaches_edge(edits, grid) -> bool:
     pts += [c for part in ('frozen', 'voids') for t in edits.get(part) or () for c in t]
     pts += [c for pair in edits.get('links') or () for t in pair for c in t]
     return any(not (x0 < p[0] < x1 and y0 < p[1] < y1) for p in pts)
+
+
+def build_pins(edits, grid):
+    """The part of `edits` a build must hold rather than lay on top afterwards: all of them when they
+    reach the cell's edge, else only the pinned flood nodes (their flood seeds the neighbours); None when
+    neither."""
+    if reaches_edge(edits, grid):
+        return edits
+    if edits.get('nodes'):
+        return dict({part: [] for part in edits}, nodes=edits['nodes'])
+    return None
 
 
 def apply_hand_edits(verts, tris, ledges, edits):
@@ -282,6 +303,7 @@ def digest(plugin, key):
                   for t in tris_for(plugin, part, key)]
     parts += ['L' + ';'.join('%.2f,%.2f,%.2f' % p for p in up + down)
               for up, down in links_for(plugin, key)]
+    parts += ['N%.2f,%.2f,%.2f' % p for p in nodes_for(plugin, key)]
     if any(tris_for(plugin, part, key) for part in ('frozen', 'voids')):
         parts.append('V%d' % FROZEN_VERSION)
     return '|'.join(parts)
@@ -312,22 +334,24 @@ def _write(plugin, doc, folder):
     return path
 
 
-def save(plugin, key, frozen=None, voids=None, links=None):
-    """Replace one cell's frozen patch and pinned links in the save folder's file.
+def save(plugin, key, frozen=None, voids=None, links=None, nodes=None):
+    """Replace one cell's frozen patch, pinned links and pinned flood nodes in the save folder's file.
 
     A section passed as None is left alone; an empty one clears the cell from
     it (kept as an empty override where a shipped pin exists).  `frozen` and
     `voids` are triangles of three points; `links` are (upper, lower) pairs
-    of them.  Values round to 0.01u so float noise never churns the diff.
-    Returns `(path, {section: rows now in effect})`.
+    of them; `nodes` are points.  Values round to 0.01u so float noise never
+    churns the diff.  Returns `(path, {section: rows now in effect})`.
     """
     folder = save_dir()
     doc = _read_file(pins_path(plugin, folder))
     shipped = _read_file(pins_path(plugin)) if folder != PINS else None
     flat_links = None if links is None else [tuple(u) + tuple(d) for u, d in links]
+    flat_nodes = None if nodes is None else [(p,) for p in nodes]
     for part, rows, width in (('frozen', frozen, TRI_WIDTH),
                               ('voids', voids, TRI_WIDTH),
-                              ('links', flat_links, LINK_WIDTH)):
+                              ('links', flat_links, LINK_WIDTH),
+                              ('nodes', flat_nodes, NODE_WIDTH)):
         if rows is None:
             continue
         got = _rounded([_flat(t) for t in rows], width)
@@ -405,3 +429,29 @@ def remove_patch(plugin, key, point=None):
               if not any(_holds(t, centroid(end)) for t in lost for end in pair)]
     path, _n = save(plugin, key, frozen=keep_f, voids=keep_v, links=keep_l)
     return path, nf - len(keep_f), len(voids) - len(keep_v)
+
+
+#: A click within this of a pinned node (in plan) removes that node.
+NODE_PICK = 64.0
+
+
+def add_node(plugin, key, point):
+    """Pin one flood node at `point` (x, y, z); returns `(path, nodes now pinned)`."""
+    nodes = nodes_for(plugin, key) + [tuple(float(c) for c in point[:3])]
+    path, _n = save(plugin, key, nodes=nodes)
+    return path, len(nodes)
+
+
+def remove_node(plugin, key, point=None):
+    """Unpin the flood node nearest `point` within NODE_PICK in plan, or every node when None.
+
+    Returns `(path, nodes removed)`.
+    """
+    nodes = nodes_for(plugin, key)
+    drop = set(range(len(nodes)))
+    if point is not None:
+        near = sorted(((p[0] - point[0]) ** 2 + (p[1] - point[1]) ** 2, i) for i, p in enumerate(nodes))
+        drop = {near[0][1]} if near and near[0][0] <= NODE_PICK ** 2 else set()
+    keep = [p for i, p in enumerate(nodes) if i not in drop]
+    path, _n = save(plugin, key, nodes=keep)
+    return path, len(nodes) - len(keep)

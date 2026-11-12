@@ -17,8 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from tes5_import.base.navmesh_frozen import centroid, covered_by
 from tes5_import.base.navmesh_pins import (
-    PARTS, apply_hand_edits, cell_key, hand_edits_for, load as load_pins, reaches_edge, remove_patch,
-    save as save_pins,
+    PARTS, add_node, apply_hand_edits, cell_key, hand_edits_for, load as load_pins, reaches_edge,
+    remove_node, remove_patch, save as save_pins,
 )
 from tes5_import.navmesh import corridor
 from tools.cellview import plugins, progress, seams, world
@@ -509,6 +509,7 @@ def mesh_bake(plugin, cell, job='', pinned=True, lattice=False):
         'edges': [list(e) for e in src.edges],
         'flood': flood_json(plugin, src, lattice),
         'edge_pins_kept': not pinned and not lattice and reaches_edge(edits, cell_grid(src)),
+        'pin_nodes': [list(p) for p in edits.get('nodes', ())],
         'ops': (fix or {}).get('ops', []),
         'stale': is_stale(fix, verts, tris) if fix else False,
         'saved': (fix or {}).get('result'),
@@ -694,6 +695,29 @@ def mesh_pin(plugin, cell, payload, lattice=False, pinned=True):
     _forget(plugin, cell)
     return {'pinned': path, 'key': key, 'tris': n['frozen'],
             'voids': n['voids'], 'links': n['links'], 'ops': len(ops)}
+
+
+def mesh_node_pin(plugin, cell, payload):
+    """Pin a flood node at `payload['point']`, or unpin the one there when `payload['remove']`.
+
+    A pinned node is where the cell's gap flood also starts, so it seeds ground no pathgrid node or
+    neighbour reaches; it changes the build (and the neighbours), so the next open rebuilds.
+    """
+    src, why = resolve_cell(plugin, cell)
+    if src is None:
+        return {'error': why}
+    key = cell_corrections(plugin, src)[1]
+    if not key:
+        return {'error': 'cannot name %s for the pin file' % cell}
+    point = tuple(float(c) for c in payload.get('point') or ())
+    if len(point) != 3:
+        return {'error': 'no point'}
+    if payload.get('remove'):
+        path, n = remove_node(plugin, key, point)
+    else:
+        path, n = add_node(plugin, key, point)
+    _forget(plugin, cell)
+    return {'pinned': path, 'key': key, 'nodes': n}
 
 
 def mesh_unpin(plugin, cell, payload):

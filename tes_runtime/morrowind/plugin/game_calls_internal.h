@@ -48,6 +48,8 @@ void* RefByRuntimeId(std::uint32_t runtimeFormId);
 void* PlayerTarget(const std::string& id);
 // `Actor.IsDead`; false for a null or non-actor reference.
 bool IsDead(void* ref);
+// Records where `actor` stands as it dies (DistanceFromDeathSpot). game_calls.cpp.
+void NoteDeathSpot(void* actor);
 // Whether `ref` has its 3D now: false for a disabled reference in a loaded cell.
 bool Has3D(void* ref);
 // Whether `ref` is a placed door; false for null.

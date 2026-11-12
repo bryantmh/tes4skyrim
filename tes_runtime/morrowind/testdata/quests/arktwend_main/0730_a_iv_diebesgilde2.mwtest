@@ -21,18 +21,10 @@ expect Diebesgildevar == 10
 end
 
 # He follows the player up the stairs and out through the guild's secret
-# door; the AI walk cannot climb the stairs, so the player steers along the
-# authored pathgrid.
+# door; one walk up the stairs to the door.
 case tate_door
 walk -22 1825 328
-steer -32 1636 328
-steer -20 1400 434
-steer -28 1199 537
-steer -26 1085 596
-steer -39 839 718
-steer -21 678 704
-steer -31 109 704
-steer -41 -57 724
+walk -41 -57 724
 until 3000 "DIEBTate"->GetDistance player < 400
 activate 05E9C307
 until 300 GetPCCell "Stormwend, Thieves Guild" == 0

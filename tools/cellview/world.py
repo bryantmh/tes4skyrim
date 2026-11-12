@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from core.navmesh_options import set_edge_pins_only, set_keep_flood
 from core.subprocess_flags import POPEN_FLAGS
-from tes5_import.base.navmesh_pins import PARTS, hand_edits_for, load, reaches_edge
+from tes5_import.base.navmesh_pins import PARTS, build_pins, hand_edits_for, load
 from tes5_import.base.text_reader import get_formid
 from tes5_import.navmesh import pool
 from tes5_import.navmesh.edge_links import NavMeshView, extract_nvnm
@@ -101,9 +101,9 @@ def _edge_pins(plugin, grid_of):
     keys = sorted({k for part in PARTS for k in doc.get(part, {})})
     rows = []
     for key in keys:
-        edits = hand_edits_for(plugin, key)
-        if reaches_edge(edits, grid_of(key)):
-            rows.append((key, edits))
+        held = build_pins(hand_edits_for(plugin, key), grid_of(key))
+        if held:
+            rows.append((key, held))
     return repr(rows)
 
 

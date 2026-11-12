@@ -3,6 +3,7 @@
 #include "game_calls_internal.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -626,6 +627,37 @@ float DistanceToLanding(void* other) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+// Where each actor stood as it died (runtime FormID -> x, y, z). Death hook thread and game thread.
+std::mutex g_deathSpotsLock;
+std::map<std::uint32_t, std::array<float, 3>> g_deathSpots;
+
+void NoteDeathSpot(void* actor) {
+    if (!actor) return;
+    const std::array<float, 3> at = {RefPositionAxis(PapyrusVm(), actor, 0), RefPositionAxis(PapyrusVm(), actor, 1),
+                                      RefPositionAxis(PapyrusVm(), actor, 2)};
+    const std::lock_guard<std::mutex> hold(g_deathSpotsLock);
+    g_deathSpots[FormIdOf(actor)] = at;
+}
+
+// 🛑 A TES3 corpse lies where its actor died; Skyrim's ragdoll can slide or drop far from it (Arpk Temple: the
+// demon king's body fell ~1050 under the floor, so his script's `GetDistance Player <= 800` never held). Distance
+// from a dead actor is measured from its death spot; -1 when none was seen.
+float DistanceFromDeathSpot(void* dead, void* other) {
+    std::array<float, 3> at;
+    {
+        const std::lock_guard<std::mutex> hold(g_deathSpotsLock);
+        const auto it = g_deathSpots.find(FormIdOf(dead));
+        if (it == g_deathSpots.end()) return -1.0f;
+        at = it->second;
+    }
+    if (!other) return -1.0f;
+    if (PlaceOf(other) != PlaceOf(dead)) return std::numeric_limits<float>::max();
+    const float dx = RefPositionAxis(PapyrusVm(), other, 0) - at[0];
+    const float dy = RefPositionAxis(PapyrusVm(), other, 1) - at[1];
+    const float dz = RefPositionAxis(PapyrusVm(), other, 2) - at[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 // A reference Skyrim has not loaded stands in another cell, where OpenMW's
 // GetDistance answers FLT_MAX: 0 would pass every `GetDistance < x` test.
 // A player whose script move is landing stands where it lands, as in OpenMW.
@@ -635,6 +667,8 @@ float Distance(const std::string& from, const std::string& to) {
     void* player = PlayerRef();
     const float landing = a == player ? DistanceToLanding(b) : b == player ? DistanceToLanding(a) : -1.0f;
     if (landing >= 0.0f) return landing;
+    const float fromDeath = IsDead(a) ? DistanceFromDeathSpot(a, b) : IsDead(b) ? DistanceFromDeathSpot(b, a) : -1.0f;
+    if (fromDeath >= 0.0f) return fromDeath;
     const float apart = DistanceBetween(a, b);
     return apart < 0.0f ? std::numeric_limits<float>::max() : apart;
 }

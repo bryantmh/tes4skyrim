@@ -94,8 +94,8 @@ import struct
 import logging
 
 from core.navmesh_options import edge_pins_only, keep_flood, navmesh_plugin
-from ..base.navmesh_pins import (apply_hand_edits, cell_key, digest,
-                                 hand_edits_for, reaches_edge)
+from ..base.navmesh_pins import (apply_hand_edits, build_pins, cell_key, digest,
+                                 hand_edits_for)
 from ..base.text_reader import get_int, get_float, get_str, get_formid
 from . import native_loader
 from .lookup_grid import build_navmesh_grid
@@ -949,8 +949,10 @@ def cell_pins(rec, cell_rec):
     if not key:
         return {}, ''
     edits = hand_edits_for(plugin, key)
-    if edge_pins_only() and not reaches_edge(edits, grid):
-        return {}, ''
+    if edge_pins_only():
+        edits = build_pins(edits, grid)
+        if not edits:
+            return {}, ''
     return edits, digest(plugin, key)
 
 
@@ -1143,11 +1145,12 @@ def convert_PGRD(rec: dict, writer=None,
     flood_graph = [] if keep_flood() else None
     if seeded and flood_graph is not None:
         flood_graph.append((list(points), list(edges)))
+    flood_from = list(edge_seeds or ()) + list(cell_pins(rec, cell_rec)[0].get('nodes', ()) if pins else ())
     verts3d, tris, ledges, geom_cached, geom_key = _cell_geometry(
         rec, cell_fid, points, edges, origin_x, origin_y, is_exterior,
         land_rec, refr_recs, base_model_by_fid, door_fids, doors, geom_cache,
         cell_rec=cell_rec, lone=lone, obstacles=obstacles,
-        flood=(tuple(map(tuple, edge_seeds or ())),) if is_exterior and not seeded else (), pins=pins,
+        flood=(tuple(map(tuple, flood_from)),) if is_exterior and not seeded else (), pins=pins,
         flood_out=None if seeded else flood_graph)
     if verts3d is None or len(verts3d) < 3 or not tris:
         return None, None

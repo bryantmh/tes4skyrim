@@ -109,13 +109,41 @@ static double winding(const std::vector<double>& t, double px, double py, double
     return sum / (4.0 * 3.14159265358979323846);
 }
 
-bool Ground::enclosed(double x, double y, double z) const {
-    if (!solids) return false;
-    for (const Solid& s : *solids)
-        if (s.box[0] <= x && x <= s.box[3] && s.box[1] <= y && y <= s.box[4] && s.box[2] <= z && z <= s.box[5]
-            && winding(s.tris, x, y, z) >= 0.5)
-            return true;
+// Plan bucket size of SolidSet::cells, and of each object's own face index.
+static constexpr double kSolidBucket = 512.0, kSolidFaceBucket = 64.0;
+
+static long long solid_key(long long bx, long long by) { return bx * 1000003LL + by; }
+
+void SolidSet::index() {
+    cells.clear();
+    for (size_t i = 0; i < items.size(); ++i) {
+        Solid& s = items[i];
+        s.grid.build(s.tris.data(), s.tris.size() / 9, kSolidFaceBucket);
+        for (long long bx = (long long)std::floor(s.box[0] / kSolidBucket);
+             bx <= (long long)std::floor(s.box[3] / kSolidBucket); ++bx)
+            for (long long by = (long long)std::floor(s.box[1] / kSolidBucket);
+                 by <= (long long)std::floor(s.box[4] / kSolidBucket); ++by)
+                cells[solid_key(bx, by)].push_back((int)i);
+    }
+}
+
+bool SolidSet::enclosed(double x, double y, double z) const {
+    auto it = cells.find(solid_key((long long)std::floor(x / kSolidBucket), (long long)std::floor(y / kSolidBucket)));
+    if (it == cells.end()) return false;
+    std::vector<double> zs;
+    for (int i : it->second) {
+        const Solid& s = items[(size_t)i];
+        if (!(s.box[0] <= x && x <= s.box[3] && s.box[1] <= y && y <= s.box[4] && s.box[2] <= z && z <= s.box[5]))
+            continue;
+        bucket_heights(s.grid, x, y, zs);
+        if (std::none_of(zs.begin(), zs.end(), [z](double h) { return h > z; })) continue;
+        if (winding(s.tris, x, y, z) >= 0.5) return true;
+    }
     return false;
+}
+
+bool Ground::enclosed(double x, double y, double z) const {
+    return land && land->g && solids && solids->enclosed(x, y, z);
 }
 
 Soups gather_cell(const std::vector<PlacedRef>& refs, const Land* land, const double* water_z) {
@@ -134,7 +162,8 @@ Soups gather_cell(const std::vector<PlacedRef>& refs, const Land* land, const do
         if (!r.door) solids.push_back(solid_of(w, b));
     }
     Soups S;
-    S.solids = std::move(solids);
+    S.solids.items = std::move(solids);
+    S.solids.index();
     walk_faces.insert(walk_faces.end(), block_faces.begin(), block_faces.end());
     split_by_slope(walk_faces, S.walk, &S.block);
     split_by_slope(door_faces, S.walk, nullptr);

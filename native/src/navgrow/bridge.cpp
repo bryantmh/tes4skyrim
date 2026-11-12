@@ -17,10 +17,6 @@ namespace navgrow {
 using Box = std::array<double, 6>;
 using Key = std::pair<int, int>;
 
-// How far above its floor a generated point is tested for lying inside an object: a point standing ON a
-// rock's top sits on that rock's surface, where the enclosure test reads half in.
-constexpr double kEnclosedLift = 8.0;
-
 bool Ground::blocked(double x, double y, double z, double ux, double uy) const {
     return geo.wall_at(x, y, ux, uy, -uy, ux, z + P().RIBBON_GROW_SLAB_Z_BOTTOM,
                        z + P().AGENT_HEIGHT, P().RIBBON_GROW_SLAB_DEPTH,

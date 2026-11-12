@@ -38,6 +38,8 @@ Rules, with the CK message each mirrors:
   DOOR_XNDP_BAD_TRI  XNDP triangle index out of range for that navmesh
   NAVI_MISSING       "NavmeshInfo refers to form that does not exist"
                      / "refers to a form that is not a navmesh"
+  NAVI_EDGE_LINKS    NVMI Edge Links differ from the meshes the navmesh's own
+                     NVNM edge links reach (the vanilla contract, navi.py)
   TRI_COUNT_WARN     uNavmeshTriangleCountWarnThreshold (3500 exterior /
                      5000 interior) — the CK's own audit warning.
 
@@ -355,29 +357,42 @@ def check_counts(nm):
 # ---------------------------------------------------------------------------
 
 def _parse_navi_meshes(body):
-    """FormIDs registered by the NAVI's NVMI entries.
+    """[(navmesh FormID, set of NVMI Edge Link FormIDs)] of the NAVI's NVMI entries.
 
-    One NVMI subrecord per navmesh; the navmesh FormID is the FIRST field
-    (offset 0) — see tes5_import/navmesh/navi.py for the full layout.  We only
-    need that field, so the rest of the entry is not parsed.
+    Layout: tes5_import/navmesh/navi.py (FormID, flags, centroid, preferred %, then the Edge Link count).
     """
-    fids = []
+    out = []
     for sig, data in _iter_subrecords(body):
-        if sig == 'NVMI' and len(data) >= 4:
-            fids.append(struct.unpack_from('<I', data, 0)[0])
-    return fids
+        if sig == 'NVMI' and len(data) >= 28:
+            n = struct.unpack_from('<I', data, 24)[0]
+            out.append((struct.unpack_from('<I', data, 0)[0], set(struct.unpack_from('<%dI' % n, data, 28))))
+    return out
+
+
+def _stale_edge_links(fid, listed, nm):
+    """A NAVI_EDGE_LINKS finding when NVMI's Edge Links differ from the meshes nm's NVNM links reach."""
+    reach = {lmesh for _t, lmesh, _tri in nm.edge_links} - {fid}
+    if listed == reach:
+        return None
+    return ('NAVI_EDGE_LINKS', 'navmesh %08X: NVMI lists %s, its NVNM links reach %s -- the engine cannot cross to %s'
+            % (fid, sorted('%08X' % f for f in listed), sorted('%08X' % f for f in reach),
+               sorted('%08X' % f for f in reach - listed)))
 
 
 def check_navi(navi_bodies, by_formid, local_mask=None):
-    """NavmeshInfo refers to a form that does not exist / is not a navmesh."""
+    """NavmeshInfo refers to a form that does not exist / is not a navmesh, or lists stale Edge Links."""
     out = []
     seen = set()
     for body in navi_bodies:
-        for fid in _parse_navi_meshes(body):
+        for fid, listed in _parse_navi_meshes(body):
             if fid in seen:
                 continue
             seen.add(fid)
-            if fid not in by_formid:
+            if fid in by_formid:
+                stale = _stale_edge_links(fid, listed, by_formid[fid])
+                if stale:
+                    out.append(stale)
+            else:
                 # A NAVI override legitimately registers a master's navmeshes.
                 if local_mask is not None and (fid >> 24) not in local_mask:
                     continue

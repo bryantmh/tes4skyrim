@@ -1103,6 +1103,11 @@ bool PlayerWalkStuck() {
     return Walk().steered && Walk().stillTicks >= kSteerStallTicks;
 }
 
+// Whether an AI-driven walk has stopped making headway (counted by AiWalkSettledNear).
+bool PlayerWalkStalled() {
+    return !Walk().steered && Walk().settleTicks <= 0 && Walk().stillTicks >= kSteerStallTicks;
+}
+
 // TEMP (follower-freeze diag): the player's ExtraFollower list, which the
 // Follow procedure (0x4161f0) spaces each follower behind the nearer ones by.
 using FollowerListFn = void* (*)(void* extraList);
@@ -1173,11 +1178,40 @@ void PlayerWalkStop() {
     SetPlayerAiDriven(false);
 }
 
+// 🛑 The engine's Travel arrives within its own radius, a little wider than kArrivedDistance (sohn_home: it
+// stopped the player 132 from the crevice landing and the walk waited for good). An AI walk whose player
+// has stood still kSteerStallTicks within kSettledArrival of its end has arrived too.
+constexpr float kSettledArrival = 2.0f * kArrivedDistance;
+
+bool AiWalkSettledNear(PendingWalk& walk) {
+    void* player = PlayerRef();
+    if (!player) return false;
+    const float px = RefPositionAxis(PapyrusVm(), player, 0), py = RefPositionAxis(PapyrusVm(), player, 1);
+    if (std::hypot(px - walk.fromX, py - walk.fromY) > kSteerHeadway) {
+        walk.fromX = px;
+        walk.fromY = py;
+        walk.stillTicks = 0;
+        return false;
+    }
+    return ++walk.stillTicks >= kSteerStallTicks && std::hypot(px - walk.x, py - walk.y) <= kSettledArrival;
+}
+
 // Whether the walk has arrived, which ends it.
 bool PlayerWalkDone() {
     PendingWalk& walk = Walk();
     if (walk.settleTicks > 0) {
-        if (--walk.settleTicks == 0) AiTravelTo(kPlayerId, walk.x, walk.y, walk.z);
+        if (--walk.settleTicks > 0) return false;
+        // 🛑 A player already at the walk's end gets no Travel: one started and stopped in the same tick is
+        // still pending at a load door used next, and carries the player into the new cell at the old x/y
+        // (sohn_home: fell through Ice Flow at the crevice's coordinates).
+        void* player = PlayerRef();
+        if (player && std::hypot(RefPositionAxis(PapyrusVm(), player, 0) - walk.x,
+                                 RefPositionAxis(PapyrusVm(), player, 1) - walk.y) <= kArrivedDistance) {
+            Log("ai: the player already stands at the walk's end -- no travel package");
+            PlayerWalkStop();
+            return true;
+        }
+        AiTravelTo(kPlayerId, walk.x, walk.y, walk.z);
         return false;
     }
     if (++walk.ticks % kWalkLogTicks == 0) {
@@ -1191,6 +1225,13 @@ bool PlayerWalkDone() {
             RefPositionAxis(PapyrusVm(), player, 2), pack ? FormIdOf(pack) : 0,
             foe ? FormIdOf(foe) : 0, marker ? RefPositionAxis(PapyrusVm(), marker, 0) : 0.0f,
             marker ? RefPositionAxis(PapyrusVm(), marker, 1) : 0.0f);
+    }
+    if (!walk.steered && AiWalkSettledNear(walk)) {
+        Log("ai: the player's travel stopped %g from the walk's end -- arrived",
+            std::hypot(RefPositionAxis(PapyrusVm(), PlayerRef(), 0) - walk.x,
+                       RefPositionAxis(PapyrusVm(), PlayerRef(), 1) - walk.y));
+        PlayerWalkStop();
+        return true;
     }
     if (walk.steered ? !ReachedSteerPoint(walk) : !ReachedAiDestination(kPlayerId)) {
         if (walk.backing) SteerTick(true, walk.startX, walk.startY, walk.startX, walk.startY);
@@ -1209,6 +1250,7 @@ void InstallAiCalls(GameHooks& hooks) {
     hooks.playerWalk = PlayerWalkTo;
     hooks.playerSteer = PlayerSteerTo;
     hooks.playerWalkStuck = PlayerWalkStuck;
+    hooks.playerWalkStalled = PlayerWalkStalled;
     hooks.playerWalkDone = PlayerWalkDone;
     hooks.playerWalkStop = PlayerWalkStop;
     g_questGetAlias = Native<GetAliasFn>("Quest.GetAlias",

@@ -40,6 +40,8 @@ end
 # His authored run-over is StartCombat on the player until he is within 150.
 case gargart_cell
 until 300 GetJournalIndex A_V_Gargart == 1
+# A Skyrim melee fighter can hold at his attack range (~230) instead of closing to 150: meet him (rule 7).
+approach 0552AFC2
 until 6000 "GargartRakhissh01"->GetDistance player <= 150
 wait 30
 talk GargartRakhissh01

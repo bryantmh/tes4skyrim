@@ -26,8 +26,10 @@ end
 # The guard at the northern edge saw Mauragin pass, and a group after him. He
 # stands on a steep slope where a dropped player can slide out of his range
 # and into the child's, whose greeting skips ahead, so once the cell loads the
-# player stands just above him, read off his position.
+# player stands just above him, read off his position. Snow wolves (LandSchneewolf01) roam the slope and attack
+# on arrival; the guards then go after them (OpenMW's guard rule), so the player fights them off.
 case sohn_guard
+defend
 run
 player->Position 136538 -35112 722 180
 until 300 "NordrandWache01"->GetDistance player < 4000
@@ -52,7 +54,9 @@ end
 # A child wants to be an adventurer too, and runs off after a wolf.
 case sohn_child
 # Steered up the cliff path with the child following: big governor steps stick the player and lose the child.
+# The slope's snow wolves attack on arrival (see sohn_guard): fought off from the start.
 pace 10
+defend
 run
 player->Position 135607 -37130 74 0
 until 600 MenuMode == 1
@@ -218,6 +222,8 @@ end
 
 # Irfl in the Upper Mines has seen the group of dwarves.
 case sohn_irfl
+# Creatures of the mines may attack on arrival; they are fought off.
+defend
 run
 player->PositionCell 1618 -3150 -1015 0 "Upper Mines"
 until 600 MenuMode == 1

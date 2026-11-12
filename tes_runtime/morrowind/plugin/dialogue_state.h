@@ -316,6 +316,8 @@ struct GameHooks {
     // walk when `walking`; `playerWalkStuck` is true once it stops making headway.
     void (*playerSteer)(float x, float y, float z, bool walking) = nullptr;
     bool (*playerWalkStuck)() = nullptr;
+    // A `walk` (AI driven) whose player has stopped making headway short of its end.
+    bool (*playerWalkStalled)() = nullptr;
     bool (*playerWalkDone)() = nullptr;
     void (*playerWalkStop)() = nullptr;
     void (*aiActivate)(const std::string& actor,

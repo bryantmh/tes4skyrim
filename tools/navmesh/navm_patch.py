@@ -29,7 +29,7 @@ from scipy.spatial import cKDTree
 from core.plugin_masters import masters_from_export_header
 from output_layout import plugin_esm
 from tes5_import.base.tes5_reader import (
-    FLAG_COMPRESSED, GRP_HDR, REC_HDR, SUB_HDR, masters, walk,
+    FLAG_COMPRESSED, GRP_HDR, REC_HDR, SUB_HDR, masters, subrecords, walk,
 )
 from tes5_import.base.writer import pack_subrecord
 from tes5_import.navmesh.edge_links import (
@@ -72,23 +72,15 @@ class Navm:
     """One NAVM record located in the file, with its decoded geometry."""
 
     __slots__ = ('offset', 'end', 'fid', 'cell', 'wrld', 'grid',
-                 'nv', 'prefix', 'suffix')
+                 'nv', 'blob', 'prefix', 'suffix')
 
     def __init__(self, rec, raw, cell, wrld):
-        """Decode the record at `rec`, splitting its NVNM from its other subs."""
-        blob, self.prefix, self.suffix = extract_nvnm(raw[rec.offset:rec.end])
+        """Decode the record at `rec`, splitting its NVNM (kept as stored, edge links and all) from its other subs."""
+        self.blob, self.prefix, self.suffix = extract_nvnm(raw[rec.offset:rec.end])
         self.offset, self.end, self.fid = rec.offset, rec.end, rec.form_id
         self.cell, self.wrld = cell, wrld
-        self.nv = Nvnm(blob)
+        self.nv = Nvnm(self.blob)
         self.grid = grid_of(self.nv) if wrld else None
-
-    def blob(self):
-        """This record's NVNM re-emitted from its decode, geometry unchanged."""
-        adj = [tuple(t[3:6]) for t in self.nv.tris]
-        return pack_nvnm(self.nv.verts, [tuple(t[:3]) for t in self.nv.tris],
-                         adj, [t[6] for t in self.nv.tris], self.nv.wrld,
-                         self.nv.cell, *(self.grid or (0, 0)), bool(self.wrld),
-                         door_tris=self.nv.doors, navm_fid=self.fid)
 
     def repack(self, view):
         """This record's bytes carrying `view`'s blob."""
@@ -204,7 +196,7 @@ def restitch(target, ours, neighbours):
         nb = neighbours.get((gx + dx, gy + dy))
         if nb is None:
             continue
-        theirs = NavMeshView(nb.fid, nb.blob())
+        theirs = NavMeshView(nb.fid, nb.blob)
         drop_links_to(theirs, target.fid)
         coord = seam_plane(gx, gy, dx, dy, axis)
         for (ea, eb) in match_seam(border_edges(ours, axis, coord),
@@ -367,6 +359,42 @@ def xndp_edits(raw, placed):
     return out
 
 
+def reached_meshes(raw, fids):
+    """`{NAVM FormID: set of other NAVMs its NVNM edge links reach}` for the records in `fids`."""
+    out = {}
+    for rec, _stack in walk(raw, b'NAVM', bodies=()):
+        if rec.form_id in fids:
+            out[rec.form_id] = {lk[1] for lk in Nvnm(extract_nvnm(raw[rec.offset:rec.end])[0]).links} - {rec.form_id}
+    return out
+
+
+def nvmi_relinked(data, reach):
+    """One NVMI subrecord body with its Edge Links set to `reach[navmesh]`, unchanged if not listed.
+
+    Layout (tes5_import/navmesh/navi.py): FormID, flags, centroid, preferred %, Edge Link count + FormIDs.
+    """
+    fid = struct.unpack_from('<I', data, 0)[0]
+    if fid not in reach:
+        return data
+    n = struct.unpack_from('<I', data, 24)[0]
+    links = sorted(reach[fid])
+    return data[:24] + struct.pack('<I%dI' % len(links), len(links), *links) + data[28 + 4 * n:]
+
+
+def navi_edits(raw, reach):
+    """`(offset, end, bytes)` rewriting the NAVI's NVMI Edge Links of the meshes in `reach` (vanilla rule:
+    Edge Links = the distinct meshes the NVNM edge links reach). The record is written uncompressed.
+    """
+    out = []
+    for rec, _stack in walk(raw, b'NAVI'):
+        body = b''.join(pack_subrecord(tag.decode('latin1'), nvmi_relinked(data, reach) if tag == b'NVMI' else data)
+                        for tag, data in subrecords(rec.body))
+        head = bytearray(raw[rec.offset:rec.offset + REC_HDR])
+        struct.pack_into('<II', head, 4, len(body), rec.flags & ~FLAG_COMPRESSED)
+        out.append((rec.offset, rec.end, bytes(head) + body))
+    return out
+
+
 def patch(plugin, cell_fid, cell_name, result, export=None,
           out_root='output'):
     """Write one correction's `result` mesh into `plugin`'s built ESM.
@@ -394,8 +422,11 @@ def patch(plugin, cell_fid, cell_name, result, export=None,
                          'can re-split it' % (cell_name, got, plugin)}
     edits, placed = got
     doors = xndp_edits(raw, placed)
+    patched = splice(raw, edits + doors)
+    rewritten = {struct.unpack_from('<I', raw, start + 12)[0] for start, _end, _blob in edits}
+    patched = splice(patched, navi_edits(patched, reached_meshes(patched, rewritten)))
     with open(esm, 'wb') as fh:
-        fh.write(splice(raw, edits + doors))
+        fh.write(patched)
     return {'esm': esm, 'navm': ', '.join('%08X' % n.fid for n in found),
             'tris': len(tris), 'verts': len(verts),
             'restitched': len(edits) - len(found), 'doors': len(doors)}

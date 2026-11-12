@@ -8,11 +8,14 @@
 
 # The two guards in front of the theater greet the player and come along. The
 # second enables himself only while the journal is still 2, which the first's
-# greeting moves on, so the player arrives 1500 units out, as a walker would,
-# and the guards' scripts run before the approach.
+# greeting moves on, so the player arrives ~1200 units out, as a walker would,
+# and the guards' scripts run before the approach. The spot is on the navmesh (a walk needs a start triangle).
 case theater_guards
+# The thieves' guild fight follows the player out (DiebBoernAufbrausende, DiebGardeshSilberzunge): a player in
+# combat runs no travel package, so the walk below never starts.
+defend
 run
-player->Position -343 47700 220 0
+player->Position -776 48005 239 0
 wait 120
 # Walked in, not placed: Wache02 greets within 500 and Wache01 within 400, so an approaching player meets Wache02
 # first ("we will accompany you", journal 2 -> 3 and both follow). The walk stops on its own route inside

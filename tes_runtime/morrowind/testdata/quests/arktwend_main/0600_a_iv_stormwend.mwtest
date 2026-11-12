@@ -129,8 +129,8 @@ end
 
 # Back in the quarters, Markus pays what reward he can, then leaves for Bregen.
 case storm_markus_reward
-run
-player->PositionCell 2556 2994 13592 180 "Rostrum"
+# His reward greeting needs the player within 200 of him; he is not always at the same spot in the quarters.
+approach 05366940
 until 600 GetJournalIndex A_IV_Stormwend == 100
 wait 60
 bye

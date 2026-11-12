@@ -176,7 +176,8 @@
     <div><i style="background:#4a5a6a"></i>adjacent cell mesh</div>
     <div><i style="background:#3ba0ff"></i>pathgrid / <i
         style="background:#b46cff"></i>in mesh mode</div>
-    <div><i style="background:#ff8c1a"></i>generated flood graph</div>
+    <div><i style="background:#ff8c1a"></i>generated flood graph / <i
+        style="background:#ff3cff"></i>pinned flood node (<kbd>n</kbd>)</div>
     <div><i style="background:#7ee0a0"></i>edited / added</div>
     <div><i style="background:#3fc8e0"></i>frozen (pinned) — <kbd>u</kbd> unpins</div>
     <div><i style="background:#e0a33c"></i>node off mesh</div>
@@ -1009,6 +1010,7 @@ async function loadMesh(plugin, cell, keepCamera) {
   S = { off_nodes: [], bad_edges: [] };
   buildPathgrid();
   buildFlood(d.flood);
+  buildPinNodes(d.pin_nodes);
   applyScope();
   applyVisibility();
   setMode('tri');
@@ -1562,7 +1564,40 @@ function buildClick(ev) {
   return true;
 }
 
+/* Node-pin mode (`n`): a click on the ground pins a flood node there -- the cell's generated flood
+   also starts from it -- and a click within NODE_PICK of a pinned one removes it.  It changes the
+   build, so the cell re-opens from a fresh build. */
+let mNodePin = false;
+const NODE_PICK = 64;
+
+async function nodePinClick(ev) {
+  const pt = pickSurface(ev);
+  if (!pt) { showError('Click the ground to pin a node.'); return; }
+  const near = (M.pin_nodes || []).some(p => Math.hypot(p[0] - pt.x, p[1] - pt.y) <= NODE_PICK);
+  let d;
+  try {
+    d = await (await fetch('/node_pin?plugin=' + encodeURIComponent(M.plugin) +
+                           '&cell=' + encodeURIComponent(M.cell), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ point: [pt.x, pt.y, pt.z], remove: near })
+    })).json();
+  } catch (err) { showError('node pin FAILED: ' + err); return; }
+  if (d.error) { showError(d.error); return; }
+  refreshPinned();
+  await loadMesh(M.plugin, M.cell, true);
+}
+
+function buildPinNodes(nodes) {
+  if (!nodes || !nodes.length) return;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(nodes.flat(), 3));
+  layers.pin_nodes = new THREE.Points(g, new THREE.PointsMaterial(
+    { color: 0xff3cff, size: 14, sizeAttenuation: false }));
+  scene.add(layers.pin_nodes);
+}
+
 function meshPointerDown(ev) {
+  if (mNodePin) { nodePinClick(ev); return; }
   if (mBuild && buildClick(ev)) return;
   const v = pickVert(ev);
   if (v >= 0) {
@@ -1630,9 +1665,11 @@ function pinTxt() {
   /* A snapshot is frozen geometry the pins never touched, so claiming they
      are APPLIED or DISABLED there would describe a mesh nobody is looking at. */
   if (showSaved()) return '';
-  const n = (M.pin_cuts || 0) + (M.pin_frozen || 0) + (M.pin_voids || 0);
+  const nodes = (M.pin_nodes || []).length;
+  const n = (M.pin_cuts || 0) + (M.pin_frozen || 0) + (M.pin_voids || 0) + nodes;
   if (!n) return ' · <span class="warn">no pins committed</span>';
   const parts = [];
+  if (nodes) parts.push(`${nodes} flood node` + (nodes > 1 ? 's' : ''));
   if (M.pin_frozen || M.pin_voids)
     parts.push(`${M.pin_frozen} frozen tris over ${M.pin_voids} replaced`);
   if (M.pin_cuts) parts.push(`${M.pin_cuts} cut` + (M.pin_cuts > 1 ? 's' : ''));
@@ -1684,6 +1721,7 @@ function meshStatus() {
   $('mode').textContent = 'Mesh · ' + M.plugin + ' · ' + M.cell +
     (M.nodes.length === 0 ? ' · NO PATHGRID (nothing to generate from)' : '') +
     (mBuild ? ' · BUILD ' + mRing.length + '/3' : '') +
+    (mNodePin ? ' · NODE PIN (click ground: pin / click a magenta node: unpin)' : '') +
     (mSelVert >= 0 ? ' · vert ' + mSelVert : '') +
     (mSelTri >= 0 ? ' · tri ' + mSelTri : '') +
     (mSnapFrom >= 0 ? ' · welding ' + mSnapFrom : '') +
@@ -2019,6 +2057,12 @@ function meshKey(e) {
   }
   if (e.key === 'u' || e.key === 'U') {
     meshUnpin(e.key === 'U');
+    return true;
+  }
+  if (e.key === 'n') {
+    mNodePin = !mNodePin;
+    el.style.cursor = mNodePin ? 'crosshair' : 'default';
+    status();
     return true;
   }
   if (e.key === 'b') {

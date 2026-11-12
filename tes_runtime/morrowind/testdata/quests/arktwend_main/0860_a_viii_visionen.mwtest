@@ -143,7 +143,6 @@ steer 7052 7017 667
 steer 7044 7638 672
 steer 7051 8416 668
 steer 7051 9109 664
-steer 7065 9170 660
 activate 0563B701
 until 600 GetPCCell "Dwarven Smelter Cave" == 1
 # Along the navmesh: the travel package stands still at the door here.
@@ -194,14 +193,8 @@ end
 # leaves it does Daras's own script, which returns in menu mode, write journal
 # 4 and greet again.
 case dwarves_mao
-# From the lift's foot up the slope to the canyon door, along the shaft's pathgrid.
-steer 3462 4024 -102
-steer 3239 3977 -100
-steer 3140 3904 -102
-steer 3107 3762 -97
-steer 3111 3596 -104
-steer 3128 3327 9
-steer 3113 3216 13
+# From the lift's foot up the slope to the canyon door: one walk, so Daras and the others keep up.
+walk 3113 3216 13
 activate 05D7D816
 until 600 GetPCCell "Subterranean Canyon of Grul" == 1
 walk 5303 6700 12673

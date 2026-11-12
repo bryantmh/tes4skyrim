@@ -321,7 +321,10 @@ int DeathHook(void* sink, const void* event, void* source) {
     const std::uint8_t state = e ? *reinterpret_cast<const std::uint8_t*>(e + ids::kOffDeathState) : 0;
     if (actor) {
         Log("death: %08X state %u", FormIdOf(actor), state);
-        if (state == ids::kDeathStateDying) NoteEngineDeath(FormIdOf(actor));
+        if (state == ids::kDeathStateDying) {
+            NoteEngineDeath(FormIdOf(actor));
+            NoteDeathSpot(actor);
+        }
     }
     return g_death(sink, event, source);
 }

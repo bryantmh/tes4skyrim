@@ -34,7 +34,7 @@ ask assassinated
 expect GetJournalIndex CO_12 == 10
 follow Falco Galenus
 bye
-until 900 GetJournalIndex CO_12 == 20
+until 900 GetJournalIndex CO_12 >= 20
 run
 set TestResult to ( "Falco Galenus"->GetPos x )
 player->SetPos x TestResult
@@ -61,13 +61,7 @@ until 600 GetJournalIndex CO_12 == 100
 console 0654C18C.kill
 follow
 expect "Falco Galenus"->GetHealth > 0
-run
-set TestResult to ( "Falco Galenus"->GetPos x )
-player->SetPos x TestResult
-set TestResult to ( ( "Falco Galenus"->GetPos y ) + 100 )
-player->SetPos y TestResult
-set TestResult to ( ( "Falco Galenus"->GetPos z ) + 20 )
-player->SetPos z TestResult
+approach Falco Galenus
 until 600 "Falco Galenus"->GetDistance player < 400
 talk Falco Galenus
 ask assassinated

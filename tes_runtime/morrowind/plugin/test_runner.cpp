@@ -120,7 +120,18 @@ struct Progress {
     int punches = 0;           // punches the current `punch` step has thrown
     int rests = 0;             // hours the current `rest` step has slept
     int restTries = 0;         // tries since its last sleep that opened no Sleep/Wait menu
+    int rescues = 0;           // times the current `walk` put its slid-off player back on the navmesh
+    bool rescueAsked = false;  // the harness has been asked where to put it
+    int restarts = 0;          // times the current `walk` was issued again because it never started
+    Spot walkFrom;             // where the player stood when the current `walk` was issued
 };
+
+// Times one `walk` may put its player back on the navmesh after a slide off it.
+constexpr int kWalkRescues = 3;
+// Times one `walk` whose player never left its starting spot is issued again, and how far counts as leaving
+// (wide: the player can settle ~40 off a Position before the walk is issued).
+constexpr int kWalkRestarts = 3;
+constexpr float kWalkStarted = 128.0f;
 
 // Ticks between a `punch` step's swings: room for one unarmed attack to land.
 constexpr int kPunchTicks = 45;
@@ -488,6 +499,58 @@ bool Punched(const TestStep& step) {
     return true;
 }
 
+// A `walk` whose player stalled off the navmesh -- slid down a slope past the mesh's edge, where the
+// engine's Travel never moves it again -- is put back on the mesh a little further along its route
+// (the harness picks the point from the built ESM; it answers 'none' when the player stands on the mesh,
+// so a stall on the mesh still fails). True while that is under way; the walk is issued again after.
+// See: docs/commentary/headless_testing.md#quest-runs
+bool RescuedSlide(float x, float y, float z) {
+    if (g_case.rescueAsked) {
+        g_case.rescueAsked = false;
+        float ax = 0.0f, ay = 0.0f, az = 0.0f;
+        std::ifstream in(Env("TES_MW_TEST_RESULTS") + ".answer");
+        if (!(in >> ax >> ay >> az)) {
+            g_case.rescues = kWalkRescues;
+            return false;
+        }
+        Log("test: the player slid off the navmesh -- put back on it at (%g, %g, %g)", ax, ay, az);
+        if (Hooks().playerWalkStop) Hooks().playerWalkStop();
+        Hooks().placeHere("player", ax, ay, az, 0.0f);
+        ++g_case.rescues;
+        g_case.ticksLeft = -1;
+        return true;
+    }
+    if (g_case.rescues >= kWalkRescues || !Hooks().playerWalkStalled || !Hooks().playerWalkStalled() ||
+        !Hooks().position || !Hooks().placeHere) {
+        return false;
+    }
+    const bool inside = Hooks().playerInInterior && Hooks().playerInInterior() && Hooks().playerCell;
+    g_out << "{\"onmesh\":[" << Hooks().position("player", 0) << "," << Hooks().position("player", 1) << ","
+          << Hooks().position("player", 2) << "],\"to\":[" << x << "," << y << "," << z << "],\"cell\":"
+          << Json(inside ? Hooks().playerCell() : "") << "}\n";
+    g_out.flush();
+    g_awaitedAck = ++g_written;
+    g_case.rescueAsked = true;
+    return true;
+}
+
+// A `walk` whose travel package never moved the player from where it was issued is the test framework's
+// failure, not the game's (the engine sometimes leaves a just-filled Travel standing): it is issued again,
+// up to kWalkRestarts times. True when it was.
+bool RestartedWalk() {
+    if (g_case.restarts >= kWalkRestarts || !Hooks().playerWalkStalled || !Hooks().playerWalkStalled() ||
+        !Hooks().position) {
+        return false;
+    }
+    const float px = Hooks().position("player", 0), py = Hooks().position("player", 1);
+    if (std::hypot(px - g_case.walkFrom.x, py - g_case.walkFrom.y) > kWalkStarted) return false;
+    Log("test: the walk never started (player still at %g, %g) -- issuing it again", px, py);
+    if (Hooks().playerWalkStop) Hooks().playerWalkStop();
+    ++g_case.restarts;
+    g_case.ticksLeft = -1;
+    return true;
+}
+
 // `walk x y z`: the player walks to the point in the current cell, as a player
 // would, so what follows or watches the player sees a walk and not a jump. A
 // greeting that opens on the way ends it there, as a player stops to talk.
@@ -508,21 +571,29 @@ bool Walked(const TestStep& step) {
         if (MoveLanding()) return false;
         if (steer) Hooks().playerSteer(x, y, z, std::strcmp(pace, "walk") == 0);
         else Hooks().playerWalk(x, y, z);
+        if (Hooks().position) g_case.walkFrom = {Hooks().position("player", 0), Hooks().position("player", 1), 0.0f};
         g_case.ticksLeft = kWalkTicks;
         return false;
     }
     if (Hooks().playerWalkDone()) {
         g_case.ticksLeft = -1;
+        g_case.rescues = 0;
+        g_case.restarts = 0;
         return true;
     }
     if (Talking()) {
         g_case.ticksLeft = -1;
+        g_case.rescues = 0;
+        g_case.restarts = 0;
         if (Hooks().playerWalkStop) Hooks().playerWalkStop();
         return true;
     }
+    if (!steer && (RestartedWalk() || RescuedSlide(x, y, z))) return false;
     const bool stuck = Hooks().playerWalkStuck && Hooks().playerWalkStuck();
     if (--g_case.ticksLeft > 0 && !stuck) return false;
     g_case.ticksLeft = -1;
+    g_case.rescues = 0;
+    g_case.restarts = 0;
     if (Hooks().playerWalkStop) Hooks().playerWalkStop();
     g_case.error = (stuck ? "steer: the player is stuck short of " : "walk: the player never reached ") +
                    step.text + (Hooks().whereIs ? " -- the player " + Hooks().whereIs("player") : "");
