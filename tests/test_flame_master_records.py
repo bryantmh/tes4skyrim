@@ -269,7 +269,7 @@ def test_own_flame_nif_in_packaged_case_beats_the_masters(export):
         fh.write(b'own')
     asset = str(export / 'Child.esp')
     meshes = os.path.join(asset, 'meshes') + os.sep
-    assert nif_flames._flame_source(asset, meshes, 'firecandleflame.nif') == own
+    assert os.path.samefile(nif_flames._flame_source(asset, meshes, 'firecandleflame.nif'), own)
 
 
 def test_masters_flame_nif_in_packaged_case_is_found(tmp_path):
@@ -284,7 +284,7 @@ def test_masters_flame_nif_in_packaged_case_is_found(tmp_path):
     _header(str(root / 'Child.esp'), ['Base.esm'])
     asset = str(root / 'Child.esp')
     meshes = os.path.join(asset, 'meshes') + os.sep
-    assert nif_flames._flame_source(asset, meshes, 'firecandleflame.nif') == master
+    assert os.path.samefile(nif_flames._flame_source(asset, meshes, 'firecandleflame.nif'), master)
 
 
 def test_flame_nif_lookup_falls_back_to_the_master(export):
