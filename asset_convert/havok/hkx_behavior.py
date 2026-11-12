@@ -966,6 +966,11 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
     layout = project_layout(name, namespace)
     proj_dir = os.path.join(out_root, layout['fs_dir'])
     clips = classify_clips(creature_dir)
+    if not clips.get('idle'):
+        available = ', '.join(sorted(f for f in os.listdir(creature_dir)
+                                     if f.lower().endswith('.kf')))
+        raise ValueError(f'creature has no idle clip: {creature_dir}; '
+                         f'available clips: {available or "none"}')
     skeleton_nif = _skeleton_nif(creature_dir)
     bones = generate_skeleton_hkx(
         skeleton_nif, os.path.join(proj_dir, 'character assets',

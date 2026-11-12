@@ -354,7 +354,7 @@ class TestProjectFilePaths:
         creature = tmp_path / 'Rat'
         creature.mkdir()
         (creature / 'Skeleton.NIF').write_bytes(b'')
-        monkeypatch.setattr(hkx_behavior, 'classify_clips', lambda folder: {})
+        monkeypatch.setattr(hkx_behavior, 'classify_clips', lambda folder: {'idle': 'idle.kf'})
         monkeypatch.setattr(hkx_behavior, 'generate_skeleton_hkx', _stop_with_path)
         with pytest.raises(LookupError) as seen:
             hkx_behavior.generate_creature_project(
