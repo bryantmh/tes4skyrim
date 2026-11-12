@@ -5370,8 +5370,54 @@ separate causes:
   grows 40% over the single-thread run. The heap is ~16% of single-thread time
   (`RtlAllocateHeap` 10%, `RtlFreeHeap` 6%), spread over GEOS and many navgrow
   callers (none above 1.5%), and a job touches ~48,000 fresh pages (~190 MB).
-  Heap/page-fault contention fits; it is not yet confirmed by a wait trace
-  (WPR needs admin).
+  Confirmed below: it is the process heap's lock.
+
+<a id="allocator"></a>**The process heap's lock bounded the thread pool; navgrow
+allocates through mimalloc** (`native/src/navgrow/alloc.cpp`, vendored
+`external/mimalloc/` v2.1.7, MIT). Measured on 600 Nehrim jobs, cold cache, one process:
+
+| threads | 8 | 12 | 16 | 20 | 24 | 30 |
+|---|---|---|---|---|---|---|
+| jobs/s (process heap) | 12.7 | **16.1** | 15.4 | 13.7 | 11.4 | 10.4 |
+
+Throughput peaked at 12 threads and FELL as threads were added, which a
+hardware limit does not do. The same 24 threads as two processes of 12 ran
+27.7 jobs/s against 11.4 in one process, so the bound was per process. A stack
+sampler over every thread at 30 threads (no WPR: it needs admin; an
+out-of-process `SuspendThread` + `StackWalk64` sampler over a `/Zi` build)
+found 65% of all time inside navgrow asleep in `ZwWaitForAlertByThreadId`
+under `RtlEnterCriticalSection` from `RtlAllocateHeap`/`RtlFreeHeap`: one
+lock, entered through `malloc`/`free`. About 80% of those waits came from
+navgrow's own `new`/`delete` (growing vectors, hash tables, `EdgeOwners`,
+`gather_cell`'s soups, `TriGrid` teardown), the rest from GEOS.
+
+`alloc.cpp` compiles mimalloc into the module and replaces only this module's
+`operator new`/`delete` (navgrow calls no `malloc` directly); GEOS and Python
+keep their own allocators. mimalloc gives each thread its own heap, frees
+from another thread safely, and returns freed pages to the OS.
+A process pool would also remove the lock but holds a copy of the collision
+per process, so it was not taken.
+
+mimalloc's default 10 ms delay before returning freed pages raised the pool's
+peak; `alloc.cpp` sets `mi_option_purge_delay` to 0. At 30 threads on the
+same 600 jobs (peak above the level at pool start):
+
+| build | time | peak commit | peak working set |
+|---|---|---|---|
+| process heap | 58.4s | +4.75 GB | +4.60 GB |
+| mimalloc, default purge delay | 25.6s | +6.71 GB | +5.90 GB |
+| mimalloc, purge delay 0 | 25.5s | +5.83 GB | +4.83 GB |
+
+Committing on demand as well (`eager_commit`/`arena_eager_commit` 0) changed
+nothing. After the pool, commit and working set sit slightly BELOW the
+process heap's (4.83 vs 5.06 GB, 3.31 vs 3.37 GB).
+
+<a id="biggest-first"></a>**Starting the costliest jobs first was tried and
+reverted.** With the process heap, sorting the pool's jobs by pathgrid points x
+placed refs (doubled with LAND) cut the 600 jobs at 30 threads from 57.7s to
+42.6s: contention stretched each job, so a large cell started last ran alone.
+With mimalloc it changed nothing (24.7s sorted, 24.6s natural), and it would
+have edited `pool.py`, which re-keys every navmesh cache.
 
 **A dense cell is bound by GEOS overlays, not by the port.** Nehrim
 `00230BF2` took 16.7s natively against 52.7s in Python: stage timers on a

@@ -34,6 +34,12 @@ MODULES = {
 }
 
 
+#: Module name -> include folders of the vendored libraries it compiles in, relative to the repo root.
+INCLUDES = {
+    '_navgrow_native': ['external', 'external/mimalloc/include'],
+}
+
+
 def module_files(src_dir, exts=('.cpp',)):
     """The files in `src_dir` with one of `exts`, sorted by name."""
     return sorted(os.path.join(src_dir, f) for f in os.listdir(src_dir)
@@ -88,10 +94,16 @@ def find_unix_compiler():
     return None
 
 
+def module_includes(name):
+    """Absolute include folders of module `name`'s vendored libraries."""
+    return [os.path.join(ROOT, d) for d in INCLUDES.get(name, ())]
+
+
 def _build_one_msvc(name, srcs, toolchain, py_inc, np_inc, py_lib, target, obj_dir):
     """Compile and link `srcs` into `target` with MSVC; returns the exit code."""
     vcvars = toolchain
     quoted = ' '.join(f'"{s}"' for s in srcs)
+    extra = ''.join(f'/I"{d}" ' for d in module_includes(name))
     # /O2 optimise, /GL whole-program, /fp:precise so the compiler may NOT
     # reassociate float ops -- the geometry predicates compare against exact
     # thresholds and reassociation would change which branches are taken.
@@ -117,7 +129,7 @@ def _build_one_msvc(name, srcs, toolchain, py_inc, np_inc, py_lib, target, obj_d
         implib = os.path.join(obj_dir, name + '.lib')
         fh.write(
             f'cl /nologo /LD /O2 /GL /EHsc /std:c++17 /fp:precise /W3 '
-            f'/I"{py_inc}" /I"{np_inc}" '
+            f'/I"{py_inc}" /I"{np_inc}" {extra}'
             f'/Fo"{obj_dir}\\\\" /Fe:"{target}" {quoted} '
             f'/link /LIBPATH:"{py_lib}" /IMPLIB:"{implib}" '
             f'/OPT:REF /OPT:ICF\n')
@@ -138,6 +150,7 @@ def _build_one_unix(name, srcs, toolchain, py_inc, np_inc, target, obj_dir):
     cmd = [
         compiler, '-shared', '-fPIC', '-O2', '-std=c++17', '-Wall',
         '-I', py_inc, '-I', np_inc,
+        *[a for d in module_includes(name) for a in ('-I', d)],
         '-o', target, *srcs,
     ]
     print('building', target)
