@@ -884,7 +884,7 @@ that owns this, not the pool.
 
 **Code:** `find_nocase`, `folder_names` in `asset_convert/game_paths.py`;
 `ensure_ltex_normals`, `_Listings` in `asset_convert/texture/landscape_normals.py`;
-four more callers, listed at the end of this section
+seven more callers, listed at the end of this section
 
 A record keeps its author's mixed case, and the file it names may be spelled
 otherwise on disk: a BSA stores every internal path lowercase and
@@ -943,6 +943,16 @@ Four more lookups ask it:
 `audio_converter._voice_root` with `say_durations.scan_voice_durations`
 (a mod's loose `sound/Voice`), and `hkx_behavior._skeleton_nif`
 (a mod's `Skeleton.NIF`).
+
+Three more ask it for a path that a record or a creature project spells in its
+own case and with backslashes:
+`magic_art.phases_for` with `magic_art.split_effect_meshes` (an MGEF's
+`MagicEffects\Fireball.NIF`, for its [phase meshes](asset_convert_magic_art.md#phase-meshes)
+and the ARTO, PROJ and EXPL that name them),
+`npc_face_mapper.load_race_skin_tones` (a race's body texture and head `.egt`,
+for its [skin color](asset_convert_facegen.md#where-color-actually-lives)), and
+`creature_races._pile_mesh_bounds` (a [death pile's](asset_convert_creature.md#pile-acti-record-fields)
+converted mesh under `Actors\tes4\oblivion\ghost`).
 
 ## Converted asset paths are plain ASCII
 <a id="ascii-asset-paths"></a>

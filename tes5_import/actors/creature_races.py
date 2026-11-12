@@ -30,6 +30,7 @@ the Oblivion skeleton — hits still register, dismember targeting is off),
 and ARMA has no footstep SNDD yet.
 """
 
+from asset_convert.game_paths import find_nocase
 from asset_convert.havok.behavior_vocabulary import movement_type_names
 import os
 import struct
@@ -268,14 +269,12 @@ def _pile_mesh_bounds(proj, pile_name):
     """
     import os
 
-    rel = os.path.join('meshes', proj.get('body_dir', ''), pile_name)
+    rel = ('meshes', proj.get('body_dir', ''), pile_name)
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    candidates = []
     out = os.path.join(root, 'output')
-    if os.path.isdir(out):
-        for plugin in sorted(os.listdir(out)):
-            candidates.append(os.path.join(out, plugin, rel))
-    path = next((p for p in candidates if os.path.exists(p)), None)
+    plugins = sorted(os.listdir(out)) if os.path.isdir(out) else []
+    found = (find_nocase(os.path.join(out, plugin), *rel) for plugin in plugins)
+    path = next((p for p in found if p), None)
     if path is None:
         return None
     try:
