@@ -23,10 +23,10 @@ from asset_convert.collision.collision_extract import get_collision
 
 from .door_reach import flood_graph, join_missing_doors
 from .edge_links import CELL_SIZE
-from .from_pgrd import (cached_geometry, cell_pins, collect_doors, convert_PGRD, geom_cache_path, geom_equal,
+from .from_pgrd import (cell_pins, collect_doors, convert_PGRD, geom_cache_path, geom_equal,
                         record_graph)
 from .lattice.build import set_activators
-from .seeding import seeded_graph
+from .seeding import regrow_unchanged, seeded_graph
 
 #: A landing this close in plan to a door with no Door Triangle seeds that door's flood and stands in for it.
 DOOR_LANDING_REACH = 512.0
@@ -103,7 +103,7 @@ def _verify_against_cache(job: dict, result: tuple) -> tuple:
     See: docs/commentary/tes5_import_navmesh.md#verifying-a-cache-against-fresh-geometry
     """
     navm_bytes, meta = result
-    stored = cached_geometry(_GEOM_CACHE, *job['key'])
+    stored = meta.get('geometry')
     if stored is None:
         return result
     fresh_bytes, fresh_meta = _convert(job, None)
@@ -119,10 +119,23 @@ def _verify_against_cache(job: dict, result: tuple) -> tuple:
 def convert_job(job: dict, base_model_by_fid: dict, door_fids, geom_cache=None):
     """(navm_bytes, meta) for one gathered job; a seeded job floods its pathgrid first.
 
-    An interior's door seeds join walkable paths from its doors into the graph.
+    An interior's door seeds join walkable paths from its doors into the graph.  A regrown pathgrid
+    cell whose new seeds change no flood keeps its last result.
     See: docs/commentary/tes5_import_navmesh.md#seeded-cells
     See: docs/commentary/tes5_import_navmesh.md#door-reach
     """
+    if job.get('previous') and regrow_unchanged(job, base_model_by_fid, door_fids, get_collision):
+        return job['previous']
+    opens = []
+    result = _convert_flow(job, base_model_by_fid, door_fids, geom_cache, opens)
+    if result[1]:
+        result[1]['flood_opens'] = opens
+        result[1]['edge_seeds'] = job.get('edge_seeds')
+    return result
+
+
+def _convert_flow(job, base_model_by_fid, door_fids, geom_cache, opens):
+    """convert_job's builds; each build's open lattice goes to `opens`."""
     graph = None
     if job.get('seeds'):
         graph = seeded_graph(job, base_model_by_fid, door_fids, get_collision)
@@ -132,7 +145,7 @@ def convert_job(job: dict, base_model_by_fid: dict, door_fids, geom_cache=None):
         graph = flood_graph(job, base_model_by_fid, door_fids, get_collision)
         if not graph[1]:
             return None, None
-    args = (job, base_model_by_fid, door_fids, geom_cache)
+    args = (job, base_model_by_fid, door_fids, (geom_cache, opens))
     if not cell_pins(job['pgrd_rec'], job['cell_rec'])[1]:
         return _door_choices(args, graph, True)[0]
     _built, graph, spots = _door_choices(args, graph, False)
@@ -180,8 +193,12 @@ def _linked(result) -> int:
     return len((result[1] or {}).get('door_refs') or ()) if result else 0
 
 
-def _build(job, base_model_by_fid, door_fids, geom_cache, graph, door_spots=None, pins=True):
-    """(navm_bytes, meta) for one job over `graph` (None: its pathgrid record's own graph)."""
+def _build(job, base_model_by_fid, door_fids, cache_opens, graph, door_spots=None, pins=True):
+    """(navm_bytes, meta) for one job over `graph` (None: its pathgrid record's own graph).
+
+    `cache_opens` is (geometry cache, list the build's open lattice goes to).
+    """
+    geom_cache, opens = cache_opens
     return convert_PGRD(
         job['pgrd_rec'],
         land_rec=job['land_rec'],
@@ -199,6 +216,7 @@ def _build(job, base_model_by_fid, door_fids, geom_cache, graph, door_spots=None
         seeded=bool(job.get('seeds')),
         edge_seeds=job.get('edge_seeds'),
         pins=pins,
+        opens_out=opens,
     )
 
 

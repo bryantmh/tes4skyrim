@@ -286,13 +286,32 @@ void seed_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double 
     flood_lattice(seeds, ground, lattice(ground, ox, oy), points, edges);
 }
 
-void gap_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
+bool gap_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
                const std::function<bool(const P3&)>& covered,
-               std::vector<P3>& points, std::vector<std::pair<int, int>>& edges) {
+               std::vector<P3>& points, std::vector<std::pair<int, int>>& edges, std::uint64_t* open) {
     std::map<Key, P3> nodes = lattice(ground, ox, oy);
     for (auto it = nodes.begin(); it != nodes.end();)
         it = covered(it->second) ? nodes.erase(it) : std::next(it);
     flood_lattice(seeds, ground, nodes, points, edges);
+    const int count = (int)py_floordiv(4096.0, P().LATTICE_SPACING);
+    if (!open || count * count > 64) return false;
+    *open = 0;
+    for (const auto& kv : nodes) *open |= std::uint64_t(1) << (kv.first.second * count + kv.first.first);
+    return true;
+}
+
+bool seeds_link(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
+                const std::vector<std::uint64_t>& opens) {
+    const std::map<Key, P3> all = lattice(ground, ox, oy);
+    const int count = (int)py_floordiv(4096.0, P().LATTICE_SPACING);
+    for (const std::uint64_t open : opens) {
+        std::map<Key, P3> nodes;
+        for (const auto& kv : all)
+            if (open >> (kv.first.second * count + kv.first.first) & 1) nodes.insert(kv);
+        std::vector<P3> placed;
+        if (!seed_links(ground, seeds, nodes, placed).empty()) return true;
+    }
+    return false;
 }
 
 }  // namespace navgrow

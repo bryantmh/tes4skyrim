@@ -1218,7 +1218,7 @@ def test_geom_equal_ignores_ledge_order():
 
 
 def test_geom_quantize_matches_what_the_cache_stores():
-    """The demotion must agree with _geom_cache_store's float32 array."""
+    """The demotion must agree with geom_cache_store's float32 array."""
     verts = [(1.0000001, 2.0, 3.0)]
     stored = np.asarray(verts, dtype=np.float32).tolist()
     assert geom_quantize(verts) == [tuple(v) for v in stored]
@@ -1305,6 +1305,57 @@ def test_rekey_rewrites_only_the_hash(tmp_path):
     assert np.array_equal(got['tris'], blob['tris'])
     assert got['ledges'] == [(1, 2)]
     assert navm_verify.rekey_entry(str(path), 'new') is False
+
+
+def test_rekey_drops_the_other_builds(tmp_path):
+    """A re-key stamps the new tag; the old tag's other builds could never hit again.
+
+    See: docs/commentary/tes5_import_navmesh.md#one-file-every-build
+    """
+    from tes5_import.navmesh.from_pgrd import geom_cache_load, geom_cache_store
+    path = str(tmp_path / 'e.pkl')
+    geom_cache_store(path, 'a', [(0.0, 0.0, 0.0)], [(0, 0, 0)], (), 'T0')
+    geom_cache_store(path, 'b', [(1.0, 0.0, 0.0)], [(0, 0, 0)], (), 'T0')
+    assert navm_verify.rekey_entry(path, 'b1', tag='T1') is True
+    assert geom_cache_load(path, 'b1') is not None
+    assert geom_cache_load(path, 'a') is None
+
+
+def test_a_cell_keeps_every_build(tmp_path):
+    """A cell built several times in one run hits each build on the next.
+
+    See: docs/commentary/tes5_import_navmesh.md#one-file-every-build
+    """
+    from tes5_import.navmesh.from_pgrd import geom_cache_load, geom_cache_store
+    path = str(tmp_path / 'e.pkl')
+    for n, key in enumerate('abc'):
+        geom_cache_store(path, key, [(float(n), 0.0, 0.0)], [(0, 0, 0)], [(n, n, 1.0)], 'T')
+    assert [geom_cache_load(path, k)[0][0][0] for k in 'abc'] == [0.0, 1.0, 2.0]
+    assert pickle.load(open(path, 'rb'))['hash'] == 'c'
+    geom_cache_store(path, 'a', [(5.0, 0.0, 0.0)], [(0, 0, 0)], (), 'T')
+    assert geom_cache_load(path, 'a')[0][0][0] == 5.0
+    assert geom_cache_load(path, 'c')[0][0][0] == 2.0
+
+
+def test_a_new_tag_drops_the_old_builds(tmp_path):
+    """Builds stored under an older cache tag are not carried into the new file."""
+    from tes5_import.navmesh.from_pgrd import geom_cache_load, geom_cache_store
+    path = str(tmp_path / 'e.pkl')
+    geom_cache_store(path, 'a', [(0.0, 0.0, 0.0)], [(0, 0, 0)], (), 'T0')
+    geom_cache_store(path, 'b', [(1.0, 0.0, 0.0)], [(0, 0, 0)], (), 'T1')
+    assert geom_cache_load(path, 'a') is None
+    assert 'more' not in pickle.load(open(path, 'rb'))
+
+
+def test_a_cell_keeps_at_most_the_cap(tmp_path):
+    """The oldest builds fall off past GEOM_CACHE_BUILDS."""
+    from tes5_import.navmesh.from_pgrd import GEOM_CACHE_BUILDS, geom_cache_load, geom_cache_store
+    path = str(tmp_path / 'e.pkl')
+    keys = ['k%d' % n for n in range(GEOM_CACHE_BUILDS + 2)]
+    for key in keys:
+        geom_cache_store(path, key, [(0.0, 0.0, 0.0)], [(0, 0, 0)], (), 'T')
+    assert [geom_cache_load(path, k) is not None for k in keys[:3]] == [False, False, True]
+    assert geom_cache_load(path, keys[-1]) is not None
 
 
 def test_rekey_keeps_a_cell_whose_pins_changed_stale(tmp_path, monkeypatch):

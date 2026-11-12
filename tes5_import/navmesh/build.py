@@ -55,14 +55,14 @@ def teleport_door_positions(refr_recs):
 def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
                   land_rec=None, origin_x=0.0, origin_y=0.0, budget=None,
                   doors=None, ledges_out=None, door_bases=None, lone=(), water_z=None,
-                  obstacles=(), flood=(), flood_out=None):
+                  obstacles=(), flood=(), flood_out=None, opens_out=None):
     """Build a navmesh for one cell.  Returns (verts3d, tris) or ([], []).
 
-    doors: [(x, y, z, rot_z, is_teleport, width), ...] door REFRs, else recovered
+    doors: (x, y, z, rot_z, is_teleport, width) door REFRs, else recovered
     from XTEL.  door_bases: low-24 DOOR base FormIDs whose panel collision is
     EXCLUDED.  lone: edgeless nodes that still get a disc.  obstacles: (placement,
     model key) pairs `edges` is bridged across.  flood: flood the mesh's gaps, its
-    (points, edges) to `flood_out`.  Ledge Up/Down pairs go to `ledges_out`.
+    (points, edges) to `flood_out`, open lattice to `opens_out`.  Ledges to `ledges_out`.
     See: docs/commentary/tes5_import_navmesh.md#ledges-are-returned-out-of-band
     """
     if not nodes:
@@ -74,8 +74,10 @@ def build_navmesh(refr_recs, base_model_by_fid, get_collision, nodes, edges,
             refr_recs, base_model_by_fid, get_collision, nodes, edges,
             land_rec=land_rec, origin_x=origin_x, origin_y=origin_y, doors=doors,
             door_bases=door_bases, lone=lone, water_z=water_z, obstacles=obstacles, flood=flood,
-            flood_out=flood_out)
+            flood_out=flood_out, opens_out=opens_out)
     else:
+        if opens_out is not None:
+            opens_out.append(None)
         bridge_obstacles(nodes, edges, obstacles, lambda: cell_ground(
             refr_recs, base_model_by_fid, get_collision, land_rec,
             origin_x, origin_y, door_bases, water_z), get_collision)

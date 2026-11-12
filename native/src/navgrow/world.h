@@ -3,6 +3,7 @@
 // obstacle_bridge.bridge_obstacles and seeding.seed_graph.
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <unordered_map>
 #include <utility>
@@ -94,9 +95,15 @@ void seed_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double 
                 std::vector<P3>& points, std::vector<std::pair<int, int>>& edges);
 
 // The same flood over only the lattice ground `covered` rejects: an authored mesh's gaps.
-void gap_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
+// `open` (when given) gets the uncovered keys as bits j * count + i; false when they need over 64 bits.
+bool gap_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
                const std::function<bool(const P3&)>& covered,
-               std::vector<P3>& points, std::vector<std::pair<int, int>>& edges);
+               std::vector<P3>& points, std::vector<std::pair<int, int>>& edges, std::uint64_t* open = nullptr);
+
+// True when any seed links into a lattice holding only the keys of one of `opens` (gap_graph's masks):
+// a flood that adds those seeds differs from the one each mask came from.
+bool seeds_link(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
+                const std::vector<std::uint64_t>& opens);
 
 // door_reach.door_reach: per seed, the walkable lattice path to the nearest anchor it
 // reaches (joins: (point, anchor)); with no anchors, the whole flood from the seeds.

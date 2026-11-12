@@ -260,11 +260,13 @@ def _settle(results, jobs, built, meshed, regrow) -> None:
             meshed.discard(square)
 
 
-def _prepare(jobs, regrow, derive_fid) -> None:
-    """A seeded cell gets its FormID; a pathgrid cell keeps its own and takes its seeds as `edge_seeds`."""
+def _prepare(jobs, regrow, derive_fid, cache) -> None:
+    """A seeded cell gets its FormID; a pathgrid cell keeps its own, takes its seeds as `edge_seeds`
+    and its `cache` result as `previous` (regrow_unchanged)."""
     for square, job in jobs:
         if square in regrow:
             job['edge_seeds'] = job.pop('seeds')
+            job['previous'] = cache.get(job['key'])
         else:
             job['navm_fid'] = derive_fid(job['key'])
 
@@ -286,7 +288,7 @@ def grow_into_empty(cache, seedable, sources, derive_fid, run, regrow=None) -> l
         jobs = _wave_jobs(seam_seeds(sources, targets, own), targets, sides, sea, meshed)
         if not jobs:
             return list(built.values())
-        _prepare(jobs, regrow, derive_fid)
+        _prepare(jobs, regrow, derive_fid, cache)
         results = run([job for _square, job in jobs])
         _settle(results, jobs, built, meshed, regrow)
         cache.update(results)
@@ -367,8 +369,8 @@ def pathgrid_order(points, edges):
     return [tuple(float(c) for c in p) for p in points], ordered
 
 
-def seeded_graph(job, base_model_by_fid, door_fids, get_collision):
-    """The job's flooded (points, edges) in pathgrid order, or None when nothing walks in.
+def _ground_args(job, base_model_by_fid, door_fids, get_collision) -> tuple:
+    """The native flood's ground arguments for the job's cell: placements, land grid, origin, water.
 
     Door panels are left out of the blocking soup, as the corridor build leaves them out.
     """
@@ -377,8 +379,31 @@ def seeded_graph(job, base_model_by_fid, door_fids, get_collision):
     oy = float(cell.get('XCLC.Y') or 0) * CELL_SIZE
     bases = set(door_fids.keys()) if isinstance(door_fids, dict) else set(door_fids or ())
     land = land_field(job['land_rec'], ox, oy)
+    return (*placements(job['refr_recs'], base_model_by_fid, get_collision, bases),
+            None if land is None else land.grid, ox, oy, open_water_z(cell, True))
+
+
+def seeded_graph(job, base_model_by_fid, door_fids, get_collision):
+    """The job's flooded (points, edges) in pathgrid order, or None when nothing walks in."""
     points, edges = native_loader.native_core().seed_graph(
-        *placements(job['refr_recs'], base_model_by_fid, get_collision, bases),
-        None if land is None else land.grid, ox, oy, open_water_z(cell, True),
+        *_ground_args(job, base_model_by_fid, door_fids, get_collision),
         np.asarray(job['seeds'], dtype=np.float64).reshape(-1, 3))
     return pathgrid_order(points, edges) if edges else None
+
+
+def regrow_unchanged(job, base_model_by_fid, door_fids, get_collision) -> bool:
+    """True when the regrow job's last result stands: no seed it was not built with links into the open
+    lattice any of that result's builds left (meta['flood_opens']), so every flood comes out the same.
+    See: docs/commentary/tes5_import_navmesh.md#regrow-reuse
+    """
+    meta = (job.get('previous') or (None, None))[1]
+    opens = (meta or {}).get('flood_opens')
+    if not opens or None in opens:
+        return False
+    built = set(map(tuple, meta.get('edge_seeds') or ()))
+    new = [p for p in job['edge_seeds'] if tuple(p) not in built]
+    if not new or job['land_rec'] is None:
+        return True
+    return not native_loader.native_core().seeds_link(
+        *_ground_args(job, base_model_by_fid, door_fids, get_collision),
+        np.asarray(new, dtype=np.float64).reshape(-1, 3), opens)

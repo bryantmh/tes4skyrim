@@ -126,7 +126,11 @@ CleanOutput with_gaps(CellCtx& C, const Authored& A, CleanOutput M, Ground& grou
         if (ground.floor(n[0], n[1], n[2], &z) && ground.open_land(n[0], n[1], z)) starts.push_back(n);
     }
     std::vector<std::pair<int, int>> edges;
-    gap_graph(starts, ground, C.land->ox, C.land->oy, [&](const P3& p) { return on_mesh(M, p); }, points, edges);
+    std::uint64_t open = 0;
+    const bool known = gap_graph(starts, ground, C.land->ox, C.land->oy, [&](const P3& p) { return on_mesh(M, p); },
+                                 points, edges, &open);
+    M.open_lattice = open;
+    M.open_known = known;
     if (edges.empty()) return M;
     C.nodes = A.nodes;
     C.edges = A.edges;
@@ -142,6 +146,8 @@ CleanOutput with_gaps(CellCtx& C, const Authored& A, CleanOutput M, Ground& grou
     CleanOutput out = build_corridor_cell(C);
     out.flood = std::move(points);
     out.flood_edges = std::move(edges);
+    out.open_lattice = open;
+    out.open_known = known;
     return out;
 }
 

@@ -1053,6 +1053,28 @@ triangles span hundreds of units of depth.
 `seeding.py` is outside the cache tag: its output is the synthetic pathgrid,
 which every seeded cell's geometry hash already covers.
 
+#### <a id="regrow-reuse"></a>A regrown pathgrid cell keeps its result when its new seeds change no flood
+
+**Code:** `seeding.regrow_unchanged`, `worker.convert_job`, native `gap_graph` / `seeds_link`
+(`bridge.cpp`).
+
+A pathgrid cell that a new neighbour offers seeds is rebuilt in full: the gather, the first corridor
+build, the gap flood, and the second build over the flood. On Nehrim (2026-11-11) 1,262 of the 2,419
+such rebuilds came out byte-identical to the cell's previous mesh, and pass 2's 1,020 of 1,855 cost
+about 45 s of its 99 s. A replay of 200 pass-2 rebuilds put collision gathering at 14% of a rebuild
+and the flood search at ~1%; the rest is the two corridor builds.
+
+The check is exact, not a threshold. A build's flood is `flood_lattice` over the lattice nodes its
+first mesh does not cover; a seed changes it only if `seed_links` places it, i.e. it links to one of
+those nodes. A seed that links nowhere is skipped and changes neither `placed` nor the links. So each
+corridor build reports its uncovered lattice keys as a 64-bit mask (the lattice is 8 x 8 at 512u;
+`None` when it would not fit), stored with the build in the geometry cache so a cache hit carries it
+too ([one-file-every-build](#one-file-every-build)); the job's result keeps every build's mask
+(`meta['flood_opens']`, discarded door-choice builds included) and the seeds it was built with. The
+next round's job gathers the cell's collision and tests only the seeds it was not built with against
+each mask; when none links, the previous result is returned. A cell with no LAND never floods, so its
+seeds never matter.
+
 #### <a id="door-reach"></a>An interior's navmesh reaches its doors
 
 **Code:** `navmesh/door_reach.py`, native `doorreach.cpp`, `pool.py::_emit_interior`.
@@ -2216,6 +2238,33 @@ rounding after the store would make the two paths disagree in the low bits.
 a local after the function shadows it — the call then resolves to `None`,
 raising `'NoneType' object is not callable` per cell and **silently producing 61
 empty navmeshes with every XNDP door link dropped**, which no test caught.
+
+### <a id="one-file-every-build"></a>One cache file holds every build of its cell
+
+**Code:** `from_pgrd.geom_cache_store` / `geom_cache_load`, `cache_audit.rekey_entry`,
+`worker._verify_against_cache`.
+
+A cell is often built more than once per run, each build with its own input hash: a pinned cell
+decides its doors unpinned and then builds pinned; a door with no Door Triangle rebuilds with paths
+joined from it, then at its landing; a pathgrid cell regrows in the seeding rounds
+([regrow-reuse](#regrow-reuse)). The file was one entry per cell, so each build overwrote the last,
+and on the next run the cell's first build missed, rebuilt and overwrote, and so did every build
+after it: those cells built cold on every run, published cache or not (found 2026-11-12 from the
+code; the miss count was not measured).
+
+The file now keeps the newest build at its top level -- the shape every reader (`verify`, adoption,
+`cached_geometry`) already expects -- and the cell's other builds under `more`, `{hash: build}`,
+oldest first, at most `GEOM_CACHE_BUILDS` in all. A load hits either. The file records the cache tag
+it was written under; a store under another tag drops `more`, since an old tag's hashes never hit
+again, and so does a re-key (which also drops the build's open-lattice mask, `open`: adoption proves
+the final geometry, not the first mesh the mask describes). The run-time verify compares against the
+geometry the job was served (`meta['geometry']`), which may come from `more`, not against the file's
+top entry.
+
+Each build also stores its open lattice ([regrow-reuse](#regrow-reuse)). Without it a warm run could
+not skip a regrown cell -- its pass-1 result came from the cache with no mask -- and the cold run
+never stored the pass-2 builds it skipped: Nehrim's warm run still missed 1,148 builds (pass 2:
+62.7 s) before the mask was cached.
 
 ## The shared navmesh cache — design rationale
 <a id="shared-navmesh-cache-design-rationale"></a>

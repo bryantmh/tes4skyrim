@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <vector>
 
@@ -69,6 +70,8 @@ struct CleanOutput {
     std::vector<Ledge> ledges;
     std::vector<P3> flood;                       // the gap flood's points, for viewing
     std::vector<std::pair<int, int>> flood_edges;  // its edges, indices into `flood`
+    std::uint64_t open_lattice = 0;              // gap_graph's uncovered lattice keys (0: no flood ran)
+    bool open_known = true;                      // false when the lattice outgrows the 64-bit mask
 };
 
 // corridor_clean.finalize plus the rest of corridor.build_corridors.

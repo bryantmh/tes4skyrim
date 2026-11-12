@@ -88,6 +88,7 @@ PyObject* py_set_params(PyObject*, PyObject*);           // params.cpp
 PyObject* py_union_mesh(PyObject*, PyObject*);           // union.cpp
 PyObject* py_corridor_cell(PyObject*, PyObject*);        // pycell.cpp
 PyObject* py_seed_graph(PyObject*, PyObject*);           // pycell.cpp
+PyObject* py_seeds_link(PyObject*, PyObject*);           // pycell.cpp
 PyObject* py_door_reach(PyObject*, PyObject*);           // pycell.cpp
 PyObject* py_pack_nvnm(PyObject*, PyObject*);            // navm.cpp
 
@@ -809,6 +810,8 @@ PyMethodDef methods[] = {
      "One cell's whole corridor build, collision gather included (build_corridors)."},
     {"seed_graph", py_seed_graph, METH_VARARGS,
      "A seeded cell's flooded pathgrid (seeding.seed_graph)."},
+    {"seeds_link", py_seeds_link, METH_VARARGS,
+     "Whether seeds link into any of a cell's open lattice masks (corridor_cell's fifth item)."},
     {"door_reach", py_door_reach, METH_VARARGS,
      "Walkable paths from door seeds into a cell's pathgrid (door_reach.door_reach)."},
     {"pack_nvnm", py_pack_nvnm, METH_VARARGS,

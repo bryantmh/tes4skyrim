@@ -46,7 +46,7 @@ old algorithm with no visible symptom.  Three independent guards:
      REFRs, the LAND heights, the collision of the meshes THAT CELL places, and
      the navmesh source tag.  A mismatch makes that entry miss -- the loader
      falls back to generating.  This is enforced by the importer itself
-     (pgrd_to_navm._geom_cache_load), not by this tool.
+     (from_pgrd.geom_cache_load), not by this tool.
   2. `verify` checks the cache against the CURRENT navmesh sources before any
      publish, so an out-of-date cache cannot be released.
   3. The manifest records the source tag, the collision content hash and the

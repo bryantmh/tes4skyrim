@@ -249,10 +249,12 @@ def _pins_since(job: dict, geom_cache, old_tag: str) -> str:
     return _job_key(job, (geom_cache[0], old_tag)) if old_tag else '-'
 
 
-def rekey_entry(path: str, want: str, was: str = '') -> bool:
-    """Rewrite one entry's stored hash in place.  True when it changed.
+def rekey_entry(path: str, want: str, was: str = '', tag: str = '') -> bool:
+    """Rewrite one entry's stored hash (and cache `tag`) in place.  True when it changed.
 
-    A non-empty `was` must equal the stored hash, else the entry is left stale.
+    A non-empty `was` must equal the stored hash, else the entry is left stale.  The file's other
+    builds are dropped (their hashes carry the old tag), and so is its open lattice: adoption proves
+    the geometry, not the first mesh the mask came from.
     """
     import pickle
     try:
@@ -261,6 +263,9 @@ def rekey_entry(path: str, want: str, was: str = '') -> bool:
         if blob.get('hash') == want or (was and blob.get('hash') != was):
             return False
         blob['hash'] = want
+        blob['tag'] = tag
+        blob.pop('more', None)
+        blob.pop('open', None)
         tmp = '%s.tmp%d' % (path, os.getpid())
         with open(tmp, 'wb') as fh:
             pickle.dump(blob, fh, pickle.HIGHEST_PROTOCOL)
@@ -295,7 +300,7 @@ def rekey_cache(jobs: list, geom_cache, old_tag: str = '') -> tuple:
         if not fresh:
             skipped += 1
         elif rekey_entry(os.path.join(cache_dir, name), fresh,
-                        _pins_since(job, geom_cache, old_tag)):
+                         _pins_since(job, geom_cache, old_tag), geom_cache[1]):
             done += 1
     return done, skipped
 

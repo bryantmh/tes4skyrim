@@ -141,16 +141,19 @@ PyObject* cell_result(const CleanOutput& out) {
 
 PyObject* graph_result(const std::vector<P3>& points, const std::vector<std::pair<int, int>>& edges);
 
-// cell_result plus the gap flood's (points, edges) as a fourth item.
+// cell_result plus the gap flood's (points, edges) and its open lattice mask (None: unknown).
 PyObject* cell_result_with_flood(const CleanOutput& out) {
     PyObject* base = cell_result(out);
     PyObject* flood = base ? graph_result(out.flood, out.flood_edges) : nullptr;
-    if (!flood) {
+    PyObject* open = !flood ? nullptr
+                     : out.open_known ? PyLong_FromUnsignedLongLong(out.open_lattice) : Py_NewRef(Py_None);
+    if (!open) {
         Py_XDECREF(base);
+        Py_XDECREF(flood);
         return nullptr;
     }
-    PyObject* got = Py_BuildValue("(OOON)", PyTuple_GET_ITEM(base, 0), PyTuple_GET_ITEM(base, 1),
-                                  PyTuple_GET_ITEM(base, 2), flood);
+    PyObject* got = Py_BuildValue("(OOONN)", PyTuple_GET_ITEM(base, 0), PyTuple_GET_ITEM(base, 1),
+                                  PyTuple_GET_ITEM(base, 2), flood, open);
     Py_DECREF(base);
     return got;
 }
@@ -189,7 +192,7 @@ bool released(const char* what, F&& body) {
 
 // corridor_cell(nodes, edges, lone, doors, land, land_ox, land_oy, cell_clip,
 //               refs, soups, obstacles, obstacle_soups, water_z[, flood_gaps, seeds])
-//   -> (verts, tris, ledges, (flood points, flood edges))
+//   -> (verts, tris, ledges, (flood points, flood edges), open lattice mask or None)
 //
 // corridor.build_corridors for one cell, collision gather and obstacle bridge
 // included.  nodes (N, 3) and doors (D, 6: x, y, z, rot_z, is_teleport, width)
@@ -262,6 +265,45 @@ PyObject* py_seed_graph(PyObject*, PyObject* args) {
         }))
         return nullptr;
     return graph_result(points, edges);
+}
+
+// seeds_link(refs, soups, land, ox, oy, water_z, seeds, opens) -> bool
+//
+// seeding's world.seeds_link over the cell's gathered collision; seeds (S, 3) float64, opens a
+// sequence of corridor_cell's open lattice masks.
+PyObject* py_seeds_link(PyObject*, PyObject* args) {
+    PyObject *o_r, *o_rs, *o_land, *o_wz, *o_s, *o_o;
+    double ox, oy;
+    if (!PyArg_ParseTuple(args, "OOOddOOO", &o_r, &o_rs, &o_land, &ox, &oy, &o_wz, &o_s, &o_o))
+        return nullptr;
+    BufView lv(o_land, 'd', 8), sv(o_s, 'd', 8);
+    Held held;
+    Land land;
+    std::vector<PlacedRef> refs;
+    double wz = 0.0;
+    bool has_wz = false;
+    if (!land_of(o_land, lv, ox, oy, land) || !refs_of(o_r, o_rs, held, refs)
+        || !water_of(o_wz, &wz, &has_wz) || !rows_of(3, sv))
+        return nullptr;
+    std::vector<std::uint64_t> opens;
+    PyObject* seq = PySequence_Fast(o_o, "opens must be a sequence");
+    if (!seq) return nullptr;
+    for (Py_ssize_t i = 0; i < PySequence_Fast_GET_SIZE(seq); ++i)
+        opens.push_back(PyLong_AsUnsignedLongLong(PySequence_Fast_GET_ITEM(seq, i)));
+    Py_DECREF(seq);
+    if (PyErr_Occurred()) return nullptr;
+    const std::vector<P3> seeds = points_of(sv);
+    bool linked = false;
+    if (!released("seeds_link", [&] {
+            const Land* L = land.g ? &land : nullptr;
+            const Soups S = gather_cell(refs, L, has_wz ? &wz : nullptr);
+            CellGeo geo;
+            geo.build(S.walk.data(), S.walk.size() / 9, S.block.data(), S.block.size() / 9);
+            Ground ground{geo, L, &S.solids};
+            linked = seeds_link(seeds, ground, ox, oy, opens);
+        }))
+        return nullptr;
+    return PyBool_FromLong(linked);
 }
 
 // door_reach(refs, soups, land, ox, oy, water_z, seeds, anchors) -> (points, edges, joins)

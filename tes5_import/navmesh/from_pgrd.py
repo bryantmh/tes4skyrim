@@ -797,17 +797,26 @@ def geom_hash(tag, points, edges, refr_recs, base_model_by_fid, doors,
     return h.hexdigest()
 
 
-def _geom_cache_load(path, want_hash):
-    """(verts, tris) from a cache file, or None on any mismatch/problem."""
+#: Most builds one cell's cache file keeps (its newest at the top level, the rest under 'more').
+GEOM_CACHE_BUILDS = 24
+
+
+def _entry_geometry(entry):
+    """(verts, tris, ledges) lists from one stored build."""
+    return ([tuple(v) for v in entry['verts'].tolist()], [tuple(t) for t in entry['tris'].tolist()],
+            [tuple(l) for l in entry.get('ledges', ())])
+
+
+def geom_cache_load(path, want_hash):
+    """(verts, tris, ledges, open lattice or None) of the file's build stored under `want_hash`, or None
+    on any miss/problem.
+    See: docs/commentary/tes5_import_navmesh.md#one-file-every-build
+    """
     try:
         with open(path, 'rb') as fh:
             stored = pickle.load(fh)
-        if stored.get('hash') != want_hash:
-            return None
-        verts = [tuple(v) for v in stored['verts'].tolist()]
-        tris = [tuple(t) for t in stored['tris'].tolist()]
-        ledges = [tuple(l) for l in stored.get('ledges', ())]
-        return verts, tris, ledges
+        entry = stored if stored.get('hash') == want_hash else stored.get('more', {}).get(want_hash)
+        return None if entry is None else (*_entry_geometry(entry), entry.get('open'))
     except Exception:
         return None
 
@@ -1002,25 +1011,46 @@ def cached_geometry(geom_cache, cell_fid, pgrd_fid):
         return None
     try:
         with open(geom_cache_path(geom_cache, cell_fid, pgrd_fid), 'rb') as fh:
-            stored = pickle.load(fh)
-        return ([tuple(v) for v in stored['verts'].tolist()],
-                [tuple(t) for t in stored['tris'].tolist()],
-                [tuple(l) for l in stored.get('ledges', ())])
+            return _entry_geometry(pickle.load(fh))
     except Exception:
         return None
 
 
-def _geom_cache_store(path, geom_key, verts, tris, ledges=()):
-    """Write one cell's geometry to the cache, keyed by its hash."""
+def _older_builds(path, geom_key, tag) -> dict:
+    """{hash: build} the file at `path` already holds besides `geom_key` under cache tag `tag`, newest
+    last, capped; none when it was written under another tag."""
+    try:
+        with open(path, 'rb') as fh:
+            stored = pickle.load(fh)
+    except Exception:
+        return {}
+    if stored.get('tag') != tag:
+        return {}
+    more = dict(stored.get('more') or {})
+    top = stored.get('hash')
+    if top:
+        more.pop(top, None)
+        more[top] = {k: stored[k] for k in ('verts', 'tris', 'ledges', 'open') if k in stored}
+    more.pop(geom_key, None)
+    return dict(list(more.items())[-(GEOM_CACHE_BUILDS - 1):])
+
+
+def geom_cache_store(path, geom_key, verts, tris, ledges=(), tag='', opened=None):
+    """Write one build of a cell (and its open lattice, `opened`) to its cache file under its hash,
+    keeping the cell's other builds made under the same cache `tag`.
+    See: docs/commentary/tes5_import_navmesh.md#one-file-every-build
+    """
     import numpy as np
     try:
+        blob = {'hash': geom_key, 'tag': tag, 'verts': np.asarray(verts, dtype=np.float32),
+                'tris': np.asarray(tris, dtype=np.int32), 'ledges': [tuple(l) for l in (ledges or ())],
+                'open': opened}
+        more = _older_builds(path, geom_key, tag)
+        if more:
+            blob['more'] = more
         tmp = path + '.tmp%d' % os.getpid()
         with open(tmp, 'wb') as fh:
-            pickle.dump({'hash': geom_key,
-                         'verts': np.asarray(verts, dtype=np.float32),
-                         'tris': np.asarray(tris, dtype=np.int32),
-                         'ledges': [tuple(l) for l in (ledges or ())]},
-                        fh, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(blob, fh, pickle.HIGHEST_PROTOCOL)
         os.replace(tmp, path)
     except Exception:
         pass                      # a failed cache write must never fail the cell
@@ -1044,13 +1074,13 @@ def _cell_frame(rec, cell_rec):
 def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
                    is_exterior, land_rec, refr_recs, base_model_by_fid,
                    door_fids, doors, geom_cache, cell_rec=None, lone=(), obstacles=(), flood=(), pins=True,
-                   flood_out=None):
+                   flood_out=None, opens_out=None):
     """(verts, tris, ledges, geom_cached, geom_key) from real Havok collision.
 
-    Serves a cache hit for this cell's input hash, else bridges the pathgrid across
-    `obstacles`, builds the mesh and stores it.  `lone`: edgeless spawn nodes; `flood`:
-    () or (neighbour mesh points,) floods gaps; `pins` false: no pins.  `flood_out`
-    (cache unused) gets the flood's (points, edges).  `geom_key` is the hash VALUE.
+    A cache hit for this cell's input hash, else the pathgrid bridged across `obstacles`,
+    built and stored.  `lone`: edgeless spawn nodes; `flood`: () or (neighbour points,)
+    floods gaps; `pins` false: no pins.  `flood_out` (no cache) gets the flood's graph,
+    `opens_out` its open lattice (cached with it).  `geom_key`: the hash.
 
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
     See: docs/commentary/tes5_import_navmesh.md#a-removed-obstacle-is-bridged
@@ -1067,9 +1097,11 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
                              origin_x, origin_y, pin_digest=pin_digest, water_z=water_z, flood=flood)
         cache_path = geom_cache_path(geom_cache, cell_fid,
                                      get_formid(rec, 'FormID'))
-        cached = _geom_cache_load(cache_path, geom_key)
+        cached = geom_cache_load(cache_path, geom_key)
         if cached is not None:
-            verts3d, tris, ledges = cached
+            verts3d, tris, ledges, opened = cached
+            if opens_out is not None:
+                opens_out.append(opened)
             return verts3d, tris, ledges, True, geom_key
 
     from ..navmesh import build as navmesh_build
@@ -1078,6 +1110,7 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
 
     land = land_rec if is_exterior else None
     door_bases = set(door_fids.keys()) if isinstance(door_fids, dict) else set(door_fids or ())
+    opened = []
     verts3d, tris = navmesh_build.build_navmesh(
         refr_recs or [], base_model_by_fid or {}, get_collision,
         points, edges,
@@ -1086,13 +1119,16 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
         doors=[(x, y, z, r, tp, w) for (x, y, z, r, _f, tp, w) in doors],
         ledges_out=ledges,
         door_bases=door_bases,
-        lone=lone, water_z=water_z, obstacles=obstacles, flood=flood, flood_out=flood_out)
+        lone=lone, water_z=water_z, obstacles=obstacles, flood=flood, flood_out=flood_out, opens_out=opened)
+    opened = opened[0] if opened else None
+    if opens_out is not None:
+        opens_out.append(opened)
     if verts3d:
         verts3d = [tuple(v) for v in
                    np.asarray(verts3d, dtype=np.float32).tolist()]
         verts3d, tris, ledges = apply_hand_edits(verts3d, tris, ledges, edits)
     if cache_path is not None:
-        _geom_cache_store(cache_path, geom_key, verts3d, tris, ledges)
+        geom_cache_store(cache_path, geom_key, verts3d, tris, ledges, geom_cache[1], opened)
     return verts3d, tris, ledges, False, geom_key
 
 
@@ -1115,11 +1151,13 @@ def convert_PGRD(rec: dict, writer=None,
                  door_spots: dict = None,
                  seeded: bool = False,
                  edge_seeds: list = None,
-                 pins: bool = True) -> tuple:
+                 pins: bool = True,
+                 opens_out: list = None) -> tuple:
     """One TES4 PGRD as a TES5 NAVM: (navm_bytes, meta), or (None, None) when the pathgrid is too
     sparse or the build has under 3 verts.  `spawns`: points to reach; `obstacles`: pairs to bridge;
     `graph`: the (points, edges) to build over; `door_spots`: {door ref: point} for its triangle;
-    `seeded`: no gap flood; `edge_seeds`: neighbour mesh points; `pins` false: no pins.
+    `seeded`: no gap flood; `edge_seeds`: neighbour mesh points; `pins` false: no pins;
+    `opens_out` as _cell_geometry.
 
     See: docs/commentary/tes5_import_navmesh.md#convert-pgrd-arguments
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
@@ -1151,7 +1189,7 @@ def convert_PGRD(rec: dict, writer=None,
         land_rec, refr_recs, base_model_by_fid, door_fids, doors, geom_cache,
         cell_rec=cell_rec, lone=lone, obstacles=obstacles,
         flood=(tuple(map(tuple, flood_from)),) if is_exterior and not seeded else (), pins=pins,
-        flood_out=None if seeded else flood_graph)
+        flood_out=None if seeded else flood_graph, opens_out=opens_out)
     if verts3d is None or len(verts3d) < 3 or not tris:
         return None, None
 

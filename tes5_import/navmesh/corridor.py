@@ -160,21 +160,25 @@ def _native_corridor_cell(cell, nodes, edges, lone, doors, obstacles, flood=()):
 
 def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
                     land_rec=None, origin_x=0.0, origin_y=0.0, doors=None,
-                    door_bases=None, lone=(), water_z=None, obstacles=(), flood=(), flood_out=None):
+                    door_bases=None, lone=(), water_z=None, obstacles=(), flood=(), flood_out=None,
+                    opens_out=None):
     """Phase-1 corridor navmesh for one cell: (verts, tris, ledges) lists.
 
-    doors: [(x, y, z, rot_z, is_teleport, width), ...] door centers.
-    door_bases: low-24 DOOR base FormIDs without collision.  lone: edgeless nodes
-    that still get a disc.  obstacles: (placement, model key) pairs `edges` is bridged across.
-    flood: () or (neighbour mesh points,) floods the gaps; `flood_out` gets its (points, edges).
-    ledges: [(upper_tri, lower_tri, drop), ...] Ledge Up/Down links.
+    doors: (x, y, z, rot_z, is_teleport, width) door centers.  door_bases: low-24 DOOR base
+    FormIDs without collision.  lone: edgeless nodes that still get a disc.  obstacles:
+    (placement, model key) pairs `edges` is bridged across.  flood: () or (neighbour mesh
+    points,) floods the gaps; `flood_out` gets its (points, edges), `opens_out` its open
+    lattice mask (None: unknown).  ledges: Ledge Up/Down links.
     See: docs/commentary/tes5_import_navmesh.md#ribbon-construction
     """
     cell = (refr_recs, base_model_by_fid, get_collision, land_rec, origin_x, origin_y,
             door_bases, water_z)
     if not nodes:
         return [], [], []
-    verts, tris, ledges, flood_graph = _native_corridor_cell(cell, nodes, edges, lone, doors, obstacles, flood)
+    verts, tris, ledges, flood_graph, opened = _native_corridor_cell(cell, nodes, edges, lone, doors, obstacles,
+                                                                     flood)
     if flood_out is not None:
         flood_out.append(flood_graph)
+    if opens_out is not None:
+        opens_out.append(opened)
     return verts, tris, ledges
