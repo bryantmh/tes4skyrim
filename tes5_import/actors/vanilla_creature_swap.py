@@ -36,9 +36,9 @@ keyword fallbacks in skyrim_overrides.CREA_RACE_PATTERNS are not equivalences.
 Inspect coverage with `python tools/creature/creature_swap_report.py -f <plugin>`.
 
 All FormIDs verified against references/Skyrim.esm/RACE.txt and ARMO.txt.
-Several constants in skyrim_overrides.py are WRONG (_SKY_WOLF is ChaurusRace,
-_SKY_MAMMOTH is WolfRace, _SKY_CHAURUS is DwarvenSpiderRace); this table does
-not use them.
+The keyword fallback keeps constants of its own (base/equivalents.py); this
+table does not use them. tests/test_creature_race_fallback.py holds the two
+tables to one FormID per race.
 """
 
 EXACT = 'exact'
