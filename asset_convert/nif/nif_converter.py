@@ -72,6 +72,7 @@ from asset_convert.nif.nif_passes import (add_animobject_bged, wrap_root_transfo
                                           collect_sequence_names,
                                           graph_sound_text_keys,
                                           fade_above_rig_root,
+                                          move_root_controller,
                                           wrap_geometry_root,
                                           fix_controller_flags,
                                           resolve_palette_strings,
@@ -924,6 +925,8 @@ def _convert_one_root(data, i, root, stats, fix_textures, src_path, creature,
     has_constraints = any(isinstance(b, NifFormat.bhkConstraint)
                           for b in data.blocks)
     _hoist_root_collision(data, root, wrapped, has_constraints, creature)
+    if not is_sky:
+        move_root_controller(root, has_skin, wrapped, stats)
     convert_root_collision(data, root, creature, nif_basename,
                             has_constraints)
 
