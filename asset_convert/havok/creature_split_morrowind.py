@@ -167,16 +167,22 @@ def _plan(groups: dict, known_only: bool) -> dict:
             if seg_stem and stop in events and (start is None or start in events):
                 found.append((seg_stem, _segment_events(events, start, stop, hit)))
         for clip_stem, clip_events in found:
-            span = clip_range(clip_events)
-            # TES3 accepts an Idle that holds one authored instant. Do not
-            # change clip_range globally: other consumers require motion.
-            if (span is None and clip_stem == 'idle'
-                    and clip_events.get('start') is not None
-                    and clip_events.get('start') == clip_events.get('stop')):
-                span = (clip_events['start'], clip_events['stop'], True)
+            span = clip_range(clip_events) or _held_idle_span(clip_stem, clip_events)
             if span is not None:
                 plan.setdefault(clip_stem, (span, clip_events))
     return plan
+
+
+def _held_idle_span(stem: str, events: dict):
+    """A looping span for an `Idle` that holds one instant (start == stop), else None.
+
+    TES3 accepts such a pose; `clip_range` stays strict because its other
+    callers need motion.
+    """
+    start = events.get('start')
+    if stem != 'idle' or start is None or start != events.get('stop'):
+        return None
+    return (start, start, True)
 
 
 def _sample(arrays: tuple, times: np.ndarray) -> BoneTrack:
