@@ -2055,7 +2055,8 @@ creature is fully proven.
     mid-swing.  Single-play clips fire `returnToDefault` at clip end (NOT attackStop);
     the completion events the engine waits for (attackStop/recoilStop/staggerStop) are
     state exitNotifyEvents.  Attack clips also emit `weaponSwing` (~0.3s before the
-    hit) like every vanilla attack clip.
+    hit) like every vanilla attack clip.  (An amphibian's swim attacks sit inside the
+    swim machine and end on `attackStop` instead: #swim-attacks.)
   * DefaultState → DefaultBehavior SM {StandingState(0) ↔ LocomotionState(1)} via
     local moveStart/moveStop transitions.
   * StandingState → StandingBehavior SM {StandingIdle(0), LoopingTurnRight(1),
@@ -2542,10 +2543,11 @@ both measured:
    Census: slaughterfish (Oblivion, Nehrim) and dreugh (Morrowind_ob) are
    the water natives.
 
-Known gap, untouched: an AMPHIBIAN (baliwog, horker, mudcrab…) still cannot
-attack while in its SwimState for the same reason — its attack transitions
-live on DefaultState. *Fish promotion shipped 2026-08-26, awaiting in-game
-confirmation.*
+An AMPHIBIAN had the same gap — its attack transitions lived on DefaultState,
+so it could not attack while in its SwimState. One that ships swim attack
+clips and has at most one weapon stance now plays them there: see
+[Swim attacks live in the swim state](#swim-attacks). *Fish promotion shipped
+2026-08-26, awaiting in-game confirmation.*
 
 ### 7d. Blocking (implemented 2026-08-22)
 
@@ -2868,6 +2870,12 @@ convention — the root state machine's global wildcard routes it back to
 `attackStop`/`recoilStop`/`staggerStop` — are state `exitNotify` events, not
 clip triggers.
 
+One exception: an amphibian's swim attack clip ends on `attackStop`.
+`returnToDefault` would take the graph out of `SwimState`, so the clip's end
+has to be an event the swim machine can answer by itself
+([Swim attacks live in the swim state](#swim-attacks)). Its state still sends
+`attackStop` on exit like every other attack state.
+
 `CombatStance` is the looping combat-idle clip nested under the standing idle
 switch (`combatStanceStart`/`Stop` local transitions, routed from the engine's
 `ActionDraw`). The `weaponDraw` reply the combat controller waits for is sent by
@@ -3136,11 +3144,110 @@ Promotion CLEARS the swim dict, and that is the point: no swim dict means no
 SwimState, no Swim MOVT and no `iState` switch — the Default movement type
 carries the swim speeds directly, exactly as vanilla slaughterfish does.
 
-Amphibians (baliwog, horker, grummite: land + swim sets) are untouched and keep
-the land graph + SwimState split. Telling the two apart needs a stem test that
-ignores spelling — grummite spells its land gait `forwardwalk`, horker
-`walkforward` — so `_LAND_GAIT_MARKERS` matches ANY spelling containing the
-marker.
+Amphibians (baliwog, horker, grummite: land + swim sets) keep the land graph +
+SwimState split. Telling the two apart needs a stem test that ignores spelling
+— grummite spells its land gait `forwardwalk`, horker `walkforward` — so
+`_LAND_GAIT_MARKERS` matches ANY spelling containing the marker.
+
+### <a id="swim-attacks"></a>Swim attacks live in the swim state
+
+**Code:** `behavior_clips.swim_attacks`, `behavior_attacks.swim_attack_states`,
+`behavior_actions.build_swim`
+
+Oblivion ships a second attack set for a creature that fights in water:
+`swimhandtohandattackleft.kf` beside `handtohandattackleft.kf`. The attack
+sweep takes both sets as attacks, RACE lists one event per clip, and the combat
+AI picks among all of them wherever the actor stands. With every attack a root
+state reached from `DefaultState`, such a creature played a swim attack on dry
+land about every second time (the murkdweller: 6 of its 13 attacks) and had no
+attack at all in water — `SwimState` is a root sibling that no attack
+transition leaves.
+
+Vanilla's horker is the same animal and the model. Its RACE lists
+`attackStart_HorkerSwim` beside five land events, and its graph
+(`quadrupedbehavior.hkx`) splits them by state:
+
+- the land events are local transitions out of `DefaultState`, as here;
+- `HorkerSwimBehavior`, the machine inside `HorkerSwimState`, holds a
+  `SwimAttack` state. The swim idle and the swim locomotion states each carry
+  `attackStart_HorkerSwim -> SwimAttack`, with the same to-animation-driven
+  effect the land attacks use;
+- the swim attack clip's END trigger is `attackStop`, and `SwimAttack` carries
+  `attackStop -> swim idle` with the from-animation-driven effect. It has no
+  exit notify, where the land attack states send `attackStop` on exit and end
+  their clips on `returnToDefault`.
+
+An event the active state has no transition for is not taken, so the land
+events do nothing in water and the swim event nothing on land. RACE still
+lists all of them: the horker's race gives its swim event chance 1.00 beside
+land events at 0.40, 0.40 and 0.20. What a refused pick costs in attack rate
+was not measured. Neither the horker's race nor a converted
+swimmer's carries the `No Combat In Water` flag (0x800) that 95 of
+Skyrim.esm's 99 races do.
+
+Two things differ from the horker on purpose:
+
+- **The state sends `attackStop` on exit as well.** The horker's does not.
+  Here the swim attack clips carry the hit triggers, and only `attackStop`
+  clears an attack the engine has seen swing
+  ([Only an attack clip carries a hit window](#hit-window-attacks-only)): a
+  swim attack cut short by a stagger, or by leaving the water, could
+  otherwise leave the actor mid-attack. On a normal end the event is
+  sent twice, the second time into the swim idle, which has no transition
+  for it. Vanilla's giant builds its nested attack state the same way: the
+  clip's end trigger, the local transition and the exit notify are all
+  `attackStop` (so do the atronachs and six more graphs). A cut-short leaves
+  through the ROOT, so the notify is heard only if Havok sends a nested
+  state's exit notify when its parent state is left; the giant's graph
+  relies on the same thing.
+- **The clip keeps the attack wrapper** (`AttackModifierList`: `IsAttacking`,
+  rotation, head tracking, `bAnimationDriven`). The horker's swim attack
+  plays its clip bare. Whether animation-driven motion suits an attack in
+  water was not measured.
+
+`swim_attacks` picks the clips: the `swim*` attacks of a creature that keeps a
+SwimState, has at most one weapon stance and ships a land attack too. Each
+becomes a state of `SwimBehavior` (ids from `SWIM_ATTACK_FIRST_ID`, after the
+five gait ids), every swim gait state carries the transitions into them, and
+`_attack_specs` leaves them out of the root. `state_defs` gives those clips the
+`attackStop` end event, so the animation cache names the trigger the graph
+fires. The events, the RACE list and the clip files are unchanged.
+
+Oblivion.esm, by this rule: baliwog (5 land + 5 swim), dog (5 + 3),
+murkdweller (7 + 6), rat (2 + 2). Built for the 45 animated folders of its
+export, the graph XML of the other 41 is identical with and without it.
+
+**Left as they were:**
+
+- **A creature with weapon stances** (grummite: four stances, swim attacks for
+  two). Its swim attacks stay inside the stance machines, reachable on land
+  and not in water. Nesting them by stance inside the swim machine is the
+  missing piece.
+- **A creature with swim attacks and no land attack** keeps them at the root:
+  with nothing else to play on land, the old wiring is the safer guess. No
+  folder of the official files is like that.
+- **A swimmer with no swim attack clips** (bear, deer, horse, mudcrab) still
+  cannot attack while swimming.
+
+**Open:**
+
+- **Root wildcards leave `SwimState` and none leads back.** For these four
+  creatures there are seven: `recoilStart`, `recoilLargeStart`,
+  `staggerStart`, the equip and unequip events, the aware vocal and
+  `returnToDefault`. All end in `DefaultState`; only `swimStart` enters
+  `SwimState`. The equip pair's dispatch never fires
+  ([Attacks are gated by NESTING](#attacks-are-gated-by-nesting)), which
+  leaves five. If the engine sends `swimStart` on the change only (not
+  measured), a creature that is hit or calls out while swimming stays on its
+  land states in the water, and there it answers its land attack events.
+  That was so before this rule. A look at a creature fighting in water
+  therefore has to note WHICH clip it attacks with.
+- The graphs were checked as the builder's XML; a packed `.hkx` of this
+  wiring was not read back here.
+
+*In game, on a build of our fork: a converted scalon (`murkdweller`) attacks
+on land without the swimming pose it showed before, and one was seen to
+attack a player in the water; which clip it played there was not seen.*
 
 ## FO3/FNV creature clip naming
 

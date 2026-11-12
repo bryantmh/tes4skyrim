@@ -222,13 +222,18 @@ class GraphBuilder:
         return self._driven_fx[name].ref
 
     def trans_array(self, items, root=False):
-        """Transition array from (event_id, to_state, flags) tuples; `root` for the action layer."""
+        """Transition array from (event_id, to_state, flags) tuples; `root` for the action layer.
+
+        A fourth element, when true, gives that one transition the action
+        layer's effect inside a nested machine.
+        """
         arr = self.pf.add('hkbStateMachineTransitionInfoArray')
         arr.param_raw(
             'transitions',
             '\n'.join(TRANSITION_TMPL.format(
-                effect=self._effect_ref(st, root), event_id=e, to_state=st,
-                flags=f) for e, st, f in items),
+                effect=self._effect_ref(st, root or any(action)),
+                event_id=e, to_state=st, flags=f)
+                for e, st, f, *action in items),
             numelements=len(items))
         return arr
 

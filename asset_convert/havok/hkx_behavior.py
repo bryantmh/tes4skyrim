@@ -58,6 +58,7 @@ from asset_convert.havok.behavior_attacks import (
     add_interrupts,
     add_vocal_idles,
     equip_dispatch_modifier,
+    swim_attack_states,
 )
 from asset_convert.havok.behavior_locomotion import build_default
 from asset_convert.havok.behavior_vocabulary import (
@@ -309,7 +310,9 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     attack_ml = attack_modifier_list(gb)
     root = RootStates()
     add_interrupts(gb, root, clips, hit_times)
-    root.extend(*build_swim(gb, clips, speeds, root.next_id))
+    root.extend(*build_swim(
+        gb, clips, speeds, root.next_id,
+        swim_attack_states(gb, clips, hit_times, attack_ml)))
     add_attacks(gb, root, clips, hit_times, attack_ml)
     equip_dispatch = add_equips(gb, root, clips, hit_times)
     root.extend(*build_cast(gb, cast_defs, clips, hit_times, root.next_id))

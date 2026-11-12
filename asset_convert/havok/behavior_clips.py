@@ -529,6 +529,25 @@ def build_attack_events(clips: dict) -> list:
             for p in clips['attacks']]
 
 
+#: The swim sub-machine's own states take ids 0-4; its attack states follow.
+SWIM_ATTACK_FIRST_ID = 5
+
+
+def swim_attacks(clips: dict) -> list:
+    """The attack clips an amphibian plays only while it swims, in clip order.
+
+    Empty unless the creature keeps a SwimState, has at most one weapon
+    stance and ships land attacks beside its `swim*` ones.
+    See: docs/commentary/asset_convert_creature.md#swim-attacks
+    """
+    if (not clips.get('swim', {}).get('forward')
+            or len(clips.get('equip', {})) > 1):
+        return []
+    swim = [p for p in clips['attacks']
+            if clip_state_name(p).lower().startswith('swim')]
+    return swim if len(swim) < len(clips['attacks']) else []
+
+
 def cast_clip(clips: dict):
     """The one .kf the cast chain plays, or None for a non-caster."""
     for mode in CAST_CLIP_PREFERENCE:
@@ -580,9 +599,10 @@ def state_defs(clips: dict) -> list:
         if st in clips['single']:
             defs.append((st, clips['single'][st], False, enter,
                          'returnToDefault' if st != 'Death' else None))
+    swim = set(swim_attacks(clips))
     for kf, evt in zip(clips['attacks'], build_attack_events(clips)):
         defs.append((f'Attack_{clip_state_name(kf)}', kf, False, evt,
-                     'returnToDefault'))
+                     'attackStop' if kf in swim else 'returnToDefault'))
     _append_equip_states(defs, clips)
     _append_swim_states(defs, clips)
     _append_block_states(defs, clips)

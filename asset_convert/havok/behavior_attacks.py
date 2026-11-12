@@ -15,8 +15,10 @@ See: docs/commentary/asset_convert_creature.md#attacks-are-gated-by-nesting
 from asset_convert.havok.behavior_clips import (
     EQUIP_STANCES,
     SINGLE_PLAY,
+    SWIM_ATTACK_FIRST_ID,
     build_attack_events,
     clip_state_name,
+    swim_attacks,
 )
 from asset_convert.havok.behavior_nodes import (
     F_GLOBAL,
@@ -97,25 +99,63 @@ def add_interrupts(gb, root, clips, hit_times):
 # Attacks
 # ---------------------------------------------------------------------------
 
+def _attack_generator(gb, st_name, kf, hit_times, attack_ml, end_evt):
+    """One attack clip inside the IsAttacking modifier list; the wrapper's ref."""
+    clip = gb.clip(st_name, kf, False, gb.clip_triggers(
+        hit_times.get(st_name, []), end_evt))
+    mg = gb.add('hkbModifierGenerator')
+    mg.param('variableBindingSet', 'null')
+    mg.param('userData', 1)
+    mg.param('name', f'{st_name}_MG')
+    mg.param('modifier', attack_ml.ref)
+    mg.param('generator', clip.ref)
+    return mg.ref
+
+
 def _attack_specs(gb, clips, hit_times, attack_ml, multi_stance):
-    """One `(stance, state name, generator ref, event)` per attack clip."""
+    """One `(stance, state name, generator ref, event)` per land attack clip."""
     stance_of = clips.get('attack_stance', {})
+    swim = set(swim_attacks(clips))
     specs = []
     for kf, evt in zip(clips['attacks'], build_attack_events(clips)):
+        if kf in swim:
+            continue
         st_name = f'Attack_{clip_state_name(kf)}'
-        clip = gb.clip(st_name, kf, False, gb.clip_triggers(
-            hit_times.get(st_name, []), 'returnToDefault'))
-        mg = gb.add('hkbModifierGenerator')
-        mg.param('variableBindingSet', 'null')
-        mg.param('userData', 1)
-        mg.param('name', f'{st_name}_MG')
-        mg.param('modifier', attack_ml.ref)
-        mg.param('generator', clip.ref)
+        gen_ref = _attack_generator(gb, st_name, kf, hit_times, attack_ml,
+                                    'returnToDefault')
         stance = stance_of.get(kf) if multi_stance else None
         if stance not in clips.get('equip', {}):
             stance = None
-        specs.append((stance, st_name, mg.ref, evt))
+        specs.append((stance, st_name, gen_ref, evt))
     return specs
+
+
+def swim_attack_states(gb, clips, hit_times, attack_ml):
+    """An amphibian's swim attacks, as states of its swim sub-machine.
+
+    Returns `(states, entries)`: one state per swim attack clip, and the
+    local transition every swim gait state carries into it.  The clip's END
+    fires `attackStop`, which leads back to the swim idle, as in vanilla's
+    horker.  The state also sends `attackStop` on exit, as a land attack
+    state does, so an attack cut short still clears.  Both are empty for a
+    creature with no such clips, and nothing is built.
+    See: docs/commentary/asset_convert_creature.md#swim-attacks
+    """
+    swim = set(swim_attacks(clips))
+    states, entries = [], []
+    for kf, evt in zip(clips['attacks'], build_attack_events(clips)):
+        if kf not in swim:
+            continue
+        st_name = f'Attack_{clip_state_name(kf)}'
+        state_id = SWIM_ATTACK_FIRST_ID + len(states)
+        gen_ref = _attack_generator(gb, st_name, kf, hit_times, attack_ml,
+                                    'attackStop')
+        states.append(gb.state(
+            state_id, f'{st_name}State', gen_ref,
+            transitions=[(gb.eid['attackStop'], 0, F_LOCAL)],
+            exit_events=['attackStop'], root=True))
+        entries.append((gb.eid[evt], state_id, F_LOCAL, True))
+    return states, entries
 
 
 def attack_modifier_list(gb):
