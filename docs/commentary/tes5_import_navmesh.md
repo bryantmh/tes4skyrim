@@ -5338,6 +5338,41 @@ kernel table below is the history of how it got there. Verified exact:
   the parent; the threaded run starts no processes, and its parent peaked
   0.8 GB over its resting size (3.1 -> 3.9 GB, parsed export included).
 
+<a id="throughput-after-gap-flood"></a>**Throughput after seams, door reach and
+the gap flood (measured 2026-11-11, same 160-job Nehrim sample, cold cache).**
+Serial 44.3s -> **69.7s**; 31 threads 4.0s -> **12.2s (13.1 jobs/s)**. Two
+separate causes:
+
+- *More work per cell.* A native stack sampler over 30 serial jobs put
+  **47%** of build time in `with_gaps` (ccell.cpp), which reruns the whole
+  corridor build once the flood finds open LAND. `grow_march` is 37% of the
+  total, split 18.7% first build / 18.4% rebuild; the rebuild re-grew every
+  authored station the first build already grew. GEOS overlays/unions are ~25%;
+  `wall_hit` 12%, `tri_height` (walk sampling inside the march) 8%,
+  `Land::z` 5%.
+  <a id="grow-memo"></a>*Fixed by `GrowMemo`* (kernels.h, held on `CellCtx`):
+  a width is a pure function of the station's exact bits, the neighbour field's
+  exact segments, and the cell's collision/LAND/tunables (fixed for one
+  `build_cell`), so a station marched before against an identical field reuses
+  its width. Flood nodes are appended after the authored ones, so authored
+  stations keep their indices and hit; on 40 real Nehrim jobs every authored
+  station in a gap rebuild hit (85-99% of a rebuild's stations). Keys are
+  fixed-size arrays in one sorted vector per field: a map node per station
+  added heap traffic, which is what the threads contend on. Output unchanged
+  (`cell_baseline.py` against the previous build: 20 Nehrim cells, 14 in
+  `--mode stress`, 12 Oblivion, all MATCH). Serial 80 jobs **41.4s -> 37.0s**
+  and 45.8s -> 39.7s on a second pass; 31 threads unchanged within noise
+  (11.5-14.4s either build), as the contention below bounds it.
+- *Threads stop scaling at 8.* 80 jobs: 1 thread 41.5s, 4 12.7s, 8 9.5s, 16
+  9.5s. The Python side is 6% of a job and the GIL is released for the whole
+  build, so this is inside the native call: at 16 threads `corridor_cell`
+  spends 88.6s wall against 58.5s thread CPU (a third blocked) and its CPU time
+  grows 40% over the single-thread run. The heap is ~16% of single-thread time
+  (`RtlAllocateHeap` 10%, `RtlFreeHeap` 6%), spread over GEOS and many navgrow
+  callers (none above 1.5%), and a job touches ~48,000 fresh pages (~190 MB).
+  Heap/page-fault contention fits; it is not yet confirmed by a wait trace
+  (WPR needs admin).
+
 **A dense cell is bound by GEOS overlays, not by the port.** Nehrim
 `00230BF2` took 16.7s natively against 52.7s in Python: stage timers on a
 scratch build put 13.8s in `_sheet_coverage`, all of it in

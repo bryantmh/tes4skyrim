@@ -174,6 +174,15 @@ def _add_block(seq, name: bytes, ctype: bytes, ctrl, ip) -> None:
     block.interpolator = ip
 
 
+def _alpha_interpolator(ctrl, local, times):
+    """A NiFloatInterpolator replaying a NiAlphaController's material alpha at `local`, keyed at `times`."""
+    ip = NifFormat.NiFloatInterpolator()
+    ip.float_value = _NO_VALUE
+    ip.data = NifFormat.NiFloatData()
+    _fill_float_keys(ip.data.data, times, _rows(local, channel(ctrl.data.data.keys, lambda v: (v,))))
+    return ip
+
+
 def _sequence(manager, mttc, animated, span) -> object:
     """One NiControllerSequence replaying every animated controller over `span`."""
     name, start, stop, cycle = span
@@ -192,6 +201,10 @@ def _sequence(manager, mttc, animated, span) -> object:
             _add_block(seq, bytes(node.name), b'NiTransformController', mttc,
                        _transform_interpolator(node, ctrl.data, local, times))
             continue
+        if isinstance(ctrl, NifFormat.NiAlphaController):
+            _add_block(seq, bytes(node.name), b'NiAlphaController', ctrl,
+                       _alpha_interpolator(ctrl, local, times))
+            continue
         for ip in _morph_interpolators(ctrl, local, times):
             _add_block(seq, bytes(node.name), b'NiGeomMorpherController',
                        ctrl, ip)
@@ -203,8 +216,19 @@ def _usable(ctrl) -> bool:
     data = getattr(ctrl, 'data', None)
     if isinstance(ctrl, NifFormat.NiKeyframeController):
         return isinstance(data, NifFormat.NiKeyframeData)
+    if isinstance(ctrl, NifFormat.NiAlphaController):
+        return isinstance(data, NifFormat.NiFloatData) and data.data.num_keys > 0
     return (isinstance(ctrl, NifFormat.NiGeomMorpherController)
             and data is not None and data.num_morphs > 1)
+
+
+def _controllers(node) -> list:
+    """The node's own controllers, then those on its properties (a material's alpha fade)."""
+    found = list(chain(node.controller, 'next_controller'))
+    for prop in getattr(node, 'properties', None) or ():
+        if prop is not None:
+            found += chain(prop.controller, 'next_controller')
+    return found
 
 
 def _animated(root, autoplay: bool) -> list:
@@ -221,9 +245,7 @@ def _animated(root, autoplay: bool) -> list:
         seen.add(id(node))
         under = under or getattr(node, '_mw_autoplay', False)
         if under == autoplay:
-            out.extend((node, c) for c in chain(node.controller,
-                                                 'next_controller')
-                       if _usable(c))
+            out.extend((node, c) for c in _controllers(node) if _usable(c))
         kids = [c for c in (getattr(node, 'children', None) or ()) if c is not None]
         stack.extend((kid, under) for kid in reversed(kids))
     return out

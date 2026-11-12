@@ -398,7 +398,29 @@ arktwend_side 6/6 in every Arktwend run since 13.
   User: recording looked low-res -> launch() re-applied PREFS_INI 640x360 over the record size (fixed: launch
   takes `prefs`; 1:1 crop now sharp). Face Discoloration Fix (user's Vortex staging, FaceGenFixes.dll) linked
   via new `build --skse-plugin DLL` (removed again by the next build without it); skse64.log: loaded.
-  RECORDED: temp/recording_mw_main2/2026-11-11 16-12-10.mp4, 97/97 passed, 2560x1440 60 fps, 8 m 29 s, 2.0 GB. Run 44 (MW lane) done: all clean but co_protect_falco (fixed). Recording run = morrowind stage build +
+  RECORDED: temp/recording_mw_main2/2026-11-11 16-12-10.mp4, 97/97 passed, 2560x1440 60 fps, 8 m 29 s, 2.0 GB.
+  User: no Azura / robes messed up. Azura = 'azura spirit' ACTI (r\Azura.NIF), AzuraEnd: ~12 game s visible
+  (0.5 s at 25x) then the harness stopped the game the same second; mw_end.bik never shipped (Morrowind's sound
+  stage predates video.py 10-12; the instance's mw_cavern.bik was a Morroblivion leftover) -> video step run for
+  Morrowind.esm. Robes: output/Morrowind.esm meshes 6379 Sep / 457 Oct / 127 Nov; arm-fit fix d085a80a 10-11 ->
+  user OK'd full --meshes-only for Morrowind/Tribunal/Bloodmoon after the azura_view clip, then re-record.
+  azura_view (normal speed, held open; temp/recording_azura): mw_end.bik PLAYS; Azura NOT visible. She stands
+  150 ahead of the player (REFR 00417C86 at 4037 5301). Cause: game_calls_anim PlayGroupNow dropped a PlayGroup
+  on a ref whose 3D was still loading (AzuraEnd: Enable, then PlayGroup Idle2 = fade-in next pass; no 'idle2'
+  anim line). Fix: g_pending + PendingTick (plays once the 3D loads, drops after 600 ticks). DLL built, gates
+  pass. recording_azura2: idle2 now plays but she is STILL invisible -> real cause #2: source azura.nif has
+  material alpha 0 + 28 NiAlphaController (the fade); object_anim_morrowind cut only keyframe/morph
+  controllers, so the fade was dropped. Fix: _controllers() includes property controllers, NiAlphaController
+  -> NiFloatInterpolator block (sequences.py retargets to the shader Alpha). Also: vanilla census 1454/1454
+  shader values driven from 2+ sequences share ONE controller; ours chained one per sequence ->
+  attach_seq_shader_controllers reuses the shader's twin (_chained_twin). Azura test: 8 seqs, Idle2 Intro
+  0->1, 1 ctrl/shader. Tests: 51 + 6 pass. Blast radius: (a) every MW-format fixture mesh with material
+  alpha keys; (b) EVERY plugin's meshes with a shader value in 2+ sequences. Rebuilt meshes: MW 6375/6377
+  (2 NOGEO crystals), Tribunal 750, Bloodmoon 1073. recording_azura3: AZURA FADES IN AND SHOWS (strip.png).
+  NOT YET rebuilt for the alpha/shared-controller fixes: Arktwend, TR/TD, Morroblivion, Oblivion, Nehrim, FNV.
+  Re-recording from temp/recording_cases/morrowind_main (copy; c3_azura gets `pace 1` + `wait 1500`) into
+  temp/recording_mw_main3. DONE: 97/97, 2026-11-11 17-01-09.mp4, 10 m 28 s, 2.4 GB; Azura shows at ~8:30
+  (azura.png), mw_end.bik follows. Run 44 (MW lane) done: all clean but co_protect_falco (fixed). Recording run = morrowind stage build +
   `mwtest --cases quests/morrowind_main --new-game 2 --fast --timeout 21600 --record <dir>`; sound off.
 - Run 44 (MW lane, inst 2) and run 45 (Morroblivion, inst 1) = post-change verification of the done lanes.
   Run 44: co_protect_falco FAIL (1 in 15 logged runs): last step SetPos x/y/z onto Falco, then Falco 1802 away

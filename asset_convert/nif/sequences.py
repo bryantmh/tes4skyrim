@@ -857,8 +857,23 @@ def _already_chained(shader, ctrl):
     return False
 
 
+def _chained_twin(shader, ctrl):
+    """The controller already on the shader driving the same value as `ctrl`, or None."""
+    probe = shader.controller
+    while probe is not None:
+        if (type(probe) is type(ctrl)
+                and getattr(probe, 'type_of_controlled_variable', None)
+                == getattr(ctrl, 'type_of_controlled_variable', None)
+                and getattr(probe, 'type_of_controlled_color', None)
+                == getattr(ctrl, 'type_of_controlled_color', None)):
+            return probe
+        probe = probe.next_controller
+    return None
+
+
 def attach_seq_shader_controllers(root, stats=None):
-    """Hang each sequence's shader controller off the shader it drives.
+    """Hang each sequence's shader controller off the shader it drives; every
+    sequence driving the same shader value shares that one controller, as vanilla does.
 
     See: docs/commentary/asset_convert_nif.md#seq-shader-controller-attach
     """
@@ -877,6 +892,10 @@ def attach_seq_shader_controllers(root, stats=None):
                 name = palette_lookup(raw, getattr(cb, 'node_name_offset', None))
             shader = shaders.get(name)
             if shader is None or _already_chained(shader, ctrl):
+                continue
+            twin = _chained_twin(shader, ctrl)
+            if twin is not None:
+                cb.controller = twin
                 continue
             ctrl.target = shader
             ctrl.next_controller = shader.controller

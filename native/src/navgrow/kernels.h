@@ -3,7 +3,9 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -31,6 +33,16 @@ std::vector<std::vector<double>> levels_at_points(const std::vector<Strip>& stri
 // `exact_nodes` (actor spawns) count only what stands inside a wall slab.
 // Nodes [flood_lo, flood_hi) are a flood's: an authored station's crossing
 // stop ignores the flood's lines (they must not narrow the author's ribbons).
+//
+// `memo` carries widths between the grows of ONE cell's builds over the same
+// collision, LAND and tunables: a station whose exact bits and neighbour field
+// (its segments' exact bits) were marched before reuses that width.
+struct GrowMemo {
+    using Bits = std::vector<std::uint64_t>;
+    using Station = std::array<std::uint64_t, 11>;
+    using Widths = std::vector<std::pair<Station, double>>;  // sorted by station
+    std::map<Bits, Widths> by_field;
+};
 std::vector<double> grow_widths(const TriGrid& wall, const TriGrid* walk,
                                 const std::vector<double>& nodes_xy,
                                 const std::vector<int>& edges,
@@ -38,7 +50,7 @@ std::vector<double> grow_widths(const TriGrid& wall, const TriGrid* walk,
                                 const std::vector<double>& stations,
                                 const std::vector<double>& on_land, int land_from,
                                 const std::set<int>* exact_nodes = nullptr,
-                                int flood_lo = 0, int flood_hi = 0);
+                                int flood_lo = 0, int flood_hi = 0, GrowMemo* memo = nullptr);
 
 // --- meshflip.cpp (xy: interleaved plan points) ----------------------------
 // union_cdt._flip2d.

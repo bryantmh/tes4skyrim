@@ -54,7 +54,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <map>
 #include <new>
 #include <stdexcept>
 #include <string>
@@ -274,14 +276,66 @@ double grow_half_width(const TriGrid& wall, const TriGrid* walk,
     return grown;
 }
 
+void put_bits(GrowMemo::Bits& k, double v) {
+    std::uint64_t u;
+    std::memcpy(&u, &v, sizeof u);
+    k.push_back(u);
+}
+
+// The exact bits a field's crossing test answers from: its segments, in order.
+GrowMemo::Bits field_bits(const NeighbourField& f) {
+    GrowMemo::Bits k;
+    for (const Seg& s : f.segs) {
+        for (double v : {s.ax, s.ay, s.az, s.bx, s.by, s.bz}) put_bits(k, v);
+        k.push_back((std::uint64_t)(std::uint32_t)s.i);
+        k.push_back((std::uint64_t)(std::uint32_t)s.j);
+    }
+    return k;
+}
+
+// The exact bits one march of station row `r` reads besides the field and collision.
+GrowMemo::Station station_bits(const double* r, int ex_a, int ex_b, bool exact, bool on_land) {
+    GrowMemo::Station k;
+    std::memcpy(k.data(), r, 8 * sizeof(double));
+    k[8] = (std::uint64_t)(std::uint32_t)ex_a;
+    k[9] = (std::uint64_t)(std::uint32_t)ex_b;
+    k[10] = (exact ? 1u : 0u) | (on_land ? 2u : 0u);
+    return k;
+}
+
+bool station_less(const std::pair<GrowMemo::Station, double>& a, const std::pair<GrowMemo::Station, double>& b) {
+    return a.first < b.first;
+}
+
+// The width `seen` (sorted) holds for station `k`; false when it holds none.
+bool seen_width(const GrowMemo::Widths& seen, const GrowMemo::Station& k, double* w) {
+    const auto it = std::lower_bound(seen.begin(), seen.end(), std::make_pair(k, 0.0), station_less);
+    if (it == seen.end() || it->first != k) return false;
+    *w = it->second;
+    return true;
+}
+
+// `fresh` merged into `seen`, which stays sorted (a station already held keeps its width).
+void remember(GrowMemo::Widths& seen, GrowMemo::Widths& fresh) {
+    if (fresh.empty()) return;
+    const size_t mid = seen.size();
+    seen.insert(seen.end(), fresh.begin(), fresh.end());
+    std::stable_sort(seen.begin() + (long long)mid, seen.end(), station_less);
+    std::inplace_merge(seen.begin(), seen.begin() + (long long)mid, seen.end(), station_less);
+    seen.erase(std::unique(seen.begin(), seen.end(),
+                           [](const auto& a, const auto& b) { return a.first == b.first; }),
+               seen.end());
+}
+
 // Every station's grown half-width into `out` (stations: (N, 9) rows of cx,
 // cy, cz, dirx, diry, tanx, tany, lo, edge_index; on_land per station or null).
 // The discs of `exact_nodes` (actor spawns) test walls by what stands in the slab.
+// A station `memo` saw marched against the same field takes that width.
 void grow_march(const TriGrid& wall, const TriGrid* walk, const double* nodesp,
                 size_t nnode, const int* edgesp, size_t nedge, const double* nzp,
                 const Land* land, const double* stp, size_t nst, const double* onlandp,
                 const Params& P, double* out, const std::set<int>* exact_nodes = nullptr,
-                int flood_lo = 0, int flood_hi = 0) {
+                int flood_lo = 0, int flood_hi = 0, GrowMemo* memo = nullptr) {
     auto flooded = [&](int n) { return n >= flood_lo && n < flood_hi; };
     NeighbourField field, authored;
     if (nedge) field.build(nodesp, nnode, edgesp, nedge, nzp);
@@ -292,6 +346,9 @@ void grow_march(const TriGrid& wall, const TriGrid* walk, const double* nodesp,
             own.push_back(edgesp[e * 2 + 1]);
         }
     if (!own.empty()) authored.build(nodesp, nnode, own.data(), own.size() / 2, nzp);
+    GrowMemo::Widths* seen_all = memo ? &memo->by_field[field_bits(field)] : nullptr;
+    GrowMemo::Widths* seen_own = memo && flood_hi > flood_lo ? &memo->by_field[field_bits(authored)] : nullptr;
+    GrowMemo::Widths fresh_all, fresh_own;
     for (size_t s = 0; s < nst; ++s) {
         const double* r = &stp[s * 9];
         // Exclude the station's OWN centerline(s) from the crossing test.
@@ -308,11 +365,17 @@ void grow_march(const TriGrid& wall, const TriGrid* walk, const double* nodesp,
         }
         const bool exact = ei < 0 && exact_nodes && exact_nodes->count((int)(-1 - ei));
         const bool by_author = flood_hi > flood_lo && ex_a >= 0 && !flooded(ex_a) && !flooded(ex_b);
-        out[s] = grow_half_width(wall, walk, by_author ? authored : field,
-                                 (onlandp && onlandp[s] > 0.0 && land->g) ? land : nullptr,
+        const Land* L = (onlandp && onlandp[s] > 0.0 && land->g) ? land : nullptr;
+        const GrowMemo::Widths* seen = by_author ? seen_own : seen_all;
+        const GrowMemo::Station key = station_bits(r, ex_a, ex_b, exact, L != nullptr);
+        if (seen && seen_width(*seen, key, &out[s])) continue;
+        out[s] = grow_half_width(wall, walk, by_author ? authored : field, L,
                                  r[0], r[1], r[2], r[3], r[4], r[5], r[6], ex_a, ex_b, r[7], P,
                                  exact);
+        if (seen) (by_author ? fresh_own : fresh_all).push_back({key, out[s]});
     }
+    if (seen_all) remember(*seen_all, fresh_all);
+    if (seen_own) remember(*seen_own, fresh_own);
 }
 
 // --------------------------------------------------------------------------
@@ -475,7 +538,7 @@ std::vector<double> navgrow::grow_widths(const TriGrid& wall, const TriGrid* wal
                                          const std::vector<double>& stations,
                                          const std::vector<double>& on_land, int land_from,
                                          const std::set<int>* exact_nodes,
-                                         int flood_lo, int flood_hi) {
+                                         int flood_lo, int flood_hi, GrowMemo* memo) {
     const NavParams& N = P();
     Params G;
     G.step = N.RIBBON_GROW_STEP;
@@ -494,7 +557,7 @@ std::vector<double> navgrow::grow_widths(const TriGrid& wall, const TriGrid* wal
     std::vector<double> out(stations.size() / 9);
     grow_march(wall, walk, nodes_xy.data(), nodes_xy.size() / 2, edges.data(), edges.size() / 2,
                node_z.data(), land ? land : &none, stations.data(), out.size(),
-               land ? on_land.data() : nullptr, G, out.data(), exact_nodes, flood_lo, flood_hi);
+               land ? on_land.data() : nullptr, G, out.data(), exact_nodes, flood_lo, flood_hi, memo);
     return out;
 }
 

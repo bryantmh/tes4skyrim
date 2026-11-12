@@ -707,7 +707,8 @@ Group build_corridor_strips(CellCtx& C) {
         C.geo.ensure_walk_index();
         G.widths = grow_widths(C.geo.wall, C.geo.has_walkable ? &C.geo.walk : nullptr,
                                C.edges.empty() ? std::vector<double>() : nodes_xy, eg, nz, C.land,
-                               G.rows, G.on_land, C.land_from, &C.lone, C.flood_lo, C.flood_hi);
+                               G.rows, G.on_land, C.land_from, &C.lone, C.flood_lo, C.flood_hi,
+                               &C.grow_memo);
         bridge_blocked_stations(G);
         erode_far_widths(G);
     }

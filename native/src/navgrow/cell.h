@@ -9,6 +9,7 @@
 
 #include "cellgeo.h"
 #include "clean.h"
+#include "kernels.h"
 #include "union.h"
 #include "world.h"
 
@@ -36,6 +37,7 @@ struct CellCtx {
     bool has_clip = false;
     double clip[4] = {0, 0, 0, 0};
     std::deque<UStrip> store;        // owns every strip of the build
+    GrowMemo grow_memo;              // widths kept across this cell's builds (same geo)
 
     // corridor._surface_sampler (false for None).
     bool sample(double x, double y, double near_z, double* z) const {

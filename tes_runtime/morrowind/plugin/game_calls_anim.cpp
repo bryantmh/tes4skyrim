@@ -74,7 +74,18 @@ struct Held {
     bool loop = false;
 };
 
+// A group asked of an object whose 3D is still loading (just enabled, say):
+// OpenMW builds the animation inside Enable, so it plays once the 3D is in.
+struct Pending {
+    Clip clip;
+    int mode = 0;
+    int ticks = 0;
+};
+// Ticks a pending group waits for its 3D before it is dropped (~10 s).
+constexpr int kPendingTicks = 600;
+
 std::unordered_map<std::uint32_t, Queue> g_queues;   // game thread only
+std::unordered_map<std::uint32_t, Pending> g_pending;
 std::unordered_map<std::uint32_t, Held> g_held;
 std::unordered_set<std::uint32_t> g_skips;            // asked for this tick
 std::unordered_set<std::string> g_logged;             // ref+group plays logged once
@@ -194,6 +205,10 @@ const char* Unplayable(void* ref, void* manager, const std::string& group) {
 void PlayGroupNow(std::uint32_t id, const std::string& group, int mode,
                   std::uint32_t loops) {
     void* ref = RefByRuntimeId(id);
+    if (ref && !Has3D(ref)) {
+        g_pending[id] = Pending{Clip{group, loops}, mode};
+        return;
+    }
     void* manager = ManagerOfRef(ref);
     if (const char* why = Unplayable(ref, manager, group)) ReportOnce(why, group);
     if (!manager || (group != kIdleGroup && !SequenceFor(manager, group))) return;
@@ -289,7 +304,26 @@ void HoldTick() {
     g_skips.clear();
 }
 
+// Plays each pending group whose 3D has loaded; drops one whose reference is
+// gone or whose 3D never came.
+void PendingTick() {
+    for (auto it = g_pending.begin(); it != g_pending.end();) {
+        const std::uint32_t id = it->first;
+        void* ref = RefByRuntimeId(id);
+        if (ref && Has3D(ref)) {
+            const Pending due = it->second;
+            it = g_pending.erase(it);
+            Log("anim: %08X's 3D loaded -- playing the '%s' it was asked for %d tick(s) earlier",
+                id, due.clip.group.c_str(), due.ticks);
+            PlayGroupNow(id, due.clip.group, due.mode, due.clip.loops);
+        } else {
+            it = (!ref || ++it->second.ticks > kPendingTicks) ? g_pending.erase(it) : std::next(it);
+        }
+    }
+}
+
 void AnimTick() {
+    PendingTick();
     HoldTick();
     for (auto it = g_queues.begin(); it != g_queues.end();) {
         it = Advance(it->first, it->second) ? std::next(it) : g_queues.erase(it);

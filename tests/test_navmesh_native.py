@@ -192,15 +192,15 @@ def _corridor_build(seed):
                                     doors=[door], door_bases=doors, water_z=30.0)
 
 
-#: sha1 of seeded_graph over _flood_job(Random(seed)), per seed.
-FLOOD_DIGESTS = {0: 'a60c651941e8bd35a7d62f5557a8b21e308f0d59',
-                 1: '8b47bc2699c6a73261d68ca4636759d725f06f0a',
-                 2: '0902119ef5669252977f39a75ab5df8ebaf7fb64'}
+#: sha1 of seeded_graph over _flood_job(Random(seed)), per seed whose seeds reach open floor.
+FLOOD_DIGESTS = {0: '15dda32b2da2c39efffad349abbe1295bf7e0109',
+                 2: 'c891c3ddd976a45e60158b6f922c2b4bbef64115',
+                 3: '33cac5561e70e707f943320056dd1487e90cd18c'}
 
 #: sha1 of _corridor_build(seed), per seed.
-CORRIDOR_DIGESTS = {0: 'c74420db136fe88d0bf61ed2ac0b5be421935d46',
-                    1: '531276d471ddd56fc43a6911e6bd2bea6326c736',
-                    2: 'c33cf7b047e0825ed6f1c6698d228925f3f2ae7c'}
+CORRIDOR_DIGESTS = {0: 'f793b744b988a8d14a0d549491579ef76eb770a3',
+                    1: '8d9be5bd6530f8c9c54bb1fc47c3afa95ec4888c',
+                    2: '5d9d410ebe6fdeb2d8b47d21ba684beb318c0713'}
 
 
 def test_seed_flood_is_golden():
