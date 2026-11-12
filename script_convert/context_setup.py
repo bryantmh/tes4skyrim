@@ -120,7 +120,7 @@ def build_xref(export_dir: str) -> CrossRefGraph:
           f'{len(xref.quest_edids)} quests')
     scpt_path = os.path.join(export_dir, 'SCPT.txt')
     if os.path.exists(scpt_path):
-        xref.build_ref_as_int_map(scpt_path)
+        xref.build_script_indexes(scpt_path)
         if xref.ref_as_int:
             print(f'    {len(xref.ref_as_int)} ref variables detected as '
                   f'integer-only (cross-script)')

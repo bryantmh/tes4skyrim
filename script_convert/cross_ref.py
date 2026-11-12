@@ -19,6 +19,7 @@ from core.plugin_masters import (
 )
 from core.worker_budget import worker_count
 from core.worldspace_names import converted_worldspace_edid, renames_for
+from tes5_import.base.text_reader import unescape_value
 
 # ===========================================================================
 # Cross-reference graph builder
@@ -62,6 +63,7 @@ def _new_scan_out() -> dict:
         'formid_to_edid': {}, 'edid_to_formid': {},
         'script_formid_to_edid': {}, 'script_formid_to_type': {},
         'record_scri': {}, 'record_base': {}, 'record_type': {},
+        'record_parent': {},
         'quest_edids': set(), 'npc_formids': set(),
         'mgef_shaders': {}, 'spell_effects': {},
         'global_types': {}, 'global_values': {},
@@ -117,6 +119,8 @@ def index_record_details(tables: dict, sig: str, formid: str, edid: str,
     model = rec.get('Model.MODL')
     if model:
         tables['record_model'][formid] = model
+    if sig in PLACED_REF_SIGS and rec.get('XESP.Reference'):
+        tables['record_parent'][formid] = rekey(rec['XESP.Reference'])
     low = edid.lower() if edid else ''
     if sig == 'MGEF' and low:
         tables['mgef_shaders'][low] = (
@@ -238,7 +242,8 @@ _SIG_SCANNERS = {'SCPT': _scan_scpt, 'CELL': _scan_cell, 'NPC_': _scan_actor,
 
 
 #: The fields of a record that hold a FormID, beside its own and every `AIPackage[n]`.
-_ID_FIELDS = ('SCRI', 'NAME', 'ParentWRLD', 'DATA.EffectShader', 'DATA.EnchantEffect')
+_ID_FIELDS = ('SCRI', 'NAME', 'ParentWRLD', 'DATA.EffectShader', 'DATA.EnchantEffect',
+              'XESP.Reference')
 
 _FORMID_RE = re.compile(r'[0-9A-Fa-f]{8}')
 
@@ -355,6 +360,12 @@ def _model_is_held(model: str) -> bool:
     return bool(get_mesh_physics_flags(current_namespace() + '/' + key) & 2)
 
 
+def _agreed(sigs) -> str:
+    """The ONE signature every entry names, or '' when any is unknown or they differ."""
+    found = set(sigs)
+    return found.pop() if len(found) == 1 else ''
+
+
 class CrossRefGraph:
     """Builds FormID->EditorID and EditorID->ScriptName lookup tables."""
 
@@ -381,6 +392,12 @@ class CrossRefGraph:
         # base FormID (upper) -> its ONE placed ref FormID; lazily inverted
         # from record_base by unique_placed_ref().
         self._base_to_unique_ref: 'dict[str, str] | None' = None
+        #: Placed ref FormID -> its ENABLE PARENT's FormID (XESP), what `getParentRef` returns.
+        self.record_parent: dict[str, str] = {}
+        #: (script EditorID, variable), lowercase, that ANOTHER script assigns (`set Owner.var to X`).
+        self.remote_writes: set[tuple[str, str]] = set()
+        #: Variable names assigned through an owner no script could be found for; these veto by name.
+        self.remote_write_names: set[str] = set()
         self.quest_edids: set[str] = set()
         self.npc_formids: set[str] = set()
         # Cross-script ref-as-int analysis: set of (script_name_lower, var_name_lower)
@@ -502,6 +519,7 @@ class CrossRefGraph:
         self.script_formid_to_type.update(out['script_formid_to_type'])
         self.record_scri.update(out['record_scri'])
         self.record_base.update(out['record_base'])
+        self.record_parent.update(out['record_parent'])
         self.record_type.update(out['record_type'])
         self.record_model.update(out['record_model'])
         self.cell_geom.update(out['cell_geom'])
@@ -861,6 +879,39 @@ class CrossRefGraph:
                    for rec_fid, scri in self.record_scri.items()
                    if scri == script_fid)
 
+    def placed_refs(self, base_fid: str) -> list:
+        """Every placed reference of a base record; the index is built on first use."""
+        index = getattr(self, '_placed_index', None)
+        if index is None:
+            index = {}
+            for ref_fid, base in self.record_base.items():
+                index.setdefault(base, []).append(ref_fid)
+            self._placed_index = index
+        return index.get(base_fid, [])
+
+    def script_self_signature(self, script_edid: str) -> str:
+        """Signature every record carrying the script shares (its `getSelf`), or ''."""
+        return _agreed(self.record_type.get(fid, '')
+                       for fid in self.script_owner_actors(script_edid))
+
+    def script_parent_signature(self, script_edid: str) -> str:
+        """Base signature `getParentRef` resolves to in this script, or '' unless proven.
+
+        Proven means every record carrying the script is placed, every
+        placement names an enable parent (XESP), and every parent's base
+        record has the same signature.  A placement with no parent, or two
+        that disagree, proves nothing.
+        See: docs/commentary/script_convert.md#playgroup-variable-target
+        """
+        sigs = []
+        for owner in self.script_owner_actors(script_edid):
+            refs = self.placed_refs(owner)
+            if not refs:
+                return ''
+            sigs += [self.record_type.get(self.record_base.get(
+                self.record_parent.get(ref, ''), ''), '') for ref in refs]
+        return _agreed(sigs)
+
     def get_record_script_type(self, name: str) -> str:
         """Get the Papyrus script class name for any record with an attached script.
         For placed references (ACHR/ACRE/REFR), follows the NAME chain to the
@@ -1149,6 +1200,47 @@ class CrossRefGraph:
         _scan_plugin_result_scripts(export_dir, _scan_text_for_cross_access)
 
         self.cross_script_vars = cross_script_vars
+
+    def build_script_indexes(self, scpt_path: str) -> None:
+        """Every index read off script SOURCE; the one entry both graph builders call."""
+        self.build_ref_as_int_map(scpt_path)
+        self.index_remote_writes(_script_texts(os.path.dirname(scpt_path)))
+
+    def index_remote_writes(self, texts) -> None:
+        """Record every `set Owner.var to X` in `texts` against the script that OWNS var.
+
+        The owner is a script, a quest or object carrying one, or a placed
+        reference whose base carries one.  An owner that resolves to no script
+        vetoes the variable NAME instead: a write the scan cannot place must
+        never read as "nobody else assigns this".
+        See: docs/commentary/script_convert.md#playgroup-variable-target
+        """
+        known = {e.lower() for e in self.script_formid_to_edid.values()}
+        for text in texts:
+            for owner, var in _REMOTE_WRITE_RE.findall(text):
+                scripts = self._scripts_of(owner, known)
+                self.remote_writes.update((s, var.lower()) for s in scripts)
+                if not scripts:
+                    self.remote_write_names.add(var.lower())
+
+    def _scripts_of(self, name: str, known: set) -> set:
+        """Lowercase EditorIDs of the scripts `name` reaches: itself, its SCRI, its base's SCRI."""
+        low = name.lower()
+        found = {low} & known
+        fid = self.edid_to_formid.get(low, '')
+        for rec_fid in (fid, self.record_base.get(fid, '')):
+            edid = self.script_formid_to_edid.get(
+                self.record_scri.get(rec_fid, ''), '')
+            if edid:
+                found.add(edid.lower())
+        return found
+
+    def remotely_assigned(self, script_edid: str, var_name: str) -> bool:
+        """Does another script assign this variable, or one indistinguishable from it?"""
+        var = var_name.lower()
+        return ((script_edid or '').lower(), var) in self.remote_writes \
+            or var in self.remote_write_names
+
     def is_remote_ref_var(self, owner_edid: str, var_name: str) -> bool:
         """Check if a variable on a remote record's script is ref-typed in TES4.
 
@@ -1211,6 +1303,28 @@ def _scan_plugin_result_scripts(export_dir: str, scan) -> None:
             if raw_line.startswith(prefix):
                 text = raw_line[len(prefix):].strip()
                 scan(text.replace('\\r\\n', '\n').replace('\\n', '\n'))
+
+
+#: `set Owner.var to` / `let Owner.var :=` (and its compound forms) at a statement start.
+_REMOTE_WRITE_RE = re.compile(
+    r'^[ \t]*(?:set|let)[ \t]+(\w+)[ \t]*\.[ \t]*(\w+)[ \t]*(?:to\b|[-+*/^]?:=)',
+    re.I | re.M)
+
+#: Export fields holding script source: a SCPT's text, INFO's two result halves, a QUST stage log entry's.
+_SCRIPT_TEXT_RE = re.compile(
+    r'(?:SCTX|ResultScript|ResultScriptEnd|Stage\[\d+\]\.Log\[\d+\]\.ResultScript)=(.*)')
+
+
+def _script_texts(export_dir: str) -> list:
+    """Every SCPT, INFO-result and QUST-stage script of the plugin AND its masters, as source text."""
+    texts = []
+    for d in _export_dirs_with_masters(export_dir):
+        for name in ('SCPT.txt', 'INFO.txt', 'QUST.txt'):
+            for line in _export_lines(os.path.join(d, name)):
+                m = _SCRIPT_TEXT_RE.match(line)
+                if m:
+                    texts.append(unescape_value(m.group(1)))
+    return texts
 
 
 def _export_lines(path: str):

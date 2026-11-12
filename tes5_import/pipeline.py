@@ -652,7 +652,7 @@ def _prescan_cross_ref_graph(all_records: list, ctx, export_dir: str, _step_done
         _index_xref_record(xref, fid_str, rec, _rekey_ref)
     scpt_path = os.path.join(export_dir, 'SCPT.txt')
     if os.path.exists(scpt_path):
-        xref.build_ref_as_int_map(scpt_path)
+        xref.build_script_indexes(scpt_path)
     print(f"  Built CrossRefGraph: {len(xref.edid_to_formid)} entries, "
           f"{len(xref.quest_edids)} quests, {len(xref.script_formid_to_edid)} scripts")
     _step_done('cross-ref graph')

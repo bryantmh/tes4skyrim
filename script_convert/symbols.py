@@ -31,7 +31,7 @@ from script_convert.tes4 import nodes as N
 from dataclasses import dataclass, field
 
 from script_convert.constants import (
-    AXIS_COMMANDS, KNOWN_GLOBALS, NUMERIC_RANK, RETURN_TYPES,
+    AXIS_COMMANDS, KNOWN_GLOBALS, NUMERIC_RANK, RETURN_TYPES, TRACEABLE_SOURCES,
     _BASE_OBJECT_PAPYRUS, is_generated_script_type,
     _FORM_RETURNING,
 )
@@ -231,6 +231,34 @@ def scan_var_usage(stmts, names, lookup):
     return usage
 
 
+def assignment_sources(usage) -> dict:
+    """`{lowercase name: command}` for each variable assigned ONE traceable command.
+
+    A variable with any other assignment -- a second command, a name, a
+    literal -- is left out: nothing then says which value a later use sees.
+    """
+    out = {}
+    for low, use in usage.items():
+        sources = {_source_command(value) for value in use.assigned}
+        only = sources.pop() if len(sources) == 1 else ''
+        if only:
+            out[low] = only
+    return out
+
+
+def foreach_iterators(stmts) -> set:
+    """Lowercased names an OBSE `forEach <it> <- ...` header assigns."""
+    return {st.expr.args[0].name.lower() for st in stmts
+            if isinstance(st, N.ForEach) and isinstance(st.expr, N.Call)
+            and st.expr.args and isinstance(st.expr.args[0], N.Ident)}
+
+
+def _source_command(value) -> str:
+    """The traceable command this value is a BARE call of (an `Ident`), or ''."""
+    low = value.name.lower() if isinstance(value, N.Ident) else ''
+    return low if low in TRACEABLE_SOURCES else ''
+
+
 def _names_a_typed_call(value) -> bool:
     """Is this value a CALL to one of the narrow-return commands?
 
@@ -317,7 +345,7 @@ def _bare(node) -> str:
     return ''
 
 
-def resolve_ref_types(stmts, ref_vars, lookup, record_type_of):
+def resolve_ref_types(stmts, ref_vars, lookup, record_type_of, usage=None):
     """Final Papyrus type for every TES4 `ref` variable, decided BEFORE emission.
 
     TES4 has one `ref` type covering placed references, base records and plain
@@ -337,7 +365,7 @@ def resolve_ref_types(stmts, ref_vars, lookup, record_type_of):
     """
 
     out = {}
-    for low, use in scan_var_usage(stmts, ref_vars, lookup).items():
+    for low, use in (usage or scan_var_usage(stmts, ref_vars, lookup)).items():
         # A `ref` only ever assigned integers and never used as a reference is
         # the TES4 flag idiom, not a reference at all.
         if use.is_int_flag:

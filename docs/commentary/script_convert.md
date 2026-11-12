@@ -5335,7 +5335,8 @@ Function exists in Oblivion but not Papyrus. A polyfill script provides the equi
 - `PlayGroup` → **routes on WHAT THE TARGET IS, never on call syntax**:
   animated OBJECTS (ACTI/DOOR/STAT/MSTT — a NiControllerManager NIF that keeps
   its TES4 sequence names) get `PlayAnimation("Forward")`; ACTORS
-  (NPC_/CREA/ACHR/ACRE) get `Debug.SendAnimationEvent()` (animation group name
+  (NPC_/CREA/ACHR/ACRE, and the leveled lists LVLC/LVLN that place one) get
+  `Debug.SendAnimationEvent()` (animation group name
   mapping), because `PlayAnimation()` on an actor corrupts its behavior graph.
   Resolve the base record via `CrossRefGraph.get_base_signature()`; an unknown
   target keeps the event (inert on an object, never harmful to an actor).
@@ -5349,6 +5350,38 @@ Function exists in Oblivion but not Papyrus. A polyfill script provides the equi
   the next TES4 line converted correctly. **When one of a pair of identical TES4
   statements converts and the other doesn't, suspect the branch that
   distinguishes them.** Guarded by `TestPlayGroupTargetRouting`.
+  <a id="playgroup-variable-target"></a>
+  A receiver that is a ref VARIABLE has no EditorID, so `get_base_signature()`
+  reads `''` and the call took the event unconditionally:
+  `MQ05SewerWheelScript01`'s `set myParent to GetParentRef` /
+  `myParent.playgroup "Forward", 1` asked an activator for an actor event,
+  while the wheel's own bare call on the line before converted to
+  `PlayAnimation`. The variable is now TRACED, and takes
+  `PlayAnimation` only on positive proof -- every condition must hold, and
+  anything short of it keeps the inert event:
+  - every assignment to it in the script is the same bare `getSelf` or
+    `getParentRef` (`symbols.assignment_sources`; `other.getParentRef`, a named
+    ref, a literal or a second command all disqualify it, and so does an OBSE
+    `forEach` header naming it as the iterator: `symbols.foreach_iterators`);
+  - no other script assigns it (`CrossRefGraph.remotely_assigned`: every
+    `set Owner.var to X` in SCPT sources and in INFO / QUST-stage result
+    scripts, masters included, keyed on the owning script; a write whose owner
+    resolves to no script vetoes the variable NAME);
+  - it is not declared `Actor`;
+  - `getSelf`: every record carrying the script has the same signature;
+    `getParentRef`: every such record is placed, every placement names an
+    enable parent (XESP, indexed as `record_parent` by the shared
+    `index_record_details`, so the script stage's graph and the importer's
+    agree), and every parent's base has the same signature;
+  - that signature is a placeable object that can carry a sequence
+    (`SEQUENCE_OBJECT_SIGS`: ACTI/DOOR/CONT/FLOR/FURN/LIGH/MISC/STAT) -- a
+    whitelist, because "not an actor" is not "an animated object".
+
+  The proof is closed-world: a master's script is judged on the master's own
+  placements, and a later plugin that places the same base under an actor
+  parent does not re-emit it. A promoted variable target does not get
+  `ReleaseBreakaway`: `_needs_havok_release` resolves the receiver by EditorID.
+  Guarded by `tests/test_playgroup_variable_target.py`.
 - `GetPos X/Y/Z` → `GetPositionX()` / `GetPositionY()` / `GetPositionZ()`
 - `SetPos X/Y/Z` → `SetPosition(x, y, z)` (needs axis decomposition)
 - `GetAngle X/Y/Z` → `GetAngleX()` / `GetAngleY()` / `GetAngleZ()`

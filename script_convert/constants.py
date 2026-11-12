@@ -607,6 +607,15 @@ SELF_NAMES = ('self', 'myself', 'getself')
 #: Export signatures of a PLACED reference (as opposed to its base record).
 PLACED_REF_SIGS = ('ACHR', 'ACRE', 'REFR')
 
+#: Base signatures of an ACTOR (a leveled list spawns one), which takes a graph event and never PlayAnimation.
+ACTOR_SIGS = ('NPC_', 'CREA', 'ACHR', 'ACRE', 'LVLC', 'LVLN')
+
+#: Placeable object base signatures whose NIF can carry a NiControllerSequence; a TRACED target must be one.
+SEQUENCE_OBJECT_SIGS = ('ACTI', 'DOOR', 'CONT', 'FLOR', 'FURN', 'LIGH', 'MISC', 'STAT')
+
+#: Zero-argument commands whose result is traceable to the records the script is attached to.
+TRACEABLE_SOURCES = ('getself', 'getparentref')
+
 #: The importer's force-greet alias quest, which StartConversation's Quest property names.
 FORCE_GREET_QUEST = 'TES4ForceGreets'
 

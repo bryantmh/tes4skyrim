@@ -30,6 +30,8 @@ class ScriptContext:
     var_types: dict = field(default_factory=dict)
     #: Original lowercased name -> Papyrus-safe name, where they differ.
     var_renames: dict = field(default_factory=dict)
+    #: Lowercased `ref` variable -> the ONE traceable command it is assigned (symbols.assignment_sources).
+    ref_sources: dict = field(default_factory=dict)
     #: OBSE `array_var` declarations; a read of one is inert.
     obse_arrays: set = field(default_factory=set)
     #: Lowercased OBSE user-function parameter names.
