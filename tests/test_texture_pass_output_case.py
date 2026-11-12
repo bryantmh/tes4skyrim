@@ -12,6 +12,9 @@ import os
 from asset_convert.nif import flipbook, nif_converter
 from asset_convert.texture import parallax
 
+#: What regen prints for the test's map, in this platform's path separator.
+MISSING_MAP = 'MISSING SOURCE for ' + os.path.join('tes4', 'stone_p.dds')
+
 
 def _touch(_src, out):
     """Stand-in for an atlas or height-map writer: an empty file at `out`."""
@@ -99,7 +102,7 @@ def test_the_parallax_regen_looks_in_lowercase_textures(tmp_path, capsys, monkey
     _touch('', str(tmp_path / 'Test.esm' / 'textures' / 'tes4' / 'stone_p.dds'))
     rc = parallax_check.regen('Test.esm', str(tmp_path), 1.0, None, None, None, workers=1)
     assert rc == 2
-    assert 'MISSING SOURCE for tes4/stone_p.dds' in capsys.readouterr().out
+    assert MISSING_MAP in capsys.readouterr().out
 
 
 def test_the_parallax_regen_names_the_lowercase_folder_when_none_match(tmp_path, capsys):
@@ -139,4 +142,4 @@ def test_the_parallax_regen_also_reads_an_older_capitalised_folder(tmp_path, cap
     _touch('', str(tmp_path / 'Test.esm' / 'Textures' / 'tes4' / 'stone_p.dds'))
     rc = parallax_check.regen('Test.esm', str(tmp_path), 1.0, None, None, None, workers=1)
     assert rc == 2
-    assert 'MISSING SOURCE for tes4/stone_p.dds' in capsys.readouterr().out
+    assert MISSING_MAP in capsys.readouterr().out
