@@ -413,9 +413,6 @@ class CrossRefGraph:
         self.ref_as_base_form: set[tuple[str, str]] = set()
         # Per-script ref-typed variable names (populated by build_ref_as_int_map)
         self.script_ref_vars: dict[str, set[str]] = {}
-        # Cross-script variable accesses: script_name_lower -> set of var_name_lower
-        # Variables that are accessed from OTHER scripts (need to be Properties)
-        self.cross_script_vars: dict[str, set[str]] = {}
         # Per-script ALL variable declarations: script_name_lower -> dict(var_low -> type_str)
         self.script_all_vars: dict[str, dict[str, str]] = {}
         # Per-script `ref` variables the script itself uses as an ACTOR, i.e. it
@@ -1158,49 +1155,6 @@ class CrossRefGraph:
                     self.ref_as_base_form.add(dest)
                     changed = True
 
-        # Phase D: detect cross-script variable access (Owner.VarName patterns)
-        # These variables must be Properties on the owning script so other scripts
-        # can access them. Scans SCPT sources, INFO result scripts, and QUST stage scripts.
-        _owner_var_re = re.compile(r'\b(\w+)\.(\w+)\b')
-        cross_script_vars: dict[str, set[str]] = {}
-
-        def _scan_text_for_cross_access(text):
-            for raw_line in text.split('\n'):
-                line = raw_line.strip()
-                if not line or line.startswith(';'):
-                    continue
-                semi = line.find(';')
-                if semi >= 0:
-                    line = line[:semi]
-                for match in _owner_var_re.finditer(line):
-                    owner = match.group(1).lower()
-                    var = match.group(2).lower()
-                    target_script = None
-                    if owner in script_all_vars and var in script_all_vars[owner]:
-                        target_script = owner
-                    else:
-                        fid = self.edid_to_formid.get(owner, '')
-                        if fid:
-                            scri_fid = self.record_scri.get(fid, '')
-                            if scri_fid:
-                                se = self.script_formid_to_edid.get(scri_fid, '')
-                                if se:
-                                    se_low = se.lower()
-                                    if se_low in script_all_vars and var in script_all_vars[se_low]:
-                                        target_script = se_low
-                    if target_script:
-                        if target_script not in cross_script_vars:
-                            cross_script_vars[target_script] = set()
-                        cross_script_vars[target_script].add(var)
-
-        # Scan all SCPT sources
-        for scn_low, sctx in script_sources.items():
-            _scan_text_for_cross_access(sctx)
-
-        _scan_plugin_result_scripts(export_dir, _scan_text_for_cross_access)
-
-        self.cross_script_vars = cross_script_vars
-
     def build_script_indexes(self, scpt_path: str) -> None:
         """Every index read off script SOURCE; the one entry both graph builders call."""
         self.build_ref_as_int_map(scpt_path)
@@ -1288,21 +1242,6 @@ def _strip_comments(text: str) -> str:
     """
     nl = chr(10)
     return nl.join(line.split(';', 1)[0] for line in text.split(nl))
-
-
-def _scan_plugin_result_scripts(export_dir: str, scan) -> None:
-    """Feed THIS plugin's INFO result scripts (both halves) and QUST stage
-    scripts to `scan`: a pure union that only ADDS names which must become
-    Properties.  The masters' copies are not read -- each master's own run
-    emits its fragments."""
-    for extra_file, field_name in [('INFO.txt', 'ResultScript'),
-                                   ('INFO.txt', 'ResultScriptEnd'),
-                                   ('QUST.txt', 'SCTX')]:
-        prefix = field_name + '='
-        for raw_line in _export_lines(os.path.join(export_dir, extra_file)):
-            if raw_line.startswith(prefix):
-                text = raw_line[len(prefix):].strip()
-                scan(text.replace('\\r\\n', '\n').replace('\\n', '\n'))
 
 
 #: `set Owner.var to` / `let Owner.var :=` (and its compound forms) at a statement start.
