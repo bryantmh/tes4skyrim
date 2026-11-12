@@ -57,6 +57,8 @@ class ScriptContext:
     moves_in_poll: bool = False
     #: Poll SetPos/SetAngle calls stepping from their own axis read -> (axis, step, sign) (poll_motion.relative_sets).
     relative_sets: dict = field(default_factory=dict)
+    #: (receiver, item) source names of the calls that take items out of an inventory (authored_items.removals).
+    removals: frozenset = frozenset()
     #: Authored quest-script delay in seconds (FO3/FNV DATA.Delay); 0 = none.
     quest_delay: float = 0.0
     #: Every record the script is attached to is a BOOK, so its OnActivate means "read".
