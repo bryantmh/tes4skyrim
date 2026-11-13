@@ -60,6 +60,17 @@ python -m tools.live.repeat_case --cases <folder> --case <case> --times 3 --inst
 - `--keep` leaves the game running afterwards (for `shot` and console probes).
 - A run takes minutes (the whole Morrowind main quest < 10 min); `--timeout` is
   only a hang cap. A quiet runtime log for 180 s ends the run as "GAME HUNG".
+- 🛑 **Never start a run without a fallback timer.** Every background run gets
+  `--stop-on-fail` and a watch that wakes you: a Monitor (or ScheduleWakeup) set
+  to about twice the run's expected time (cases x ~10 s; a quest folder ~5 min),
+  which checks the runtime log's last `test:` line and stops the run if it has not
+  moved. A run that outlives its timer is a hang or a stuck case: read the log and
+  act, never keep waiting. (A Hlaalu run sat idle 25 min on a failed case
+  because none was set.) The same goes for any long background job.
+  Watch: `Monitor` on `python tools/validate/safe_run.py python
+  temp/full_run_2026_10_31/watch_lane.py <run .out> <instance> 180` -- it prints
+  each case result, `STALLED` after 180 s with no result (a busy log counts), and
+  exits on the run's totals. Monitor timeout = 2x the expected run time.
 - Keep the next 2-3 quests' cases drafted, so a pass runs straight on.
 
 ## Writing a case

@@ -1,0 +1,79 @@
+# Clan Berne: "Fall of Merta" (VA_VampCountess). Raxle Berne takes the player's service again ("serve me") and names
+# a renegade ("an errand for you": 10, "I will kill her for you." 1: 20). In the Reloth Ancestral Tomb Merta smells
+# Berne blood and attacks (mertaScript); her death logs 40, and Raxle rewards the player with his amulet ("Merta": 50).
+# Kills of twelve Aundae or Quarra vampires while the quest stands at 50 (Vampire_Aundae counts VampKills on death)
+# earn the clan's last reward ("future rewards": 60).
+# The kills stand in for the fights; `approach` stands in for the travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from va_berne_countess_start --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case va_berne_countess_start
+approach 0537C5DE
+talk raxle berne
+ask serve me
+ask an errand for you
+expect GetJournalIndex VA_VampCountess == 10
+choose 1
+expect GetJournalIndex VA_VampCountess == 20
+bye
+end
+
+case va_berne_countess_merta
+approach 05738EDD
+wait 60
+bye if open
+defend
+console 05738EDD.kill
+until 600 GetJournalIndex VA_VampCountess == 40
+approach 0537C5DE
+talk raxle berne
+ask Merta
+expect GetJournalIndex VA_VampCountess == 50
+expect player->GetItemCount "amulet_berne" == 1
+bye
+end
+
+case va_berne_rewards
+approach 053E1E58
+console 053E1E58.kill
+wait 60
+approach 052D64B1
+console 052D64B1.kill
+wait 60
+approach 053C5D68
+console 053C5D68.kill
+wait 60
+approach 05826ECA
+console 05826ECA.kill
+wait 60
+approach 05BE5476
+console 05BE5476.kill
+wait 60
+approach 057AF45F
+console 057AF45F.kill
+wait 60
+approach 053E90AA
+console 053E90AA.kill
+wait 60
+approach 05DAF1FD
+console 05DAF1FD.kill
+wait 60
+approach 05588CCD
+console 05588CCD.kill
+wait 60
+approach 05D63F0E
+console 05D63F0E.kill
+wait 60
+approach 05572B34
+console 05572B34.kill
+wait 60
+approach 05DC6EA3
+console 05DC6EA3.kill
+wait 60
+expect VampKills >= 12
+approach 0537C5DE
+talk raxle berne
+ask future rewards
+expect GetJournalIndex VA_VampCountess == 60
+bye
+end

@@ -1,0 +1,44 @@
+# House Hlaalu: promotion. Crassius Curio's and Odral Helvi's work asks Kinsman (rank 4) and up; the rank rows
+# (MorrowindRuntime FACT.txt: Speed, Agility; best favored skill, second; reputation) run to House Father 33, 33,
+# 70, 25, 80. The quests so far gave the reputation; SetMercantile (Skyrim's Speech carries Mercantile and
+# Speechcraft both, so it fills both favored-skill slots) and the attribute sets stand in
+# for the player's training. Each "Advancement" asked of Nileno Dorvayn raises one rank, up to Lawman (3).
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_advancement
+run
+player->SetSpeed 35
+player->SetAgility 35
+player->SetMercantile 90
+approach 0549AC23
+talk nileno dorvayn
+ask Advancement
+ask Advancement
+ask Advancement
+expect player->GetPCRank Hlaalu == 3
+bye
+end
+
+# Past Lawman a Councilor must sponsor the player: Crassius Curio's greeting asks the player to undress (10), and
+# greets an undressed player (PcClothingModifier <= 0) by raising them to Kinsman (100). UnequipAll stands in for
+# the player taking off their clothes, and a common shirt for dressing again (an undressed player gets only
+# "Cover yourself!" greetings, PcClothingModifier <= 0, which hide Dram Bero's topic).
+case hh_crassius_sponsor
+run
+player->PositionCell 492 -116 -491 0 "Vivec, Curio Manor"
+until 300 GetPCCell "Vivec, Curio Manor" == 1
+approach 059264AE
+talk crassius curio
+expect GetJournalIndex HH_Crassius == 10
+bye if open
+console player.unequipall
+wait 30
+talk crassius curio
+expect GetJournalIndex HH_Crassius == 100
+expect player->GetPCRank Hlaalu == 4
+bye if open
+run
+player->AddItem common_shirt_01 1
+player->Equip common_shirt_01
+end

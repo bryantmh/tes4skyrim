@@ -1,0 +1,35 @@
+# Thieves Guild: Gentleman Jim Stacey's last job, Sjoring Hard-Heart (Vivec Guild of Fighters, 056049A0), then his
+# final "jobs" line raises the player to Master Thief (rank 9). Last in the folder: staceyScript disables Stacey at
+# the next cell change once TG_KillHardHeart is 100.
+# The kill stands in for the fight.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tg_hard_heart
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask jobs
+ask Sjoring Hard-Heart
+expect GetJournalIndex TG_KillHardHeart == 10
+bye
+run
+player->PositionCell -913 -200 -499 0 "Vivec, Guild of Fighters"
+until 300 GetPCCell "Vivec, Guild of Fighters" == 1
+approach 056049A0
+defend
+console 056049A0.kill
+until 600 GetDeadCount "sjoring hard-heart" >= 1
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask Sjoring Hard-Heart
+expect GetJournalIndex TG_KillHardHeart == 100
+ask jobs
+expect player->GetPCRank "Thieves Guild" == 9
+bye
+end

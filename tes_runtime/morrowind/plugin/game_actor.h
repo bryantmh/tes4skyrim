@@ -30,6 +30,11 @@ public:
     RefId Class() const override;
     bool  IsFemale() const override;
     bool  IsWerewolf() const override;
+    bool  PlayerIsVampire() const override;
+    int   PlayerClothingValue() const override;
+    bool  PlayerHasCommonDisease() const override;
+    bool  PlayerHasBlightDisease() const override;
+    bool  PlayerHasCorprus() const override;
 
     RefId PrimaryFaction() const override;
     int   PrimaryFactionRank() const override;

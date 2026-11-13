@@ -107,12 +107,12 @@ def _emit(writer, fid: int, edid: str, head: bytes, data: bytes,
 
 
 def clone(src_fid: int, site: str, key, edid: str, patch, writer,
-          head: bytes = None) -> int:
+          head: bytes = None, conditions: bytes = b'') -> int:
     """FormID of a clone of ``src_fid`` whose DATA ``patch`` rewrote, written on first use.
 
     The clone keeps the source's other subrecords (VMAD, FULL, DNAM) unless
-    ``head`` replaces the ones before DATA, and carries no ESCE.  Returns 0
-    when there is no source to clone (see _parts_of).
+    ``head`` replaces the ones before DATA, adds the CTDAs ``conditions`` last,
+    and carries no ESCE.  Returns 0 when there is no source to clone (see _parts_of).
     """
     if writer is None:
         return 0
@@ -129,7 +129,7 @@ def clone(src_fid: int, site: str, key, edid: str, patch, writer,
         patch(data)
         fid = generated_formid(writer, 'MGEF', edid, site, key)
         _emit(writer, fid, edid, src_head if head is None else head, bytes(data),
-              tail, _source_rec(src_fid), src_fid)
+              tail + conditions, _source_rec(src_fid), src_fid)
         _clones[(site, key)] = fid
         return fid
 

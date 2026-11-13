@@ -1,0 +1,95 @@
+# House Hlaalu: the stronghold, second stage (HH_Stronghold), Dondos Driler, Balmora.
+# Dondos on "egg mining" (110), "Shurdan-Raplay" (120) and "recruit some miners" (130); the blighted kwama queen
+# of the Shurdan-Raplay Egg Mine cured (her script, kwamaQueenShurdan: 140; RemoveSpell of her Ash-chancre stands in
+# for the player's Cure Blight); the Gnisis egg miner Ilasour Tansumiran hired ("I need miners in the
+# Shurdan-Raplay mine." 1: 150); Dondos (170) starts Strong_Build2_H, 6 days (200).
+# PositionCell + `approach` stand in for the travel; `rest` for the days the builders take.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_stronghold_mine
+run
+player->PositionCell 368 -276 16 0 "Balmora, Hlaalu Council Manor"
+until 300 GetPCCell "Balmora, Hlaalu Council Manor" == 1
+approach 05C0F40D
+talk dondos driler
+ask stronghold
+ask egg mining
+expect GetJournalIndex HH_Stronghold == 110
+ask Shurdan-Raplay
+expect GetJournalIndex HH_Stronghold == 120
+ask recruit some miners
+expect GetJournalIndex HH_Stronghold == 130
+bye
+run
+player->PositionCell -341 5180 -1393 0 "Shurdan-Raplay Egg Mine"
+until 300 GetPCCell "Shurdan-Raplay Egg Mine" == 1
+run
+"kwama queen_shurdan"->RemoveSpell "ash-chancre"
+until 300 GetJournalIndex HH_Stronghold >= 140
+run
+player->PositionCell -158 -87 -174 0 "Gnisis, Tansumiran Cave Dwelling"
+until 300 GetPCCell "Gnisis, Tansumiran Cave Dwelling" == 1
+approach 05B10EAD
+talk ilasour tansumiran
+ask recruit some miners
+choose 1
+expect GetJournalIndex HH_Stronghold == 150
+bye
+run
+player->PositionCell 368 -276 16 0 "Balmora, Hlaalu Council Manor"
+until 300 GetPCCell "Balmora, Hlaalu Council Manor" == 1
+approach 05C0F40D
+talk dondos driler
+ask stronghold
+expect GetJournalIndex HH_Stronghold == 170
+bye
+rest 10x24 - GetJournalIndex HH_Stronghold >= 200
+end
+
+# Third stage (House Father): Dondos wants the bandits that prey on the stronghold dealt with ("guard against
+# bandits": 210); Flaenia Amiulusus at the Balmora Fighters Guild hires out Fjorgeir ("Pay 1000 gold." 1: 220), who
+# guards the stronghold ("Guard this spot." 2); the bandit leader Maros Gimayn in Zainsipilu killed; Dondos (270)
+# starts Strong_Build3_H, 6 days (300).
+case hh_stronghold_guard
+approach 05C0F40D
+talk dondos driler
+ask stronghold
+ask guard against bandits
+expect GetJournalIndex HH_Stronghold == 210
+bye
+run
+player->PositionCell 402 597 -361 0 "Balmora, Guild of Fighters"
+until 300 GetPCCell "Balmora, Guild of Fighters" == 1
+approach 0567BA03
+talk flaenia amiulusus
+ask guard against bandits
+choose 1
+expect GetJournalIndex HH_Stronghold == 220
+bye
+run
+player->Position -35037 -35304 1803 0
+until 300 player->GetDistance fjorgeir < 2000
+approach 058675E4
+talk fjorgeir
+ask guard against bandits
+ask fight together
+choose 2
+bye
+defend
+run
+player->PositionCell -1588 -694 396 0 "Zainsipilu"
+until 300 GetPCCell "Zainsipilu" == 1
+approach 05548F17
+console 05548F17.kill
+wait 60
+run
+player->PositionCell 368 -276 16 0 "Balmora, Hlaalu Council Manor"
+until 300 GetPCCell "Balmora, Hlaalu Council Manor" == 1
+approach 05C0F40D
+talk dondos driler
+ask guard against bandits
+expect GetJournalIndex HH_Stronghold == 270
+bye
+rest 10x24 - GetJournalIndex HH_Stronghold >= 300
+end

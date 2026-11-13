@@ -59,6 +59,8 @@ from .actors.misc_stats import create_misc_stat_globals
 from .actors import npc_face_morrowind
 from .actors.stat_factions import create_stat_factions
 from .actors.brawl import create_brawl_ability
+from .actors.disease_contact import load_contact_settings
+from .actors.vampirism_morrowind import create_vampirism
 from .actors.disposition import create_disposition_factions
 from script_convert.constants import FORCE_FLEE_QUEST, FORCE_GREET_QUEST
 from script_convert.context_setup import topic_reveals
@@ -318,6 +320,9 @@ def _prescan_special_records(by_type: dict, ctx, writer, export_dir: str, _step_
         wanted=tes4_source or is_tes3_export(export_dir), tes3=is_tes3_export(export_dir)))
     WELL_KNOWN_PROPERTIES.update(create_brawl_ability(
         writer, getattr(ctx, 'master_index', None), wanted=is_tes3_export(export_dir)))
+    WELL_KNOWN_PROPERTIES.update(create_vampirism(writer, by_type, getattr(ctx, 'master_export', None),
+                                                  getattr(ctx, 'master_index', None), is_tes3_export(export_dir)))
+    load_contact_settings(by_type, getattr(ctx, 'master_export', None))
     if tes4_source:
         WELL_KNOWN_PROPERTIES.update(create_misc_stat_globals(
             writer, getattr(ctx, 'master_index', None), by_type))

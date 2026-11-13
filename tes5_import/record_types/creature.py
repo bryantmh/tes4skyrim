@@ -8,7 +8,9 @@ See: docs/commentary/tes5_import_actors.md
 import struct
 
 from ..base.constants import TES5_SKILL_ORDER
-from ..actors.creature_races import creature_capped_level, creature_health_offset
+from ..actors.creature_races import (creature_capped_level, creature_health_offset, race_attacks,
+                                     spell_record)
+from ..actors.disease_contact import actor_diseases, attack_subs
 from ..actors.combat_style import actor_combat_style
 from ..actors.confidence import flee_memberships, flee_spells
 from ..actors.stat_factions import stat_memberships
@@ -356,8 +358,8 @@ def _crea_voice(rec: dict) -> int:
             or VOICE_TYPE_MAP.get(('Imperial', gender), 0))
 
 
-def _crea_spell_subs(rec: dict) -> bytes:
-    """SPCT + SPLO for a creature's spells.
+def _crea_spell_subs(rec: dict, race_fid: int) -> bytes:
+    """SPCT + SPLO for a creature's spells, then the attacks passing its diseases on.
 
     The target may be a SPEL, SHOU or LVSP -- xEdit types SPLO as all three --
     so a TES4 leveled spell is referenced directly rather than unrolled.  The
@@ -371,12 +373,10 @@ def _crea_spell_subs(rec: dict) -> bytes:
     fids.append(creature_unarmed_ability(get_formid(rec, 'FormID') & 0x00FFFFFF))
     fids += flee_spells(rec)
     fids = [f for f in fids if f]
-    if not fids:
-        return b''
-    subs = pack_subrecord('SPCT', struct.pack('<I', len(fids)))
+    subs = pack_subrecord('SPCT', struct.pack('<I', len(fids))) if fids else b''
     for fid in fids:
         subs += pack_formid_subrecord('SPLO', fid)
-    return subs
+    return subs + attack_subs(race_fid, race_attacks(race_fid), actor_diseases(rec, spell_record))
 
 
 def _crea_inventory_subs(carried: list, barter_gold: int) -> bytes:
@@ -516,7 +516,7 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
     subs += pack_formid_subrecord('VTCK', _crea_voice(rec))
     subs += pack_formid_subrecord('RNAM', crea_race_fid)
 
-    subs += _crea_spell_subs(rec)
+    subs += _crea_spell_subs(rec, crea_race_fid)
 
     full = get_str(rec, 'FULL')
     outfit_fids, carried = split_inventory(read_items(rec))

@@ -1,0 +1,65 @@
+# Clan Aundae: "Vampire's Child" (VA_VampChild). Dhaunayne Aundae greets the new Aundae vampire (PcVampire and
+# VampClan 1), takes the player's service ("plan to serve me": 10) and tells of her son ("about my family": 20,
+# "I will find out about your child." 1: 30 and her family ring). In Sadrith Mora's Mages Guild Iniel knows the
+# crest (50) and Tusamircil sends the player on with Sinyaramen's potion (60, "I'll take it to him." 1: 66).
+# Sinyaramen in the Gateway Inn takes it (70) and tells of his grandfather Vilandon (90; the 80 aside, "killed by
+# your kind", is a topic nothing has named yet). Dhaunayne orders Kjeld's death (100);
+# killed in Druscashti, she is satisfied (120).
+# The kill stands in for the fight; `approach` stands in for the travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from va_child_start --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case va_child_start
+approach 05A7D05F
+talk dhaunayne aundae
+ask plan to serve me
+expect GetJournalIndex VA_VampChild == 10
+ask about my family
+expect GetJournalIndex VA_VampChild == 20
+choose 1
+expect GetJournalIndex VA_VampChild == 30
+expect player->GetItemCount "extravagant_ring_aund_uni" == 1
+bye
+end
+
+case va_child_crest
+approach 05ACC1C0
+talk iniel
+ask family crest
+expect GetJournalIndex VA_VampChild == 50
+bye
+approach 0575D6E5
+talk tusamircil
+ask family crest
+expect GetJournalIndex VA_VampChild == 60
+choose 1
+expect GetJournalIndex VA_VampChild == 66
+expect player->GetItemCount "p_sinyaramen_unique" == 1
+bye
+end
+
+case va_child_sinyaramen
+approach 05BC95F9
+talk sinyaramen
+choose 1
+expect GetJournalIndex VA_VampChild == 70
+ask Vilandon
+expect GetJournalIndex VA_VampChild == 90
+end
+
+case va_child_kjeld
+approach 05A7D05F
+talk dhaunayne aundae
+ask about my family
+expect GetJournalIndex VA_VampChild == 100
+bye
+approach 05741E1B
+defend
+console 05741E1B.kill
+until 600 "kjeld"->GetHealth <= 0
+approach 05A7D05F
+talk dhaunayne aundae
+ask Kjeld
+expect GetJournalIndex VA_VampChild == 120
+bye
+end

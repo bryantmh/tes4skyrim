@@ -244,6 +244,24 @@ bool ItemIsEquipped(const std::string& actor, const std::string& item) {
            g_isEquipped(PapyrusVm(), 0, ref, form);
 }
 
+// `PcClothingModifier`: the gold value of everything the player wears, as
+// OpenMW sums its armor and clothing slots; Skyrim carries both as ARMO.
+int PlayerWornValue() {
+    void* player = PlayerRef();
+    if (!player || !g_isEquipped) return 0;
+    int total = 0;
+    ForEachCarried(player, [&](void* form) {
+        if (At<std::uint8_t>(form, ids::kOffFormType) == ids::kFormTypeArmor &&
+            g_isEquipped(PapyrusVm(), 0, player, form)) {
+            total += static_cast<int>(At<std::uint32_t>(form, ids::kOffArmorValue));
+        }
+    });
+    static int logged = -1;
+    if (total != logged) Log("clothing: the player wears %d gold of armor and clothing", total);
+    logged = total;
+    return total;
+}
+
 // `GetPCSleep`: the VM's own sleep sinks, which hear the engine start and end
 // the player's sleep, drive the tick's latch (object_tick.h).
 int SleepStartHook(void* sink, const void* event, void* source) {
@@ -283,7 +301,11 @@ bool WasAttacked(const std::string& actor) {
 // `Creature::onHit` do; a brawler the player punched is tired. Main thread.
 void NoteHit(std::uint32_t target, std::uint32_t source, bool byPlayer,
              std::uint32_t attacker) {
-    LogVerbose("hit: %08X struck by %08X%s", target, source, byPlayer ? " (player)" : "");
+    if (target == ids::kPlayerRefFormId || byPlayer) {
+        Log("hit: %08X struck by %08X from %08X%s", target, source, attacker, byPlayer ? " (player)" : "");
+    } else {
+        LogVerbose("hit: %08X struck by %08X%s", target, source, byPlayer ? " (player)" : "");
+    }
     if (source) g_lastHit[target] = source;
     NoteAttacked(target, attacker);
     if (!byPlayer) return;
@@ -320,7 +342,8 @@ int DeathHook(void* sink, const void* event, void* source) {
     void* actor = e ? *reinterpret_cast<void* const*>(e + ids::kOffDeathActor) : nullptr;
     const std::uint8_t state = e ? *reinterpret_cast<const std::uint8_t*>(e + ids::kOffDeathState) : 0;
     if (actor) {
-        Log("death: %08X state %u", FormIdOf(actor), state);
+        void* killer = *reinterpret_cast<void* const*>(e + ids::kOffDeathKiller);
+        Log("death: %08X state %u, killer %08X", FormIdOf(actor), state, killer ? FormIdOf(killer) : 0u);
         if (state == ids::kDeathStateDying) {
             NoteEngineDeath(FormIdOf(actor));
             NoteDeathSpot(actor);
@@ -637,6 +660,7 @@ void InstallQueryCalls(GameHooks& hooks) {
     hooks.sneaking = ActorSneaking;
     hooks.running = ActorRunning;
     hooks.itemEquipped = ItemIsEquipped;
+    hooks.playerWornValue = PlayerWornValue;
     hooks.hitOnMe = TakeHitBy;
     hooks.attacked = WasAttacked;
     hooks.spellReadied = SpellIsReadied;

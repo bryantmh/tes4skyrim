@@ -334,6 +334,11 @@ struct GameHooks {
     // `IsWerewolf`, which reads back what the last of them asked.
     void (*setWerewolf)(const std::string& actor, bool on) = nullptr;
     bool (*isWerewolf)(const std::string& actor) = nullptr;
+    // `PcVampire`: whether the player wears one of Skyrim's vampire races --
+    // Skyrim's vampirism, which carries Morrowind's.
+    bool (*playerVampire)() = nullptr;
+    // `PcClothingModifier`: the gold value of everything the player wears.
+    int (*playerWornValue)() = nullptr;
     // Once a tick of unpaused play: keeps the player's beast form until a
     // script undoes it, as TES3's does.
     void (*werewolfTick)() = nullptr;

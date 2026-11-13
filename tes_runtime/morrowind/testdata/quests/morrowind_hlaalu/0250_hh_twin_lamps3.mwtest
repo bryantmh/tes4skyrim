@@ -1,0 +1,42 @@
+# House Hlaalu: the Twin Lamps, Ilmeni Dren's last task.
+# "Free Hides-His-Foot" (HH_TwinLamps3): Ilmeni, "slavery" (10); at the Dren Plantation Hides-His-Foot greets an
+# envoy of Ilmeni and, "travel together", follows the player (50: AiFollow Player 0 34770 -38050 680, Sterdecan's
+# Farm); his own script (hidesFootScript) logs 70 when that follow is done or the player is in Sterdecan's
+# Farmhouse; Ilmeni, "slavery" (100). Hides-His-Foot really walks: ONE walk to his destination.
+# Position + `approach` stand in for the travel (no follower along yet).
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_twin_lamps3_start
+run
+player->PositionCell 417 -412 -103 0 "Vivec, St. Delyn Canal South-One"
+until 300 GetPCCell "Vivec, St. Delyn Canal South-One" == 1
+approach 052DA0B7
+talk ilmeni dren
+ask slavery
+expect GetJournalIndex HH_TwinLamps3 == 10
+bye
+end
+
+case hh_twin_lamps3_escort
+defend
+run
+player->Position 18000 -56650 640 0
+until 300 player->GetDistance hides_his_foot < 2000
+approach 055F1FFD
+talk hides_his_foot
+ask travel together
+choose 1
+expect GetJournalIndex HH_TwinLamps3 == 50
+bye
+walk 34770 -38050 680
+until 3000 GetJournalIndex HH_TwinLamps3 >= 70
+run
+player->PositionCell 417 -412 -103 0 "Vivec, St. Delyn Canal South-One"
+until 300 GetPCCell "Vivec, St. Delyn Canal South-One" == 1
+approach 052DA0B7
+talk ilmeni dren
+ask slavery
+expect GetJournalIndex HH_TwinLamps3 == 100
+bye
+end

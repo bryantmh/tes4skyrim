@@ -1,0 +1,47 @@
+# The vampire's cure ("MS_VampireCure"), Molag Bal's shrine in Bal Ur. Activated by a vampire, the shrine's
+# script (VampireMolag) speaks Molag Bal's bargain (30); his daughter Molag Grunda and her consort Nomeg Gwai, in
+# Dubdilla, killed (molaggrundaScript: 40); the shrine again (50) starts Vampire_Cure_PC, whose RemoveSpell of
+# the Vampirism stand-in runs Skyrim's own cure (PlayerVampireQuest stage 10 -> VampireCure) and sets PCVampire
+# to -1. Skyrim's side is checked through dialogue: PcVampire reads the Skyrim race, and the Mages Guild greets a
+# vampire "Your kind is not welcome here, vampire..." -- Anarenen (Ald'ruhn, no greetings of his own) said that
+# to the bargain save and "I'm Anarenen, Alchemist Service..." / "Welcome to Ald'ruhn, Prisoner..." to the cured
+# one (probe vamp_greet, 11-12): `unsaid vampire` fails the case if his greeting still names a vampire.
+# PositionCell stands in for the travel; the kills for the fight.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from va_cure_bargain --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case va_cure_bargain
+run
+player->PositionCell 3529 -3862 0 0 "Bal Ur, Underground"
+until 300 GetPCCell "Bal Ur, Underground" == 1
+activate 05982084
+until 1800 GetJournalIndex MS_VampireCure >= 30
+end
+
+case va_cure_daughter
+defend
+run
+player->PositionCell 3500 7400 -540 0 "Dubdilla, Uncharted Caverns, Lower"
+until 300 GetPCCell "Dubdilla, Uncharted Caverns, Lower" == 1
+console 05CD38A0.kill
+wait 30
+console 05EF6BCA.kill
+until 300 GetJournalIndex MS_VampireCure >= 40
+end
+
+case va_cured
+run
+player->PositionCell 3529 -3862 0 0 "Bal Ur, Underground"
+until 300 GetPCCell "Bal Ur, Underground" == 1
+activate 05982084
+until 1800 GetJournalIndex MS_VampireCure >= 50
+until 600 PCVampire == -1
+wait 120
+run
+player->PositionCell 1597 -614 -629 0 "Ald-ruhn, Guild of Mages"
+until 300 GetPCCell "Ald-ruhn, Guild of Mages" == 1
+approach 05CEBDE3
+talk anarenen
+unsaid vampire
+bye
+end

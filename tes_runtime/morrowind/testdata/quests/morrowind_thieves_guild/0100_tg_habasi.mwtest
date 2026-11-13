@@ -1,0 +1,162 @@
+# Thieves Guild: joining, then Sugar-Lips Habasi's jobs, South Wall Cornerclub, Balmora (Habasi = 05B9FAAA).
+# Joining asks rank 0's Agility and Personality 30 (MorrowindRuntime's FACT table: attributes 3, 6); the Set* lines
+# stand in for level-up choices, made once here at the Mastermind requirement (34/34; best guild skill 80, second
+# 30 -- OpenMW hasSkillsForRank) so later promotions hinge on the faction reputation the jobs earn. Each job is offered under "jobs" in a fixed order (diamond, Nerano Manor,
+# Dwemer artifacts, Vintage Brandy, New-Shoes Bragor, South Wall) and learned from its words.
+# AddItem stands in for the thefts (Nalcarya's diamond, the Nerano Manor key, Ra'Zhid's artifacts, Mebestien's
+# coherer); the brandy leaves the drawer the job put it in. PositionCell + `approach` stand in for the travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tg_join
+run
+player->SetAgility 34
+player->SetPersonality 34
+player->SetSecurity 80
+player->SetSneak 30
+player->PositionCell -242 650 9 0 "Balmora, South Wall Cornerclub"
+until 300 GetPCCell "Balmora, South Wall Cornerclub" == 1
+approach 05B9FAAA
+talk habasi
+ask join the Thieves Guild
+choose 1
+expect player->GetPCRank "Thieves Guild" >= 0
+bye
+end
+
+case tg_diamond
+approach 05B9FAAA
+talk habasi
+ask jobs
+ask diamond
+expect GetJournalIndex TG_Diamonds == 10
+bye
+run
+player->AddItem Ingred_Diamond_01 1
+approach 05B9FAAA
+talk habasi
+ask diamond
+choose 1
+expect GetJournalIndex TG_Diamonds == 100
+bye
+end
+
+case tg_manor_key
+approach 05B9FAAA
+talk habasi
+ask jobs
+ask Nerano Manor
+expect GetJournalIndex TG_ManorKey == 10
+bye
+run
+player->AddItem key_neranomanor 1
+approach 05B9FAAA
+talk habasi
+ask Nerano Manor
+choose 1
+expect GetJournalIndex TG_ManorKey == 100
+bye
+end
+
+case tg_overdue_payments
+approach 05B9FAAA
+talk habasi
+ask jobs
+ask Dwemer artifacts
+expect GetJournalIndex TG_OverduePayments == 10
+bye
+run
+player->AddItem misc_dwrv_artifact60 1
+player->AddItem misc_dwrv_bowl00 1
+player->AddItem misc_dwrv_goblet00 1
+approach 05B9FAAA
+talk habasi
+ask Dwemer artifacts
+choose 1
+expect GetJournalIndex TG_OverduePayments == 100
+bye
+end
+
+case tg_vintage_brandy
+approach 05B9FAAA
+talk habasi
+ask jobs
+ask Vintage Brandy
+expect GetJournalIndex TG_VintageBrandy == 10
+bye
+run
+"de_r_drawers_01_hlaalo"->RemoveItem p_vintagecomberrybrandy1 1
+player->AddItem p_vintagecomberrybrandy1 1
+approach 05B9FAAA
+talk habasi
+ask Vintage Brandy
+choose 1
+expect GetJournalIndex TG_VintageBrandy == 100
+bye
+end
+
+case tg_brother_bragor
+approach 05B9FAAA
+talk habasi
+ask jobs
+ask New-Shoes Bragor
+expect GetJournalIndex TG_BrotherBragor == 10
+bye
+run
+player->AddItem misc_dwrv_artifact50 1
+player->PositionCell 2191 100 136 0 "Pelagiad, Fort Pelagiad"
+until 300 GetPCCell "Pelagiad, Fort Pelagiad" == 1
+approach 05EF6FC0
+talk shadbak gra-burbug
+ask New-Shoes Bragor
+choose 4
+choose 1
+expect GetJournalIndex TG_BrotherBragor == 50
+bye
+run
+player->PositionCell -242 650 9 0 "Balmora, South Wall Cornerclub"
+until 300 GetPCCell "Balmora, South Wall Cornerclub" == 1
+approach 05B9FAAA
+talk habasi
+ask New-Shoes Bragor
+expect GetJournalIndex TG_BrotherBragor == 100
+bye
+end
+
+case tg_south_wall
+approach 05B9FAAA
+talk habasi
+ask jobs
+ask South Wall
+expect GetJournalIndex TG_BalmoraDefenses == 10
+bye
+run
+player->PositionCell -195 380 12 0 "Balmora, Hecerinde's House"
+until 300 GetPCCell "Balmora, Hecerinde's House" == 1
+approach 05C1B4B8
+talk hecerinde
+ask South Wall
+expect GetJournalIndex TG_BalmoraDefenses == 50
+bye
+run
+player->PositionCell -242 650 9 0 "Balmora, South Wall Cornerclub"
+until 300 GetPCCell "Balmora, South Wall Cornerclub" == 1
+approach 05B9FAAA
+talk habasi
+ask South Wall
+expect GetJournalIndex TG_BalmoraDefenses == 100
+bye
+end
+
+# Six jobs' reputation (ModPCFacRep 5 each: 30) meets rank 4 (Operative: reputation 30); Habasi, a rank 8
+# speaker, promotes one rank per "Advancement".
+case tg_habasi_advancement
+approach 05B9FAAA
+talk habasi
+ask Advancement
+ask Advancement
+ask Advancement
+ask Advancement
+expect player->GetPCRank "Thieves Guild" == 4
+bye
+end

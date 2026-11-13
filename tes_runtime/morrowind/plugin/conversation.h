@@ -25,6 +25,8 @@ void BeginConversation(const char* speaker, const char* displayName,
 
 // True while a conversation is open.
 bool ConversationOpen();
+// Whether the open conversation is with `npc`: its TES3 id or shown name (any case), or its ref's runtime FormID in hex.
+bool ConversationWith(const std::string& npc);
 
 // A headless run's clicks, each the same call the window's own click makes.
 // The topic rows the list shows now, in order.

@@ -1,0 +1,56 @@
+# Morrowind vampirism, Clan Aundae: catching Porphyric Hemophilia and the turn, carried by Skyrim's vampirism.
+# The Aundae vampires of the Dulo, Aralen and Sarethi tombs (Vampire_Aundae gives each its blood) attack a stranger
+# and flee after a few blows (authored Flee 70), so the player seeks out each in turn; their hits pass on "Vampire
+# Blood Aundae", which converts as Skyrim's vampire disease (10% a hit). Infecting from Dhaunayne herself would
+# leave her fighting the player for good: SetFight never ends a fight (OpenMW's OpSetAiSetting). Three days on, a
+# sleep in Caius Cosades' bed turns the player:
+# VampireCheck starts Vampire_Aundae_PC (PCVampire 1, VampClan 1, the clan's Specials) and Skyrim's
+# PlayerVampireQuest.VampireChange makes the player a Skyrim vampire. The generic Morrowind abilities are Skyrim's
+# to give, so Vampire Sun Damage never lands on the player.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case va_aundae_infect
+approach 053E1E58
+wait 200
+approach 052D64B1
+wait 200
+approach 053C5D68
+wait 200
+approach 05826ECA
+wait 200
+approach 05BE5476
+wait 200
+approach 057AF45F
+wait 200
+approach 053E90AA
+wait 200
+approach 05DAF1FD
+wait 200
+approach 05588CCD
+wait 200
+approach 05D63F0E
+wait 200
+approach 05572B34
+wait 200
+approach 05DC6EA3
+wait 200
+approach 05B0B02A
+wait 200
+approach 0521688A
+wait 200
+approach 05D9E582
+until 600 player->GetSpell "Vampire Blood Aundae" == 1
+end
+
+case va_aundae_turn
+run
+player->PositionCell -60 -30 60 0 "Balmora, Caius Cosades' House"
+until 300 GetPCCell "Balmora, Caius Cosades' House" == 1
+wait 60
+rest 120 05201D4E PCVampire == 1
+expect VampClan == 1
+expect player->GetSpell "Vampire Aundae Specials" == 1
+expect player->GetSpell "Vampire Sun Damage" == 0
+expect player->GetSpell "Vampire Blood Aundae" == 0
+end

@@ -1,0 +1,124 @@
+# Thieves Guild: Aengoth the Jeweler's jobs, The Rat In The Pot, Ald'ruhn (Aengoth = 054E3E00). Offered under
+# "jobs" in a fixed order: Anareren's Devil Tanto (the job puts it in Anarenen's chest), Redoran Master Helm,
+# Boethiah's Pillow Book, Withershins, scrap metal, Darts of Judgement.
+# AddItem stands in for the thefts and finds; the tanto leaves the chest it was put in. Reputation: 5 each but the
+# helm (its 5 goes to Redoran) and the darts (5 for all four) -- 25, 55 with Habasi's.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tg_devil_tanto
+run
+player->PositionCell 171 500 -256 0 "Ald-ruhn, The Rat In The Pot"
+until 300 GetPCCell "Ald-ruhn, The Rat In The Pot" == 1
+approach 054E3E00
+talk aengoth
+ask jobs
+ask Anareren's Devil Tanto
+expect GetJournalIndex TG_LootAldruhnMG == 10
+bye
+run
+"chest_small_02_anararen"->RemoveItem devil_tanto_tgamg 1
+player->AddItem devil_tanto_tgamg 1
+approach 054E3E00
+talk aengoth
+ask Anareren's Devil Tanto
+choose 4
+choose 1
+expect GetJournalIndex TG_LootAldruhnMG == 100
+bye
+end
+
+case tg_master_helm
+approach 054E3E00
+talk aengoth
+ask jobs
+ask Redoran Master Helm
+expect GetJournalIndex TG_MasterHelm == 10
+bye
+run
+player->AddItem redoran_master_helm 1
+approach 054E3E00
+talk aengoth
+ask Redoran Master Helm
+choose 1
+expect GetJournalIndex TG_MasterHelm == 100
+bye
+end
+
+case tg_bad_gandosa
+approach 054E3E00
+talk aengoth
+ask jobs
+ask Boethiah's Pillow Book
+expect GetJournalIndex TG_BadGandosa == 10
+bye
+run
+player->AddItem bk_BoethiahPillowBook 1
+approach 054E3E00
+talk aengoth
+ask Boethiah's Pillow Book
+choose 1
+expect GetJournalIndex TG_BadGandosa == 100
+bye
+end
+
+case tg_withershins
+approach 054E3E00
+talk aengoth
+ask jobs
+ask Withershins
+expect GetJournalIndex TG_Withershins == 10
+bye
+run
+player->AddItem BookSkill_Restoration1 1
+approach 054E3E00
+talk aengoth
+ask Withershins
+choose 1
+expect GetJournalIndex TG_Withershins == 100
+bye
+end
+
+case tg_scrap_metal
+approach 054E3E00
+talk aengoth
+ask jobs
+ask scrap metal
+expect GetJournalIndex TG_AldruhnDefenses == 10
+bye
+run
+player->AddItem Ingred_Scrap_Metal_01 4
+approach 054E3E00
+talk aengoth
+ask scrap metal
+choose 1
+expect GetJournalIndex TG_AldruhnDefenses == 100
+bye
+end
+
+case tg_darts
+approach 054E3E00
+talk aengoth
+ask jobs
+ask Darts of Judgement
+expect GetJournalIndex TG_DartsJudgement == 10
+bye
+run
+player->AddItem dart_uniq_judgement 4
+approach 054E3E00
+talk aengoth
+ask Darts of Judgement
+choose 1
+expect GetJournalIndex TG_DartsJudgement == 100
+bye
+end
+
+# 55 reputation meets rank 5 (Bandit: 45), not 6 (60).
+case tg_aengoth_advancement
+approach 054E3E00
+talk aengoth
+ask Advancement
+ask Advancement
+expect player->GetPCRank "Thieves Guild" == 5
+bye
+end

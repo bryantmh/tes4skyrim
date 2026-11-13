@@ -87,6 +87,10 @@ void* WorldSpaceOf(void* ref);
 // Where `ref` is as MoveInto takes it: its cell indoors, its worldspace outdoors.
 void* PlaceOf(void* ref);
 
+// Each form `ref`'s inventory changes hold a stack of, its worn ones included.
+// game_calls_spell.cpp.
+void ForEachCarried(void* ref, const std::function<void(void*)>& fn);
+
 template <typename Fn>
 Fn Native(const char* name, std::uint64_t id) {
     return reinterpret_cast<Fn>(Resolve(name, id, nullptr));
@@ -177,6 +181,7 @@ constexpr int kCureBlight = 70;
 constexpr int kCureCorprus = 71;
 constexpr int kRemoveCurse = 100;
 constexpr int kCorprusEffect = 132;
+constexpr int kVampirismEffect = 133;
 bool IsCure(int index);
 // Purges what the cure `index` takes off `ref`. game_calls_spell.cpp.
 // See: docs/commentary/morrowind_runtime.md#cures-purge-by-class

@@ -1,11 +1,12 @@
 // Quest and opcode test cases run in the live game, for headless end-to-end
-// testing. The game-independent half: the case grammar, the step loop, the
-// results file and the harness handshake. Each runtime hands over its game
-// side as a TestBackend.
+// testing. The one step loop every runtime shares: the case grammar, the steps,
+// the results file and the harness handshake. Each runtime hands over its game
+// side as a TestBackend (MorrowindRuntime: plugin/test_backend.cpp; TESRuntime:
+// tes/test_game.cpp), so a `.mwtest` and a `.tes4test` are the same language.
 //
-// Off unless TES_TEST_CASES names a case file. Once the player is in the
+// Off unless `<envPrefix>CASES` names a case file. Once the player is in the
 // world, every TickTestRunner call gives the runner one step. One JSON line per
-// case goes to TES_TEST_RESULTS, then a closing summary line.
+// case goes to `<envPrefix>RESULTS`, then a closing summary line.
 //
 // A backend with no `run` or `judge` of its own leaves them to the harness:
 // the runner writes {"run": ...} or {"judge": ...} and waits until
@@ -24,7 +25,8 @@ namespace tesruntime::test {
 struct TestStep {
     enum class Kind {
         kRun, kWait, kExpect, kTalk, kAsk, kChoose, kBye, kButton, kActivate, kUntil, kPick, kClose,
-        kTake, kConsole, kPersuade, kSleep, kWalk, kHear
+        kTake, kConsole, kPersuade, kSleep, kWalk, kFollow, kDefend, kPunch, kRest, kSteer, kApproach,
+        kPace, kHear, kUnsaid, kSaid
     };
     Kind kind = Kind::kRun;
     std::string text;   // the script, condition, reference or topic
@@ -46,28 +48,68 @@ struct TestCase {
 // What the game answers and does for the runner. Every hook is optional; a
 // step whose hook is missing fails its case naming the step.
 struct TestBackend {
+    // The environment variables' prefix: TES_MW_TEST_ (MorrowindRuntime) or TES_TEST_.
+    const char* envPrefix = "TES_TEST_";
+    // Once the case file is read.
+    void (*start)() = nullptr;
     // A `run` body under `actor`; false when it did not compile or run.
     bool (*run)(const std::string& actor, const std::string& source) = nullptr;
-    // 1 holds, 0 does not, -1 did not evaluate; `left` gets the left side's value as JSON.
+    // 1 holds, 0 does not, -1 did not evaluate; when `left` is given and the
+    // condition does not hold, it gets the left side's value as JSON.
     int (*judge)(const std::string& actor, const std::string& condition, std::string* left) = nullptr;
     // A loaded game: the player stands in some cell.
     bool (*inWorld)() = nullptr;
     // A menu other than the conversation holds the game.
     bool (*held)() = nullptr;
     bool (*menuOpen)(const std::string& name) = nullptr;
+    // A menu still opening, and a player move still landing.
+    bool (*menuOpening)() = nullptr;
+    bool (*moveLanding)() = nullptr;
     // The player activating `ref`; false while it has not loaded yet.
     bool (*activate)(const std::string& ref) = nullptr;
+    // How far the player stands from door `ref`'s origin; who follows the player, for a failure.
+    float (*doorDistance)(const std::string& ref) = nullptr;
+    std::string (*followerNames)() = nullptr;
+    // Where `ref` is, for a failure that names it.
+    std::string (*whereIs)(const std::string& ref) = nullptr;
+    // `approach`: 1 when a move was posted, 0 when none is needed, -1 while `ref` does not resolve.
+    int (*approach)(const std::string& ref) = nullptr;
     void (*take)(const std::string& ref) = nullptr;
     void (*pressButton)(int button) = nullptr;
     void (*closeMenu)(const std::string& name) = nullptr;
     bool (*menuPick)(const std::string& name) = nullptr;
     void (*sleepFor)(int hours) = nullptr;
-    // The player walks to a reference or to `x y z`, on the engine's own pathing.
-    void (*walk)(const std::string& where) = nullptr;
+    // The Wait key, for `rest` with no bed.
+    void (*wait)() = nullptr;
+    bool (*punch)(const std::string& npc) = nullptr;
+    // The player walks to `x y z` (walk), or to a reference or `x y z` (walkTo), on
+    // the engine's own pathing; steer drives it there at the controls.
+    void (*walk)(float x, float y, float z) = nullptr;
+    void (*walkTo)(const std::string& where) = nullptr;
+    void (*steer)(float x, float y, float z, bool walking) = nullptr;
     bool (*walkDone)() = nullptr;
     void (*walkStop)() = nullptr;
+    // The walk's travel has stopped moving the player; the steer is stuck.
+    bool (*walkStalled)() = nullptr;
+    bool (*walkStuck)() = nullptr;
+    float (*position)(const std::string& ref, int axis) = nullptr;
+    float (*distance)(const std::string& from, const std::string& to) = nullptr;
+    void (*placeHere)(const std::string& ref, float x, float y, float z, float zRot) = nullptr;
+    // `follow` fills in the followed NPC's trail between two looks. Off (the default) leaves
+    // `follow` exactly as it is for the game that does not set it.
+    bool fillTrail = false;
+    bool (*inInterior)() = nullptr;
+    std::string (*cell)() = nullptr;
+    // `pace <speed>`: a --fast game's speed from here on; 0 is the default.
+    void (*setPace)(float speed) = nullptr;
+    // `defend` and `follow`: the player kills whatever attacks it.
+    void (*killPlayerAttackers)() = nullptr;
+    // `defend <ally>`: the same, and whatever attacks `ally` too (the player fights beside it).
+    void (*killAttackersOf)(const std::string& ally) = nullptr;
     // The conversation's clicks.
     bool (*talking)() = nullptr;
+    // Whether the open conversation is with `npc` (id or name); null = any open one counts.
+    bool (*talkingWith)(const std::string& npc) = nullptr;
     std::vector<std::string> (*topics)() = nullptr;
     bool (*ask)(const std::string& topic) = nullptr;
     bool (*choose)(int index) = nullptr;
@@ -91,20 +133,32 @@ bool TestCasesRequested();
 
 // The cases in a case file:
 //   case <name> / actor <id> / run, then script lines / wait <ticks> /
-//   expect <condition> / talk <npc> / ask <topic> / choose <n> / bye /
-//   button <n> / activate <ref> / until <ticks> <condition> / pick <name> /
-//   close <menu> / take <ref> / console <Skyrim console command> /
-//   persuade <kind> / sleep <hours> / walk <ref | x y z> /
+//   expect <condition> / talk <npc> / ask <topic or service row> / choose <n>
+//   (a choice, or row n of an open Travel or Persuasion list) / bye [if open] /
+//   button <n> / activate <ref> / until <ticks> <condition> / pick <class or
+//   sign> / close <menu> / take <ref> / console <Skyrim console command> /
+//   persuade <admire|intimidate|taunt|bribe10|bribe100|bribe1000> [until <condition>] /
+//   sleep <hours> / walk <x y z | ref> / steer <x y z> [walk] /
+//   follow <npc> (keeps the player on the NPC's trail; a bare `follow` stops) /
+//   defend (the player kills whatever attacks it, as `follow` also does, for
+//   the rest of the case) / punch <n> <npc> (up to n bare-fisted punches; a
+//   greeting ends it) / rest <max> <bed | -> <condition> / approach <npc> (the
+//   player is put in front of the NPC, wherever it stands, when out of reach --
+//   NPCs move; never with a follower along) / pace <speed> (a --fast game is
+//   steered to <speed>x real time for the rest of the case) /
 //   hear <ticks> <speaker | any> [text] / end.
 //   `#` starts a comment line. Steps run in file order, and an action not
-//   followed by a `wait` settles for 2 ticks. `until` fails the case when its
-//   condition does not hold within the ticks; `hear` when the speaker has not
-//   begun a line containing the text (any case) within them, counting lines
-//   since the case began that no earlier `hear` took; `button`, `pick` and `close`
-//   wait for their menu to open first. With TES_TEST_CHECKPOINTS set, the
-//   runner pauses after each passing case until `<results>.ack` holds the
-//   count of finished cases (the harness saves the game, then writes it).
+//   followed by a `wait` settles for 2 ticks (`bye` for 30). `until` fails the
+//   case when its condition does not hold within the ticks; `hear` when the
+//   speaker has not begun a line containing the text (any case) within them;
+//   `button`, `pick` and `close` wait for their menu, `ask` for its topic. With
+//   `<envPrefix>CHECKPOINTS` set, the runner pauses after each passing case
+//   until `<results>.ack` holds the count of finished cases (the harness saves
+//   the game, then writes it).
 std::vector<TestCase> ParseTestCases(std::istream& in);
+
+// Each step kind's directive, in Kind order.
+const std::vector<std::string>& TestStepNames();
 
 // The commands in `real` (lower case) that no case's script or expect names.
 std::vector<std::string> UncoveredCommands(const std::vector<TestCase>& cases,
@@ -114,7 +168,7 @@ std::vector<std::string> UncoveredCommands(const std::vector<TestCase>& cases,
 // player is not in the world.
 void TickTestRunner();
 
-// Forgets the run, so the next tick reads TES_TEST_CASES again (headless tests).
+// Forgets the run, so the next tick reads the case file again (headless tests).
 void ResetTestRunner();
 
 }  // namespace tesruntime::test

@@ -33,7 +33,7 @@
 #include "script_runner.h"
 #include "script_tables.h"
 #include "session.h"
-#include "test_runner.h"
+#include "test_backend.h"
 
 namespace tesruntime::mw {
 
@@ -908,7 +908,7 @@ void InstallConversation() {
     SetTestConversation({ConversationOpen, ConversationTopics, ConversationAsk,
                          ConversationChoose, ConversationGoodbye, ConversationLastText,
                          ConversationChoices, ConversationPersuade, MenuOpening,
-                         PlayerMovePending});
+                         PlayerMovePending, ConversationWith});
     MenuInput input;
     input.hover = [](double x, double y) {
         const LayerScope scope(g_layer);
@@ -995,6 +995,14 @@ void BeginConversation(const char* speaker, const char* displayName,
 }
 
 bool ConversationOpen() { return g_open; }
+
+bool ConversationWith(const std::string& npc) {
+    if (!g_open) return false;
+    if (_stricmp(npc.c_str(), g_speaker.c_str()) == 0 || _stricmp(npc.c_str(), g_speakerName.c_str()) == 0) return true;
+    char* end = nullptr;
+    const unsigned long formId = std::strtoul(npc.c_str(), &end, 16);
+    return end && *end == '\0' && formId != 0 && Hooks().refRuntimeId && Hooks().refRuntimeId(g_speaker) == formId;
+}
 
 std::vector<std::string> ConversationTopics() {
     std::vector<std::string> topics;

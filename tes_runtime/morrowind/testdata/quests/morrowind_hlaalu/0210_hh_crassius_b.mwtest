@@ -1,0 +1,89 @@
+# House Hlaalu: Crassius Curio's council work, Vivec (House Brother and up).
+# "Banden Indarys" (HH_DestroyIndarysManor): the Redoran lord of the unchartered stronghold killed (10, 100).
+# "Dram Bero" (HH_BeroSupport): Crassius (10); Dram Bero in the St. Olms Haunted Manor sets a duel ("Yes." 1: 50);
+# entering the Arena Pit brings his champion Garding in (vivecArenaScript), who logs 70 when beaten; Dram pledges
+# (100). "Reynel Uvirith" (HH_DestroyTelUvirith; Crassius's "business" offers it at House Father with the
+# stronghold's second stage built): the Telvanni sorcerer of Tel Uvirith killed (10, 100).
+# PositionCell + `approach` stand in for the travel; the kills and `defend` for the fights.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_destroy_indarys
+approach 059264AE
+talk crassius curio
+ask business
+ask Banden Indarys
+expect GetJournalIndex HH_DestroyIndarysManor == 10
+bye
+run
+player->PositionCell 139 -801 -1260 0 "Indarys Manor"
+until 300 GetPCCell "Indarys Manor" == 1
+approach 05481A45
+console 05481A45.kill
+wait 60
+run
+player->PositionCell 492 -116 -491 0 "Vivec, Curio Manor"
+until 300 GetPCCell "Vivec, Curio Manor" == 1
+approach 059264AE
+talk crassius curio
+ask Banden Indarys
+expect GetJournalIndex HH_DestroyIndarysManor == 100
+bye
+end
+
+case hh_bero_support
+approach 059264AE
+talk crassius curio
+ask business
+ask Dram Bero
+expect GetJournalIndex HH_BeroSupport == 10
+bye
+run
+player->PositionCell 7129 501 -501 0 "Vivec, St. Olms Haunted Manor"
+until 300 GetPCCell "Vivec, St. Olms Haunted Manor" == 1
+approach 05A264FA
+talk dram bero
+ask support on the Council
+choose 1
+expect GetJournalIndex HH_BeroSupport == 50
+bye
+defend
+run
+player->PositionCell 0 -400 -325 0 "Vivec, Arena Pit"
+until 300 GetPCCell "Vivec, Arena Pit" == 1
+until 1200 GetJournalIndex HH_BeroSupport >= 70
+run
+player->PositionCell 7129 501 -501 0 "Vivec, St. Olms Haunted Manor"
+until 300 GetPCCell "Vivec, St. Olms Haunted Manor" == 1
+approach 05A264FA
+talk dram bero
+ask support on the Council
+expect GetJournalIndex HH_BeroSupport == 100
+bye
+end
+
+case hh_destroy_uvirith
+run
+player->PositionCell 492 -116 -491 0 "Vivec, Curio Manor"
+until 300 GetPCCell "Vivec, Curio Manor" == 1
+approach 059264AE
+talk crassius curio
+ask business
+ask Reynel Uvirith
+expect GetJournalIndex HH_DestroyTelUvirith == 10
+bye
+run
+player->PositionCell 175 -92 25 0 "Tel Uvirith, Tower Lower"
+until 300 GetPCCell "Tel Uvirith, Tower Lower" == 1
+approach 05A411B1
+console 05A411B1.kill
+wait 60
+run
+player->PositionCell 492 -116 -491 0 "Vivec, Curio Manor"
+until 300 GetPCCell "Vivec, Curio Manor" == 1
+approach 059264AE
+talk crassius curio
+ask Reynel Uvirith
+expect GetJournalIndex HH_DestroyTelUvirith == 100
+bye
+end

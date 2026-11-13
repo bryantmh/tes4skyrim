@@ -1,0 +1,37 @@
+# House Hlaalu: Crassius Curio's work, Vivec.
+# "Velfred the Outlaw" (HH_NordSmugglers): the Nord smuggler on the Bitter Coast agrees to pay House Hlaalu its
+# respects at disposition 75 ("respect House Hlaalu": 50; SetDisposition stands in for persuasion); Crassius pays
+# (100).
+# Position + `approach` stand in for the travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_nord_smugglers
+run
+player->PositionCell 492 -116 -491 0 "Vivec, Curio Manor"
+until 300 GetPCCell "Vivec, Curio Manor" == 1
+approach 059264AE
+talk crassius curio
+ask business
+ask Velfred the Outlaw
+expect GetJournalIndex HH_NordSmugglers == 10
+bye
+run
+player->Position -54732 -44843 178 0
+until 300 player->GetDistance velfred < 2000
+approach 058E1FE7
+run
+velfred->SetDisposition 100
+talk velfred
+ask respect House Hlaalu
+expect GetJournalIndex HH_NordSmugglers == 50
+bye
+run
+player->PositionCell 492 -116 -491 0 "Vivec, Curio Manor"
+until 300 GetPCCell "Vivec, Curio Manor" == 1
+approach 059264AE
+talk crassius curio
+ask Velfred the Outlaw
+expect GetJournalIndex HH_NordSmugglers == 100
+bye
+end

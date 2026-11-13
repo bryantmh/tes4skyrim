@@ -106,6 +106,31 @@ wait 30
 expect GetDeadCount arrille == 2
 end
 
+# PcCommonDisease / PcBlightDisease read the player's diseases: any Healer Service NPC greets a diseased player
+# "You are afflicted with a common disease..." / "...a blight disease..." (Greeting 4). Telis Salvani, a Balmora
+# Temple healer, has no greetings of her own. The player goes back to Arrille's Tradehouse for 50_world.
+case talk_disease_greetings
+run
+player->AddSpell "swamp fever"
+player->PositionCell 4312 3864 15007 0 "Balmora, Temple"
+until 300 GetPCCell "Balmora, Temple" == 1
+approach 05E8E57A
+talk telis salvani
+said common disease
+bye
+run
+player->RemoveSpell "swamp fever"
+player->AddSpell "ash woe blight"
+wait 30
+talk telis salvani
+said blight disease
+bye
+run
+player->RemoveSpell "ash woe blight"
+player->PositionCell -257 -161 135 0 "Seyda Neen, Arrille's Tradehouse"
+until 300 GetPCCell "Seyda Neen, Arrille's Tradehouse" == 1
+end
+
 # 50_world.mwtest drives arrille next: his base back, then alive.
 case arrille_restored
 run

@@ -1,0 +1,156 @@
+# Thieves Guild: Gentleman Jim Stacey's war on the Camonna Tong, Simine Fralinie: Bookseller, Vivec (Stacey =
+# 05D48791). His "jobs" open at Captain (rank 6) and offer, in order: Nads Tharen (the key), help us fight (Percius
+# Mercius, Ald'ruhn Fighters Guild: 50, "Continue" 2: 60, "Continue" 1: 70), Bitter Cup (Eydis Fire-Eye, Balmora
+# Fighters Guild), Hrundi's woman (Falena Hlaren at Fara's: 60; Hrundi, Wolverine Hall, "join our cause": 70). Their
+# 5 each make 100 reputation: Mastermind (rank 8), which his last two need -- the Ienith brothers here (Ranes is
+# placed at the player by Navil's script when the player first hits Navil) and Sjoring Hard-Heart (0150, after the
+# Bal Molagmer: staceyScript disables Stacey once Hard-Heart's job is done).
+# AddItem stands in for the finds (Nads Tharen's key, the Bitter Cup); SetDisposition for persuading Percius (60)
+# and Falena (50); `punch` + `defend` for the Ienith fight.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tg_nads_tharen
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask jobs
+ask Nads Tharen
+expect GetJournalIndex TG_BrotherThief == 10
+bye
+run
+player->AddItem key_tgbt 1
+approach 05D48791
+talk stacey
+ask Nads Tharen
+choose 1
+expect GetJournalIndex TG_BrotherThief == 100
+bye
+end
+
+case tg_enemy_parley
+approach 05D48791
+talk stacey
+ask jobs
+ask help us fight
+expect GetJournalIndex TG_EnemyParley == 10
+bye
+run
+"persius mercius"->SetDisposition 60
+player->PositionCell 1493 -240 -752 0 "Ald-ruhn, Guild of Fighters"
+until 300 GetPCCell "Ald-ruhn, Guild of Fighters" == 1
+approach 052FE173
+talk persius mercius
+ask help us fight
+expect GetJournalIndex TG_EnemyParley == 50
+choose 2
+expect GetJournalIndex TG_EnemyParley == 60
+choose 1
+expect GetJournalIndex TG_EnemyParley == 70
+bye
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask help us fight
+expect GetJournalIndex TG_EnemyParley == 100
+bye
+end
+
+case tg_bitter_bribe
+approach 05D48791
+talk stacey
+ask jobs
+ask Bitter Cup
+expect GetJournalIndex TG_BitterBribe == 10
+bye
+run
+player->AddItem artifact_bittercup_01 1
+player->PositionCell 241 110 140 0 "Balmora, Guild of Fighters"
+until 300 GetPCCell "Balmora, Guild of Fighters" == 1
+approach 052A98A9
+talk eydis fire-eye
+ask Bitter Cup
+choose 1
+expect GetJournalIndex TG_BitterBribe == 50
+bye
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask Bitter Cup
+expect GetJournalIndex TG_BitterBribe == 100
+bye
+end
+
+case tg_hostage
+approach 05D48791
+talk stacey
+ask jobs
+ask Hrundi's woman
+expect GetJournalIndex TG_Hostage == 10
+bye
+run
+"falena hlaren"->SetDisposition 50
+player->PositionCell 213 0 395 0 "Sadrith Mora, Fara's Hole in the Wall"
+until 300 GetPCCell "Sadrith Mora, Fara's Hole in the Wall" == 1
+approach 05DE6499
+talk falena hlaren
+ask Hrundi's woman
+expect GetJournalIndex TG_Hostage == 60
+bye
+run
+player->PositionCell 55 140 10 0 "Sadrith Mora, Wolverine Hall: Fighter's Guild"
+until 300 GetPCCell "Sadrith Mora, Wolverine Hall: Fighter's Guild" == 1
+approach 05A02138
+talk hrundi
+ask join our cause
+expect GetJournalIndex TG_Hostage == 70
+bye
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask Hrundi's woman
+expect GetJournalIndex TG_Hostage == 100
+bye
+end
+
+# 100 reputation meets rank 8 (Mastermind: 100, Security 80, Sneak 30, Agility and Personality 34).
+case tg_stacey_advancement
+approach 05D48791
+talk stacey
+ask Advancement
+expect player->GetPCRank "Thieves Guild" == 8
+bye
+end
+
+case tg_ienith
+approach 05D48791
+talk stacey
+ask jobs
+ask Ienith
+expect GetJournalIndex TG_KillIenith == 10
+bye
+run
+player->PositionCell 3807 3500 15448 0 "Dren Plantation, Dren's Villa"
+until 300 GetPCCell "Dren Plantation, Dren's Villa" == 1
+approach 05D4C924
+defend
+punch 3 Navil Ienith
+until 1500 GetDeadCount "Navil Ienith" >= 1
+until 1500 GetDeadCount "Ranes Ienith" >= 1
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask Ienith
+expect GetJournalIndex TG_KillIenith == 100
+bye
+end

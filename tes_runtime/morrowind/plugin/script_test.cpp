@@ -35,7 +35,7 @@
 #include "script_runner.h"
 #include "script_tables.h"
 #include "store.h"
-#include "test_runner.h"
+#include "test_backend.h"
 #include "travel.h"
 
 using namespace tesruntime;

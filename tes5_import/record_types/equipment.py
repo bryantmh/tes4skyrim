@@ -37,6 +37,8 @@ from .magic_variants import (DELIVERY_CONTACT, MGEF_CAST_FOR_OWNER, RANGE_DELIVE
                              delivery_variant, get_mgef_formid,
                              get_seff_variant, menu_object, owner_delivery,
                              written_once)
+from ..actors.disease_contact import contact_effect
+from ..actors.vampirism_morrowind import vampire_disease_effects
 from .world_falloutnv import is_fallout_source
 from .equipment_falloutnv import ammo_flags, gun_speed
 from .equipment_falloutnv import refine_anim_type as refine_fallout_anim_type
@@ -297,14 +299,16 @@ def _slot_mgef(rec: dict, i: int, code: str, writer, spell_type: int,
 
 def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
                   delivery: int = 0, writer=None, spell_type: int = -1,
-                  owner: tuple = OWNER_CONSUMED, self_only: bool = False) -> bytes:
+                  owner: tuple = OWNER_CONSUMED, self_only: bool = False,
+                  disease: str = '') -> bytes:
     """EFID/EFIT pairs for every effect on a record that has a TES5 MGEF.
 
     A null EFID crashes the menu, so an empty list (or one short of
     ``pad_to``) takes zero-magnitude fillers.  Every slot is fitted to
     ``owner`` and ``spell_type`` (see _slot_mgef); a filler takes
     ``delivery`` when the owner fixes none, and carries no hit visuals on an
-    Ability.  ``self_only`` keeps only Self-range effects.
+    Ability.  ``self_only`` keeps only Self-range effects.  The effects of
+    the disease named ``disease`` carry its contraction (contact_effect).
     See: docs/commentary/tes5_import_magic.md#aimed-ench-null-projectile
     """
     effects = []
@@ -315,6 +319,9 @@ def _pack_effects(rec: dict, count_key: str = 'EffectCount', pad_to: int = 0,
             continue
         code = get_str(rec, f'Effect[{i}].EFID')
         mgef_fid = _slot_mgef(rec, i, code, writer, spell_type, owner) if code else 0
+        if mgef_fid and disease:
+            mgef_fid = contact_effect(mgef_fid, disease, len(effects),
+                                      effects[0][0] if effects else 0, writer)
         if mgef_fid:
             effects.append((mgef_fid, float(get_int(rec, f'Effect[{i}].Magnitude')),
                             get_int(rec, f'Effect[{i}].Area'),
@@ -1021,9 +1028,10 @@ def _spell_subrecords(rec: dict, edid: str, writer, delivery: int = None) -> byt
     cast_type, target_type = SPELL_TYPE_CAST.get(tes5_type, (1, None))
     if target_type is None:
         target_type = owner_delivery(rec) if delivery is None else delivery
-    effects = _pack_effects(rec, delivery=target_type, writer=writer,
-                            spell_type=tes5_type,
-                            owner=(cast_type, target_type if cast_type == 0 else delivery))
+    effects = vampire_disease_effects(rec) or _pack_effects(
+        rec, delivery=target_type, writer=writer, spell_type=tes5_type,
+        owner=(cast_type, target_type if cast_type == 0 else delivery),
+        disease=get_str(rec, 'EditorID') if tes5_type == SPELL_TYPE_DISEASE else '')
 
     if tes5_type != SPELL_TYPE_DISEASE:
         first_effect = struct.unpack_from('<I', effects, _SUBRECORD_HEADER)[0]

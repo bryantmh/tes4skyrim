@@ -1,0 +1,34 @@
+# Clan Berne: "Quarra Blood Potion" (VA_VampBlood). Raxle Berne greets the new Berne vampire in Galom Daeus (10,
+# adds "serve me") and sends the player after Volrina Quarra's blood ("serve me": 20, "I will serve you." 1 -- its
+# response writes no stage, so 30 never logs in Morrowind.esm). The potion sits in a barrel in Druscashti's lower
+# level among the Quarra; brought back ("Quarra Blood Potion"), Raxle takes it (50).
+# The barrel's Take All stands in for opening it; `defend` takes the Quarra who attack; `approach` stands in for the
+# travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from va_berne_blood_start --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case va_berne_blood_start
+approach 0537C5DE
+talk raxle berne
+expect GetJournalIndex VA_VampBlood == 10
+ask serve me
+expect GetJournalIndex VA_VampBlood == 20
+choose 1
+expect GetJournalIndex VA_VampBlood == 20
+bye
+end
+
+case va_berne_blood_potion
+run
+player->PositionCell 250 -1454 -1715 0 "Druscashti, Lower Level"
+until 300 GetPCCell "Druscashti, Lower Level" == 1
+defend
+wait 60
+console 05C880FB.removeallitems player
+until 300 player->GetItemCount "p_quarrablood_UNIQUE" >= 1
+approach 0537C5DE
+talk raxle berne
+ask Quarra Blood Potion
+expect GetJournalIndex VA_VampBlood == 50
+bye
+end

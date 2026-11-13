@@ -127,23 +127,31 @@ float PlainValue(const Condition& cond, const ActorView& actor, bool* known) {
             actor.PlayerAttribute(index - kFirstPcAttribute));
     }
     switch (index) {
-        // 🛑 Not modelled, and the answer is NO -- which is what keeps the
-        // "Get away from me, vampire!" greeting off every ordinary NPC.
+        // OpenMW reads the Vampirism effect; Skyrim's vampirism carries it.
         case Fn_PcVampire:
-        case Fn_PcCorprus:
+            return actor.PlayerIsVampire() ? 1.0f : 0.0f;
+        // OpenMW: Spells::hasCommonDisease / hasBlightDisease, and the Corprus effect's magnitude.
         case Fn_PcCommonDisease:
+            return actor.PlayerHasCommonDisease() ? 1.0f : 0.0f;
         case Fn_PcBlightDisease:
+            return actor.PlayerHasBlightDisease() ? 1.0f : 0.0f;
+        case Fn_PcCorprus:
+            return actor.PlayerHasCorprus() ? 1.0f : 0.0f;
+        // 🛑 Not modelled, and the answer is NO.
         case Fn_PcWerewolfKills:
         case Fn_CreatureTarget:
         case Fn_ShouldAttack:
         case Fn_FriendHit:
         case Fn_Weather:
             return 0.0f;
-        // The GOLD VALUE of everything worn (OpenMW sums slots 0..15), so a
-        // clothed player is far above zero and 0 means NAKED -- which is what
-        // the "Cover yourself!" greeting tests with `<= 0`.
-        case Fn_PcClothingModifier:
-            return kClothedValue;
+        // The GOLD VALUE of everything worn (OpenMW sums slots 0..15): 0 means
+        // NAKED ("Cover yourself!" tests `<= 0`), and a disguise asks for a
+        // costly outfit (Neminda: `<= 167` sees through it). A game that
+        // cannot read it answers as a modestly clothed player.
+        case Fn_PcClothingModifier: {
+            const int worn = actor.PlayerClothingValue();
+            return worn >= 0 ? static_cast<float>(worn) : kClothedValue;
+        }
         // Stats the runtime does not track; the player reads as ordinary.
         case Fn_PcMagicka:
         case Fn_PcFatigue:

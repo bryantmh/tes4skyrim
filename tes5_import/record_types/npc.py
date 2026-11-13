@@ -16,10 +16,12 @@ from ..actors.combat_style import actor_combat_style
 from ..actors.confidence import flee_memberships, flee_spells
 from ..actors.stat_factions import stat_memberships
 from ..base.constants import TES5_SKILL_ORDER
-from ..actors.creature_races import TES5_HEALTH_LEVEL_BONUS
+from ..actors.creature_races import TES5_HEALTH_LEVEL_BONUS, spell_record
+from ..actors.disease_contact import HUMANOID_ATTACKS, actor_diseases, attack_subs
 from ..actors import npc_face_morrowind as morrowind_faces
 from ..actors.npc_face_mapper import build_face_tail_subs, build_pnam_subs
 from ..actors.outfits import split_inventory
+from ..actors.vampirism_morrowind import carrier_bloods
 from ..packages.actor_wiring import (CSTY_DEFAULT, DPLT_NPC_LIST, authored_packages,
                                      default_package_list, npc_packages, stand_still_list)
 from ..base.equivalents import map_hair_color
@@ -305,6 +307,8 @@ def _identity_subs(rec: dict, skyrim_race: int, gender: str, carried: list,
 
     subs += pack_formid_subrecord('RNAM', skyrim_race)
     subs += _spell_subs(rec)
+    subs += attack_subs(skyrim_race, HUMANOID_ATTACKS,
+                        carrier_bloods(rec) + actor_diseases(rec, spell_record))
     subs += _inventory_subs(carried,
                             get_int(rec, 'ACBS.BarterGold') if vendor_fid else 0)
     subs += pack_subrecord('AIDT', build_aidt(rec))

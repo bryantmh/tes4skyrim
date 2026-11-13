@@ -1,0 +1,173 @@
+# House Hlaalu: Odral Helvi's work, Caldera (Crassius Curio sends the player; Kinsman).
+# "sealed orders" (HH_BankFraud): Crassius (5); Odral's orders (10) handed to Tenisi Lladri in the Hlaalu Vaults
+# ("Here they are." 1: 50); Odral (100). "Caldera mining contracts" (HH_CaptureSpy): Odral (10); Elmussa Damori
+# confesses at disposition 80 and gives her chest's key (40); the contract taken from her chest; "Truth: Elmussa
+# Damori." 1 (110). "erroneous documents" (HH_ReplaceDocs): the fake deed (10) put in the Hlaalu Records chest,
+# whose own script (landDeedChest) sets Odral's replacedDocs, and the real deed taken; "Yes, I have." 1 (100).
+# "rent and taxes" (HH_RentCollector): Manat Varnan-Adda (60) and Llovyn Andus (50) refuse; the player pays the
+# hundred ("Yes, here it is." 1: 100). "shipment of ebony" (HH_EbonyDelivery): five raw ebony to Drinar Varyon in
+# Ald'ruhn ("Give him the ebony." 7: 50); Odral (100).
+# PositionCell/Position + `approach` stand in for the travel; SetDisposition for persuasion; the chest
+# RemoveItem/AddItem for opening the chests.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_bank_fraud
+approach 059264AE
+talk crassius curio
+ask business
+expect GetJournalIndex HH_BankFraud == 5
+bye if open
+run
+player->PositionCell 309 389 392 0 "Caldera, Governor's Hall"
+until 300 GetPCCell "Caldera, Governor's Hall" == 1
+approach 055E5721
+talk odral helvi
+ask business
+ask sealed orders
+expect GetJournalIndex HH_BankFraud == 10
+bye
+run
+player->PositionCell 457 -149 -106 0 "Vivec, Hlaalu Vaults"
+until 300 GetPCCell "Vivec, Hlaalu Vaults" == 1
+approach 0535F3C7
+talk tenisi lladri
+ask sealed orders
+choose 1
+expect GetJournalIndex HH_BankFraud == 50
+bye
+run
+player->PositionCell 309 389 392 0 "Caldera, Governor's Hall"
+until 300 GetPCCell "Caldera, Governor's Hall" == 1
+approach 055E5721
+talk odral helvi
+ask business
+ask sealed orders
+expect GetJournalIndex HH_BankFraud == 100
+bye
+end
+
+case hh_capture_spy
+approach 055E5721
+talk odral helvi
+ask business
+ask Caldera mining contracts
+expect GetJournalIndex HH_CaptureSpy == 10
+bye
+run
+player->PositionCell 587 -192 386 0 "Caldera, Elmussa Damori's House"
+until 300 GetPCCell "Caldera, Elmussa Damori's House" == 1
+approach 05543701
+run
+"elmussa damori"->SetDisposition 100
+talk elmussa damori
+ask Caldera mining contracts
+expect GetJournalIndex HH_CaptureSpy == 40
+expect player->GetItemCount key_elmussadamori == 1
+bye
+run
+"com_chest_01_elmussa"->RemoveItem bk_CalderaMiningContract 1
+player->AddItem bk_CalderaMiningContract 1
+run
+player->PositionCell 309 389 392 0 "Caldera, Governor's Hall"
+until 300 GetPCCell "Caldera, Governor's Hall" == 1
+approach 055E5721
+talk odral helvi
+ask business
+ask Caldera mining contracts
+choose 1
+expect GetJournalIndex HH_CaptureSpy >= 100
+bye
+end
+
+case hh_replace_docs
+approach 055E5721
+talk odral helvi
+ask business
+ask erroneous documents
+expect GetJournalIndex HH_ReplaceDocs == 10
+expect player->GetItemCount bk_landdeedfake_hhrd == 1
+bye
+run
+player->PositionCell -604 -57 -303 0 "Vivec, Hlaalu Records"
+until 300 GetPCCell "Vivec, Hlaalu Records" == 1
+run
+player->RemoveItem bk_landdeedfake_hhrd 1
+"chest_small_02_HHRD"->AddItem bk_landdeedfake_hhrd 1
+"chest_small_02_HHRD"->RemoveItem bk_landdeed_hhrd 1
+player->AddItem bk_landdeed_hhrd 1
+until 300 "odral helvi".replacedDocs == 1
+run
+player->PositionCell 309 389 392 0 "Caldera, Governor's Hall"
+until 300 GetPCCell "Caldera, Governor's Hall" == 1
+approach 055E5721
+talk odral helvi
+ask business
+ask erroneous documents
+choose 1
+expect GetJournalIndex HH_ReplaceDocs == 100
+bye
+end
+
+case hh_rent_collector
+approach 055E5721
+talk odral helvi
+ask business
+ask rent and taxes
+expect GetJournalIndex HH_RentCollector == 10
+bye
+run
+player->Position 29335 -46170 699 0
+until 300 player->GetDistance "manat varnan-adda" < 2000
+approach 056BC6FD
+talk manat varnan-adda
+ask rent and taxes
+expect GetJournalIndex HH_RentCollector == 60
+bye
+run
+player->Position 14355 -57122 156 0
+until 300 player->GetDistance "llovyn andus" < 2000
+approach 057FAF3B
+talk llovyn andus
+ask rent and taxes
+expect GetJournalIndex HH_RentCollector >= 50
+bye
+run
+player->PositionCell 309 389 392 0 "Caldera, Governor's Hall"
+until 300 GetPCCell "Caldera, Governor's Hall" == 1
+approach 055E5721
+talk odral helvi
+ask business
+ask rent and taxes
+choose 1
+expect GetJournalIndex HH_RentCollector == 100
+bye
+end
+
+case hh_ebony_delivery
+approach 055E5721
+talk odral helvi
+ask business
+ask shipment of ebony
+expect GetJournalIndex HH_EbonyDelivery == 10
+expect player->GetItemCount Ingred_Raw_Ebony_01 >= 5
+bye
+run
+player->PositionCell -58 136 -251 0 "Ald-ruhn, Drinar Varyon's House"
+until 300 GetPCCell "Ald-ruhn, Drinar Varyon's House" == 1
+approach 0533831D
+talk drinar varyon
+ask shipment of ebony
+choose 7
+expect GetJournalIndex HH_EbonyDelivery == 50
+bye
+run
+player->PositionCell 309 389 392 0 "Caldera, Governor's Hall"
+until 300 GetPCCell "Caldera, Governor's Hall" == 1
+approach 055E5721
+talk odral helvi
+ask business
+ask shipment of ebony
+expect GetJournalIndex HH_EbonyDelivery == 100
+bye
+end

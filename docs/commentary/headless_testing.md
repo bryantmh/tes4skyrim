@@ -197,13 +197,14 @@ A case is a list of steps, run in file order:
 | `run` + MWScript lines | runs the body as `actor` through the OpenMW interpreter |
 | `wait <ticks>` | lets that many ticks pass |
 | `expect <condition>` | wraps it as `if ( cond ) set TestResult to 1 else ... 0`; -1 means the probe did not compile or run |
-| `talk <npc>` | activates the NPC as the player does, then waits up to 90 ticks for the conversation to open |
+| `talk <npc>` | activates the NPC as the player does, then waits up to 90 ticks for the conversation to open; a conversation already open with `npc` is taken as is, one left open with someone else gets its Goodbye first (MW backend; `approach` likewise) |
 | `ask <topic>` | clicks a topic the list shows; fails naming the listed topics when it is not there |
 | `choose <n>` | answers pending choice `n`; fails naming the pending choices |
 | `bye` | clicks Goodbye; fails while a choice locks it |
 | `button <n>` | clicks button `n` of the open MessageBox |
 | `activate <ref>` | activates the reference as the player does, without waiting for a conversation |
 | `until <ticks> <condition>` | waits for the condition to hold; fails the case after `ticks` with the condition's `left` |
+| `rest <max>[x<hours>] <bed\|-> <condition>` | sleeps `hours` (default 1) in the bed, or waits on the spot for `-`, up to `max` times until the condition holds; each sleep counts once, when its Sleep/Wait menu closes. A script that counts `Day` changes (stronghold builders, Boethiah's shrine) takes `x24`: one day per sleep, seconds instead of ~30 min of 1-hour sleeps |
 
 An action with no `wait` after it settles for 2 ticks. An action that fails
 ends its case; a failed `expect` does not. The clicks are the window's own calls (`ConversationAsk` and the

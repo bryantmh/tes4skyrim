@@ -1,0 +1,86 @@
+# House Hlaalu: Edryno Arethi's last duties, Vivec.
+# "ebony trade" (HH_AshlanderEbony): gulakhan Ashibaal of the Zainab ("The Zainab are now strong enough to sell
+# ebony." 3, "If we both sell ebony the price drops." 1: 50), reported (100). "Prelude" (HH_SunkenTreasure): the
+# Daedric Wakizashi from the wreck's chest (AddItem stands in for looting it), handed over ("Give her" 1: 100).
+# "Ralen Tilvur" (HH_GuardMerchant): the smith's greeting lets the thief Drarel Andus in (50); killed, reported (100).
+# `approach`/PositionCell stand in for the travel; the kill for the fight.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_ashlander_ebony
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask business
+ask ebony trade
+expect GetJournalIndex HH_AshlanderEbony == 10
+bye
+run
+player->PositionCell 114 482 -238 0 "Zainab Camp, Ashibaal's Yurt"
+until 300 GetPCCell "Zainab Camp, Ashibaal's Yurt" == 1
+approach 0570791D
+talk ashibaal
+ask ebony trade
+choose 3
+choose 1
+expect GetJournalIndex HH_AshlanderEbony == 50
+bye
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask ebony trade
+expect GetJournalIndex HH_AshlanderEbony == 100
+bye
+end
+
+case hh_prelude
+approach 0541184D
+talk edryno arethi
+ask business
+ask Prelude
+expect GetJournalIndex HH_SunkenTreasure == 10
+bye
+run
+player->PositionCell 3645 3204 176 0 "Prelude Shipwreck, Lower Level"
+until 300 GetPCCell "Prelude Shipwreck, Lower Level" == 1
+run
+player->AddItem "daedric wakizashi_hhst" 1
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask Prelude
+choose 1
+expect GetJournalIndex HH_SunkenTreasure == 100
+bye
+end
+
+case hh_guard_merchant
+approach 0541184D
+talk edryno arethi
+ask business
+ask Ralen Tilvur
+expect GetJournalIndex HH_GuardMerchant == 10
+bye
+run
+player->PositionCell -95 -186 -92 0 "Vivec, Ralen Tilvur: Smith"
+until 300 GetPCCell "Vivec, Ralen Tilvur: Smith" == 1
+approach 05874C09
+talk ralen tilvur
+until 300 GetJournalIndex HH_GuardMerchant >= 50
+console 05CFAD51.kill
+until 600 GetDeadCount "drarel andus" >= 1
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask Ralen Tilvur
+expect GetJournalIndex HH_GuardMerchant == 100
+bye
+end

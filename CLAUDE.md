@@ -293,6 +293,10 @@ comes from what actually solved 46 recent bugs
   down, say so. Test scripts print as they go and write each result as computed;
   on timeout, use what was written — never re-run the same sweep smaller. This
   limit does not apply to real pipeline runs.
+- 🛑 **Never start a test run or long background job without a fallback timer**
+  (a Monitor or wakeup at ~2x its expected time, plus `--stop-on-fail` for case
+  runs) that checks progress and stops a stalled run. Never sit waiting on one.
+  How: the **test-instances** skill.
 - **Builds queue themselves; launch them without checking the load.** `convert.py`
   and `create_lod.py` take a machine-wide lock
   ([heavy_lock](docs/commentary/performance.md#one-heavy-job-at-a-time)), so a

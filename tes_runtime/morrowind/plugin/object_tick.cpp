@@ -17,7 +17,7 @@
 #include "object_script.h"
 #include "scope.h"
 #include "script_tables.h"
-#include "test_runner.h"
+#include "test_backend.h"
 
 namespace tesruntime::mw {
 

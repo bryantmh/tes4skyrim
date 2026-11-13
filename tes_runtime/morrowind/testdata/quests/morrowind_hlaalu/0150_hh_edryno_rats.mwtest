@@ -1,0 +1,44 @@
+# House Hlaalu: "game rats" (HH_TheExterminator), Edryno Arethi, Vivec.
+# Edryno hands over the basement key (10); the three blighted rats (rat_cave_hhte2) in Yngling Manor's basement are
+# killed and the game rats (rat_cave_hhte1) spared; Edryno pays (100: "D:rat_cave_hhte2>=3 D:rat_cave_hhte1<=1").
+# No `defend`: it would kill the game rats too. The kills stand in for the fight. The blighted rats' hits can pass
+# on Black-Heart Blight (2.5% a hit), and a diseased player gets the disease greetings (Greeting 4), which hide
+# Dondos Driler's stronghold offer: the player drinks a cure for each disease, as a player would.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_game_rats
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask business
+ask game rats
+expect GetJournalIndex HH_TheExterminator == 10
+expect player->GetItemCount "key_yinglingbasement" == 1
+bye
+run
+player->PositionCell -444 900 -96 0 "Vivec, St. Olms Yngling Manor Basement"
+until 300 GetPCCell "Vivec, St. Olms Yngling Manor Basement" == 1
+console 05A5A2D2.kill
+console 05A0BB8A.kill
+console 057520C4.kill
+wait 60
+run
+player->AddItem p_cure_blight_s 1
+player->Equip p_cure_blight_s
+player->AddItem p_cure_common_s 1
+player->Equip p_cure_common_s
+wait 30
+expect player->GetBlightDisease == 0
+expect player->GetCommonDisease == 0
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask game rats
+expect GetJournalIndex HH_TheExterminator == 100
+bye
+end

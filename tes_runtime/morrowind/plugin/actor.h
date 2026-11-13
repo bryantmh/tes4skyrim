@@ -64,6 +64,16 @@ public:
     // A TES3 skill or attribute index, mapped to Skyrim or stubbed.
     virtual int   PlayerSkill(int tes3Index) const = 0;
     virtual int   PlayerAttribute(int tes3Index) const = 0;
+    // `PcVampire`: Skyrim's vampirism, which carries Morrowind's.
+    virtual bool  PlayerIsVampire() const { return false; }
+    // `PcClothingModifier`: the gold value of everything the player wears;
+    // -1 when it cannot be read.
+    virtual int   PlayerClothingValue() const { return -1; }
+    // `PcCommonDisease` / `PcBlightDisease`: a disease of that kind on the player.
+    virtual bool  PlayerHasCommonDisease() const { return false; }
+    virtual bool  PlayerHasBlightDisease() const { return false; }
+    // `PcCorprus`: the Corprus effect on the player.
+    virtual bool  PlayerHasCorprus() const { return false; }
 
     // --- world ----------------------------------------------------------
     // The cell name the player is in; TES3 matches it as a PREFIX.

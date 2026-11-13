@@ -1,0 +1,43 @@
+# House Hlaalu: "people cannot read" (HH_LiteracyCampaign), Ilmeni Dren, Vivec.
+# Ilmeni asks for "ABCs for Barbarians" and "The Annotated Anuad" (10), bought at Jobasha's Rare Books (AddItem and
+# 75 gold stand in for the barter); Vala Catraso at the Ald'ruhn Mages Guild takes them ("Yes, here they are" 1:
+# 50); Ilmeni (100).
+# PositionCell + `approach` stand in for the travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_literacy
+run
+player->PositionCell 417 -412 -103 0 "Vivec, St. Delyn Canal South-One"
+until 300 GetPCCell "Vivec, St. Delyn Canal South-One" == 1
+approach 052DA0B7
+talk ilmeni dren
+ask business
+ask people cannot read
+expect GetJournalIndex HH_LiteracyCampaign == 10
+bye
+run
+player->PositionCell 883 -243 -408 0 "Vivec, Jobasha's Rare Books"
+until 300 GetPCCell "Vivec, Jobasha's Rare Books" == 1
+run
+player->RemoveItem Gold_001 75
+player->AddItem bk_ABCs 1
+player->AddItem bk_AnnotatedAnuad 1
+run
+player->PositionCell 1673 953 -632 0 "Ald-ruhn, Guild of Mages"
+until 300 GetPCCell "Ald-ruhn, Guild of Mages" == 1
+approach 058AF44E
+talk vala catraso
+ask people cannot read
+choose 1
+expect GetJournalIndex HH_LiteracyCampaign == 50
+bye
+run
+player->PositionCell 417 -412 -103 0 "Vivec, St. Delyn Canal South-One"
+until 300 GetPCCell "Vivec, St. Delyn Canal South-One" == 1
+approach 052DA0B7
+talk ilmeni dren
+ask people cannot read
+expect GetJournalIndex HH_LiteracyCampaign == 100
+bye
+end

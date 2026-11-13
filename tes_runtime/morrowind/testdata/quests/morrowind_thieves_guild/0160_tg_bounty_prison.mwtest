@@ -1,0 +1,97 @@
+# Thieves Guild: bounty and prison. "price on your head": only Phane Rielle (Balmora, South Wall), Tongue-Toad
+# (Ald'ruhn, Rat In The Pot), Rissinia (Sadrith Mora, Dirty Muriel's) and Arantamo (Vivec, Simine Fralinie's) clear
+# a bounty for a guild member -- "Thanks. I'll pay it." 1 takes CrimeGoldDiscount (fCrimeGoldDiscountMult 0.5 of
+# it), SetPCCrimeLevel 0, PayFineThief (the stolen goods stay); any other member only points to them (Habasi).
+# Prison: a Hlaalu guard in Balmora's Eastern Guard Tower, to a player who turns in with a bounty, offers "Go to
+# Jail." 2: GotoJail, then the engine jails the player and serves the sentence (game_calls_crime ServeSentence).
+# SetPCCrimeLevel stands in for a crime seen; the gold is set to exactly 1000 to read the price paid.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tg_bounty_master_refers
+run
+SetPCCrimeLevel 1000
+player->PositionCell -242 650 9 0 "Balmora, South Wall Cornerclub"
+until 300 GetPCCell "Balmora, South Wall Cornerclub" == 1
+approach 05B9FAAA
+talk habasi
+ask price on your head
+expect GetPCCrimeLevel == 1000
+bye
+end
+
+case tg_bounty_phane_rielle
+run
+SetPCCrimeLevel 1000
+player->RemoveItem Gold_001 10000000
+player->AddItem Gold_001 1000
+approach 052A6AD7
+talk phane rielle
+ask price on your head
+choose 1
+expect GetPCCrimeLevel == 0
+expect player->GetItemCount Gold_001 == 500
+bye
+end
+
+case tg_bounty_tongue_toad
+run
+SetPCCrimeLevel 1000
+player->RemoveItem Gold_001 10000000
+player->AddItem Gold_001 1000
+player->PositionCell -128 700 -480 0 "Ald-ruhn, The Rat In The Pot"
+until 300 GetPCCell "Ald-ruhn, The Rat In The Pot" == 1
+approach 05B948EC
+talk tongue_toad
+ask price on your head
+choose 1
+expect GetPCCrimeLevel == 0
+expect player->GetItemCount Gold_001 == 500
+bye
+end
+
+case tg_bounty_rissinia
+run
+SetPCCrimeLevel 1000
+player->RemoveItem Gold_001 10000000
+player->AddItem Gold_001 1000
+player->PositionCell -312 -420 140 0 "Sadrith Mora, Dirty Muriel's Cornerclub"
+until 300 GetPCCell "Sadrith Mora, Dirty Muriel's Cornerclub" == 1
+approach 05995A1C
+talk rissinia
+ask price on your head
+choose 1
+expect GetPCCrimeLevel == 0
+expect player->GetItemCount Gold_001 == 500
+bye
+end
+
+case tg_bounty_arantamo
+run
+SetPCCrimeLevel 1000
+player->RemoveItem Gold_001 10000000
+player->AddItem Gold_001 1000
+player->PositionCell 6314 -600 -251 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 059862E5
+talk arantamo
+ask price on your head
+choose 1
+expect GetPCCrimeLevel == 0
+expect player->GetItemCount Gold_001 == 500
+bye
+end
+
+case tg_prison
+run
+player->PositionCell 3749 4080 15797 0 "Balmora, Eastern Guard Tower"
+until 300 GetPCCell "Balmora, Eastern Guard Tower" == 1
+run
+SetPCCrimeLevel 300
+approach 05651DB3
+talk 05651DB3
+choose 2
+bye
+until 1200 GetPCCrimeLevel == 0
+until 600 GetPCCell "Balmora, Eastern Guard Tower" == 0
+end

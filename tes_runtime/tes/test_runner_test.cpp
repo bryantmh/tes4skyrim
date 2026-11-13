@@ -74,7 +74,7 @@ void ParsesTheGrammar() {
 
 // Ticks until the runner writes `count` result lines, or gives up.
 std::vector<std::string> TickUntil(const std::string& results, std::size_t count) {
-    for (int i = 0; i < 500 && ReadLines(results).size() < count; ++i) TickTestRunner();
+    for (int i = 0; i < 1500 && ReadLines(results).size() < count; ++i) TickTestRunner();
     return ReadLines(results);
 }
 
@@ -161,7 +161,7 @@ void HearsAndWalks(const std::string& dir) {
     TestBackend game;
     game.inWorld = InWorld;
     game.spoken = Spoken;
-    game.walk = [](const std::string& where) { g_walkedTo = where; };
+    game.walkTo = [](const std::string& where) { g_walkedTo = where; };
     game.walkDone = []() { return ++g_walkTicks >= 10; };
     SetTestBackend(game);
     ResetTestRunner();

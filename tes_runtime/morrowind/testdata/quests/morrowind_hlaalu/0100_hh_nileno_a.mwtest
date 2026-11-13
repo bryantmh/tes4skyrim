@@ -1,0 +1,90 @@
+# House Hlaalu: joining, then Nileno Dorvayn's first duties in the Hlaalu Council Manor, Balmora.
+# Joining asks Speed and Agility 30 (MorrowindRuntime's FACT table); SetSpeed and SetAgility stand in for level-up
+# choices. "Disguise" (HH_DisguisedArmor): "business" -> "say that again" ("Yes." 1: 10 or 11 by gender, and a
+# disfigured Redoran's helm); worn, the helm passes Neminda in Ald'ruhn's Redoran Council Entrance ("Orphan of
+# Arnesia": 50, her orders) and Nileno pays for them ("Yes, here it is." 1: 100). "Alchemical Formulas"
+# (HH_IndEsp1): formulas lifted from Aurane Frernis' Vivec shop (100). "Inanius Egg Mine" (HH_EggMine): the
+# kwama queen killed (100).
+# `approach` stands in for the travel; the take for lifting the formulas; the kill for the fight.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_join
+run
+player->SetSpeed 30
+player->SetAgility 30
+approach 0549AC23
+talk nileno dorvayn
+ask business
+ask join House Hlaalu
+choose 1
+expect player->GetPCRank Hlaalu >= 0
+bye
+end
+
+case hh_disguise_start
+approach 0549AC23
+talk nileno dorvayn
+ask business
+ask say that again
+choose 1
+expect GetJournalIndex HH_DisguisedArmor >= 10
+expect player->GetItemCount "Bonemold_Gah-Julan_HHDA" == 1
+bye
+end
+
+case hh_disguise_neminda
+run
+player->Equip "Bonemold_Gah-Julan_HHDA"
+approach 05438C44
+talk neminda
+ask Orphan of Arnesia
+expect GetJournalIndex HH_DisguisedArmor == 50
+expect player->GetItemCount "bk_NemindasOrders" == 1
+bye
+end
+
+case hh_disguise_done
+approach 0549AC23
+talk nileno dorvayn
+ask Orphan of Arnesia
+choose 1
+expect GetJournalIndex HH_DisguisedArmor == 100
+bye
+end
+
+case hh_formulas
+approach 0549AC23
+talk nileno dorvayn
+ask business
+ask alchemical formulas
+expect GetJournalIndex HH_IndEsp1 == 10
+bye
+approach 05928FF0
+take 0555047C
+until 300 player->GetItemCount "bk_auranefrernis2" >= 1
+approach 0549AC23
+talk nileno dorvayn
+ask alchemical formulas
+choose 1
+expect GetJournalIndex HH_IndEsp1 == 100
+bye
+end
+
+case hh_eggmine
+approach 0549AC23
+talk nileno dorvayn
+ask business
+ask Inanius egg mine
+expect GetJournalIndex HH_EggMine == 10
+bye
+approach 057B5992
+defend
+console 057B5992.kill
+wait 60
+approach 0549AC23
+talk nileno dorvayn
+ask Inanius egg mine
+expect GetJournalIndex HH_EggMine == 100
+bye
+end

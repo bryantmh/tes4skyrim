@@ -402,6 +402,26 @@ Condition Numbered(int index, char comparison, int value) {
     return cond;
 }
 
+// A player carrying a common disease, a blight and the Corprus effect.
+class DiseasedActor : public FakeActor {
+public:
+    bool PlayerHasCommonDisease() const override { return true; }
+    bool PlayerHasBlightDisease() const override { return true; }
+    bool PlayerHasCorprus() const override { return true; }
+};
+
+// The disease functions answer the player's real state, not a constant "no".
+int DiseasedPlayerCases() {
+    DiseasedActor actor;
+    int failed = 0;
+    for (int index : {Fn_PcCommonDisease, Fn_PcBlightDisease, Fn_PcCorprus}) {
+        const bool got = TestCondition(Numbered(index, '0', 1), actor, -1);
+        std::printf("  %s  disease function %d == 1 passes for a diseased player\n", got ? "ok  " : "FAIL", index);
+        if (!got) ++failed;
+    }
+    return failed;
+}
+
 // 🛑 The vampire regression: an index with no case must REJECT, or the
 // greeting it guards wins for every ordinary NPC.
 // See: docs/commentary/morrowind_runtime.md#unknown-functions
@@ -426,7 +446,7 @@ int UnknownFunctionCases() {
                                           actor, -1);
     std::printf("  %s  PCVampire == 0 passes\n", notVampire ? "ok  " : "FAIL");
     if (!notVampire) ++failed;
-    return failed;
+    return failed + DiseasedPlayerCases();
 }
 
 // 🛑 RankRequirement judges the PLAYER against the SPEAKER's faction, and

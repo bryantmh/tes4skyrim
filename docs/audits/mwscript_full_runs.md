@@ -211,6 +211,10 @@ arktwend_side 6/6 in every Arktwend run since 13.
 - `approach <npc>`: player MoveTo 80 in front of the NPC, any cell, actor refs only, never with followers along.
 - Followers through doors (fix 4/4b/4c): within 800 move with the player, onto the landing after 128 off / 120 ticks.
 - `until` already true ignores held menus (both runners); HeldMenuError names open menus; rest refusal cap 10.
+- `talk X` (11-13): the Oblivion session (8df7edec) made talk take ANY open conversation (force-greets); a window
+  left open by a "Goodbye" result (Hroldar, co_blocked_door) or a case with no `bye` (Sinyaramen, va_child_kjeld)
+  then served the wrong speaker's topics. Fix: backend hook talkingWith (MW: ConversationWith, id or name); talk
+  clicks Goodbye on someone else's window first. TES backend has no hook -> its behavior unchanged.
 - Walk done when the player already stands at the end (no travel package; crevice fall fix). AiWalkSettledNear:
   stalled within 2 x kArrivedDistance of the end = arrived. StopAiPackage re-evaluates.
 - RestartedWalk (user 11-11: "a walk that doesn't start is a framework failure"): stalled within kWalkStarted 128
@@ -255,13 +259,17 @@ arktwend_side 6/6 in every Arktwend run since 13.
 
 ---------------------------------------------------------------------------------------------------------
 # QUESTS -- MORROWIND LANE (DONE: clean runs 20, 21)
-- ingame 187/187; daedric 24/24 (da_boethiah_build indoors; rest cap fixed a 40-min hang); temple 70/70;
+- ingame 187/187; daedric 24/24 (da_boethiah_build indoors; rest cap fixed a 40-min hang; 11-13 `rest 25x24` --
+  ShrineBoethiah counts Day changes > 20, ~30 min of 1-h sleeps -> ~1 min); temple 70/70;
   raven_rock_brawl 3/3; mournhold 11/11 (warlords/scroll_sales SetDisposition; ms_performers player on the stage
   before the 2nd Meryn greeting); story 17/17.
 - chargen_captain/papers/hall "MessageBoxMenu holds": `button 0` before `run` (case order) + button settle 2
   ticks + landing distance (kLandedWithin 16). TEMP box log in object_script.cpp still in.
 - a1_2_key: carry (fixed); stale shared save once. b3_bride: Falura escort legs; passes.
-- **b2_escort -- passes since the stripped case (runs 20, 21); was ~50%.** Case: walks (shrine door, Inner Shrine
+- **b2_escort -- passes since the stripped case (runs 20, 21, 44 + the user's ~5 game runs); was ~50%.** 11-13
+  regression run (new game, follow-reach DLL): 1 fail -- Sinnammu frozen in the Inner Shrine ~990 from the player at
+  (5376 3632), combat state 0; Inner/Outer Shrine NAVMs identical to 11-01 (hash). Then 3/3 rc + 1 in the folder
+  resume. Read as the old standoff at ~1 in 10, not the reach change (only matters within 256 of the point). Case: walks (shrine door, Inner Shrine
   door, statue), creature kills before the first walk. Residual risk: Nals/Eigma standoff (see follower freeze).
   Failed: steer to the statue; walk onto 4471 3620; re-evaluate; Accompany; governor speed; observe flag; swim.
 - bloodmoon 18/18: bm_beasts riekling kills in one `run` block; bm_carius `approach 0635C797`; bm_siege waits all
@@ -271,6 +279,80 @@ arktwend_side 6/6 in every Arktwend run since 13.
 - tr_shrine_dead (Urvel): 10/10 after slot rule v3 + Gardens drop/north pins + Sewers crack pin; (325 -2257)
   Gardens stall seen 2 in ~25 runs before. tr_blade/ms_warlords: carry -> `approach`. da_malacath_rumors
   `approach 053E05E5`. tr_assassins: doorjamb crash fixed.
+
+# QUESTS -- MORROWIND VAMPIRES (DONE 11-12: aundae 9/9, berne 7/7, quarra 6/6, each x2 full)
+- Folders morrowind_vampire_{aundae,berne,quarra}, each `--load mwtest_a1_11_report` (morrowind stage, MW-only
+  build; in full_run.py). NOT from the lane end: Divayth Fyr's cure gives Resist Common Disease 100 (player
+  DiseaseResist read 350), so a post-cure player can never catch vampirism -- vanilla behavior, not a bug.
+- Mechanism (user 11-12: Skyrim's vampirism, never two): import actors/vampirism_morrowind.py -- bloods carry
+  Skyrim's DisDamageHealthVampire (10%/hit, 3-day VampireChange); carriers (script AddSpells a blood on self: MW 64,
+  Tri 1) get per-NPC ATKD attack spells (disasm: applied on EVERY melee hit incl. weapons; Disease rolls DiseaseResist);
+  TES3VampireChange spell (VampireChangeEffect). Runtime: turn-script gifts no script GetSpells are stand-ins
+  (skipped; the Vampirism one casts TES3VampireChange); PcVampire = player race in `vampire_race:` rows; GetSpell
+  also counts an active effect from the spell (combat diseases are effects, not list entries).
+- Case lessons: infect from tomb carriers (Flee 70 -> visit each), never the clan elder (SetFight never ends a
+  fight: OpenMW); sleep in Caius' bed 05201D4E (Ebonheart cave bedroll refused at Act 1); Volrina (Fight 90) is
+  reached through the upper-level door 056757B0; NotLocal NoLore keeps Edwinna quiet (Anarenen answers).
+- Vanilla data gaps reproduced faithfully: Berne VA_VampBlood 30 and Quarra VA_VampAmulet 40 never logged;
+  Quarra "raw materials" dead end (UESP confirmed bug) -> case runs UESP's `Journal VA_VampAmulet 20` + AddTopic.
+- FormID removal 02103B61 (orphaned RestoreFatigue ability) approved by the user 11-12.
+- FIXED 11-12: the cure (MS_VampireCure, Molag Bal) runs Skyrim's VampireCure (PlayerVampireQuest stage 10) when
+  Vampire_Cure_PC removes the Vampirism stand-in; case 0130_va_aundae_cure 3/3 (Anarenen's greeting: `unsaid vampire`,
+  new runner steps `said`/`unsaid`). Dialogue PcCommonDisease/PcBlightDisease/PcCorprus were a constant 0 -> real;
+  GetCommon/BlightDisease now also read the spell list (AddSpell'd diseases were invisible); ingame/45_talk
+  talk_disease_greetings 3/3. Docs: tes5_import_actors.md#morrowind-vampirism, morrowind_runtime.md#disease-queries.
+- FIXED 11-12 (user: use Skyrim's creature-disease system): common/blight contact on hits = carriers' ATKD attack
+  spells + per-disease MGEF clones rolling GetRandomPercent <= 2.5 (actors/disease_contact.py). The clone needed
+  vanilla's disease DATA (flags 0x00400A06, skill 22); with the source DATA nothing landed even at 100%. Case
+  quests/morrowind_disease (rat Witbane, alit blight) 3/3; in full_run.py. Docs tes5_import_actors.md#disease-contact.
+  Drift: MGEF +45 new, SPEL ~22, NPC_ ~85, no ids moved. Open: corpse-loot contact; Oblivion not reimported.
+
+# QUESTS -- MORROWIND HOUSE HLAALU (DONE 11-13: run 1 with 2 fix-resumes, run 2 CLEAN 46/46 in 11 min)
+- Run 3 (after the talk/approach fix) 43/46: hh_twin_lamps_escort until-70 fail (log lost -- chained run relaunched
+  the game); then 4/4 rc (rc_twin/, logs kept). ~1 in 11 overall; cause unknown, catch it with a kept log.
+- Folder morrowind_hlaalu (0100-0250), `--load mwtest_a1_11_report`, MW-only build; in full_run.py.
+- 11-13 run 1: (a) MY MISREAD: the watch's 180 s STALLED fired during hh_stronghold_foreman's legit `rest 240`
+  (1-h sleeps ~2 s each, ~140 per stage) and I stopped a working run. Rests now `rest 10x24` (new runner syntax
+  `<max>x<hours>`; 24 h = one Day change, which Strong_Build*_H count) -> seconds. Runner fixes: a sleep counts once,
+  when its Sleep/Wait menu closes (a long sleep was re-ordered into the open menu and counted twice); the step no
+  longer ends before its last sleep lands. (b) hh_stronghold_mine: MY REGRESSION from the 11-12 disease queries --
+  Skyrim's RemoveSpell can't take a BASE-list spell off (kwama queen's ash-chancre), so GetSpell/GetBlightDisease
+  stayed 1 -> game_calls_spell records script removals (state "spell|removed", AddSpell clears) + dispels. Probe 0/0.
+- Runtime fix: PcClothingModifier was a flat 100 -> real worn value (game_calls_query PlayerWornValue: ARMO forms
+  equipped, TESValueForm value at +0x70; logged 177 = Neminda helm 167 + 10). Neminda's disguise and Crassius's
+  sponsorship (worn value 0) both depend on it.
+- Case lessons: most givers teach their topic only through "business" (ask it first); Mercantile is folded into
+  Speechcraft (never SetSpeechcraft after SetMercantile); past Lawman the sponsor (Crassius) promotes; dress again
+  after Crassius (undressed = "Cover yourself!" greetings hide topics); an unscripted NPC is non-persistent ->
+  PositionCell into its cell before `approach`; closed LOCKED doors leave AI walks standing (Odirniran cell door +
+  hall door, key_Odirniran); river creatures freeze followers (Tarvyn escort: `defend`); chests resolve by base id.
+- Escort walks: Tarvyn (Vivec -> Pelagiad: walk to bank, steered swim across the bridgeless river, walk; rule 6
+  exception), Vedelea (Odirniran). Predictor false stalls ("ceiling below body height" at the Odirniran landing).
+- Stronghold all 3 stages pass (Fjorgeir hired to guard, "Guard this spot." 2 -- no follower; Maros killed; 300).
+- hh_twin_lamps_escort 3/3: user pinned AshalmawiaXN20Y30; then J'Saddha fell off the Ald Velothi dock and stuck
+  swimming under it (generic "mesh under a platform": deck tris on the sea floor) -> my pin AldVelothiXN22Y31
+  (pin_region, 229 frozen tris, mesh_to_esm into NAVM 0217F704; mesh_clean unchanged 8/2/7 sea-floor faults, holes
+  3 -> 1; picture AldVelothiXN22Y31_walk.png); walk end moved past Galyn (-88640 128480) -- a walk ending AT him
+  stopped behind him, ~300 away. Predictor false stall "collision ahead" at the deck corner (-88612 128100).
+- hh_twin_lamps3 (0250, Hides-His-Foot) 3/3: runtime fix -- a follow with a destination counted done only within
+  128 of its point; OpenMW AiFollow uses followDistance (NPC 64 + 64 + 2x64 = 256). Hides rested ~190 from the
+  point (120 behind the player). game_calls_ai FollowReach (creatures keep 128: no real bounds). Earlier work had
+  noted the mismatch (archive 716) and dropped a 256 edit UNTESTED (archive_2 1560). Predictor false stall
+  "climb 54 over 12" at (34570 -39158); the walk reached the farm.
+- hh_game_rats: blighted rats' hits can now pass Black-Heart Blight (disease contact) -> Greeting 4 disease lines hid
+  Dondos's stronghold offer (topic learned only from his Greeting 5) -> case drinks cure blight/common potions.
+
+# QUESTS -- MORROWIND THIEVES GUILD (DONE 11-13: 42/42 x2 full, ~5 min each)
+- Folder morrowind_thieves_guild (0100-0160), `--load mwtest_a1_11_report`, MW-only build; in full_run.py.
+  0100 Habasi (join + 6 jobs), 0110 Aengoth (6), 0120 Big Helende (5), 0130 Stacey (Nads Tharen .. Ienith),
+  0140 Bal Molagmer (8), 0150 Sjoring Hard-Heart -> Master Thief, 0160 bounty (the 4 "price on your head" NPCs)
+  + prison (turn in to a Balmora tower guard, "Go to Jail." -> served, bounty 0; tg_prison_released.png).
+- Ranks: TG attributes are Agility + PERSONALITY (FACT 3,6 -- not Speed); OpenMW hasSkillsForRank = best guild skill
+  >= primary, second >= favoured. tg_join sets 34/34, Security 80, Sneak 30 (Mastermind's); reputation from jobs
+  (5 each; Master Helm's goes to Redoran) carries rank 4 / 5 / 7 / 8; Stacey's jobs need rank 6, the last two 8.
+- Order lessons: each Bal Molagmer job is named in Stacey's next "Bal Molagmer" answer (ask it first); staceyScript
+  disables Stacey at a cell change once TG_KillHardHeart is 100 -> Hard-Heart last; Ranes Ienith is PlaceAtPC'd by
+  Navil's script on the first hit (punch + defend); GotoJail runs only once the player clicks Goodbye (`bye`).
 
 # QUESTS -- MORROBLIVION LANE (DONE: clean runs 16, 19)
 - morroblivion_main 10/10; quiz 4/4 (runner until/menu fix in common test_runner.cpp); tr_necrom 19/19

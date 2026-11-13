@@ -339,11 +339,26 @@ void RememberAiDestination(const std::string& actor, void* marker) {
     if (marker) AiDestinations()[actor] = FormIdOf(marker);
 }
 
-// A follow's point, and the interior it counts in (empty: outdoors only).
+// A follow's point, the interior it counts in (empty: outdoors only), and how
+// near the follower must come to it.
 struct FollowGoal {
     std::string cell;
     float x, y, z;
+    float reach;
 };
+
+// OpenMW's AiFollow followDistance for one follower: the target's half extent
+// + 64 + twice the follower's, where every NPC (the player too) counts 64.
+// Converted creatures carry no real bounds, so a creature on either end keeps
+// kArrivedDistance.
+// See: docs/commentary/morrowind_runtime.md#a-package-finishes-when-it-arrives
+float FollowReach(const std::string& actor, const std::string& target) {
+    constexpr float kNpcHalfExtent = 64.0f;
+    const ActorDef* a = FindActor(actor);
+    const ActorDef* t = FindActor(target);
+    if ((a && a->creature) || (t && t->creature)) return kArrivedDistance;
+    return kNpcHalfExtent + 64.0f + 2.0f * kNpcHalfExtent;
+}
 
 std::map<std::string, FollowGoal>& FollowGoals() {
     static std::map<std::string, FollowGoal> goals;
@@ -365,7 +380,7 @@ bool ReachedFollowPoint(const std::string& actor) {
     const float dx = RefPositionAxis(PapyrusVm(), ref, 0) - it->second.x;
     const float dy = RefPositionAxis(PapyrusVm(), ref, 1) - it->second.y;
     const float dz = RefPositionAxis(PapyrusVm(), ref, 2) - it->second.z;
-    return dx * dx + dy * dy + dz * dz <= kArrivedDistance * kArrivedDistance;
+    return dx * dx + dy * dy + dz * dz < it->second.reach * it->second.reach;
 }
 
 // How far apart two references stand on the ground plane.
@@ -518,7 +533,7 @@ void AiFollowActor(const std::string& actor, const std::string& target,
         return;
     }
     ForgetAiDestination(actor);
-    FollowGoals()[actor] = {cell, x, y, z};
+    FollowGoals()[actor] = {cell, x, y, z, FollowReach(actor, target)};
     if (RunAiPackage("follow", actor, OwnerRef(target))) {
         Log("ai: %s follows %s for %g h", actor.c_str(), target.c_str(),
             duration);

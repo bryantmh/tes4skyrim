@@ -1,0 +1,130 @@
+# Thieves Guild: Big Helende's jobs, Dirty Muriel's Cornerclub, Sadrith Mora (Helende = 058C3F4A). Offered under
+# "jobs" in a fixed order: potion recipe (the job puts it in Anis Seloth's crate; Tusamircil at Wolverine Hall takes
+# it, 50), Grandmaster's Retort, hire a wizard (Arielle Phiencel at Wolverine Hall: 50, four raw ebony 70), Redoran
+# Cooking Secrets, Felen Maryon's staff ("I'm interested." 20; sold, 6: 100).
+# AddItem stands in for the thefts and finds; the recipe leaves the crate it was put in. Reputation 5 each: 25, 80
+# with Habasi's and Aengoth's.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case tg_potion_recipe
+run
+player->PositionCell -317 -400 391 0 "Sadrith Mora, Dirty Muriel's Cornerclub"
+until 300 GetPCCell "Sadrith Mora, Dirty Muriel's Cornerclub" == 1
+approach 058C3F4A
+talk big helende
+ask jobs
+ask potion recipe
+expect GetJournalIndex TG_CookbookAlchemy == 10
+bye
+run
+"crate_01_anis seloth"->RemoveItem bk_dispelrecipe_tgca 1
+player->AddItem bk_dispelrecipe_tgca 1
+player->PositionCell -76 700 81 0 "Sadrith Mora, Wolverine Hall: Mage's Guild"
+until 300 GetPCCell "Sadrith Mora, Wolverine Hall: Mage's Guild" == 1
+approach 0575D6E5
+talk tusamircil
+ask potion recipe
+choose 1
+expect GetJournalIndex TG_CookbookAlchemy == 50
+bye
+run
+player->PositionCell -317 -400 391 0 "Sadrith Mora, Dirty Muriel's Cornerclub"
+until 300 GetPCCell "Sadrith Mora, Dirty Muriel's Cornerclub" == 1
+approach 058C3F4A
+talk big helende
+ask potion recipe
+expect GetJournalIndex TG_CookbookAlchemy == 100
+bye
+end
+
+case tg_retort
+approach 058C3F4A
+talk big helende
+ask jobs
+ask Grandmaster's Retort
+expect GetJournalIndex TG_GrandmasterRetort == 10
+bye
+run
+player->AddItem Apparatus_G_Retort_01 1
+approach 058C3F4A
+talk big helende
+ask Grandmaster's Retort
+choose 1
+expect GetJournalIndex TG_GrandmasterRetort == 100
+bye
+end
+
+case tg_hire_wizard
+approach 058C3F4A
+talk big helende
+ask jobs
+ask hire a wizard
+expect GetJournalIndex TG_SadrithMoraDefenses == 10
+bye
+run
+player->AddItem Ingred_Raw_Ebony_01 4
+player->PositionCell 241 350 86 0 "Sadrith Mora, Wolverine Hall: Mage's Guild"
+until 300 GetPCCell "Sadrith Mora, Wolverine Hall: Mage's Guild" == 1
+approach 05661C92
+talk arielle phiencel
+ask hire a wizard
+expect GetJournalIndex TG_SadrithMoraDefenses == 50
+ask hire a wizard
+choose 1
+expect GetJournalIndex TG_SadrithMoraDefenses == 70
+bye
+run
+player->PositionCell -317 -400 391 0 "Sadrith Mora, Dirty Muriel's Cornerclub"
+until 300 GetPCCell "Sadrith Mora, Dirty Muriel's Cornerclub" == 1
+approach 058C3F4A
+talk big helende
+ask hire a wizard
+expect GetJournalIndex TG_SadrithMoraDefenses == 100
+bye
+end
+
+case tg_redoran_cookbook
+approach 058C3F4A
+talk big helende
+ask jobs
+ask Redoran Cooking Secrets
+expect GetJournalIndex TG_RedoranCookbook == 10
+bye
+run
+player->AddItem bk_RedoranCookingSecrets 1
+approach 058C3F4A
+talk big helende
+ask Redoran Cooking Secrets
+choose 1
+expect GetJournalIndex TG_RedoranCookbook == 100
+bye
+end
+
+case tg_ebony_staff
+approach 058C3F4A
+talk big helende
+ask jobs
+ask Felen Maryon's staff
+choose 1
+expect GetJournalIndex TG_EbonyStaff == 20
+bye
+run
+player->AddItem "ebony staff caper" 1
+approach 058C3F4A
+talk big helende
+ask Felen Maryon's staff
+choose 6
+expect GetJournalIndex TG_EbonyStaff == 100
+bye
+end
+
+# 80 reputation meets rank 7 (Ringleader: 80).
+case tg_helende_advancement
+approach 058C3F4A
+talk big helende
+ask Advancement
+ask Advancement
+expect player->GetPCRank "Thieves Guild" == 7
+bye
+end

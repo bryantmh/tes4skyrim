@@ -1,0 +1,67 @@
+# House Hlaalu: Edryno Arethi's first duties, Vivec.
+# "sealed report" (HH_BankCourier): the report carried to Baren Alen in the Hlaalu Vaults ("Is that report for
+# me?"; "Yes, take it." 1: 50), reported (100).
+# "Murudius Flaeus" (HH_BuriedTreasure): Murudius in Hla Oad gives up the key to his chest ("debt money": 50;
+# SetDisposition stands in for persuasion), Edryno takes the 800 drakes ("Yes, here it is." 1: 100).
+# `approach` stands in for the travel (PositionCell first for an unscripted NPC: a non-persistent ref is not found
+# while its cell is unloaded).
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_bank_courier
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask business
+ask sealed report
+expect GetJournalIndex HH_BankCourier == 10
+expect player->GetItemCount "bk_TreasuryReport" == 1
+bye
+run
+player->PositionCell 245 -349 -119 0 "Vivec, Hlaalu Vaults"
+until 300 GetPCCell "Vivec, Hlaalu Vaults" == 1
+approach 0556AF5D
+talk baren alen
+ask sealed report
+choose 1
+expect GetJournalIndex HH_BankCourier == 50
+bye
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask sealed report
+expect GetJournalIndex HH_BankCourier == 100
+bye
+end
+
+case hh_buried_treasure
+approach 0541184D
+talk edryno arethi
+ask business
+ask Murudius Flaeus
+expect GetJournalIndex HH_BuriedTreasure == 10
+bye
+run
+player->PositionCell 4035 4067 2306 0 "Hla Oad, Murudius Flaeus's House"
+until 300 GetPCCell "Hla Oad, Murudius Flaeus's House" == 1
+approach 0597DB64
+run
+"murudius flaeus"->SetDisposition 100
+talk murudius flaeus
+ask debt money
+expect GetJournalIndex HH_BuriedTreasure == 50
+bye
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask Murudius Flaeus
+choose 1
+expect GetJournalIndex HH_BuriedTreasure == 100
+bye
+end

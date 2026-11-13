@@ -44,6 +44,8 @@ using GlobalCallFn = void (*)(void* vm, std::uint32_t stack, void* tag);
 using PlaceAtMeFn = void* (*)(void* vm, std::uint32_t stack, void* self, void* base,
                              std::int32_t count, bool forcePersist, bool initiallyDisabled);
 using RefCallFn = void (*)(void* vm, std::uint32_t stack, void* ref);
+using MoveToFn = void (*)(void* vm, std::uint32_t stack, void* ref, void* target, float dx, float dy, float dz,
+                          bool matchRotation);
 
 // Milliseconds between the runner's steps, about 30 a real second.
 constexpr int kTickMs = 33;
@@ -59,6 +61,12 @@ constexpr float kArrivedDistance = 128.0f;
 constexpr int kWalkRetryTicks = 300;
 // Full speed: the player runs, as a player does.
 constexpr float kWalkSpeed = 1.0f;
+// `approach`, as MorrowindRuntime's: no move within talking reach; otherwise
+// the player is put this far in front of the NPC. A move is given this many
+// ticks to land before the next step judges the player's place.
+constexpr float kTalkReach = 200.0f;
+constexpr float kTalkStandOff = 80.0f;
+constexpr int kMoveLandTicks = 30;
 
 struct Calls {
     GetPlayerFn player = nullptr;
@@ -78,9 +86,13 @@ struct Calls {
     GlobalCallFn thirdPerson = nullptr;
     PlaceAtMeFn placeAtMe = nullptr;
     RefCallFn deleteRef = nullptr;
+    MoveToFn moveTo = nullptr;
 };
 
 Calls g_c;
+
+// Ticks left for the player's last `approach` move to land.
+int g_moveLanding = 0;
 
 // Lines begun since the runner last read them; AddSubtitle may run off the
 // main thread.
@@ -240,7 +252,14 @@ bool Ask(const std::string& topic) {
 
 bool Choose(int index) { return ClickTopic(index - 1); }
 
-bool Bye() { return CallMovie(g_c.closeDialogue, MenuObject(ids::kDialogueMenuName), nullptr); }
+// Leaves the conversation as the Tab key does: the menu's own CloseMenu callback marks the exit as the player's,
+// and the hide message takes the menu down even while a choice list is showing (the callback alone waits for a
+// line to end).
+bool Bye() {
+    const bool asked = CallMovie(g_c.closeDialogue, MenuObject(ids::kDialogueMenuName), nullptr);
+    if (asked) CloseMenuNamed(ids::kDialogueMenuName);
+    return asked;
+}
 
 std::string HexId(void* form) {
     char hex[16];
@@ -270,6 +289,40 @@ float Apart(void* a, void* b) {
     const float dy = RefPositionAxis(g_api.vm, a, 1) - RefPositionAxis(g_api.vm, b, 1);
     return std::sqrt(dx * dx + dy * dy);
 }
+
+// Turns the player to look at `target`. A player left facing away has the
+// third-person camera sitting on whoever stands behind them; the engine fades
+// an actor that close to the camera out, and opens no dialogue with one.
+void FacePlayerTo(void* target) {
+    void* player = Player();
+    const float dx = RefPositionAxis(g_api.vm, target, 0) - RefPositionAxis(g_api.vm, player, 0);
+    const float dy = RefPositionAxis(g_api.vm, target, 1) - RefPositionAxis(g_api.vm, player, 1);
+    SetRefAngle(g_api.vm, player, 0.0f, 0.0f, std::atan2(dx, dy) * kDegreesPerRadian);
+}
+
+// `approach`: puts the player in front of `id`, wherever it stands, unless
+// already within talking reach in the same cell -- as a player walks up to
+// whoever they talk to -- and has them look at it. 1 when a move was posted,
+// 0 when none is needed, -1 while `id` does not resolve.
+int Approach(const std::string& id) {
+    void* npc = RefNamed(id);
+    void* player = Player();
+    if (!npc || !player || !g_c.moveTo || !g_c.parentCell) return -1;
+    const bool sameCell = g_c.parentCell(g_api.vm, 0, npc) == g_c.parentCell(g_api.vm, 0, player);
+    if (sameCell && Apart(player, npc) <= kTalkReach) {
+        FacePlayerTo(npc);
+        return 0;
+    }
+    const float heading = RefAngleDegrees(npc, 2) / kDegreesPerRadian;
+    g_c.moveTo(g_api.vm, 0, player, npc, std::sin(heading) * kTalkStandOff, std::cos(heading) * kTalkStandOff,
+               0.0f, false);
+    g_moveLanding = kMoveLandTicks;
+    Log("test: the player walks up to %s", id.c_str());
+    return 1;
+}
+
+// Whether the player's last `approach` move may still be landing.
+bool MoveLanding() { return g_moveLanding > 0 && g_moveLanding-- > 0; }
 
 void SetPlayerDriven(bool on) {
     if (g_c.aiDriven) g_c.aiDriven(g_api.vm, 0, nullptr, on);
@@ -335,6 +388,55 @@ bool Pick(const std::string& name) {
     return pick && pick(name.c_str());
 }
 
+// `pace <speed>`: MorrowindRuntime's frame governor steers every converted game, so the speed is set there.
+void Pace(float speed) {
+    using PaceFn = bool (*)(float speed);
+    HMODULE runtime = GetModuleHandleA(ids::kMorrowindRuntimeDll);
+    const auto pace = runtime ? reinterpret_cast<PaceFn>(GetProcAddress(runtime, "TESTestPace")) : nullptr;
+    if (!pace || !pace(speed)) Log("test: no pace -- MorrowindRuntime's governor is not loaded");
+}
+
+// `defend`: MorrowindRuntime walks the actors for every converted game and has the player kill its attackers.
+// `ally` is the runtime FormID in hex of an actor the player fights beside, or empty.
+void KillAttackersOf(const std::string& ally) {
+    using KillFn = bool (*)(std::uint32_t ally);
+    HMODULE runtime = GetModuleHandleA(ids::kMorrowindRuntimeDll);
+    const auto kill =
+        runtime ? reinterpret_cast<KillFn>(GetProcAddress(runtime, "TESTestKillPlayerAttackers")) : nullptr;
+    const auto id = static_cast<std::uint32_t>(std::strtoul(ally.c_str(), nullptr, 16));
+    if (!kill || !kill(id)) Log("test: no defend -- MorrowindRuntime is not loaded");
+}
+
+void KillPlayerAttackers() { KillAttackersOf(""); }
+
+// A MorrowindRuntime export, or null: it does the world's work for every converted game.
+template <typename Fn>
+Fn RuntimeCall(const char* name) {
+    HMODULE runtime = GetModuleHandleA(ids::kMorrowindRuntimeDll);
+    return runtime ? reinterpret_cast<Fn>(GetProcAddress(runtime, name)) : nullptr;
+}
+
+// A step's reference for MorrowindRuntime: its runtime FormID, 0 for the player.
+std::uint32_t RuntimeId(const std::string& id) {
+    return Lower(id) == "player" ? 0 : static_cast<std::uint32_t>(std::strtoul(id.c_str(), nullptr, 16));
+}
+
+// `follow`: MorrowindRuntime's own position, distance and placement calls, as its cases use.
+float Position(const std::string& ref, int axis) {
+    const auto position = RuntimeCall<float (*)(std::uint32_t, int)>("TESTestPosition");
+    return position ? position(RuntimeId(ref), axis) : 0.0f;
+}
+
+float Distance(const std::string& from, const std::string& to) {
+    const auto distance = RuntimeCall<float (*)(std::uint32_t, std::uint32_t)>("TESTestDistance");
+    return distance ? distance(RuntimeId(from), RuntimeId(to)) : 0.0f;
+}
+
+void PlaceHere(const std::string& ref, float x, float y, float z, float zRot) {
+    const auto place = RuntimeCall<void (*)(std::uint32_t, float, float, float, float)>("TESTestPlaceHere");
+    if (place) place(RuntimeId(ref), x, y, z, zRot);
+}
+
 void HookSubtitles() {
     const std::uintptr_t add = Resolve("SubtitleManager::AddSubtitle", ids::kAddSubtitle, nullptr);
     g_c.addSubtitle = reinterpret_cast<AddSubtitleFn>(add);
@@ -366,6 +468,7 @@ bool ResolveCalls() {
     Bind(g_c.thirdPerson, "Game.ForceThirdPerson", ids::kGameForceThirdPerson);
     Bind(g_c.placeAtMe, "ObjectReference.PlaceAtMe", ids::kRefPlaceAtMe);
     Bind(g_c.deleteRef, "ObjectReference.Delete", ids::kRefDelete);
+    Bind(g_c.moveTo, "ObjectReference.MoveTo", ids::kRefMoveTo);
     return g_c.player && g_c.parentCell && g_c.isMenuOpen && g_c.menuManager && ResolveGlide();
 }
 
@@ -392,7 +495,16 @@ void InstallTestRunner() {
     game.choices = Topics;
     game.bye = Bye;
     game.menuPick = Pick;
-    game.walk = WalkTo;
+    game.setPace = Pace;
+    game.killPlayerAttackers = KillPlayerAttackers;
+    game.killAttackersOf = KillAttackersOf;
+    game.walkTo = WalkTo;
+    game.approach = Approach;
+    game.position = Position;
+    game.distance = Distance;
+    game.placeHere = PlaceHere;
+    game.fillTrail = true;
+    game.moveLanding = MoveLanding;
     game.walkDone = WalkDone;
     game.walkStop = WalkStop;
     game.spoken = Spoken;

@@ -43,6 +43,8 @@ them does.
 - [Attack reach is per creature: reach-variant races](#reach-variant-races)
 - [A creature race allows PC dialogue only when a creature on it talks](#creature-talk-prompt)
 - [Voice type resolution](#voice-resolution)
+- [Morrowind vampirism is Skyrim's vampirism](#morrowind-vampirism)
+- [Diseases pass on through Skyrim's creature-disease mechanism](#disease-contact)
 
 ## <a id="npcs-use-skyrim-rigs"></a>Only creatures get converted rigs; NPCs use Skyrim's
 
@@ -1456,3 +1458,60 @@ Oblivion. `import_main` sets it in Phase 0 so VTCK matches the
 
 The (race, gender) computation is only the fallback for actors the map has no
 entry for.
+
+## <a id="morrowind-vampirism"></a>Morrowind vampirism is Skyrim's vampirism
+
+**Code:** `tes5_import/actors/vampirism_morrowind.py`, `record_types/equipment.py`, `record_types/npc.py`;
+runtime `tes_runtime/morrowind/plugin/game_calls_spell.cpp` (`LeftToSkyrim`, `CuredBySkyrim`, `PlayerIsVampire`)
+
+Confirmed in game 2026-11-12 (all three clan lines, two full runs each; the cure three times).
+
+- **Catching it.** The import finds the clan bloods from the scripts: a disease the turn script tests
+  for and answers with an AddSpell of a spell carrying the Vampirism effect (Morrowind.esm: 3). Each
+  blood carries Skyrim.esm `DisDamageHealthVampire` (Sanguinare Vampiris: 10% a hit, three days, then
+  `PlayerVampireQuest.VampireChange`). Its carriers -- NPCs whose own script AddSpells a blood on
+  themselves (Morrowind.esm 64, Tribunal 1) -- get per-NPC ATKD attack spells (27 humanoid events,
+  flag 0x80000000, ATKR = the NPC's race): disassembly shows attack spells apply on every melee hit,
+  weapons included, and a Disease rolls against 100 - DiseaseResist.
+- **Turning.** A turn script's gifts that no script tests (`GetSpell`) are stand-ins Skyrim's change
+  already grants (Morrowind.esm: attributes, immunities, skills, sun damage, touch); the runtime skips
+  them, and the one carrying Vampirism casts `TES3VampireChange` (Skyrim's `VampireChangeEffect`)
+  unless Skyrim has turned the player already. The clan Specials still come from the scripts.
+- **Never twice.** Skyrim's vampire races carry `AbResistDisease` 100, so a vampire cannot catch it
+  again; `PcVampire` reads the player's race against the import's `vampire_race:` rows.
+- **The cure.** Morrowind's `Vampire_Cure_PC` (Molag Bal's shrine, `MS_VampireCure`) RemoveSpells the
+  stand-ins; removing the Vampirism one from a Skyrim vampire sets Skyrim.esm `PlayerVampireQuest`
+  stage 10, whose fragment runs `VampireCure` -- the function every vanilla cure calls (Falion's
+  `QF_VC01`, `C03RampageQuest`). The script still sets `PCVampire` -1, so the player cannot turn again.
+  Checked through dialogue: the Mages Guild greets a vampire "Your kind is not welcome here, vampire".
+- **No Morrowind notices.** No "You have contracted" message: Skyrim's own disease and change UI
+  presents it.
+
+## <a id="disease-contact"></a>Diseases pass on through Skyrim's creature-disease mechanism
+
+**Code:** `tes5_import/actors/disease_contact.py`, `record_types/equipment.py` (`_pack_effects`),
+`record_types/creature.py` (`_crea_spell_subs`), `record_types/npc.py` (`_identity_subs`)
+
+Confirmed in game 2026-11-12 (Morrowind `rat_diseased` Witbane and `alit_blighted` Black-Heart Blight,
+3/3 each; case `quests/morrowind_disease`).
+
+- **Vanilla's mechanism.** A Skyrim race names its disease as the ATKD Attack Spell (BearBrownRace on 7
+  attacks, WolfRace Rockjoint on power and lunge attacks, ChaurusRace Rattles on claws and a poison on
+  bites). The chance sits on each disease effect as `GetRandomPercent <= 2.0` (16 vanilla MGEFs); the
+  game checks an MGEF's conditions once, when the effect is added (1.6.1170 0x5c30c0, per effect), so a
+  failed roll drops only that effect. Disease Resist rolls on top, as in both source games.
+- **Carriers.** Any CREA or NPC_ whose spell list holds a Disease (SPIT.Type 1) gets per-actor ATKD
+  overrides (flag 0x80000000, ATKR = its race; NPCs on the 27 NordRace humanoid events) that cast its
+  diseases in turn, plus the attack's own spell where the race has one. Morrowind.esm: 85 carriers
+  (76 creatures, 9 NPCs). Oblivion.esm: 132 (5 creatures, 127 NPCs, mostly Ataxia beggars and
+  prisoners) -- Oblivion passes an attacker's diseases on melee hits too.
+- **The chance.** TES3: `fDiseaseXferChance` (2.5, OpenMW `diseaseContact`). TES4: `fMagicDiseaseTransferMult`
+  x 100 + `fMagicDiseaseTransferBase` (Oblivion.exe 0x5490c0; Oblivion.esm sets Mult 0.15). Fallout: none.
+  Each disease spell's effects are clones (`TES4Disease<Name><n>`): the first rolls the chance, each
+  later one requires `HasMagicEffect` of the first, so a disease lands whole.
+- **The clone's DATA must be vanilla's.** With the source effect's DATA (flags 0x00200007, skill
+  Destruction) the disease never landed, even at a forced 100% chance (293 hits). Every vanilla disease
+  effect that rolls a chance writes flags 0x00400A06 (No Duration, No Area, Recover, Detrimental, Power
+  Affects Duration) and skill Restoration; with those the player catches it.
+- **Not ported:** Morrowind's disease from looting a carrier's corpse. Oblivion is not yet reimported
+  with this change.

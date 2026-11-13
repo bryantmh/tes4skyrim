@@ -1,0 +1,47 @@
+# House Hlaalu: "Tarvyn Faren" (HH_EscortMerchant), Edryno Arethi, Vivec.
+# Edryno enables the trader on the road outside Vivec (10); "travel together" sets him following (50); his own
+# script (tarvynFollow) logs 70 once the player stands in "Pelagiad, Halfway Tavern" with him still following;
+# Edryno pays (100). The escort really walks (worklog rule 6's exception: a long route around a large obstacle):
+# to the river bank (16-19k, -60k) the Pelagiad road has no bridge over, a steered swim across it (the player's
+# AI walk stalls once it swims: run hh11, 24819 -71005 -88), then on to the tavern door (each walk predicted: reached).
+# `defend`: river creatures attack the swimmer, and Follow freezes while anything fights the player (run hh12).
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_escort_start
+approach 0541184D
+talk edryno arethi
+ask business
+ask Tarvyn Faren
+expect GetJournalIndex HH_EscortMerchant == 10
+bye
+approach 055AB01F
+talk tarvyn faren
+ask travel together
+choose 1
+expect GetJournalIndex HH_EscortMerchant == 50
+bye
+end
+
+case hh_escort_walk
+defend
+walk 19008 -62986 268
+until 3000 "tarvyn faren"->GetDistance player < 500
+steer 16384 -59648 56
+until 3000 "tarvyn faren"->GetDistance player < 500
+walk 2507 -56048 1570
+until 3000 "tarvyn faren"->GetDistance player < 500
+activate 0544937B
+until 600 GetJournalIndex HH_EscortMerchant >= 70
+end
+
+case hh_escort_done
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask Tarvyn Faren
+expect GetJournalIndex HH_EscortMerchant == 100
+bye
+end

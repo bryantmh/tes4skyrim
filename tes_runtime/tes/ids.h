@@ -356,6 +356,8 @@ constexpr std::uint64_t kGameSetPlayerAIDriven = 55577;
 constexpr std::uint64_t kGameForceThirdPerson = 55565;
 constexpr std::uint64_t kRefPlaceAtMe = 56203;
 constexpr std::uint64_t kRefDelete = 56154;
+// ObjectReference.MoveTo(target, xOffset, yOffset, zOffset, matchRotation): `approach`.
+constexpr std::uint64_t kRefMoveTo = 56199;
 constexpr std::uint32_t kXMarker = 0x3B;
 
 // The runtime whose class and birthsign menus a converted chargen asks for

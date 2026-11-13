@@ -1,0 +1,43 @@
+# Clan Quarra: "Lord Irarak" (VA_VampCult). Volrina Quarra in Druscashti tolerates the new Quarra vampire and names
+# a rogue ("use to me": 10, "I will kill him." 1: 20). In the Ginith Ancestral Tomb Irarak welcomes the player to
+# the "Brood of Lord Irarak" (which is where the player learns the name Volrina's text never says), then dies
+# (irarakScript logs 110 once the quest stands at 20), and Volrina keeps her word ("Brood of Lord Irarak": 120).
+# The player comes down through the upper level's door, as a player does, before walking up to Volrina: her
+# authored Fight is 90 and her script lowers it to 30 on its second run, so a player set down beside her as she
+# loads is attacked (OpenMW isAggressive: Fight + ~20 up close >= 100).
+# The kill stands in for the fight; `defend` takes his followers; `approach` stands in for the travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from va_quarra_cult_start --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case va_quarra_cult_start
+run
+player->PositionCell 448 900 -1504 0 "Druscashti, Upper Level"
+until 300 GetPCCell "Druscashti, Upper Level" == 1
+wait 60
+activate 056757B0
+until 300 GetPCCell "Druscashti, Lower Level" == 1
+wait 120
+approach 05D57D27
+talk volrina quarra
+ask use to me
+expect GetJournalIndex VA_VampCult == 10
+choose 1
+expect GetJournalIndex VA_VampCult == 20
+bye
+end
+
+case va_quarra_cult_irarak
+approach 05234277
+wait 60
+bye if open
+talk Irarak
+bye
+defend
+console 05234277.kill
+until 600 GetJournalIndex VA_VampCult == 110
+approach 05D57D27
+talk volrina quarra
+ask Brood of Lord Irarak
+expect GetJournalIndex VA_VampCult == 120
+bye
+end

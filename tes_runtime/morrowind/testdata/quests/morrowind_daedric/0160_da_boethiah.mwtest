@@ -43,7 +43,7 @@ run
 player->PositionCell 644 -250 -385 0 "Vivec, Jobasha's Rare Books"
 until 300 GetPCCell "Vivec, Jobasha's Rare Books" == 1
 wait 60
-rest 600 - ScriptRunning ShrineBoethiah == 0
+rest 25x24 - ScriptRunning ShrineBoethiah == 0
 end
 
 case da_boethiah_done

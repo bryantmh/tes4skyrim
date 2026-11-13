@@ -41,6 +41,7 @@ from .morrowind_temples import skyrim_rows
 from ..record_types.magic_morrowind import effect_form_rows
 from ..record_types.weather_morrowind import weather_rows
 from ..actors.brawl import brawl_rows
+from ..actors.vampirism_morrowind import vampirism_rows
 from ..actors.disposition import disposition_rows
 from .morrowind_teleport import (ANCHORS_TABLE, EFFECT_FORMS_TABLE, MARKERS_TABLE,
                                  TELEPORTS_TABLE, WORLDS_TABLE, marker_lines,
@@ -1040,6 +1041,7 @@ def _teleport_tables(export_dir: str, output_path: str, plugin_name: str,
                            effect_form_rows(plugin_name, writer.masters)
                            + disposition_rows(plugin_name, writer.masters)
                            + brawl_rows(plugin_name, writer.masters)
+                           + vampirism_rows(plugin_name, writer.masters)
                            + weather_rows(plugin_name, writer.masters,
                                           master_index)))
 

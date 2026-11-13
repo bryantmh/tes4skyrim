@@ -30,6 +30,12 @@ def load_tes3_tables(tables) -> None:
     _tables[:] = [tables] if tables else []
 
 
+def tes3_gmst(name: str, default: float) -> float:
+    """The chain's numeric GMST ``name`` (lowercase), else ``default``."""
+    gmsts = _tables[0]['gmsts'] if _tables else {}
+    return float(gmsts.get(name, default))
+
+
 def tes3_pools(edid: str) -> dict:
     """`{health, magicka, fatigue}` OpenMW derives for autocalc NPC_ `edid`, else {}."""
     tables = _tables[0] if _tables else None

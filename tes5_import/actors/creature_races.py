@@ -664,6 +664,8 @@ _SHIELD_FIDS = set() # fid_low24 of ARMO records occupying the shield slot
 _LVLI_REC = {}       # fid_low24 → LVLI record dict
 _SPEL_REC = {}       # fid_low24 → SPEL record dict
 _LVSP_REC = {}       # fid_low24 → LVSP record dict
+#: {generated race FormID: [(ATKE event, ATKD)]} of every race written this run.
+_RACE_ATTACKS = {}
 
 # TES4 ARMO BMDT biped slot bits (wbDefinitionsTES4.pas:1326-1341).
 # Shield is bit 13 and Torch bit 14 — NOT bit 9, which is 'Weapon'.
@@ -687,6 +689,7 @@ def load_creature_item_index(by_type: dict, master_export: dict = None) -> None:
     _LVLI_REC.clear()
     _SPEL_REC.clear()
     _LVSP_REC.clear()
+    _RACE_ATTACKS.clear()
 
     def _add(rec):
         sig = rec.get('Signature')
@@ -949,12 +952,10 @@ def _atkd(damage_mult: float = 1.0, spell: int = 0, chance: float = 1.0,
                        0.0, 0.0, 1.0)
 
 
-def _build_race(writer, rec, folder: str, bodies: list, proj: dict,
-                race_fid: int, skin_fid: int, edid: str, full: str,
-                vnam_flags: int = None, race_recs: list = None,
-                reach: int = None, talks: bool = False) -> None:
-    subs = b''
-    subs += pack_string_subrecord('EDID', edid)
+def _race_head_subs(rec, folder: str, proj: dict, skin_fid: int, edid: str,
+                    full: str, data: bytes) -> bytes:
+    """A creature race's EDID through MTNM: names, skin, keywords, DATA, skeleton."""
+    subs = pack_string_subrecord('EDID', edid)
     subs += pack_string_subrecord('FULL', full)
     subs += pack_subrecord('DESC', b'\x00')
     subs += pack_formid_subrecord('WNAM', skin_fid)
@@ -963,40 +964,66 @@ def _build_race(writer, rec, folder: str, bodies: list, proj: dict,
     subs += pack_subrecord('KSIZ', struct.pack('<I', len(keywords)))
     subs += pack_subrecord('KWDA',
                            b''.join(struct.pack('<I', k) for k in keywords))
-    subs += pack_subrecord('DATA', _race_data(rec, race_recs, reach, talks))
-
-    skeleton = proj['skeleton_nif']
+    subs += pack_subrecord('DATA', data)
     for marker in ('MNAM', 'FNAM'):
         subs += pack_subrecord(marker, b'')
-        subs += pack_string_subrecord('ANAM', skeleton)
+        subs += pack_string_subrecord('ANAM', proj['skeleton_nif'])
         subs += pack_subrecord('MODT', _MODT)
     for code in _MTNM_CODES:
         subs += pack_subrecord('MTNM', code)
-    from ..record_types.actor_common import resolve_actor_voice
-    subs += pack_subrecord('VTCK', struct.pack(
-        '<II', resolve_actor_voice(rec, 'Male'),
-        resolve_actor_voice(rec, 'Female')))
-    subs += pack_subrecord('PNAM', struct.pack('<f', 5.0))
-    subs += pack_subrecord('UNAM', struct.pack('<f', 3.0))
+    return subs
 
-    touch_spell = creature_touch_attack_spell(race_recs or [rec], writer)
-    for event, _clip in proj.get('attacks', []):
-        subs += pack_subrecord('ATKD', _atkd(spell=touch_spell))
-        subs += pack_string_subrecord('ATKE', event)
 
-    subs += pack_subrecord('NAM1', b'')
+def _race_attack_subs(writer, recs: list, proj: dict, race_fid: int) -> bytes:
+    """ATKD/ATKE per graph attack, each casting the race's touch spell; kept for race_attacks()."""
+    touch_spell = creature_touch_attack_spell(recs, writer)
+    attacks = _RACE_ATTACKS[race_fid] = [(event, _atkd(spell=touch_spell))
+                                          for event, _clip in proj.get('attacks', [])]
+    return b''.join(pack_subrecord('ATKD', atkd) + pack_string_subrecord('ATKE', event)
+                    for event, atkd in attacks)
+
+
+def race_attacks(race_fid: int) -> list:
+    """[(ATKE event, ATKD)] of a race this run wrote; [] for any other."""
+    return _RACE_ATTACKS.get(race_fid, [])
+
+
+def spell_record(fid: int):
+    """The export SPEL record of a spell this run or its masters own, else None."""
+    return _SPEL_REC.get(fid & 0x00FFFFFF)
+
+
+def _race_body_subs(proj: dict) -> bytes:
+    """NAM1 face models, GNAM, NAM3 behavior project: the race's body data."""
+    subs = pack_subrecord('NAM1', b'')
     for marker, egt in (('MNAM', _EGT_MALE), ('FNAM', _EGT_FEMALE)):
         subs += pack_subrecord(marker, b'')
         subs += pack_subrecord('INDX', struct.pack('<I', 0))
         subs += pack_string_subrecord('MODL', egt)
         subs += pack_subrecord('MODT', _MODT)
     subs += pack_formid_subrecord('GNAM', _GNAM_BPTD)
-
     subs += pack_subrecord('NAM3', b'')
     for marker in ('MNAM', 'FNAM'):
         subs += pack_subrecord(marker, b'')
         subs += pack_string_subrecord('MODL', proj['project_hkx'])
         subs += pack_subrecord('MODT', _MODT)
+    return subs
+
+
+def _build_race(writer, rec, folder: str, bodies: list, proj: dict,
+                race_fid: int, skin_fid: int, edid: str, full: str,
+                vnam_flags: int = None, race_recs: list = None,
+                reach: int = None, talks: bool = False) -> None:
+    subs = _race_head_subs(rec, folder, proj, skin_fid, edid, full,
+                           _race_data(rec, race_recs, reach, talks))
+    from ..record_types.actor_common import resolve_actor_voice
+    subs += pack_subrecord('VTCK', struct.pack(
+        '<II', resolve_actor_voice(rec, 'Male'),
+        resolve_actor_voice(rec, 'Female')))
+    subs += pack_subrecord('PNAM', struct.pack('<f', 5.0))
+    subs += pack_subrecord('UNAM', struct.pack('<f', 3.0))
+    subs += _race_attack_subs(writer, race_recs or [rec], proj, race_fid)
+    subs += _race_body_subs(proj)
 
     subs += pack_formid_subrecord('NAM4', _NAM4_IMPACT_MAT)
     subs += pack_formid_subrecord('NAM5', _NAM5_IMPACT_SET)

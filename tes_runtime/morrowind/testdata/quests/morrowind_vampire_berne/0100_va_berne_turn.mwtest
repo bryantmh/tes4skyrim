@@ -1,0 +1,47 @@
+# Morrowind vampirism, Clan Berne: catching Porphyric Hemophilia and the turn, carried by Skyrim's vampirism.
+# The Berne vampires of the Andrethi, Othrelas and Raviro tombs (Vampire_Berne gives each its blood) attack a
+# stranger and flee after a few blows (authored Flee 70), so the player seeks out each in turn; their hits pass on
+# "Vampire Blood Berne", which converts as Skyrim's vampire disease (10% a hit). Three days on, a sleep in Caius
+# Cosades' bed turns the player: VampireCheck starts Vampire_Berne_PC (PCVampire 1, VampClan 2, the clan's
+# Specials) and Skyrim's PlayerVampireQuest.VampireChange makes the player a Skyrim vampire.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case va_berne_infect
+approach 05C0FDC7
+wait 200
+approach 059B5B46
+wait 200
+approach 052888E1
+wait 200
+approach 0575CD40
+wait 200
+approach 05C2DA8D
+wait 200
+approach 059B25F1
+wait 200
+approach 0569E579
+wait 200
+approach 05BB4113
+wait 200
+approach 05A07011
+wait 200
+approach 05A71044
+wait 200
+approach 0578DA86
+wait 200
+approach 05873FAC
+until 600 player->GetSpell "Vampire Blood Berne" == 1
+end
+
+case va_berne_turn
+run
+player->PositionCell -60 -30 60 0 "Balmora, Caius Cosades' House"
+until 300 GetPCCell "Balmora, Caius Cosades' House" == 1
+wait 60
+rest 120 05201D4E PCVampire == 1
+expect VampClan == 2
+expect player->GetSpell "Vampire Berne Specials" == 1
+expect player->GetSpell "Vampire Sun Damage" == 0
+expect player->GetSpell "Vampire Blood Berne" == 0
+end

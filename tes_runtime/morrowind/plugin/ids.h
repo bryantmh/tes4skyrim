@@ -607,6 +607,7 @@ constexpr std::uint32_t kPlayerRefFormId = 0x14;
 constexpr std::uint64_t kVmDeathSink = 217075;
 constexpr std::uint64_t kVmDeathProcess = 53967;
 constexpr std::size_t kOffDeathActor = 0x0;
+constexpr std::size_t kOffDeathKiller = 0x8;
 // The state byte: 0 as the actor BEGINS dying, the kill itself. A corpse that
 // loads dead raises the event too, which a fresh death must not be mistaken for.
 constexpr std::size_t kOffDeathState = 0x10;
@@ -1075,6 +1076,12 @@ constexpr std::uint8_t kLockLocked = 0x01;
 constexpr std::size_t kOffEntryObject = 0x0;
 constexpr std::size_t kOffEntryExtraLists = 0x8;
 constexpr std::size_t kRefRemoveItemSlot = 86;
+
+// TESObjectARMO (form type 0x1A), which carries TES3 clothing as well as armor:
+// its TESValueForm sits at +0x68 and holds the gold value at +0x8 (skse64
+// GameObjects.h; GameFormComponents.h TESValueForm).
+constexpr std::uint8_t kFormTypeArmor = 0x1A;
+constexpr std::size_t kOffArmorValue = 0x70;
 
 // Soul Trap sizes a soul by the victim's LEVEL, not the plugin's soul value
 // (Sittali, level 20, a grand soul in TES3, trapped as soul 3). Read off

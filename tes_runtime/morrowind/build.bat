@@ -85,7 +85,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\plugin.cpp plugin\store.cpp plugin\scope.cpp ^
    plugin\script_ops_query.cpp plugin\script_ops_stats.cpp ^
    plugin\script_ops_spell.cpp plugin\script_ops_control.cpp plugin\script_ops_anim.cpp ^
    plugin\object_script.cpp plugin\npc_anim.cpp ^
-   plugin\object_tick.cpp plugin\test_runner.cpp ^
+   plugin\object_tick.cpp plugin\test_backend.cpp "%COMMON%\test_runner.cpp" ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
    plugin\conversation_persuasion.cpp plugin\conversation_modal.cpp ^
    plugin\conversation_travel.cpp plugin\travel.cpp ^
@@ -132,7 +132,7 @@ cl %CXXFLAGS% %INCLUDES% plugin\store.cpp plugin\scope.cpp plugin\filter.cpp ^
    plugin\script_ops_query.cpp plugin\script_ops_stats.cpp ^
    plugin\script_ops_spell.cpp plugin\script_ops_control.cpp plugin\script_ops_anim.cpp ^
    plugin\object_script.cpp plugin\npc_anim.cpp ^
-   plugin\object_tick.cpp plugin\test_runner.cpp plugin\main_thread.cpp "%COMMON%\main_tick.cpp" ^
+   plugin\object_tick.cpp plugin\test_backend.cpp "%COMMON%\test_runner.cpp" plugin\main_thread.cpp "%COMMON%\main_tick.cpp" ^
    plugin\script_tables.cpp plugin\persuasion.cpp ^
    plugin\travel.cpp plugin\script_test.cpp ^
    plugin\leveling.cpp plugin\attribute_buffs.cpp plugin\leveling_test.cpp /Fo:objt\
@@ -164,7 +164,7 @@ link /nologo /OUT:session_test.exe objt\store.obj objt\chargen_tables.obj objt\s
      objt\script_ops_query.obj objt\script_ops_stats.obj ^
      objt\script_ops_spell.obj objt\script_ops_control.obj objt\script_ops_anim.obj ^
      objt\object_script.obj objt\npc_anim.obj ^
-     objt\object_tick.obj objt\test_runner.obj objt\main_thread.obj objt\main_tick.obj ^
+     objt\object_tick.obj objt\test_runner.obj objt\test_backend.obj objt\main_thread.obj objt\main_tick.obj ^
      objt\persuasion.obj obj\mw\*.obj ^
      kernel32.lib user32.lib shell32.lib ole32.lib
 if errorlevel 1 (
@@ -179,7 +179,7 @@ link /nologo /OUT:script_test.exe objt\store.obj objt\chargen_tables.obj objt\sc
      objt\script_ops_query.obj objt\script_ops_stats.obj ^
      objt\script_ops_spell.obj objt\script_ops_control.obj objt\script_ops_anim.obj ^
      objt\object_script.obj objt\npc_anim.obj ^
-     objt\object_tick.obj objt\test_runner.obj objt\main_thread.obj objt\main_tick.obj ^
+     objt\object_tick.obj objt\test_runner.obj objt\test_backend.obj objt\main_thread.obj objt\main_tick.obj ^
      objt\script_tables.obj objt\persuasion.obj objt\travel.obj ^
      objt\script_test.obj ^
      objt\filter.obj ^
@@ -197,7 +197,7 @@ link /nologo /OUT:leveling_test.exe objt\store.obj objt\chargen_tables.obj objt\
      objt\script_ops_query.obj objt\script_ops_stats.obj ^
      objt\script_ops_spell.obj objt\script_ops_control.obj objt\script_ops_anim.obj ^
      objt\object_script.obj objt\npc_anim.obj ^
-     objt\object_tick.obj objt\test_runner.obj objt\main_thread.obj objt\main_tick.obj ^
+     objt\object_tick.obj objt\test_runner.obj objt\test_backend.obj objt\main_thread.obj objt\main_tick.obj ^
      objt\script_tables.obj objt\persuasion.obj objt\travel.obj ^
      objt\leveling.obj objt\attribute_buffs.obj objt\leveling_test.obj ^
      objt\filter.obj ^

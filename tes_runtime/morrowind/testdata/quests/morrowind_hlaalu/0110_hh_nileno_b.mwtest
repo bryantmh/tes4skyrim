@@ -1,0 +1,112 @@
+# House Hlaalu: Nileno Dorvayn's later duties, Balmora.
+# "Guar Hides" (HH_IndEsp2): Rolasa Oren in Vivec's Foreign Quarter agrees to buy Hlaalu hides (50; SetDisposition
+# stands in for persuasion), Nileno pays (100). "Bivale Teneran" (HH_IndEsp3): orders carried to the Ald'ruhn
+# clothier ("Give her the scroll." 1: 50), reported (100). "Ralen Hlaalo" (HH_Retaliation): Uryne Nirith describes
+# the murderer (50), Thanelen Velas killed (110 at Nileno). "ebony trade" (HH_IndEsp4): Canctunian Ponius in
+# Ebonheart convinced (50), reported (100).
+# `approach` stands in for the travel (PositionCell first for an unscripted NPC: a non-persistent ref is not found
+# while its cell is unloaded); the kill for the fight.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_guar_hides
+approach 0549AC23
+talk nileno dorvayn
+ask business
+ask guar hides
+expect GetJournalIndex HH_IndEsp2 == 10
+bye
+run
+player->PositionCell 3595 4309 14869 0 "Vivec, Foreign Quarter Upper Waistworks"
+until 300 GetPCCell "Vivec, Foreign Quarter Upper Waistworks" == 1
+approach 05752175
+run
+"rolasa oren"->SetDisposition 100
+talk rolasa oren
+ask guar hides
+expect GetJournalIndex HH_IndEsp2 == 50
+bye
+approach 0549AC23
+talk nileno dorvayn
+ask guar hides
+expect GetJournalIndex HH_IndEsp2 == 100
+bye
+end
+
+case hh_bivale
+approach 0549AC23
+talk nileno dorvayn
+ask business
+ask Bivale Teneran
+expect GetJournalIndex HH_IndEsp3 == 10
+expect player->GetItemCount "bk_OrdersForBivaleTeneran" == 1
+bye
+run
+player->PositionCell -142 696 -123 0 "Ald-ruhn, Bivale Teneran: Clothier"
+until 300 GetPCCell "Ald-ruhn, Bivale Teneran: Clothier" == 1
+approach 05C23546
+talk bivale teneran
+ask scroll
+choose 1
+expect GetJournalIndex HH_IndEsp3 == 50
+bye
+approach 0549AC23
+talk nileno dorvayn
+ask Bivale Teneran
+expect GetJournalIndex HH_IndEsp3 == 100
+bye
+end
+
+case hh_retaliation
+approach 0549AC23
+talk nileno dorvayn
+ask business
+ask Ralen Hlaalo
+expect GetJournalIndex HH_Retaliation == 10
+bye
+run
+player->PositionCell -310 164 521 0 "Balmora, Hlaalo Manor"
+until 300 GetPCCell "Balmora, Hlaalo Manor" == 1
+approach 05A2C81D
+talk uryne nirith
+ask Ralen Hlaalo
+ask murderer's description
+expect GetJournalIndex HH_Retaliation == 50
+bye
+run
+player->PositionCell 134 233 24 0 "Balmora, Council Club"
+until 300 GetPCCell "Balmora, Council Club" == 1
+approach 05E532E3
+defend
+console 05E532E3.kill
+wait 60
+approach 0549AC23
+talk nileno dorvayn
+ask Ralen Hlaalo
+expect GetJournalIndex HH_Retaliation == 110
+bye
+end
+
+case hh_ebony_trade
+approach 0549AC23
+talk nileno dorvayn
+ask business
+ask ebony trade
+expect GetJournalIndex HH_IndEsp4 == 10
+bye
+run
+player->PositionCell 1091 310 14 0 "Ebonheart, East Empire Company Hall"
+until 300 GetPCCell "Ebonheart, East Empire Company Hall" == 1
+approach 05BAE9F6
+run
+"canctunian ponius"->SetDisposition 100
+talk canctunian ponius
+ask ebony trade
+expect GetJournalIndex HH_IndEsp4 == 50
+bye
+approach 0549AC23
+talk nileno dorvayn
+ask ebony trade
+expect GetJournalIndex HH_IndEsp4 == 100
+bye
+end

@@ -5,11 +5,13 @@
 #include "game_calls_internal.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "dialogue_state.h"
 #include "hook.h"
 #include "ids.h"
 #include "log.h"
@@ -61,10 +63,70 @@ void* EffectForm(const std::string& effect) {
     return form;
 }
 
+// Whether the player wears one of Skyrim's vampire races (the import's
+// `vampire_race:` rows): Skyrim's vampirism, which carries Morrowind's.
+bool PlayerIsVampire() {
+    char key[32];
+    std::snprintf(key, sizeof key, "vampire_race:%08X", Hooks().race ? Hooks().race("player") : 0u);
+    return mw::EffectForm(key) != nullptr;
+}
+
+// A turn script's gift the import leaves to Skyrim's vampirism (a `vampire_standin:`
+// row) never reaches the player; the one carrying Vampirism casts TES3VampireChange,
+// PlayerVampireQuest's own turn, unless Skyrim has turned the player already.
+bool LeftToSkyrim(void* ref, const std::string& spell) {
+    if (ref != PlayerRef() || !mw::EffectForm("vampire_standin:" + spell)) return false;
+    const SpellDef* def = FindSpell(spell);
+    void* change = Form(mw::EffectForm("vampire_change"));
+    if (def && def->Has(kVampirismEffect) && change && !PlayerIsVampire()) {
+        Log("vampirism: '%s' turns the player through Skyrim's VampireChange", spell.c_str());
+        CastForm(change, ref, ref);
+    }
+    return true;
+}
+
+// Skyrim.esm's PlayerVampireQuest and the stage whose fragment runs its VampireCure on the player.
+constexpr std::uint32_t kPlayerVampireQuest = 0x000EAFD5;
+constexpr int kVampireCureStage = 10;
+
+// A cure script's removal of the Vampirism stand-in from a Skyrim vampire runs Skyrim's cure.
+bool CuredBySkyrim(void* ref, const std::string& spell) {
+    if (ref != PlayerRef() || !mw::EffectForm("vampire_standin:" + spell)) return false;
+    const SpellDef* def = FindSpell(spell);
+    void* quest = FormFromFile(ids::kSkyrimMaster, kPlayerVampireQuest);
+    if (def && def->Has(kVampirismEffect) && quest && PlayerIsVampire()) {
+        Log("vampirism: removing '%s' cures the player through Skyrim's VampireCure", spell.c_str());
+        PostToMainThread([quest]() {
+            bool justStarted = false;
+            if (StartQuest(quest, &justStarted)) SetStage(quest, kVampireCureStage, justStarted);
+        });
+    }
+    return true;
+}
+
+// Spells `RemoveSpell` took off an actor's BASE list, by "actor|spell" FormIDs: Skyrim's RemoveSpell reaches only
+// spells added at runtime, OpenMW's the whole list. Saved with the game; `AddSpell` gives the spell back.
+// See: docs/commentary/morrowind_runtime.md#disease-queries
+constexpr const char* kRemovedSpellOwner = "spell|removed";
+
+std::string RemovedKey(void* ref, void* form) {
+    char key[24];
+    std::snprintf(key, sizeof(key), "%08X|%08X", FormIdOf(ref), FormIdOf(form));
+    return key;
+}
+
+// Whether the actor holds the spell in its list, minus base-list spells a script removed.
+bool HoldsSpell(void* ref, void* form) {
+    return g_hasSpell && g_hasSpell(PapyrusVm(), 0, ref, form)
+           && State().Var(kRemovedSpellOwner, RemovedKey(ref, form)) == 0.0f;
+}
+
 void AddSpellTo(const std::string& actor, const std::string& spell) {
     void* ref = OwnerRef(actor);
+    if (LeftToSkyrim(ref, spell)) return;
     void* form = SpellForm(spell);
     if (!ref || !form || !g_addSpell) return;
+    State().SetVar(kRemovedSpellOwner, RemovedKey(ref, form), 0.0f);
     PostToMainThread([ref, form]() {
         g_addSpell(PapyrusVm(), 0, ref, form, false);
     });
@@ -72,19 +134,29 @@ void AddSpellTo(const std::string& actor, const std::string& spell) {
 
 void RemoveSpellFrom(const std::string& actor, const std::string& spell) {
     void* ref = OwnerRef(actor);
+    if (CuredBySkyrim(ref, spell)) return;
     void* form = SpellForm(spell);
     if (!ref || !form || !g_removeSpell) return;
+    State().SetVar(kRemovedSpellOwner, RemovedKey(ref, form), 1.0f);
     PostToMainThread([ref, form]() {
         g_removeSpell(PapyrusVm(), 0, ref, form);
+        if (g_dispelSpell) g_dispelSpell(PapyrusVm(), 0, ref, form);
     });
 }
 
 // `GetSpell`: the actor's spell LIST, which is read on the spot -- a script
-// tests it and branches in the same statement.
+// tests it and branches in the same statement. A disease Skyrim gave the actor
+// on a hit is an active effect rather than a list entry, so a disease or
+// blight counts by its effect too; a spell merely CAST on the actor does not.
 bool KnowsSpell(const std::string& actor, const std::string& spell) {
     void* ref = OwnerRef(actor);
     void* form = SpellForm(spell);
-    return ref && form && g_hasSpell && g_hasSpell(PapyrusVm(), 0, ref, form);
+    if (!ref || !form) return false;
+    if (HoldsSpell(ref, form)) return true;
+    const SpellDef* def = FindSpell(spell);
+    if (!def || (def->type != kSpellDisease && def->type != kSpellBlight) || !IsActorRef(ref)) return false;
+    const std::uint32_t id = FormIdOf(form);
+    return AnyEffectSource(ref, [id](std::uint32_t source) { return source == id; });
 }
 
 // Whether one MGEF is active on the actor; the one call both queries make.
@@ -112,27 +184,22 @@ bool SpellIsActive(const std::string& actor, const std::string& spell) {
     return false;
 }
 
-// `GetCommonDisease` / `GetBlightDisease`: OpenMW's `Spells::hasSpellType`,
-// answered the way Skyrim's own GetDisease does -- an active effect whose
-// source spell is a staged spell of that TES3 type. The staged forms are
-// resolved only once the actor has an effect to compare.
+// `GetCommonDisease` / `GetBlightDisease`: OpenMW's `Spells::hasSpellType` -- a staged spell of that TES3 type in
+// the actor's spell list (AddSpell) -- or, the way Skyrim's own GetDisease answers, an active effect whose source
+// is one (a disease caught on a hit is an effect, not a list entry).
 // See: docs/commentary/morrowind_runtime.md#disease-queries
 bool HasSpellOfType(const std::string& actor, int tes3Type) {
     void* ref = OwnerRef(actor);
     if (!ref || !IsActorRef(ref)) return false;
     std::set<std::uint32_t> wanted;
-    bool built = false;
-    return AnyEffectSource(ref, [&](std::uint32_t source) {
-        if (!built) {
-            built = true;
-            for (const std::string& id : SpellsOfType(tes3Type)) {
-                const SpellDef* def = FindSpell(id);
-                void* form = def ? Form(&def->form) : nullptr;
-                if (form) wanted.insert(FormIdOf(form));
-            }
-        }
-        return wanted.count(source) != 0;
-    });
+    for (const std::string& id : SpellsOfType(tes3Type)) {
+        const SpellDef* def = FindSpell(id);
+        void* form = def ? Form(&def->form) : nullptr;
+        if (!form) continue;
+        if (HoldsSpell(ref, form)) return true;
+        wanted.insert(FormIdOf(form));
+    }
+    return AnyEffectSource(ref, [&wanted](std::uint32_t source) { return wanted.count(source) != 0; });
 }
 
 // `RemoveSpellEffects`: just that spell's effects.
@@ -223,6 +290,20 @@ std::vector<TrappedStack> TrappedSouls(void* ref, int soul) {
     }
     return out;
 }
+
+}  // namespace
+
+void ForEachCarried(void* ref, const std::function<void(void*)>& fn) {
+    if (!ref || !g_inventoryChanges) return;
+    void* changes = g_inventoryChanges(static_cast<char*>(ref) + ids::kOffRefExtraList);
+    for (auto* node = changes ? At<void**>(changes, 0) : nullptr; node;
+         node = static_cast<void**>(node[1])) {
+        void* form = node[0] ? At<void*>(node[0], ids::kOffEntryObject) : nullptr;
+        if (form) fn(form);
+    }
+}
+
+namespace {
 
 using SoulSizeFn = std::uint32_t (*)(void* actor);
 
@@ -368,6 +449,7 @@ void InstallSpellCalls(GameHooks& hooks) {
     hooks.hasEffect = EffectActive;
     hooks.spellActive = SpellIsActive;
     hooks.hasDisease = HasSpellOfType;
+    hooks.playerVampire = PlayerIsVampire;
     hooks.dispelSpell = DispelOneSpell;
     hooks.dispelByEffect = DispelByEffect;
     hooks.castSpell = CastAt;

@@ -2697,6 +2697,15 @@ stood at `(110, -101, 154)` for good, `GetAiPackageDone` never went true, and
 the movement tip and the rest of chargen never came (headless run from a New
 Game save, 2026-10-24).
 
+**A follow with a destination** (`AiFollow target dur x y z`) ends on OpenMW's
+own test instead (`aifollow.cpp` `execute`): the follower within
+`followDistance` of the point, in 3D -- the target's half extent + 64 + twice
+the follower's, where every NPC (the player too) counts 64, so **256**
+(`FollowReach`). With 128 the escort could never finish: Hides-His-Foot
+(HH_TwinLamps3) stood ~190 from his point, 120 behind the player, and journal
+70 never came; at 256 the case passes 3/3. Creatures keep 128 -- our converted
+creatures carry no real bounds to put in the formula.
+
 ### <a id="ai-packages"></a>REVERTED: the hand-rolled package queue
 
 A first attempt kept a package stack in the DLL and drove it from the object
@@ -5164,7 +5173,9 @@ and VR alike. Both labels are English.
 **Code:** `script_ops_query.cpp`, `game_calls_spell.cpp`, `game_calls_flight.cpp`,
 `game_calls_query.cpp`, `tes5_import/dialogue/morrowind_sidecar_source.py`
 
-Not yet tested in game; the headless `script_test.exe` cases use fake hooks.
+Disease and blight are tested in game by `ingame/45_talk.mwtest` `talk_disease_greetings`
+(dialogue `PcCommonDisease` / `PcBlightDisease`, which ask the same hook). GetAttacked is not
+yet tested in game; the headless `script_test.exe` cases use fake hooks.
 
 **Disease and blight.** Follows OpenMW `Spells::hasCommonDisease` /
 `hasBlightDisease` (`hasSpellType` of `ST_Disease` / `ST_Blight`), answering 0 for a
@@ -5177,7 +5188,21 @@ engine's own `GetDisease` condition makes (handler 0x32a830 on 1.6.1170 calls 0x
 whose visitor 0x5c59d0 loads the spell at effect+0x40, asks its vtable slot 0x298 for the
 type and compares it to Disease, skipping effects with flag 0x40000); we read the same two
 fields. Skyrim keeps a contracted disease as an active effect, not in the spell list, so
-`Actor.HasSpell` would miss it. Old `SPEL.txt` files without the field read as type -1.
+`Actor.HasSpell` alone would miss it -- but a disease a SCRIPT gave (`AddSpell`) is in the
+list and, measured, not visible as an active effect: a player given Swamp Fever got a
+healer's ordinary greeting until the list was read too. So the runtime asks both: a staged
+spell of that type in the list (OpenMW's own read), else an active effect from one. The
+dialogue functions `PcCommonDisease` / `PcBlightDisease` answer the same hook, and
+`PcCorprus` asks `GetEffect`'s hook for effect 132 (TES3's name: "Corpus"); before, all three
+answered a constant 0. Old `SPEL.txt` files without the field read as type -1.
+
+Reading the list brought one catch: Skyrim's `Actor.RemoveSpell` only takes off spells added
+at runtime, never one from the actor's BASE list, and `HasSpell` still sees that one. OpenMW's
+`RemoveSpell` removes it, so curing the Shurdan-Raplay kwama queen (`RemoveSpell
+"ash-chancre"`, then her script waits for `GetBlightDisease == 0`, HH_Stronghold 140) never
+finished. The runtime now records each script `RemoveSpell` in its saved state ("spell|removed",
+actor + spell FormIDs) and the list reads skip it; `AddSpell` clears the record, and the
+removal also dispels the spell's effects. Measured: `GetSpell`/`GetBlightDisease` 1 -> 0.
 
 **GetAttacked.** Follows `CreatureStats::mAttacked`, set in `Npc::onHit` / `Creature::onHit`
 when the attacker is an actor the victim is not already fighting. The DLL sets it from the

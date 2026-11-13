@@ -1,0 +1,45 @@
+# Clan Aundae: "The Vampire Hunter" (VA_VampHunter). Dhaunayne Aundae sends the player after a hunter ("vampire
+# hunter": 10, enables Ano Vando; "I will kill this vampire hunter for all to see." 1: 20). Anarenen in Ald'ruhn's
+# Mages Guild names him (50; the line is NotLocal NoLore == 0, so Edwinna Elbert, whose script declares NoLore,
+# keeps quiet). Killed in daylight in Ald'ruhn (anoScript: 9:00-17:00 -> 70), Dhaunayne
+# rewards the player with her amulet (90); "future rewards" closes it (100).
+# The wait stands in for a player waiting for day; the kill stands in for the fight.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from va_hunter_start --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case va_hunter_start
+approach 05A7D05F
+talk dhaunayne aundae
+ask plan to serve me
+ask vampire hunter
+expect GetJournalIndex VA_VampHunter == 10
+choose 1
+expect GetJournalIndex VA_VampHunter == 20
+bye
+approach 05CEBDE3
+talk anarenen
+ask vampire hunter
+expect GetJournalIndex VA_VampHunter == 50
+bye
+end
+
+case va_hunter_kill
+rest 24 - GameHour >= 10
+approach 05905199
+wait 60
+bye if open
+defend
+console 05905199.kill
+until 600 GetJournalIndex VA_VampHunter == 70
+end
+
+case va_hunter_reward
+approach 05A7D05F
+talk dhaunayne aundae
+ask vampire hunter
+expect GetJournalIndex VA_VampHunter == 90
+expect player->GetItemCount "amulet_aundae" == 1
+ask future rewards
+expect GetJournalIndex VA_VampHunter == 100
+bye
+end

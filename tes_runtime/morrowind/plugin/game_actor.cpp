@@ -138,6 +138,28 @@ bool GameActor::IsWerewolf() const {
     return Hooks().isWerewolf && Hooks().isWerewolf(mId);
 }
 
+bool GameActor::PlayerIsVampire() const {
+    return Hooks().playerVampire && Hooks().playerVampire();
+}
+
+int GameActor::PlayerClothingValue() const {
+    return Hooks().playerWornValue ? Hooks().playerWornValue() : -1;
+}
+
+// The same reads as the `GetCommonDisease` / `GetBlightDisease` / `GetEffect` script functions.
+bool GameActor::PlayerHasCommonDisease() const {
+    return Hooks().hasDisease && Hooks().hasDisease(kPlayerId, kSpellDisease);
+}
+
+bool GameActor::PlayerHasBlightDisease() const {
+    return Hooks().hasDisease && Hooks().hasDisease(kPlayerId, kSpellBlight);
+}
+
+// TES3 names effect 132 "Corpus" (sEffectCorprus).
+bool GameActor::PlayerHasCorprus() const {
+    return Hooks().hasEffect && Hooks().hasEffect(kPlayerId, "Corpus");
+}
+
 bool GameActor::Detected() const { return true; }
 
 bool GameActor::Alarmed() const { return false; }

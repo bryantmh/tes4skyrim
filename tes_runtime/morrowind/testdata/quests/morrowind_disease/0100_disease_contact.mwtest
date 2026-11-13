@@ -1,0 +1,23 @@
+# Morrowind diseases caught from a carrier's hits, carried by Skyrim's own creature-disease mechanism: the
+# carrier's attacks cast its disease spells (ATKD Attack Spell, as SkeeverRace casts Ataxia) and each disease
+# effect rolls fDiseaseXferChance (2.5%) once as it lands. The player (Disease Resist 0, health raised so the
+# carrier never kills it) stands beside a placed carrier until the disease lands; `defend` then kills it.
+# The blight case also proves a two-effect disease lands whole (the later effects gate on the first).
+
+case disease_contact_common
+run
+console player.setav health 100000
+console player.getav diseaseresist
+player->PlaceAtMe "rat_diseased" 1 96 0
+until 3000 player->GetCommonDisease == 1
+defend
+wait 120
+end
+
+case disease_contact_blight
+run
+player->PlaceAtMe "alit_blighted" 1 128 0
+until 3000 player->GetBlightDisease == 1
+defend
+wait 120
+end

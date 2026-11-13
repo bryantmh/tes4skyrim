@@ -1,0 +1,206 @@
+# Thieves Guild: the Bal Molagmer, Gentleman Jim Stacey's charity thefts (Stacey = 05D48791). "Bal Molagmer"
+# hands over the gloves (TG_SS_Generosity1 1); worn, their gloveScript sets TGglove, which Stacey and the
+# recipients test. Then, in order: Hlervu Locket (Braynas Hlervu outside Ald'ruhn: "Yes, take it." 3, the Bal
+# Molagmer answer 2: 55), corruption (Yngling Half-Troll's ledger to Stacey: 100), forged land deed (Indrele
+# Rathryon, Seyda Neen: 3, 2), Enamor (the blade and note into Salyn Sarethi's chest: staceyScript's enamorInChest),
+# Brallion's Ring (Ilmeni Dren, St. Delyn: 3, 2), history books (Odral Helvi's set to Vala Catraso, Ald'ruhn Mages
+# Guild: 1, 11), Dwemer goblet (Danso Indules outside the High Fane: 3, 2). Reputation 5 each.
+# AddItem stands in for the thefts; RemoveItem + the chest's AddItem for the player putting Enamor back.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case ss_gloves
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask Bal Molagmer
+expect GetJournalIndex TG_SS_Generosity1 == 1
+expect player->GetItemCount Common_Glove_R_BalMolagmer == 1
+bye
+run
+player->Equip Common_Glove_R_BalMolagmer
+player->Equip Common_Glove_L_BalMolagmer
+until 300 TGglove == 1
+end
+
+case ss_hlervu_locket
+approach 05D48791
+talk stacey
+ask Bal Molagmer
+ask Hlervu Locket
+expect GetJournalIndex TG_SS_Generosity1 == 10
+bye
+run
+player->AddItem exquisite_amulet_hlervu1 1
+player->Position -7301 52950 2379 0
+until 300 player->GetDistance "braynas hlervu" < 2000
+approach 05CB3BE1
+talk braynas hlervu
+ask Hlervu Locket
+choose 3
+choose 2
+expect GetJournalIndex TG_SS_Generosity1 == 55
+bye
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask Hlervu Locket
+expect GetJournalIndex TG_SS_Generosity1 == 100
+bye
+end
+
+case ss_yngling
+approach 05D48791
+talk stacey
+ask Bal Molagmer
+ask corruption
+expect GetJournalIndex TG_SS_Yngling == 10
+bye
+run
+player->AddItem bk_YnglingLedger 1
+approach 05D48791
+talk stacey
+ask corruption
+choose 1
+expect GetJournalIndex TG_SS_Yngling == 100
+bye
+end
+
+case ss_land_deed
+approach 05D48791
+talk stacey
+ask Bal Molagmer
+ask forged land deed
+expect GetJournalIndex TG_SS_Generosity2 == 10
+bye
+run
+player->AddItem bk_IndreleDeed 1
+player->Position -12181 -71450 98 0
+until 300 player->GetDistance "indrele rathryon" < 2000
+approach 05C357F1
+talk indrele rathryon
+ask forged land deed
+choose 3
+choose 2
+expect GetJournalIndex TG_SS_Generosity2 >= 50
+bye
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask forged land deed
+expect GetJournalIndex TG_SS_Generosity2 == 100
+bye
+end
+
+case ss_enamor
+approach 05D48791
+talk stacey
+ask Bal Molagmer
+ask Enamor
+expect GetJournalIndex TG_SS_Enamor == 10
+bye
+run
+player->RemoveItem Glass_Dagger_Enamor 1
+player->RemoveItem bk_Enamor 1
+"de_p_chest_02salynsaret"->AddItem Glass_Dagger_Enamor 1
+"de_p_chest_02salynsaret"->AddItem bk_Enamor 1
+until 300 stacey.enamorInChest == 1
+approach 05D48791
+talk stacey
+ask Enamor
+expect GetJournalIndex TG_SS_Enamor == 100
+bye
+end
+
+case ss_greedy_slaver
+approach 05D48791
+talk stacey
+ask Bal Molagmer
+ask Brallion's Ring
+expect GetJournalIndex TG_SS_GreedySlaver == 10
+bye
+run
+player->AddItem exquisite_ring_brallion 1
+player->PositionCell 417 -230 -103 0 "Vivec, St. Delyn Canal South-One"
+until 300 GetPCCell "Vivec, St. Delyn Canal South-One" == 1
+approach 052DA0B7
+talk ilmeni dren
+ask Brallion's Ring
+choose 3
+choose 2
+expect GetJournalIndex TG_SS_GreedySlaver >= 50
+bye
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask Brallion's Ring
+expect GetJournalIndex TG_SS_GreedySlaver == 100
+bye
+end
+
+case ss_history_books
+approach 05D48791
+talk stacey
+ask Bal Molagmer
+ask history books
+expect GetJournalIndex TG_SS_Plutocrats == 10
+bye
+run
+player->AddItem bk_BriefHistoryEmpire1_oh 1
+player->AddItem bk_BriefHistoryEmpire2_oh 1
+player->AddItem bk_BriefHistoryEmpire3_oh 1
+player->AddItem bk_BriefHistoryEmpire4_oh 1
+player->PositionCell 1673 1130 -632 0 "Ald-ruhn, Guild of Mages"
+until 300 GetPCCell "Ald-ruhn, Guild of Mages" == 1
+approach 058AF44E
+talk vala catraso
+ask history books
+choose 1
+choose 11
+expect GetJournalIndex TG_SS_Plutocrats == 50
+bye
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask history books
+expect GetJournalIndex TG_SS_Plutocrats == 100
+bye
+end
+
+case ss_church_police
+approach 05D48791
+talk stacey
+ask Bal Molagmer
+ask Dwemer goblet
+expect GetJournalIndex TG_SS_ChurchPolice == 10
+bye
+run
+player->AddItem misc_dwrv_goblet10_tgcp 1
+player->Position 32874 -99400 1091 0
+until 300 player->GetDistance "danso indules" < 2000
+approach 05597796
+talk danso indules
+ask Dwemer goblet
+choose 3
+choose 2
+expect GetJournalIndex TG_SS_ChurchPolice >= 50
+bye
+run
+player->PositionCell 6452 -800 -244 0 "Vivec, Simine Fralinie: Bookseller"
+until 300 GetPCCell "Vivec, Simine Fralinie: Bookseller" == 1
+approach 05D48791
+talk stacey
+ask Dwemer goblet
+expect GetJournalIndex TG_SS_ChurchPolice == 100
+bye
+end

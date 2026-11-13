@@ -1,0 +1,88 @@
+# House Hlaalu: "Odirniran" (HH_Odirniran), Edryno Arethi, Vivec.
+# Edryno sends the player to the Telvanni-held ruin (10); Remasa Othril in Odirniran asks for her sister (30);
+# Vedelea Othril in the Tower follows ("travel together", "Yes" 1: 50) and her own script (vedeleaFollow) logs 70
+# within 512 of Remasa, once Milyn Faram, the necromancer, is dead (her line); Remasa thanks the player (90); Edryno pays (100).
+# Vedelea is locked in a barred cell (door 053EDEBD, lock 60, key_Odirniran on Milyn Faram: taking it stands in
+# for looting him); a closed cell left every walk standing (run hh16, probes tower_walk 1-3). She really walks:
+# cell door -> Tower door 05E27081 -> Odirniran -> the hall door 058882EE (lock 30, the same key) -> Remasa. A
+# closed locked door stops an AI walk short (hh17-19: settled at 63 3571). Tower walk predicted: reached, via the
+# cell door; the Odirniran walk predicts a false "ceiling below body height" stall at the landing (calibration gap).
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_odirniran_start
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask business
+ask Odirniran
+expect GetJournalIndex HH_Odirniran == 10
+bye
+run
+player->PositionCell -333 3500 -1251 0 "Odirniran"
+until 300 GetPCCell "Odirniran" == 1
+approach 05994AFF
+talk remasa othril
+ask Odirniran
+expect GetJournalIndex HH_Odirniran == 30
+bye
+end
+
+case hh_odirniran_necromancer
+defend
+run
+player->PositionCell 485 1063 -758 0 "Odirniran, Tower"
+until 300 GetPCCell "Odirniran, Tower" == 1
+approach 0532FB4E
+console 0532FB4E.kill
+wait 60
+run
+"milyn faram"->RemoveItem key_Odirniran 1
+player->AddItem key_Odirniran 1
+expect player->GetItemCount key_Odirniran == 1
+end
+
+case hh_odirniran_rescue
+defend
+run
+player->PositionCell -1500 3480 -1408 0 "Odirniran, Tower"
+until 300 GetPCCell "Odirniran, Tower" == 1
+activate 053EDEBD
+wait 60
+approach 052D2BEF
+talk vedelea othril
+ask travel together
+choose 1
+expect GetJournalIndex HH_Odirniran == 50
+bye
+walk -60 4330 -1280
+until 3000 "vedelea othril"->GetDistance player < 500
+activate 05E27081
+until 600 GetPCCell "Odirniran" == 1
+walk 63 3571 -1280
+activate 058882EE
+wait 60
+walk -300 3600 -1251
+until 3000 GetJournalIndex HH_Odirniran >= 70
+end
+
+case hh_odirniran_report
+run
+player->PositionCell -333 3500 -1251 0 "Odirniran"
+until 300 GetPCCell "Odirniran" == 1
+approach 05994AFF
+talk remasa othril
+ask Odirniran
+expect GetJournalIndex HH_Odirniran == 90
+bye
+run
+player->PositionCell 145 -99 -86 0 "Vivec, Hlaalu Edryno Arethi's House"
+until 300 GetPCCell "Vivec, Hlaalu Edryno Arethi's House" == 1
+approach 0541184D
+talk edryno arethi
+ask Odirniran
+expect GetJournalIndex HH_Odirniran == 100
+bye
+end

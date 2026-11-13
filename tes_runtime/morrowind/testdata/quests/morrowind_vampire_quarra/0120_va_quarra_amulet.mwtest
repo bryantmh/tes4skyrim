@@ -1,0 +1,79 @@
+# Clan Quarra: "Vampire Amulet" (VA_VampAmulet). Volrina Quarra wants the makings of an amulet ("use to me": 10):
+# five extravagant sapphire amulets, two void salts, a daedra's heart, vampire dust and a skull. Given all of them
+# ("raw materials") she rewards the player (30).
+# 🛑 Morrowind.esm's own bug: "use to me" logs 10, and "raw materials" answers only below 10 (then offers the
+# choice to 20), so at 10 Volrina has nothing to say on it -- and, unanswerable, the topic is never learned from her
+# text (OpenMW's addTopicsFromText keeps only topics the speaker can answer). UESP (Morrowind:The Quarra Amulet,
+# Bugs, confirmed) gives the player's console fix, `Journal VA_VampAmulet 20` and `AddTopic "raw materials"`,
+# which the case runs in place of the dead choice. Kills of twelve Aundae or Berne
+# vampires while the quest stands at 30 (Vampire_Aundae counts VampKills on death) earn the clan's last reward
+# ("future rewards"; its response has no result script in Morrowind.esm, so 40 never logs -- the journal stays at 30).
+# AddItem stands in for gathering the materials, the kills for the fights, `approach` for the travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --from va_quarra_amulet_start --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case va_quarra_amulet_start
+approach 05D57D27
+talk volrina quarra
+ask use to me
+expect GetJournalIndex VA_VampAmulet == 10
+bye
+run
+Journal VA_VampAmulet 20
+AddTopic "raw materials"
+player->AddItem "extravagant_amulet_01" 5
+player->AddItem "ingred_void_salts_01" 2
+player->AddItem "ingred_daedras_heart_01" 1
+player->AddItem "ingred_vampire_dust_01" 1
+player->AddItem "misc_skull10" 1
+wait 30
+talk volrina quarra
+ask raw materials
+expect GetJournalIndex VA_VampAmulet == 30
+bye
+end
+
+case va_quarra_rewards
+approach 053E1E58
+console 053E1E58.kill
+wait 60
+approach 052D64B1
+console 052D64B1.kill
+wait 60
+approach 053C5D68
+console 053C5D68.kill
+wait 60
+approach 05826ECA
+console 05826ECA.kill
+wait 60
+approach 05BE5476
+console 05BE5476.kill
+wait 60
+approach 057AF45F
+console 057AF45F.kill
+wait 60
+approach 053E90AA
+console 053E90AA.kill
+wait 60
+approach 05DAF1FD
+console 05DAF1FD.kill
+wait 60
+approach 05588CCD
+console 05588CCD.kill
+wait 60
+approach 05D63F0E
+console 05D63F0E.kill
+wait 60
+approach 05572B34
+console 05572B34.kill
+wait 60
+approach 05DC6EA3
+console 05DC6EA3.kill
+wait 60
+expect VampKills >= 12
+approach 05D57D27
+talk volrina quarra
+ask future rewards
+expect GetJournalIndex VA_VampAmulet == 30
+bye
+end

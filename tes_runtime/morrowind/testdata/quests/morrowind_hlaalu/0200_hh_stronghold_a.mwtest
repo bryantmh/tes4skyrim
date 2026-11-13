@@ -1,0 +1,83 @@
+# House Hlaalu: the stronghold, first stage (HH_Stronghold), Dondos Driler, Balmora (Kinsman).
+# Dondos asks for papers (10): Duke Vedam Dren's construction contract ("I vow that I will do what I can." 1) and
+# Baren Alen's land deed for Rethan Manor (bartered: AddItem/RemoveItem 5000 gold stand in for the barter).
+# "Yes, here it is." 1 (50); Strong_Build_Start_H counts 6 days away from the Odai Plateau (55); Dondos sends the
+# player to the foreman Durbul gro-Rush (60, 70); Dondos (90) starts Strong_Build1_H, 6 more days (100).
+# PositionCell/Position + `approach` stand in for the travel; `rest` for the days the builders take.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_stronghold_papers
+run
+player->PositionCell 368 -276 16 0 "Balmora, Hlaalu Council Manor"
+until 300 GetPCCell "Balmora, Hlaalu Council Manor" == 1
+approach 05C0F40D
+talk dondos driler
+ask stronghold
+expect GetJournalIndex HH_Stronghold == 10
+bye
+run
+player->PositionCell -495 -180 402 0 "Ebonheart, Grand Council Chambers"
+until 300 GetPCCell "Ebonheart, Grand Council Chambers" == 1
+approach 057A65C7
+talk vedam dren
+ask construction contract
+choose 1
+expect player->GetItemCount bk_stronghold_c_hlaalu == 1
+bye
+run
+player->PositionCell 245 -349 -119 0 "Vivec, Hlaalu Vaults"
+until 300 GetPCCell "Vivec, Hlaalu Vaults" == 1
+run
+player->RemoveItem Gold_001 5000
+player->AddItem bk_stronghold_ld_hlaalu 1
+run
+player->PositionCell 368 -276 16 0 "Balmora, Hlaalu Council Manor"
+until 300 GetPCCell "Balmora, Hlaalu Council Manor" == 1
+approach 05C0F40D
+talk dondos driler
+ask stronghold
+choose 1
+expect GetJournalIndex HH_Stronghold == 50
+bye
+end
+
+case hh_stronghold_foreman
+rest 10x24 - GetJournalIndex HH_Stronghold >= 55
+approach 05C0F40D
+talk dondos driler
+ask stronghold
+expect GetJournalIndex HH_Stronghold == 60
+bye
+run
+player->Position -35423 -36969 1906 0
+until 300 player->GetDistance "durbul gro-rush" < 2000
+approach 05E9DA2C
+talk durbul gro-rush
+expect GetJournalIndex HH_Stronghold == 70
+bye if open
+run
+player->PositionCell 368 -276 16 0 "Balmora, Hlaalu Council Manor"
+until 300 GetPCCell "Balmora, Hlaalu Council Manor" == 1
+approach 05C0F40D
+talk dondos driler
+ask stronghold
+expect GetJournalIndex HH_Stronghold == 90
+bye
+rest 10x24 - GetJournalIndex HH_Stronghold >= 100
+end
+
+# With the first stage built, the sponsor Crassius Curio advances the player (Nileno: "speak with your sponsor").
+case hh_advancement_b
+run
+player->SetMercantile 90
+player->PositionCell 492 -116 -491 0 "Vivec, Curio Manor"
+until 300 GetPCCell "Vivec, Curio Manor" == 1
+approach 059264AE
+talk crassius curio
+ask Advancement
+ask Advancement
+ask Advancement
+expect player->GetPCRank Hlaalu >= 7
+bye
+end

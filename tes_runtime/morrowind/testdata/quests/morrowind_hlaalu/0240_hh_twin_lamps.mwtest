@@ -1,0 +1,70 @@
+# House Hlaalu: the Twin Lamps, Ilmeni Dren, Vivec.
+# "Twin Lamps" (HH_TwinLamps1): Jobasha names the abolitionists to a player who has freed more than 15 slaves (5; the
+# FreedSlavesCounter set and SetDisposition stand in for the freed slaves and his regard, AddTopic for the Cult and
+# Legion "latest rumors" that name the Twin Lamps); Ilmeni, "slavery":
+# "They light the way to freedom." 4 (10); Galyn Arvel in Ald Velothi (30) sends the player for J'Saddha at
+# Ashalmawia ("travel together", 1: 50), whose own script (jsaddhaScript) logs 70 within 300 of Galyn; Ilmeni
+# (100). J'Saddha really walks: ONE walk past Galyn (-88710 128429, the dock's north arm) on the arm's east side;
+# he trails ~120-200 behind the player, and a walk ending at Galyn stopped short behind him and left J'Saddha
+# ~300 away. AshalmawiaXN20Y30 pinned 11-12 (his mesh was an island); the Ald Velothi dock deck pinned 11-12
+# (AldVelothiXN22Y31: mesh lay on the sea floor under it, so he fell in and stuck swimming under the pier).
+# PositionCell/Position + `approach` stand in for the travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_twin_lamps_start
+run
+set FreedSlavesCounter to 16
+AddTopic "Twin Lamps"
+player->PositionCell 883 -243 -408 0 "Vivec, Jobasha's Rare Books"
+until 300 GetPCCell "Vivec, Jobasha's Rare Books" == 1
+approach 05AC1C9F
+run
+jobasha->SetDisposition 100
+talk jobasha
+ask Twin Lamps
+expect GetJournalIndex HH_TwinLamps1 == 5
+bye
+run
+player->PositionCell 417 -412 -103 0 "Vivec, St. Delyn Canal South-One"
+until 300 GetPCCell "Vivec, St. Delyn Canal South-One" == 1
+approach 052DA0B7
+talk ilmeni dren
+ask business
+ask slavery
+choose 4
+expect GetJournalIndex HH_TwinLamps1 == 10
+bye
+run
+player->Position -88600 128329 62 0
+until 300 player->GetDistance "galyn arvel" < 2000
+approach 05C7B47C
+talk galyn arvel
+ask slavery
+expect GetJournalIndex HH_TwinLamps1 == 30
+ask J'Saddha
+bye
+end
+
+case hh_twin_lamps_escort
+defend
+run
+player->Position -78230 125095 1906 0
+until 300 player->GetDistance j_saddha < 2000
+approach 0571C324
+talk j_saddha
+ask travel together
+choose 1
+expect GetJournalIndex HH_TwinLamps1 == 50
+bye
+walk -88640 128480 54
+until 3000 GetJournalIndex HH_TwinLamps1 >= 70
+run
+player->PositionCell 417 -412 -103 0 "Vivec, St. Delyn Canal South-One"
+until 300 GetPCCell "Vivec, St. Delyn Canal South-One" == 1
+approach 052DA0B7
+talk ilmeni dren
+ask slavery
+expect GetJournalIndex HH_TwinLamps1 == 100
+bye
+end

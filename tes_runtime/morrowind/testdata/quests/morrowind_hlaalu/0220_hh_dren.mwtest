@@ -1,0 +1,85 @@
+# House Hlaalu: Duke Vedam Dren, Ebonheart (House Father).
+# "control the Ordinators" (HH_WinSaryoni): the Duke (10, the Archcanon's private key); Archcanon Tholer Saryoni in
+# the High Fane asks for the Robe of St Roris ("control the Ordinators" -> "troubling times" -> "Ordinators have
+# failed": 50); the robe from the chest in the
+# Assemanu Shrine (RemoveItem/AddItem stand in for opening it), given ("control the Ordinators", 1: 70); the
+# Duke (100). "Camonna Tong" (HH_WinCamonna): the Duke (10); his brother Orvas Dren steps down at disposition 80
+# ("Together House Hlaalu and the Camonna Tong will both prosper." 1: 50; SetDisposition stands in for
+# persuasion); the Duke (100) raises the player two ranks.
+# PositionCell + `approach` stand in for the travel.
+# Run: python -m tools.live.test_instance --instance 2 mwtest --cases <this folder> --fast --checkpoints --stop-on-fail --load mwtest_a1_11_report --timeout 3600
+# See docs/commentary/headless_testing.md#quest-runs
+
+case hh_win_saryoni
+run
+player->PositionCell -495 -180 402 0 "Ebonheart, Grand Council Chambers"
+until 300 GetPCCell "Ebonheart, Grand Council Chambers" == 1
+approach 057A65C7
+talk vedam dren
+ask business
+ask control the Ordinators
+expect GetJournalIndex HH_WinSaryoni == 10
+bye
+run
+player->PositionCell -1097 504 -622 0 "Vivec, High Fane"
+until 300 GetPCCell "Vivec, High Fane" == 1
+approach 05C7472C
+talk tholer saryoni
+ask control the Ordinators
+ask troubling times
+ask Ordinators have failed
+expect GetJournalIndex HH_WinSaryoni == 50
+bye
+run
+player->PositionCell 5932 1141 12116 0 "Assemanu, Shrine"
+until 300 GetPCCell "Assemanu, Shrine" == 1
+run
+"de_r_chest_01_assemanu"->RemoveItem "Robe of St Roris" 1
+player->AddItem "Robe of St Roris" 1
+run
+player->PositionCell -1097 504 -622 0 "Vivec, High Fane"
+until 300 GetPCCell "Vivec, High Fane" == 1
+approach 05C7472C
+talk tholer saryoni
+ask control the Ordinators
+choose 1
+expect GetJournalIndex HH_WinSaryoni == 70
+bye
+run
+player->PositionCell -495 -180 402 0 "Ebonheart, Grand Council Chambers"
+until 300 GetPCCell "Ebonheart, Grand Council Chambers" == 1
+approach 057A65C7
+talk vedam dren
+ask control the Ordinators
+expect GetJournalIndex HH_WinSaryoni == 100
+bye
+end
+
+case hh_win_camonna
+approach 057A65C7
+talk vedam dren
+ask business
+ask Camonna Tong
+expect GetJournalIndex HH_WinCamonna == 10
+bye
+run
+player->PositionCell 3395 3194 16221 0 "Dren Plantation, Dren's Villa"
+until 300 GetPCCell "Dren Plantation, Dren's Villa" == 1
+approach 05ECFEA6
+run
+"orvas dren druglord"->SetDisposition 100
+talk orvas dren druglord
+ask Camonna Tong
+choose 1
+expect GetJournalIndex HH_WinCamonna == 50
+bye
+run
+player->PositionCell -495 -180 402 0 "Ebonheart, Grand Council Chambers"
+until 300 GetPCCell "Ebonheart, Grand Council Chambers" == 1
+approach 057A65C7
+talk vedam dren
+ask Camonna Tong
+expect GetJournalIndex HH_WinCamonna == 100
+expect player->GetPCRank Hlaalu == 9
+bye
+end
