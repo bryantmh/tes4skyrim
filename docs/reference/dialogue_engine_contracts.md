@@ -8,8 +8,8 @@ it came from so it can be re-checked.
 ## The binary has to be the GOG / Anniversary build
 
 The Steam `SkyrimSE.exe` is Steam-encrypted: its `.text` section has entropy
-8.00, so no code in it can be read statically (this is what
-`project_skyrimse_exe_drm_packed` recorded). The GOG / Anniversary Edition build
+8.00, so no code in it can be read statically (the unpacked exes CLAUDE.md
+lists avoid this). The GOG / Anniversary Edition build
 at `D:\Other Games\Skyrim Anniversary Edition\SkyrimSE.exe` is **not** packed —
 `.text` entropy is 6.04 and the dialogue routines disassemble cleanly.
 
@@ -164,6 +164,34 @@ look unstartable and the per-quest gating would be lost wholesale.
 *"latent and will wait for the quest to start up before returning (if it needed
 to be started)"*, so it starts a stopped quest. Censused on Skyrim.esm, 0 of
 15,037 vanilla DIALs point QNAM at a non-existent quest.
+
+## DLBR flags: nothing stops the player leaving a dialogue
+
+Skyrim has NO flag that prevents exiting (tabbing out of) dialogue (CK wiki:
+"there isn't any way to avoid tabbing out of dialogue"). What the DLBR `DNAM` flags
+do:
+
+- **Blocking `0x02`**: the branch's starting topic preempts all other dialogue
+  when it holds a valid INFO, so the forced line becomes the NPC's greeting. It
+  does not stop the player leaving (and reportedly breaks the Goodbye flag).
+- **Exclusive `0x04`**: once entered, the NPC keeps using the branch until he
+  speaks a line from a DIFFERENT branch, which keeps the rest of a conversation on
+  the branch instead of falling back to the topic list.
+- Vanilla force-greet branches are `0x06` Blocking|Exclusive
+  (`dunMossMother_ForcegreetComplete`, `C00EorlundIntro`); `0x03` never ships.
+- The flags belong to the BRANCH, not the topic: of the topics a vanilla blocking
+  topic's TCLT reaches, 1,418 share its BNAM and 8 have their own; one branch
+  covers up to 16 topics. A private branch per topic gives N one-topic
+  conversations.
+
+Keeping the player in an Oblivion force-greet is the PACKAGE's job: a
+still-qualifying package re-greets when the player walks out
+([force greet must retire](package_ai_contracts.md#a-force-greet-must-be-able-to-retire)).
+Scope a conversation by AUTHORED links (TCLT, AddTopic), never by graph
+reachability: "everything reachable from the greeting" swept in 266 topics,
+including companion commands used outside any forced conversation (`MQFollow`,
+`SE10Follow/Wait`, `MS27Umbacano*`, `Questions`). A census says what Bethesda
+used, never what a flag means; look the flag up first.
 
 ## Re-deriving any of this
 

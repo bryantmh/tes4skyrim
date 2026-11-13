@@ -478,7 +478,7 @@ properly parallel. Two findings:
   resolving one plugin's cells against another's table reads that coincidence as
   183 overrides and drags Morrowind **interior** clutter into Cyrodiil's distant
   terrain. Guarded by `tests/test_lod_overlay_scope.py`. See
-  [[project_master_index_routing]].
+  [tes5_import_override.md](tes5_import_override.md) (master-index routing).
 
   Scoping removes the 183 phantom refs as a side effect, but the merge itself
   needed the real fix — see below.
@@ -619,6 +619,13 @@ byte-identical (ESMs and every sidecar table).
   a pool.
 - **`bytes += big` is quadratic** — accumulate group contents in lists and
   `b''.join` at wrap points (CELL/WRLD builders).
+- **Measured on Oblivion.esm after the pass**: export 47.3 s -> 7.3 s; import
+  203 s -> ~57 s (text parse 99 -> 11 s in chunked pools, phase 0 36 -> 13 s,
+  WRLD builder 15 -> 4.3 s); scripts 33.4 s -> 14.9 s (`CrossRefGraph.load_from_export`
+  15.9 -> 1.1 s, skipping LAND/PGRD/ROAD). Phase 1 stays serial because
+  converters call `writer.alloc_formid`. A record belongs to the parse chunk
+  holding its `---RECORD_BEGIN---` byte offset (`text_reader.parse_file_range`,
+  reused by the cross_ref scan).
 - **Pool tools can exhaust memory**: some load the ~2.1 GB export index PER
   WORKER. Cap `--workers` or run single-process for those.
 - <a id="blas-threads-commit"></a>**One BLAS thread per process (WinError 1450).**

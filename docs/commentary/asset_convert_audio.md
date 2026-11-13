@@ -458,6 +458,22 @@ the contended mutex.
 subdirectory with `FonixData.cdf` hard-linked beside it, since the exe loads the
 `.cdf` relative to its own location.
 
+Lip sync contracts: the SSE Creation Kit's own `LipGenerator.exe`
+(`find_lipgenerator()`, `<SSE install>/Tools/LipGen/LipGenerator/`, needs the
+sibling `FonixData.cdf`) runs as `LipGenerator <wav> "<text>"` and writes
+`<wav basename>.lip` beside the input. It resamples internally but writes
+`tmp16khz.wav` into its CWD, so every parallel job runs in a private temp dir
+(`convert_file_to_xwm` uses `mkdtemp` per job). SSE reads lip data ONLY from `.fuz`
+containers (loose `.lip` is LE-only): `FUZE` + u32 version 1 + u32 lipSize + lip +
+xwm (`pack_fuz()`). Transcripts come from `dialog_converter`
+({(info_fid24, resp_num): NAM1 text}), are written to `<esm>.liptext.txt`, and
+`organize_voice_files` pairs them by (fid24, response index); a line without a
+transcript stays a bare `.xwm` (audio, no mouth movement). INFO ENAM bit 0x0800
+("No LIP File") is never set. Lip bytes are nondeterministic run to run, even
+stock: never byte-compare. FaceFXWrapper was rejected (same Fonix core, same cap,
+and its mutex string is compressed and unpatchable). Oblivion's own `.lip` files
+are an older FaceFX format and are skipped at BSA extraction.
+
 ## Voice file naming: the Oblivion prefix cannot be trusted
 <a id="voice-file-naming-prefix"></a>
 

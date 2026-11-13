@@ -966,6 +966,16 @@ bindings reported all-clear while every object script was broken.
   threw on the first tick and no TG rank ever advanced.
 - **General rule: a record the importer synthesizes needs an explicit binding
   route in EVERY VMAD binder.** The export-derived EditorID map cannot see it.
+- **The registry is a LOOKUP TABLE, never a payload.** Merging all ~1,880
+  entries into every scripted INFO/QUST VMAD (`prop_vals.update(well_known_props)`)
+  gave 4,985 of Morroblivion's 19,393 INFOs a ~70 KB VMAD and the chargen QUST
+  72,989 bytes, bloated the ESM 633 MB -> 203 MB once removed, and made the engine
+  log `Property <X> ... cannot be initialized because the script no longer
+  contains that property`. Iterate the properties the generated `.psc` actually
+  DECLARES and look each up (INFO: `_build_info_script_properties`; QUST:
+  `_quest_well_known_refs`, which re-runs `convert_fragment` over the stage
+  result scripts and needs the real `xref`, since `xref=None` aborts mid-line and
+  silently under-collects).
   Check with `python tools/script/vmad_probe.py <esm> <script> --props` — a property the
   `.psc` declares but the probe does not list is unbound.
 
@@ -1747,6 +1757,13 @@ Papyrus fallback turns one pass's worth.
 
 - `begin OnAlarm` → `OnCombatStateChanged` guarded `aeCombatState != 0`;
   `OnStartCombat` bodies are guarded `== 1` (the event also fires on combat END).
+- `pme` / `sme CODE` take a magic EFFECT CODE, not a shader EditorID: resolve
+  code -> TES4 MGEF -> its EFSH (`CrossRefGraph.get_mgef_shader_edid`) and
+  `Play`/`Stop` that shader property; no shader found leaves a note.
+- Before calling a command unconvertible, grep the vanilla `Data/Source/Scripts`
+  `.psc`: `Faction.SetReaction/ModReaction`, `Actor.GetCurrentPackage()`,
+  `ObjectReference.PushActorAway` and `GetAnimationVariableBool` all exist
+  despite wiki silence (the 2026-07-16 sweep took `;TODO` markers 188 -> 2).
 - Bare `begin MenuMode` + `isPCSleeping` (Oblivion's sleep-detection idiom) →
   `RegisterForSleep()` + OnSleepStart/OnSleepStop running the body twice with a
   `TES4_PCSleeping` flag (11 quests incl. MG04 inn ambush, Rufio murder,
@@ -1792,6 +1809,12 @@ engine.**
   length of THIS line>)`; `Fragment_0` (OnEnd) → the TES4 result script, then
   `TES4Polyfill.LineEnded(akSpeakerRef)` **last**. The hooks carry only the
   speaker — no owner analysis, no property binding, nothing to miss.
+* **INFO fragment entries are POSITIONAL, not name-bound.** The VMAD flag
+  byte is a bitmask (bit0 = OnBegin, bit1 = OnEnd); the engine binds the Nth
+  ENTRY to the Nth set BIT and `FragmentName` is arbitrary, so the Begin entry
+  must be written FIRST or the End body runs at line start. Vanilla Skyrim.esm
+  has 1,234 Begin-only INFOs, 250 Begin+End (every naming order) and 3,773
+  End-only.
 * State lives in four script Actor Values **on the speaker** (`Variable07`
   claim, `Variable08` claim deadline, `Variable09` playing line's length,
   `Variable10` speaking deadline; deadlines in game time, see the polyfill).
@@ -2127,6 +2150,19 @@ Oblivion ignored it; Papyrus fails the whole file, so it is commented out.
   `_BARE_NO_EQUIV_COMMANDS`.
 - `Activate` conversions: bare `Activate` → `(akActionRef/self, true)`. Passing
   `Game.GetPlayer()` produced door/lockpick/teleport storms.
+  - TES4 `Activate [ActionRef] [RunOnActivateFlag]`: a bare `Activate` inside
+    OnActivate/OnTrigger is the default activation by the ORIGINAL activator and
+    must NOT re-run the script's own OnActivate, so it keeps the `true`
+    (`abDefaultProcessingOnly`; without it the call recurses forever). Only
+    `RunOnActivateFlag == 1` may re-enter OnActivate and omits the `true`.
+  - `X.Activate` (explicit ref, no args) is X activating ITSELF (quest fragments
+    opening secret walls) → `X.Activate(X, true)`; in a TopicInfo context a bare
+    `Activate` → `Activate(akSpeakerRef, true)`.
+  - Why it mattered: once NPCs could pathfind, `AutoClosingDoor`/`AutoCloseDoorLock`
+    (and 266 other scripts) re-activated doors NPCs had used as the PLAYER, so load
+    doors teleported the player and locked doors opened the lockpick UI. The handler
+    sits in `converter.py` before the `FUNCTION_MAP` lookup; `activate` is not in
+    `_DEFAULT_ARGS`.
 
 ### The last activator outside OnActivate
 <a id="last-activator"></a>
@@ -3089,7 +3125,7 @@ measured:
 | Symptom | Where | Cost |
 |---|---|---|
 | Undefined identifier | Knights.esp `TES4_QF_ND00/03/07/09` | CHECKER error → **no `.pex` for the whole script**, so every OTHER stage of the quest dies too |
-| Property declared but bound to nothing | Oblivion.esm `TES4_QF_SE02` | compiles fine; the first use ABORTS the fragment (see `project_unbound_vmad_property_aborts`) |
+| Property declared but bound to nothing | Oblivion.esm `TES4_QF_SE02` | compiles fine; the first use ABORTS the fragment ([tes5_import_dialogue.md](tes5_import_dialogue.md), `_adopt_master_special_records`) |
 
 Knights.esp's stage result scripts still read `player.additem NDArmorCuirass 1`
 and `player.additem NDLL0WeaponSword 1` while their SCROs bind

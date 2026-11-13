@@ -16,10 +16,36 @@ owns it, and what it is linked to. Region decoration (REGN, LSCR, WATR) lives in
 - [TES3 refs ship Don't Havok Settle](#tes3-dont-havok-settle)
 - [TES3 script-named refs ship persistent](#tes3-script-named-refs-persist)
 - [Exterior persistent refs live in the persistent cell](#exterior-persistent-refs-live-in-the-persistent-cell)
+- [Teleport doors carry XNDP](#door-xndp)
+- [Exterior cell names come from XLCN](#exterior-cell-names)
+- [LAND texture layers and DOOR flags](#land-layers-door-flags)
 - [Nested interiors inherit a location](#nested-interiors-inherit-location)
 - [LAND DATA flags pass through VERBATIM](#land-data-flags-verbatim)
 - [LAND quadrants with alpha layers and no base layer](#land-quadrants-without-a-base-layer)
 - [WRLD land and water defaults](#wrld-land-and-water-defaults)
+
+## <a id="refr-angle-normalize-hang"></a>Placed-reference angles are sanitized (`_safe_angle`)
+
+Skyrim normalizes a placed reference's angles into [0, 2*pi) with an UNCAPPED
+float32 loop (`SkyrimSE 1.6.1170 +0x2d8e43..+0x2d8e6f`: `while (a < 0) a += 2*pi;
+while (a > 2*pi) a -= 2*pi`). Once |a| is large enough that the subtraction is a
+no-op in float32 (7.0958e+28 leaves the value bit-identical) the loop never
+ends; NaN falls through unnormalized. Signature: one thread pegged at a full
+core, private memory perfectly FLAT, `Responding: False`, no CTD, no crash log,
+Papyrus log just stops, every structural audit clean (growing memory would be a
+leak, no CPU a deadlock). `TWMP_Valenwood_Elsweyr.esp` ships 2,610 such REFRs
+(RotZ 7.09e+28, 8.06e+34, 3.6e+12, -4.3e+08) in the ORIGINAL mod; `tes4_export`
+dumps RotZ verbatim and Oblivion's normalizer tolerated it. `_safe_angle` in
+`record_types/world.py` fmod-reduces (a merely large angle keeps its true
+orientation; NaN/Inf -> 0) at all 9 rotation sites (REFR, ACHR/ACRE, XTEL).
+Audit with `tools/validate/refr_rotation_check.py --plugin X`: Valenwood 2,610 -> 0,
+every other plugin 0 except `Nehrim.esm`, whose 22 refs at Y=8.9e+17 are bad
+POSITIONS, a different defect `_safe_angle` does not address (open). To find
+such a hang live, sample the process twice ~1.5 s apart and compare CPU and
+private-memory deltas, then take stacks with `cdb -pv` (non-invasive); the
+running Steam process disassembles (decrypted in memory) at the running build's
+RVAs. On a REFR, position floats sit at +0x70/+0x74/+0x78, rotation at
++0x68/+0x6c, normalized angle stored to +0x50.
 
 ## <a id="xlkr-enable-parent-becomes-linked-ref"></a>XLKR — the enable parent becomes the linked ref
 
@@ -227,6 +253,75 @@ persistent REFR/ACHR records move into that cell's children as the worldspace is
 packed. The navmeshes are already built by then (`precompute_navmeshes`), so
 they still see each reference in its grid cell. A worldspace without a
 persistent cell keeps the old layout.
+
+## <a id="door-xndp"></a>Teleport doors carry XNDP, or no actor can path through them
+
+**Code:** `tes5_import/navmesh/split.py` (`meta['door_xndp']`),
+`tes5_import/pipeline_records.py` (`set_door_navmesh_links`)
+
+A door is bound to the navmesh by THREE structures: NVNM "Door Triangles" and NAVI
+NVMI "Door Links" (both navmesh to door) and the REFR `XNDP` (door to navmesh
+triangle). The engine builds its `BSPathingDoor` from the DOOR REFERENCE an actor
+walks toward, so it needs the door-to-navmesh direction; without `XNDP` a teleport
+door is not a pathing node and an actor whose package destination lies beyond it
+has no route (CharacterGen's Mythic Dawn assassins never left their cell, with
+packages, aliases and conditions all correct). The `XLOC` lock 100 on the cell
+door is by design: Oblivion NPCs ignore locks when pathing.
+
+Vanilla: 1,705 of 1,722 Skyrim.esm teleport-door REFRs (99.0%) carry XNDP, and
+1,705 of the file's 1,706 XNDP records are teleport doors. Layout (xEdit
+`wbStruct(XNDP, 'Navmesh Door Link')`): Navmesh FormID u32 + Triangle s16 + 2
+unused bytes (uninitialised in vanilla; write zero) = 8 bytes, written LAST,
+immediately before `DATA`, after XLOC/XOWN/XLRT/XSCL. `pgrd_to_navm` computes
+`door_tris` for the NVNM and exports `meta['door_xndp']`; it is merged after
+`build_edge_links` (triangle indices are final only then) and before any REFR is
+converted, and `convert_worker.init_worker` replays it into pool children. Result
+on Oblivion: 4,135 of 4,397 teleport doors; the 262 without are cells that
+produced no door triangle (the XNDP count equals the NAVI door-link count, 6,247).
+The navmesh checker used to validate only navmesh to door, which is how this gap
+survived; its `DOOR_NO_XNDP` check reported exactly 17 on vanilla Skyrim.esm (that
+checker file no longer exists in the tree).
+
+## <a id="exterior-cell-names"></a>Exterior cell names come from XLCN, never FULL
+
+**Code:** `tes5_import/base/locations.py` (`_worldspace_name`, `_is_dev_name`)
+
+Skyrim reads an exterior cell's displayed name (load-door prompt, discovery popup)
+off its XLCN Location: 0 of 16,978 vanilla exterior cells carry a FULL. A cell with
+no XLCN shows "Wilderness" (in a child worldspace, that worldspace's FULL), so raw
+Oblivion cells inherited "Wilderness" and Bethesda's dev name "TestEndGame" for
+`AnvilCastleCourtyardWorld`. The converter makes one LCTN (EDID + FULL only, like
+vanilla `TamrielLocation`) per named worldspace; marker LCTNs take that location as
+`PNAM` parent and record their LCEC grid squares; `convert_CELL` sets XLCN to the
+grid location when a marker covers the square, else the worldspace location. The
+worldspace name is its WRLD FULL; a missing or dev name (unspaced CamelCase
+`Test*`/`Zz*`; real spaced names like "Test of Resolve" stay) falls back to the
+sole map marker inside it (no hardcoded table), and Tamriel (no FULL, 422 markers)
+is the one special case, "Cyrodiil". A comparison of `get_formid()` output with a
+raw TES4 FormID constant never matches (the load-order offset is already applied):
+mask with `& 0x00FFFFFF`, and reproduce world logic with
+`set_formid_index_offset(1)`.
+
+## <a id="land-layers-door-flags"></a>LAND texture layers and DOOR flags
+
+**Code:** `tes5_import/record_types/world.py` (LAND layer run),
+`tes5_import/record_types/items.py` (`convert_DOOR`)
+
+- `BTXT` and `ATXT` are 8 bytes: FormID(4), Quadrant(1), pad, then pad(2) for BTXT
+  or Layer(2) for ATXT; the `VTXT` run is 8-byte entries (pos u16, pad u16,
+  opacity f32). `VTEX` does not exist in TES5, and `VNML`/`VHGT`/`VCLR` pass
+  through.
+- Layers are renumbered 0, 1, 2... per quadrant, never the TES4 values. A
+  zero-texture ALPHA layer is skipped (it renders artifacts). Alpha layers with the
+  same texture in a quadrant merge by max opacity per vertex, and each quadrant
+  keeps its 6 highest-coverage layers (sum of opacities), written in that order.
+- DOOR `FNAM`: TES4 bit 0 ("Oblivion gate") has no TES5 equivalent and is cleared;
+  bits 1-3 (Automatic, Hidden, Minimal Use) map straight across. A door without
+  `XTEL` legitimately shows Open/Close.
+- Root-NiNode rotation, LTEX/TXST landscape specular and exterior block grouping
+  are covered in [asset_convert_nif.md](asset_convert_nif.md),
+  [asset_convert_texture.md](asset_convert_texture.md) and
+  [tes5_import_override.md](tes5_import_override.md).
 
 ## <a id="nested-interiors-inherit-location"></a>Nested interiors inherit a location
 

@@ -355,6 +355,21 @@ Both layouts are now scanned. The tile count is only a relative weight used to
 rank worldspaces, so every file under a worldspace's directory counts,
 `blocks` and `normals` subfolders included.
 
+The LOD phase never guesses the worldspace from the plugin filename (Oblivion.esm
+is `TES4Tamriel`, Nehrim.esm `NehrimWorldspace`, not `Nehrim`): guessing produced
+"Worldspace 'Nehrim' not found" and collected every worldspace's LAND. The shipped
+set mirrors vanilla (Nehrim shipped LOD for ONLY `NehrimWorldspace`; vanilla
+Oblivion for 17 worldspaces: Tamriel, the Oblivion and Daedric realms, Kvatch, the
+Bruma gate, Pale Pass...) and naturally excludes child worldspaces (Anvil, Bravil,
+the IC districts), whose few overlay LAND records render in the parent's LOD grid.
+`generate_lod` looks worldspaces up by EditorID in the CONVERTED ESM, where the
+importer has renamed `Tamriel` to `TES4Tamriel` so it cannot override Skyrim's
+Tamriel, while the scan reads EDIDs from the raw export; `shipped_lod_worldspaces`
+applies the same rename before returning or the lookup misses.
+`detect_terrain_worldspaces(esm, include_children=False)` (LAND-owning ROOT
+worldspaces, WNAM-parented children excluded) is only the fallback when no shipped
+LOD assets exist; a configured `worldspaceEditorID` wins over both.
+
 
 ## <a id="write-lodgen-input-master-modes"></a>`write_lodgen_input`: master modes and `only_cells`
 

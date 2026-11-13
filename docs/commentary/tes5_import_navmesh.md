@@ -1835,6 +1835,22 @@ exterior cells regenerate automatically.
 
 <a id="node-discs-fill-junction-notches"></a>**Pathgrid NODES grow radial discs to fill the corner notches** (`corridor._disc_march_rows`, `_disc_strip`). Ribbons grow only PERPENDICULAR to their own edge, so where two edges meet at an angle the outer corner is a notch no ribbon reaches -- a right-angle junction leaves a square bite out of the mesh. Marching outward on `RIBBON_GROW_DISC_RAYS` evenly-spaced bearings under the same stop rules as a rail, then closing the ray ends into a polygon, fills exactly that corner; it joins the union like any other strip.
 
+<a id="slab-floor-is-max-climb"></a>**The wall slab starts at `MAX_CLIMB`, not below it.** The width-grow wall
+test counts ANY collision in the slab `[floor + RIBBON_GROW_SLAB_Z_BOTTOM,
+floor + AGENT_HEIGHT]` as a wall, and a wall overrides the soft floor and
+restarts the march from 0. With the slab floor at 12 (below `MAX_CLIMB` = 34), a
+17-20u curb whose top is within one climb registered as a wall on both sides and
+pinched the grown half-width to 0.0 at the middle stations (edge (5,6): 113, 169,
+0, 0, 116), splitting the ribbon union into two lobes: Anvil's main-gate door
+(AnvilExterior07, one cell north of AnvilMainGate) sat on a 21-triangle island.
+`RIBBON_GROW_SLAB_Z_BOTTOM = MAX_CLIMB` (`params.py`, passed to the native march
+through `_native_params()`, also used by the door-bridge wall test). A real wall
+extends far above `MAX_CLIMB` and is still caught. Measured: AnvilExterior07 3 -> 2
+components, coverage 97.83% -> 99.46%; AnvilMainGate 97.99% -> 99.23%; interiors
+unchanged. Diagnose a split with `tools/navmesh/coverage.py --cell <EDID>`
+(MISSING = ribbon-union ground lost); a rebuild harness must pass the exterior
+grid origin or the cell clip discards everything.
+
 <a id="slab-test-is-a-2d-sat"></a>**The slab test is a separating-axis check in the slab's own frame** (`_tri_hits_slab`). The slab is an oriented box centered at (cx, cy): extent `half_w` along the edge-tangent (~actor width), `depth` along the march direction (thin), full Z span. The triangle's vertices are projected into that frame (tangent = X', march = Y') and tested against the axis-aligned rectangle, gated first by a cheap Z overlap.
 
 ## Door footprints (`corridor_doors.py`)

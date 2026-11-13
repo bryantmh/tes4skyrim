@@ -2259,6 +2259,28 @@ wanting to cast and the actor stands there. Ours holds both hands' readiness
 over the whole `DefaultState` (`CombatIdle_MG`) — ready whenever not
 attacking/casting/staggering/blocking/swimming, each a sibling state.
 
+**Engine side of the handshake (measured live 2026-08-26, GOG 1.6.659 RVAs):**
+the AI calls `ActorMagicCaster` slot 3 (`0x563030`): `CheckCast` then `SetWantCast`
+(`0x641e30`, which only writes the graph variable `bWantCastLeft`), puts the
+caster in state 1 and RETURNS. State 1 to 2 happens ONLY in
+`LeftHandSpellCastHandler::executeHandler` (`0x75d950`): `GetMagicCaster(0)`, and
+if the state is 1 it runs `0x571820` and slot 4 (`0x5630e0`), which calls
+`PerformAction(DefaultObject 45 = ActionLeftAttack)` and walks the IDLE tree to
+the ENAM `Spell_FireForget_LH`. The exe has no literal for any `Spell_*` or
+`BeginCast*` event; the only cast tag it knows by name is `MLh_SpellFire_Event`.
+The event-to-handler binding is a per-actor `BSResponse<BSFixedStringCI, Actor>`
+map at `MiddleHighProcess+0xF8` (see `tools/live/anim_event_handlers.py`); for the
+scamp `BeginCastLeft` binds to `LeftHandSpellCastHandler`.
+
+The deadlock seen live: caster state 1, `bWantCastLeft=1`, `bMLh_Ready=1`,
+`IsCasting=0` for minutes. `BeginCast_EEM` was `SEND_ON_FALSE_TO_TRUE` and the
+engine never rewrites the flag while it waits, so no second edge fired
+("scamps only cast when the graph is hit just right"). The fix is `SEND_ON_TRUE`
+(the handler is a no-op outside state 1 and `IsCasting=1` silences it);
+unconfirmed in game. Never `hook` the handlers (ids 42819/42820): the game
+crashed on first firing, and `sae <event>` does not reach them (they fire on
+graph-raised events only).
+
 **What ships (2026-08-22):**
 
 - `hkx_behavior.py`: ONE `Mag_FF_In/Loop/Out` chain per caster graph

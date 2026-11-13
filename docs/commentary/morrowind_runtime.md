@@ -114,6 +114,15 @@ tes_runtime\morrowind\store_test.exe "export\Tamriel Rebuilt 25.08.12"   # one e
 tes_runtime\morrowind\store_test.exe --sidecar <staged root>             # the deployed layout
 ```
 
+`script_test.exe` and `filter_test.exe` call `LoadScriptTables("testdata\\scripts\\")`
+with a RELATIVE path, so they must run with the working directory
+`tes_runtime/morrowind` (`python tools/validate/safe_run.py -c 'cd tes_runtime/morrowind && ./script_test.exe'`).
+From the repo root they load no tables and print a wall of misleading
+failures (`'to': Unknown variable`, `'== ': Unexpected special token`, every
+faction/global case). Both print `all passed` and still exit non-zero (255):
+judge by the last line. `session_test.exe` is a manual tool taking
+`<sidecar root> <actor id>`, not a suite.
+
 Measured, with every count agreeing with an independent Python read of the
 source ESM:
 
@@ -487,7 +496,7 @@ edges resample, along the one axis they run.
 `tes5_import/dialogue/morrowind_sidecar.py`
 
 Routing is **one bit test on the FormID's load-order index byte**, the rule
-this project already uses everywhere (`project_master_index_routing`). At load
+this project already uses everywhere ([tes5_import_override.md](tes5_import_override.md)). At load
 the DLL asks the engine for each converted plugin's [current
 index](#load-order) and sets that bit; a plugin the user has not installed
 never sets one.
@@ -502,7 +511,7 @@ OpenMorrowindDialogue(formId);           return true
 The first test rejects every vanilla Skyrim NPC — and every Oblivion-converted
 one — before any map is touched, which is what keeps the hook off the hot path
 for content this runtime has nothing to do with. 🛑 Never route by EditorID or
-file name (`feedback_never_classify_by_filename`).
+file name.
 
 ### <a id="load-order"></a>🛑 The index byte in the sidecar is NOT the runtime one
 
@@ -512,7 +521,7 @@ load order gives it `0x22`.** An NPC the log called `22C553BA` is stored in
 fell through to vanilla, and — because a converted Morrowind NPC has no Skyrim
 dialogue either — activating one did nothing at all.
 
-This is `project_master_index_routing` again: **a raw FormID is meaningless
+This is the master-index rule again: **a raw FormID is meaningless
 across plugins.** The fix has two halves:
 
 - `NPC__index.txt` is keyed by the **local** id (`formId & 0x00FFFFFF`); the stored

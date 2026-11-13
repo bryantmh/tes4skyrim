@@ -95,6 +95,36 @@ The MASTERS' scripts are indexed alongside this plugin's (keyed on the
 plugin's actor can carry one of its master's scripts, and missing it means the
 relocation never happens, so every reason above silently applies.
 
+## <a id="qust-vmad-strict-parse"></a>The QUST VMAD is parsed strictly, and a script property bound to a base must be typed to the base
+
+A QUST VMAD is `Version, ObjectFormat, Scripts, ScriptFragmentsQuest, Aliases`,
+the last an array with an S16 count prefix (xEdit `wbVMADFragmentedQUST`).
+`build_vmad_quest_fragments` (`script_convert/pipeline.py`) must write that
+trailing count: the engine abandons a record's WHOLE script and alias binding if
+the buffer ends where it expects it. Vanilla `DBSideContract03`'s 643-byte VMAD
+parses 643/643 only once the trailing S16 is read;
+`test_vmad_quest_parses_to_exactly_its_length` demands every byte be consumed,
+because a truncated tail is invisible to every other check. When a record's
+scripts AND aliases are both empty at runtime but its fields look perfect,
+suspect a truncated or misparsed tail; the console `sqv <quest>` prints alias
+fill state and script variables directly.
+
+A property bound to a BASE record (NPC_/CREA) must be typed `ActorBase` (a base
+form is not an `Actor`, so an Actor-script-typed property is unbindable and
+aborts that script's whole init). `SetEssential X 0` on a base is therefore a
+direct `X.SetEssential(v)`; only genuine ACHR/ACRE/REFR args take the
+`(x as Actor).GetActorBase()` cast, and `converter.get_property_refs` coerces any
+actor-base-bound property typed Actor/ObjectReference/TES4_* to `ActorBase`
+(141 scripts). Item bases (ARMO/MISC) typed `ObjectReference` are equally
+unbindable but the right type depends on body usage (inventory `Form` vs placed
+reference), so they are NOT coerced; a base ITEM can carry its own object script,
+so an item-script-typed property on an item base is valid (59 vanilla cases).
+Further quest-target facts: vanilla objective targets are UNCONDITIONAL
+(`_target_live_at_stage()` resolves Oblivion's GetStage gates at build time),
+reference aliases carry `VTCK` (2,687 of 2,687 vanilla forced-ref aliases) and
+FNAM `0x0292`. The quest-alias-fill hunt's final cause was the top-level group
+order, see `ck_reference_init_hang.md#qust-after-cell-wrld-dial`.
+
 ## Quest EditorIDs that clash with Skyrim
 <a id="quest-editorids-that-clash-with-skyrim"></a>
 
@@ -1527,8 +1557,8 @@ be "fixed". Split out of the audit so they are not read as stale.
 * **`Activate X 1` dropping the trailing `1`** (`SE03AScript`). TES4's flag
   means "activate even if blocked"; the handler maps run-flag 1 to
   `Activate(x)` (full processing) and everything else to `Activate(x, true)`,
-  which is what stops the OnActivate storm recorded in
-  `project_activate_conversion`.
+  which is what stops the OnActivate storm described in
+  [script_convert.md](script_convert.md) (Activate conversions).
 * **`PickIdle` → `Debug.SendAnimationEvent(ref, "IdleForceDefaultState")`**
   (`SE03AScript`). TES4 `PickIdle` (opcode `0x1064`, 0 params) forces an idle
   re-selection; the default-state reset is the standard Skyrim idiom.

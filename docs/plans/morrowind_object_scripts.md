@@ -331,7 +331,7 @@ mistake; it has been harmless only because dialogue speakers are placed once.
 The key becomes the placement's FormID, which is what the co-save already
 contracts for. 🛑 **Store it masked to the low 24 bits with its plugin name**,
 never the raw id — the index byte is the converting order, not the player's
-(`project_sidecar_formids_need_runtime_index`).
+([morrowind_runtime.md](../commentary/morrowind_runtime.md#load-order)).
 
 ### 2. A tick
 

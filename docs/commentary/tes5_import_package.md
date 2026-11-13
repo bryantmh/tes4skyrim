@@ -208,7 +208,7 @@ every field we need (`PKDT.Flags/Type/Format`, `PSDT.*`, `PLDT.Type/Location/Rad
 | 0 Find | 741 | `Activate` / `ForceGreet` / `Sandbox` | **partial** — see §2.1, §3.2 |
 | 4 Sleep | 725 | `Sleep` | **exact** — dedicated tree w/ bed-find + LockDoors |
 | 1 Follow | 208 | `Follow` | **exact** |
-| 9 Ambush | 80 | `HoldPosition` + Weapon Drawn / No Combat Alert | **close** |
+| 9 Ambush | 80 | player target: `ForceGreet`; actor target: `Follow`; no target: `HoldPosition` + Weapon Drawn / No Combat Alert | **close** |
 | **2 Escort** | **75** | `TES4EscortWhenNear` (converter-owned root) | **exact** ← *fgc01rats*; see [§ escort restarts](#escort-restarts-when-the-target-returns) |
 | 7 Accompany | 40 | `Follow` w/ `Accompany?=1` | **exact** — Skyrim models Accompany as a Follow input |
 | 10 FleeNotCombat | 11 | `FleeTo` | **exact** |
@@ -257,10 +257,12 @@ the *activation logic* (`GetStage`, `GetDayOfWeek`, disposition checks).
    the destination — the parts a player observes — are exact; the "locate this
    object" tail is dropped.
 
-3. **Ambush (80)** — Skyrim has no Ambush procedure. `HoldPosition` + `Weapon
-   Drawn` + `No Combat Alert` reproduces "wait hidden, weapon out, don't call for
-   help," which is behaviorally most of it, but the trigger-on-detection nuance is
-   the combat AI's, not the package's.
+3. **Ambush (80)** — Skyrim has no Ambush procedure. A targetless Ambush is
+   `HoldPosition` + `Weapon Drawn` + `No Combat Alert` ("wait hidden, weapon out,
+   don't call for help"); the trigger-on-detection nuance is the combat AI's, not
+   the package's. 64 of the 80 target the PLAYER and are scripted approaches, not
+   attacks: those convert to ForceGreet (an actor target gets Follow)
+   ([Ambush is an approach](../reference/package_ai_contracts.md#ambush-is-an-approach-not-an-attack)).
 
 4. **PKDT flag bits without TES5 equivalents.** TES4 "Once per day" → TES5 `0x400`
    (same concept, different bit). TES4 "Always run" → `PreferredSpeed=Run` +
@@ -366,7 +368,10 @@ tutorial rats never turned hostile no matter how long the player waited.
   *Target to Escort*, `PLDT` → *Destination*.
 - **FleeNotCombat (10)** → `FleeTo`. `PLDT` → *Flee To Location*, `PTDT` →
   *Flee From Target*.
-- **Ambush (9)** → `HoldPosition` at `PLDT` + `Weapon Drawn` + `No Combat Alert`.
+- **Ambush (9)** → at the PLAYER: `ForceGreet` (`_pick_ambush`), weapon and sneak
+  flags suppressed; at another actor: `Follow` to `PTDT.Count`; targetless:
+  `HoldPosition` at `PLDT` + `Weapon Drawn` + `No Combat
+  Alert` ([contract](../reference/package_ai_contracts.md#ambush-is-an-approach-not-an-attack)).
 - **CastMagic (11)** → `UseMagicRepeat`.
 
 ### 3.3 Reference targets → aliases
@@ -738,6 +743,18 @@ UseItemAt Sandbox 662 → 656   Activate 87        Sit 0 → 6        SitTarget 
     into the live package left the fighter standing (type 4/5 are dead in the
     engine); the mine's navmesh is one component (`tools/navmesh/reach.py`).
     Oblivion: 6 hunts → 46 seek links;
+  * Why a chain and not one in-cell Sandbox (FGC06, measured live): a SPHERICAL
+    Sandbox location is truncated to a cylinder (`fSandboxCylinderBottom` = -100
+    in Skyrim.esm, top 150 by exe default), so a wanderer never descends 350 units
+    to targets on another level. A type-1 "in cell" location has no centre and no
+    cylinder (vanilla `MQ202SandboxInRatway`; all 448 vanilla in-cell PLDTs are
+    INTERIORS, never hand it an exterior cell), but it still wanders only ~300
+    units locally, hence the Follow chain with the in-cell Sandbox as tail. Every
+    FormID written into a PLDT/PTDA, the cell included, goes through
+    `remap_formid` (`PackContext.search_ground`): the raw cell id resolved to
+    nothing and the fighters stood still. For UseWeapon, slot 1 is the
+    weapon-type selector and "Target to Attack" is slot 4; the console has no
+    `AddScriptPackage`, `resetai` restarts a package.
   * item base/type (WEAP/INGR/MISC/ALCH/BOOK/… incl. `SEBruscusDannusFind*`,
     `HeroLoot`, the goblins' totem staffs) → **Acquire** with the same
     criteria and `PTDT.Count` as num-to-acquire (vanilla

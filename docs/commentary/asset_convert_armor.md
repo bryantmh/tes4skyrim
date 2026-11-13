@@ -38,6 +38,14 @@ Body(32) + ForeArms(34) + Calves(38), IronBootsAA Feet(37) + Calves(38),
 IronGlovesAA Hands(33) + ForeArms(34), IronHelmetAA Hair(31) + Ears(43).
 Converted lower-body pieces take LowerBody(49) + Calves(38).
 
+Headgear also claims LongHair(41), unlike vanilla helmets: slot 31 alone does not
+fully hide hair, it swaps the hair headpart for its "hairline" extra part, whose
+meshes carry partitions [141, 131]. Vanilla helmets are modelled around that
+hairline but tight Oblivion helms are not (crown hidden, sides poke through the
+shell). Covering 41 suppresses the partition-141 geometry so all hair is hidden:
+`BIPED_SLOT_EXTRA` (ARMO) and `ARMA_BODY_COVERAGE_EXTRA` (ARMA), Hair-slot helm
+ARMA adds 41 + 43-Ears.
+
 When two worn addons claim one slot, the higher ARMA DNAM priority draws it
 (CK wiki `ArmorAddon`: naked body 0, torso 5, gloves over sleeves 10).
 Skyrim.esm: 111 body-armor ARMAs at 5 and 92 skins at 0, against 51 hand

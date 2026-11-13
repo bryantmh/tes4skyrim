@@ -143,6 +143,7 @@ game, see the `oblivion-dialog-system`, `skyrim-dialog-system`, and
 - **🔴 Voice prefix is EMPTY for master-owned topics in a dependent plugin (2026-08-05)** — cause of Morroblivion's Jiub intro being silent, and of 907 topics' worth of dead audio. `quest_edid_by_fid` was built from `by_type['QUST']` only — **this plugin's** quests. A dependent plugin routinely files topics under a quest that lives in a MASTER (907 of Morroblivion's 4,400 DIALs name an Oblivion.esm quest: `Generic 0x010602`, `bed 0x19360a`, …), and the engine builds the voice filename from that quest's EditorID exactly the same way. With no entry the prefix came out **empty**, so every one of those lines was written as `_<topic>_<fid8>_<n>.fuz` — a leading-underscore name the engine never asks for. 234 of the 389 converted voice files (60%) had it. Fix: fall back to `fid_to_edid` for any `Quest[0]` this plugin doesn't own. **`fid_to_edid` is keyed by the RAW source FormID** while `get_formid` has already added the load-order `offset` to the high byte, so the fallback must un-shift (`((high - offset) & 0xFF) << 24 | low24`) before looking up — a master quest is `0x00010602` in Oblivion's own export but `0x01010602` after remap. Diagnosis method that found it: `tools/dialog/say_topic_ab.py --explain` (added in the same pass) cleared every CTDA as passing, which ruled out conditions and left the filename; the voicemap then proved the importer was right and the file on disk was wrong.
   - **Corollary — importer changes invalidate the voice OUTPUT, not just the ESM.** The importer writes `<esm>.voicemap.txt`, but the files are renamed by the SOUND stage. Any fix that changes quest ownership, topic EDIDs, or VTYP assignment silently leaves the previous run's filenames in place until `--sounds-only` re-runs; `prune_stale_voice_files` only cleans folders that run actually writes into. Jiub's `.fuz` files were dated 2026-07-27 against a voicemap regenerated the same day as the fix — correct map, stale audio. **After any dialogue/voice change, run `--import-only` AND `--sounds-only`, then `tools/dialog/voice_audit.py`.**
 - **Conversion stats**: 3817 DIAL topics (851 barks, 2966 conversation), 19278 INFOs, 954 DLBR branches, 1 DLVW view, 2908 quest-owned conversation topics, 27 fallback greetings
+- **A topic owned by a MASTER's quest needs the master's quest EditorID in its voice prefix.** The engine builds the voice path from the owning QUEST's EditorID plus the topic's (`voice_file_prefix`). `quest_edid_by_fid` was built from this plugin's `by_type['QUST']` only, but a dependent plugin routinely files topics under a master quest (907 of Morroblivion's 4,400 DIALs name an Oblivion.esm quest, e.g. `Generic 0x010602`, `bed 0x19360a`). No entry gave prefix `''`, so the file was written `_<topic>_<fid8>_<n>.fuz` (234 of 389 converted voice files, 60%), a name the engine never requests: no audio, no subtitle. Fix: fall back to `fid_to_edid` for any `Quest[0]` the plugin does not own. Key-space trap: `fid_to_edid` is keyed by the RAW source FormID while `get_formid` has already added the load-order offset to the high byte, so un-shift first (a master quest is `0x00010602` in Oblivion's export, `0x01010602` after remap). The importer only writes `<esm>.voicemap.txt`; the SOUND stage does the renaming, so any change to quest ownership, topic EDIDs or VTYP assignment needs `--import-only` AND `--sounds-only`, then `tools/dialog/voice_audit.py` (`_prune_stale_voice_files` only cleans folders the run writes into). `tools/dialog/say_topic_ab.py --explain` prints per-condition PASS/FAIL on both engines, which ruled out conditions and pointed at the filename.
 - **Dialog filtering stats**: 18,761 INFOs with conditions, 20 conditionless (down from 958 before voice type fallback fix). 17,784 INFOs with GetIsVoiceType. 3,704 GetInCell CTDAs (preserved for location gating). 3,169 DLBR branches (555 Type 1 chain topics excluded). 9,365 INFOs quest-gated with GetQuestRunning (non-SGE QSTI quests).
 - **Quest running gating (QSTI restoration, 2026-07 design)**: In Oblivion, each INFO only shows while its OWN `QSTI.Quest` is running. Single-quest topics get this natively via quest ownership. For shared topics (owned by TES4DialogueGeneric), `_build_one_topic()` injects `GetQuestRunning(info's own QSTI.Quest)==1.0` as the FIRST CTDA on each INFO whose quest is non-SGE and ≠ the topic owner. **Gate by the INFO's OWN quest, never the DIAL's Quest[0]** — gating all of GREETING's children by one arbitrary Quest[0] blocks ALL greetings (a hard-won earlier lesson). SGE quests are exempt (running from new game via the .seq file).
 - **AddTopic unlock system (2026-07)**: Oblivion's CENTRAL visibility mechanic — a topic only appears once ADDED via an INFO's Add-Topics data list (export: `AddTopic[i]=` FormIDs, 1044 INFOs), an `AddTopic X` result-script command, a quest-stage script, or automatically when a spoken line's text mentions the topic's FULL name (Oblivion highlights + auto-adds mentioned names). Skyrim has no AddTopic → re-expressed via `tes5_import/dialogue/unlocks.py`: one GLOB `TES4Unlock_<topic>` per gated topic (206); every INFO of a gated topic gets `GetGlobalValue(GLOB)==1` (func 74, same both games); every reveal event sets the global from a Papyrus fragment (INFO fragments fire OnEnd; reveal-only INFOs get a generated TIF fragment with just the SetValue call). The plan is built identically by the importer (GLOBs, conditions, VMAD property bindings) and script_convert/pipeline (fragment .psc bodies) — keys are low-24 FormIDs so it's load-order-offset independent. Gating rules (each violation caused a real in-game bug):
@@ -309,7 +310,7 @@ That is a conversation opener, not a bark.
 
 ### ⚠ A previous fix moved the wrong channel
 
-Memory (`project_hello_channel_split`, 2026-07-19) records a fix setting
+An earlier fix set
 `_EDID_SUBTYPE['HELLO'] = (88, b'IDLE', 7)`. **That mapping is not in the
 current code** — `git log -S` finds no trace of it, and both entries read
 `HELO` today. It was reverted or never landed.
@@ -818,8 +819,8 @@ logged, not silent.
 the quest VMAD from it, `script_convert.pipeline` generates the matching
 `.psc` from it. **Any divergence leaves VMAD properties unbound** — the
 generated script guards every property against `None` and disables that chain
-rather than aborting the whole poll function (see
-`project_unbound_vmad_property_aborts`), but it cannot repair the binding.
+rather than aborting the whole poll function (an unbound property aborts the
+fragment on first use), but it cannot repair the binding.
 Both sides gate on masterless plugins only.
 
 Verify the contract holds after any change:
@@ -1775,6 +1776,40 @@ dialogue path itself.
 the "reveals unlock globals?" and "opens a service menu?" questions that
 `info_needs_fragment` otherwise looks up in its maps, so they are handed over as
 single-entry maps rather than recomputed.
+
+## <a id="barter-training-services"></a>Barter and training services
+
+**Code:** `tes5_import/record_types/actor_common.py` (`create_trainer_records`,
+`create_vendor_factions`), `tes5_import/record_types/common.py` (`VENDOR_KYWD`),
+`script_convert/static_scripts/TES4_Show*Menu.psc`
+
+Engine contracts, decoded from Skyrim.esm:
+
+- There is NO Barter DIAL subtype, and vanilla never uses the Training subtype
+  (zero TRAI SNAMs). Both menus open from Papyrus fragments:
+  `akSpeaker.ShowBarterMenu()` and `Game.ShowTrainingMenu(trainer)`.
+- The training menu reads skill and cap from the trainer's **CLAS** (`DATA`
+  Teaches/MaxTrainingLevel). Oblivion keeps them per NPC in **AIDT** (Teaches at
+  byte 8, MaxTraining at 9) and 92 of 114 vanilla trainers disagree with their
+  class (classes are mostly 0/0). Trainers therefore get a per-NPC CLAS clone
+  (`create_trainer_records`) plus `TES4JobTrainerFaction` membership.
+- Barter filters through the vendor faction's `VEND` keyword FLST. Skyrim vendors
+  trade only items whose keywords appear in that list, so every sellable item
+  converter emits `KSIZ/KWDA` from `VENDOR_KYWD`; the service-bit to FLST table
+  must stay in sync with what items emit, or a vendor loses nearly its whole
+  inventory.
+- There is no TES5 `ACBS.BarterGold`: chest-less vendors trade from inventory, so
+  barter gold becomes carried `Gold001`, kept out of the DOFT outfit.
+
+Oblivion's Service-type (5) topics `Barter`/`Training` hold the voiced
+menu-opening lines. They convert to Custom player topics with synthesized prompts,
+`GetInFaction` gates, shared static fragment scripts and a synthetic catch-all
+INFO; fence lines with result scripts get the menu call appended to their
+`TES4_TIF__` fragment instead. The Barter topic is owned by `TES4DialogueGeneric`,
+so the engine looks up `tes4dialog_barter_<fid>_N` voice files: whenever dialogue
+quest OWNERSHIP changes, the voice organization step must be re-run.
+`papyrus.exe` has a compile cache that skips `.pex` generation silently (exit 0,
+no output file); pass `-nocache` when compiling single files.
 
 ## <a id="info-enam-reset-timer"></a>INFO ENAM: the re-play lockout timer
 

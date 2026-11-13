@@ -174,6 +174,37 @@ The injected gates arrive as packed bytes, so `_info_conditions` unpacks them
 into (CTDA, CIS2) pairs and orders the combined list once. The list must not
 end on an Or flag; both builders clear a trailing one.
 
+## <a id="script-variable-conditions"></a>GetQuestVariable (79) and GetScriptVariable (53) become 629 and 630
+
+**Code:** `tes5_import/base/conditions.py` (`GET_VM_QUEST_VARIABLE`),
+`tes5_import/packages/aliases.py` (`build_script_var_map`)
+
+TES5 still LISTS functions 53 and 79, but the legacy VM behind them is gone:
+vanilla Skyrim uses them zero times and a CTDA emitted as-is can never pass.
+Function 79 is `GetQuestVariable(param1 = QUST FormID, param2 = script-local
+variable INDEX)`, and 53 is its per-reference twin `GetScriptVariable(ref,
+index)`. Param2 is an SLSD index, not a name: the name lives only in the quest's
+SCPT `Variable[i].Index/Name` table. The converter rewrites them to
+`GetVMQuestVariable` (629, param1 = quest) and `GetVMScriptVariable` (630, param1
+= ref) and writes the variable NAME in a `CIS2` subrecord right after the CTDA as
+`::<name>_var` (mangled with `_safe_property_name` to match converter renames),
+because Skyrim's param2 is a runtime string pointer. The index to name table comes
+from `build_script_var_map`, which keys on LOW-24 FormIDs (param1 is a raw TES4
+FormID with no load-order offset) and must include `master_export` or the name
+lookup misses.
+
+The lookup only works when the compiled `.pex` carries the CONDITIONAL user flag
+on both the script object and the auto-property's backing variable, so
+`script_convert` emits `Conditional` on the `ScriptName` line and on value-typed
+Auto properties (without it the CK warns "Unable to find variable ::X_var on any
+VM scripts"; Owyn's Battle-Raiment check and Kud-Ei's recommendation greetings
+died this way).
+
+Do not diagnose 79 as broken: it appearing in the TES4 EXPORT is expected (the
+export is a pure dump), and the check for a working conversion is a non-zero
+`output/Oblivion.esm/Oblivion.esm` byte count of `::convCount_var`. Only a
+missing `CIS2` or missing variable NAME is a real defect.
+
 ## <a id="getincell-prefix-family"></a>GetInCell names a prefix family, not a cell
 
 **Code:** `tes5_import/base/cell_family.py`, `tes5_import/base/locations.py`

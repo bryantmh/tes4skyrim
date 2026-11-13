@@ -21,8 +21,8 @@ nothing here is patched or redistributed.
 ## Is it encrypted?
 <a id="encrypted"></a>
 
-**No.** Unlike `SkyrimSE.exe` (Steam DRM, `.text` entropy 8.00 — see
-[project_skyrimse_exe_drm_packed]), CreationKit.exe is a plain unpacked binary:
+**No.** Unlike `SkyrimSE.exe` (Steam DRM, `.text` entropy 8.00),
+CreationKit.exe is a plain unpacked binary:
 
 | Section | VA | VSize | Entropy |
 |---|---|---|---|
@@ -344,7 +344,7 @@ The CK stitches cross-cell portals with `fCellPortalDistance = 4.0`,
 checking `navm_edge_links.py` against these — particularly the very loose 64u
 Z tolerance, which suggests neighbouring cells' terrain meshes are *not*
 expected to agree in Z, and we may be rejecting valid portals with a tighter
-gate. (See [project_navmesh_edge_links] — we found 0/5825 exterior navmeshes
+gate. (See the edge-link census in [tes5_import_navmesh.md](tes5_import_navmesh.md) — we found 0/5825 exterior navmeshes
 had edge links; tolerance is a plausible contributor.)
 
 ### 9. `fMinIslandArea = 150.0` vs our `MIN_ISLAND_TRIS = 5` — ⚠️ REVERTED

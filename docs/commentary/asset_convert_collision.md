@@ -939,6 +939,23 @@ local space (both `center` fields are already in Skyrim Havok units by then).
 Frames are axis-aligned — twist = X, plane = Y, motor = Z — the orthonormal
 basis the 2010 layout requires, since a zero motor ships a singular basis.
 
+Dismemberment on death is not a body-part-data flag: a census of all 35 vanilla
+Skyrim BPTD records finds ZERO with BPND `Severable` (byte 4 bit 0) or
+`Explodable` (bit 3) set (the Draugr head's `0x32` is IK Data / Is Head /
+Headtracking with a 50 degree tracking angle). Oblivion drops a constraint-less
+`bhkRigidBody` as an independent body on death (how its skeleton sheds a head);
+Skyrim needs a connected constraint island or the body never collapses, which is
+why every orphan gets the joint above. Havok units are 0.1 of game units while node
+`translation` is not scaled, so any pivot mapped between body frames after
+`convert_all_collisions` mixes the two spaces (an unscaled mapping shipped
+`pivot_b` 240x too large). Check a synthesized joint in WORLD space: `pivot_a`
+through the child node's world transform and `pivot_b` through the parent's must
+coincide; authored joints show large apparent errors under the same check and
+must not be "fixed". A `bhkBreakableConstraint` wrapper (threshold 25.0) and a
+nearest-body re-anchor of over-long joints were tried; the re-anchor gave no
+in-game gain and crashed the goblin and grummite builds (`BrokenProcessPool`), and
+neither exists in the tree now.
+
 ## <a id="nested-and-multiple-collision"></a>Nested and multiple collision
 
 **Code:** `asset_convert/collision/collision.py` (`collision_owner`,

@@ -2011,6 +2011,18 @@ The export writes the actor's `Hello` onto each of its PACKs as
 `MorrowindHello`; a PACK without that field is not Morrowind's and keeps the
 default.
 
+#### The patch masters Morrowind_ob.esm
+
+So barks can name Morroblivion's factions, classes and actors, the compat patch
+lists `Morrowind_ob.esm` as a master: 4,495 bark lines kept, 18 dropped (an
+unnameable audience drops the LINE). The patch still CREATES its own
+VTYPs/origin/vendor records (`is_support_root`: adopt what a master supplies,
+create what none does). 419 GENERATED patch records (OTFT/SNDR/PROJ/1stPerson
+STAT) changed id when the master was added, because `derive_formid` keys carry
+the load-order byte. Gap ids must be in `ctx.taken` or a bark collides. A silent
+ambient bark with correct records: check the package flags and the origin gate
+first.
+
 ### <a id="which-sounds-a-plugin-ships"></a>Which sounds a plugin ships
 
 `Data Files\Sound` is SHARED: Morrowind, its expansions and every installed mod

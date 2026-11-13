@@ -238,6 +238,32 @@ retire mechanism — see the section above.
 The engine SKIPS inline ANAM data inputs when `PKCU.Template != 0`. See
 `GetPackageData` direct-vs-UNAM modes.
 
+## evp is a request, not a switch
+
+TES4 `evp` re-evaluated the package stack IMMEDIATELY; Skyrim's
+`Actor.EvaluatePackage()` only requests it, and the previous package "will
+continue to run for a random amount of time" (CK wiki). It also never restarts a
+package that re-wins arbitration (a dead Escort stays dead).
+
+Oblivion routinely stacks an OPEN-ENDED package just below a stage-gated one
+(`CGEmperorGreetPlayerInCell` `GetStage == 17` above `CGEmperorFollowRenote`
+`GetStage >= 16`), so when the stage fires the actor is mid-Follow until
+arbitration lands: a force-greeted actor turns, walks away for about a second,
+then turns back. Census: 49 open-ended packages (48 Oblivion, 1 Nehrim) sit below
+a higher-priority `GetStage == N` gate, so this is a class, not a CharacterGen
+quirk. `evp` emits a plain `{ref}.EvaluatePackage()` and the converter does not
+bound the open-ended packages' conditions: they convert as authored and are
+vanilla-legal.
+
+Verified NOT at fault: package conditions incl. operators, alias ALPC order (exact
+TES4 order), force-greet on vanilla's `ForceGreet` template `0x0003C1C4` with
+UNAM/PDTO and an ANAM layout matching vanilla's 125-instance variant,
+`MustComplete|OncePerDay`, deep alias stacks (vanilla goes to 10).
+
+`SetLookAt` does not survive a package switch (the new package installs its own
+headtracking), so the converter moves a look issued before an `evp` on the same
+actor to AFTER the evaluation.
+
 ## Overlapping package conditions are not the bug
 
 **When two packages' conditions OVERLAP (`== 18` vs `>= 15`), the overlap is not

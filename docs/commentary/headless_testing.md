@@ -153,6 +153,16 @@ Two faults hid behind the bootstrap:
   at the main menu returned `E_INTERNAL unknown`. The probe now runs on the
   main thread, and `MenuManager::IsMenuOpen("Main Menu")` decides first,
   because the player object already exists at the main menu.
+- **Never zero a block from the game's allocator.** MemAlloc (id 68115) returns
+  memory carrying allocator bookkeeping (the first qwords of a fresh 0x80 block
+  are heap pointers). A `memset(mem, 0, 0x80)` before `Script::ctor` in
+  `game_bridge/plugin/script_object.cpp` made the console executor compile the
+  script and do nothing, with every piece verified correct in isolation (vtable,
+  `[+0x1A]=0x13`, text at `+0x38`, compiler index 1, Script as arg2). A
+  constructor initializes every field it owns; zero only fields you own, after
+  construction. Found by running `resolve`/`readmem`/`call`/`hookstats`
+  primitives against the live process: console hook 0 hits vs Papyrus hook
+  23,916 proved the detour was fine and the commands never executed.
 
 Task faults are logged with code and module offset
 (`main thread: task faulted, code C0000005 at SkyrimSE.exe+0x...`) instead of

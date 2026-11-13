@@ -1347,7 +1347,7 @@ New (8 bytes): u32 Flags, u8 Type, bytes[3] Unused
 
 **PGRP Point (16 bytes):** f32 X, f32 Y, f32 Z, u8 ConnectionCount, bytes[3] Unused
 
-**PGRI Inter-Cell Connection (14 bytes):** u16 Point, bytes[2] Unused, f32 X, f32 Y, f32 Z
+**PGRI Inter-Cell Connection (16 bytes):** u16 Point, bytes[2] Unused, f32 X, f32 Y, f32 Z
 
 ---
 

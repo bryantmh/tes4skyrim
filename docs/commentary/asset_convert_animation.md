@@ -696,6 +696,20 @@ Every one was invisible to structural inspection **and to NifSkope, which render
 - Vanilla lays these files out in the mesh's OWN folder (`clutter\beehive\{behaviors,characters,characterassets}\`), not a `<stem>_behavior\` subfolder; ours nests them so two animated NIFs in one directory cannot collide on `Character01.hkx`. Both work — the paths inside the character file resolve relative to the project file's folder. Our project hkx is byte-identical to vanilla's (880 bytes).
 - Final step is `convert_hkx_to_amd64` on every file: SSE loads only 64-bit packfiles (verified pointer-size byte 8 on all 161×4 outputs).
 
+## <a id="cyclic-blend-no-ease"></a>BSCyclicBlendTransitionGenerator does not ease Direction changes
+
+`BSCyclicBlendTransitionGenerator::update` (1.6.1170 `0xb97260`) copies
+`fBlendParameter` (+0x78, bound to `Direction`) straight into the child blender's
+`blendParameter` (+0x4c) every frame unless frozen. Its `fTransitionDuration` and
+`BLEND_CURVE_SMOOTH` cross-blend run only after the `CyclicCrossBlend` event; no
+vanilla graph sends it, and the only engine sender (around `0x696720`) branches on
+an event state value, not on a direction change. The engine's `Direction` steps in
+hard 1/8s on a key change, so vanilla direction blends switch instantly too, and
+raising `fTransitionDuration` changes nothing (0.5 s measured: no effect in game).
+A strafe or direction snap is therefore not fixed by that generator; look at what
+differs between the directional clips, or the skeleton against the render camera.
+`DirectionDamped` exists as a graph variable but no vanilla graph binds it.
+
 ## Accum-bone bind pose leaks into every clip (user patches, 2026-08-30)
 <a id="accum-bind-pose-leak"></a>
 

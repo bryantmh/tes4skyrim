@@ -39,8 +39,14 @@
     actor where it can SEE the problem (e.g. entering the problem cell), so the mesh under a stall point proves
     nothing. On 11-09 I ignored this all day and chased slope/overhang theories with one-off scripts.
 19. (user, 11-12) Flaky = fix it, never "left unchanged". Pictures for the user = clickable links + cell names +
-    key + game track + target (route_full_pic.py takes a track file).
+    key + game track + target (tools/navmesh/route_pic.py --track; see the navmesh skill).
 20. (user, 11-09) Overnight/autonomous work is mine to finish: don't stop to wait on questions that are mine.
+    Before ending any turn, both instances run a batch; a "parked" case is never a stopping point.
+21. Keep the next 2-3 quests' cases drafted ahead, so a pass runs straight on (`--from` runs every later case).
+22. A run takes MINUTES (the whole Morrowind main quest < 10 min); `--timeout` is a hang cap, never an estimate.
+23. A new runner step a case needs to stand in for a player: just build it, don't ask. Never rig a case.
+24. docs/audits/headless_quest_runs.md records GAME bugs only (fixes with blast radius, open findings), added the
+    moment a case passes or a bug is found; case quirks go in the case header, harness notes in headless_testing.md.
 
 ## 🛑 BUG-FIX PROCESS (user, 2026-11-08 -- after weeks at ~4 Arktwend fails/run)
 1. Work failures by their RATE over all logged runs (temp/.../run_totals.py + the run ledger below).

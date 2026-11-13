@@ -98,8 +98,10 @@ reads garbage, producing symptoms indistinguishable from a conversion bug. The
 only struct offset assumed anywhere is the script text pointer at `+0x38`, read
 straight out of `Script::SetText`'s own store instruction.
 
-**Reference selection uses `prid`**, not a resolved `TESObjectREFR*`. Same end
-state, zero layout assumptions.
+**A command's target is passed with it** (`console --ref <formid>`): the bridge
+resolves it with `TESForm::LookupByID` and hands the form to the engine's dispatch
+as its target. A separate `prid` does not carry into the next command and fails
+silently ([engine_hooking.md](../docs/reference/engine_hooking.md)).
 
 **Every handler that touches game state is marshalled to the main thread** via
 `SKSETaskInterface`, and the pipe thread blocks on completion. Off-thread access

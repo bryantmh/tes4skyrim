@@ -75,6 +75,24 @@ Ids BELOW that belong to the master's own masters and are translated by NAME
 through this plugin's list — the two orders usually agree, but relying on
 that is the same unchecked assumption this function exists to remove.
 
+<a id="vmad-property-master-index"></a>**A VMAD object property copied from a master
+must have its index byte remapped through THIS plugin's MAST list by name.** A
+verbatim copy binds to an unrelated record in a different file, and logs no
+`cannot be bound` line because the id resolves to a real record. Measured on
+`ElsweyrPelletine.esp` (5 masters): `Faction ANQCORCorintheFaction` carried
+`020247E2`; `02` is Tamriel.esp there (a LAND), while the FACT of that local id
+lives in ElsweyrAnequina.esp at `03`. The property reads `None`,
+`GetCrimeGoldViolent()` aborts, and the converted `OnUpdate` re-arms
+`RegisterForSingleUpdate(0.5)` unconditionally, so six scripts spun at ~30 log
+lines/sec all session. Audit with `tools/validate/vmad_property_typecheck.py
+--cross-master` (Pelletine 33 of 167 properties, Oblivion.esm 44 of 27,336,
+Morrowind_ob.esm 13 of 54,143; it predicted the two ids the live log reported as
+`<nullptr form>`). Two checker traps: a plugin's own records use index
+`== len(masters)`, not a master slot (misreading it flagged all 66 Anequina
+self-references); and one local id can carry two signatures in a converted
+plugin (a REFR and a QUST), so accept a property if ANY candidate fits
+(`setdefault` on the first hit invented 62 false positives).
+
 <a id="script-graph-rekeys-masters"></a>**The script stage's scan re-keys the
 same way** (`script_convert/cross_ref.py:_index_remaps`, 2026-10-09). It asks
 `master_index_map` for every master of the chain, found by `master_dir`, and
@@ -1047,6 +1065,30 @@ child's version substituted in place, master order), then the child's own.
 **A child's music** resolves each TES4 music enum it has no track for to its
 masters' category MUSC (`master_music_types`, by `musc_editor_id`), so CELL
 XCMO and the `XCMT.MusicType` override rebuild have something to point at.
+
+## <a id="bark-parents-are-not-containers"></a>A shared engine-named parent is not a container
+
+**Code:** `tes5_import/overrides/nested.py` (`_NEW_NESTED_PARENT`, `_is_bark_parent`)
+
+GREETING and HELLO are engine-named topics every plugin fills, so a dependent
+plugin's own greeting INFOs all name the MASTER's GREETING DIAL as parent.
+`_attach_new_records` routes any new INFO under its `ParentDIAL`, which is only
+correct when the master parent is a genuine CONTAINER (a CELL). For a SHARED parent
+it silently routes the plugin's content into the master's quest scope and skips
+every gate the pipeline would have injected. Morroblivion's 2,727 greetings were all
+nested under Oblivion's single `GREETING_0102466E`, converted with a bare
+`convert_INFO(rec)`: 0 of 2,727 carried `GetIsVoiceType` (15,574 elsewhere), and
+because that topic belongs to Oblivion's Charactergen quest and `DIAL.QNAM` is a
+hard runtime gate, every greeting was gated on a quest that never runs
+(`dialog_emulator` printed "No greetings found!" for all 3,607 actors). Vanilla
+splits GREETING into 271 per-quest topics; Morroblivion's greetings span 384 quests.
+
+`_is_bark_parent()` returns a new INFO whose master parent is a BARK topic as
+`unattached`, so the normal builder emits the plugin's OWN per-quest bark topics,
+fully gated; the parent DIAL must be re-added to that batch (it was dropped as an
+unchanged override, leaving the builder no topic to group under). After: 384 bark
+topics (was 0), 19,293 INFOs (was 16,560), 18,280 voice-gated, Jiub 7 greetings (was
+0).
 
 ## <a id="generated-copies-follow-a-rename"></a>Generated copies follow a rename
 

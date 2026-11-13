@@ -737,7 +737,7 @@ hole in the world.
 
 - **LAND FIRST** in a cell's temporary children group — vanilla puts the
   landscape at index 0. See
-  [project_land_first_in_type9_group](tes5_import_navmesh.md).
+  [LAND first in type 9](tes5_import_override.md#land-first-in-type-9).
 - Group contents accumulate in **lists joined at each wrap point** rather than
   `bytes +=`; Tamriel's children total enough bytes that repeated concatenation
   dominates the phase.

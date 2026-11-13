@@ -37,8 +37,8 @@ This is the opposite of the retail Steam exe. Measured PE facts:
 
 Entropy 8.000 is a fully encrypted section; 5.593 is ordinary x86-64 code. The
 CK also imports no `steam_api*` and contains no Steam DRM strings. **Use the
-Steam CK directly — there is no GOG-copy dance needed** (contrast
-`project_skyrimse_exe_drm_packed`).
+Steam CK directly — there is no GOG-copy dance needed** (the retail Steam
+`SkyrimSE.exe` is DRM-packed; use the unpacked exes CLAUDE.md lists).
 
 Reproduce with `tools/disasm/ck_srcpaths.py --pe-check`.
 
@@ -68,7 +68,7 @@ Directly relevant subtrees:
   navmesh generator we reimplement**.
 - `shared\pathfinding\` — 5 navmesh + 7 pathing files, including
   `teleportdoorsearch.cpp` and `teleportpath.cpp` (cf.
-  `project_door_xndp_pathing`).
+  [door XNDP](tes5_import_world.md#door-xndp)).
 - `shared\distantterrain\` — 8 files incl. `bgsterrainmeshbuilder.cpp` (LOD).
 - `shared\speedtree\`, `shared\los\`, `shared\regions\`, `shared\facegen\`.
 

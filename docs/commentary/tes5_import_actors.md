@@ -44,6 +44,18 @@ them does.
 - [A creature race allows PC dialogue only when a creature on it talks](#creature-talk-prompt)
 - [Voice type resolution](#voice-resolution)
 
+## <a id="npcs-use-skyrim-rigs"></a>Only creatures get converted rigs; NPCs use Skyrim's
+
+`RACE` is in `SKIP_TYPES` (`tes5_import/registry.py`, "NPCs map to Skyrim
+races") and every NPC_ is re-pointed at a stock Skyrim race through `RACE_MAP` /
+`DEFAULT_RACE` in `skyrim_overrides.py`. `creature_races.py`, the only code that
+assigns `skeleton_nif` / `behavior_hkx`, runs for CREA alone. NPCs therefore
+already have Skyrim's skeleton, animations and `magicbehavior` casting graph:
+casting art on an NPC needs only an ARTO naming a stock graph
+(`Magic\CastingBasic.hkx`), and no skeleton/behavior work exists "for NPCs".
+Creatures use our generated graphs, so creature casting is the case that can
+break.
+
 ## <a id="acbs-flag-collision"></a>ACBS flags: the same bit means three different things
 
 A TES4 CREA ACBS bit, a TES4 NPC_ ACBS bit and a TES5 NPC_ ACBS bit with the
@@ -999,6 +1011,29 @@ an NPC is silent.
 
 NAM6/NAM7 are Height/Weight, which TES4 keeps on RACE rather than the NPC, so
 neutral 1.0 defaults are written and the race's own scale applies.
+
+## <a id="vtck-placeholder"></a>Every actor writes VTCK, even when the voice is 0
+
+**Code:** `tes5_import/record_types/creature.py` (`convert_CREA`),
+`tes5_import/actors/creature_races.py` (`patch_creature_voices`)
+
+Creature voices use placeholder-then-patch: `patch_creature_voices` does
+`blob.find(b'VTCK', 24)` and SKIPS a record that has no such tag. A creature's
+humanoid voice chain (`VOICE_TYPE_MAP[(race, gender)]`, Imperial fallback) yields
+0, because no TES4 creature race is in the map, so the old
+`if voice: pack VTCK` emitted nothing and all 442 creature NPC_ records ended up
+with no voice type. The whole creature sound channel was dead however correct the
+SNDRs, animationdata triggers, event tables and `.wav` files were, while the build
+log still said "42 generated, 1132 records bound": those were the RACE records,
+which carry an 8-byte male/female VTCK and patch fine. A healthy-looking patch
+count can cover only one of two record types.
+
+Rule: emission of a subrecord a later pass patches never depends on the value that
+pass supplies. After the fix 909 creature actors bind to one of 42 `TES4Cr*Voice`
+VTYPs with 0 dangling VTCK. The 442 records still without a VTCK are the `*_Lvl`
+TEMPLATE actors (`TPLT` set, `ACBS=0`), which inherit from their template, as
+vanilla LCharacter records do. Census: all 3,887 vanilla Skyrim.esm NPC_ records
+carry a non-zero VTCK.
 
 ## <a id="hdpt-valid-races"></a>Head parts: RNAM decides who can see the hair
 

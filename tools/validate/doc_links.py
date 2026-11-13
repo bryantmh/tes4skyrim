@@ -61,8 +61,11 @@ def _real(path: Path) -> bool:
 
 
 def _targets(source: Path) -> list:
-    """`(line, target)` for every repo-local link in `source`."""
-    text = source.read_text(encoding='utf-8', errors='replace')
+    """`(line, target)` for every repo-local link in `source`; none once it is gone (another session's temp file)."""
+    try:
+        text = source.read_text(encoding='utf-8', errors='replace')
+    except FileNotFoundError:
+        return []
     prose = source.suffix in ('.md', '.txt')
     out = []
     for num, line in enumerate(text.split('\n'), 1):
