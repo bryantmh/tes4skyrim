@@ -7,6 +7,7 @@ floor face that exactly matches an up-facing one.
 """
 
 import os
+from pathlib import Path
 
 from pyffi.formats.nif import NifFormat
 
@@ -21,10 +22,11 @@ _CURRENT = [None, None]
 
 
 def latch_original(src_path, src_meshes_dir) -> None:
-    """Note which mesh is converting; its original is read only if collision asks."""
+    """Note which mesh is converting; a mesh outside `src_meshes_dir` has no original."""
     rel = None
     if src_path and src_meshes_dir:
-        rel = os.path.relpath(str(src_path), str(src_meshes_dir))
+        src, root = Path(os.path.abspath(src_path)), Path(os.path.abspath(src_meshes_dir))
+        rel = str(src.relative_to(root)) if src.is_relative_to(root) else None
     _CURRENT[0], _CURRENT[1] = rel, None
 
 
