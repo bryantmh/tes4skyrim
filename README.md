@@ -93,7 +93,7 @@ exists, it asks whether to rebuild it.
 1. **Install the Skyrim Special Edition Creation Kit**, free on Steam.
 2. **Install [SKSE](https://skse.silverlock.org/)** by copying its files straight into your Skyrim folder.
 3. **Install the [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444)** with your mod manager.
-4. **Download the converter:** on the latest [release](https://github.com/bryantmh/tes4skyrim/releases), click **Source code (zip)**, then unzip it somewhere like your Documents folder (not `Program Files`).
+4. **Download the converter:** on the latest [release](https://github.com/bryantmh/tes4skyrim/releases), under **Assets** click **TES Auto-Convert &lt;version&gt; (zip)**, then unzip it somewhere like your Documents folder (not `Program Files`).
 5. **Double-click `TES Auto-Convert.cmd`** in the unzipped folder.
 
 The first time, it sets itself up. That needs internet and takes a few minutes, and it asks to download a free

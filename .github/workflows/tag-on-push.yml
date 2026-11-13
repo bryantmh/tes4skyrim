@@ -148,9 +148,15 @@ jobs:
           # later call got a 429.
           #
           # So a Release per tag is not cosmetic -- without it the app has no
-          # affordable way to read the checklists at all.  No assets are
-          # attached: the body IS the payload.
-          gh release create "$TAG" \
+          # affordable way to read the checklists at all.
+          #
+          # The converter itself is attached as a real asset: GitHub's own
+          # "Source code" archives have no download counter, uploaded assets
+          # do.  `git archive` honours .gitattributes exactly like GitHub's
+          # zip (VERSION export-subst expands to the tag, *.cmd stays CRLF).
+          name="${GITHUB_REPOSITORY#*/}-$TAG"
+          git archive --format=zip --prefix="$name/" -o "$RUNNER_TEMP/$name.zip" "$TAG"
+          gh release create "$TAG" "$RUNNER_TEMP/$name.zip#TES Auto-Convert $TAG (zip)" \
             --title "$TAG" \
             --notes-file "$RUNNER_TEMP/release-body.txt" \
             --latest
