@@ -12,7 +12,9 @@
 #include "seal.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <set>
 
 #include "params.h"
 #include "stitch.h"
@@ -196,6 +198,18 @@ bool fill_round(const std::vector<Vert>& V, std::vector<Tri>& T, const CellGeo& 
     return !add.empty();
 }
 
+// `T` without exact copies: a split can fan two overlapping triangles into the same piece.
+void drop_copies(std::vector<Tri>& T) {
+    std::set<std::array<int, 3>> seen;
+    std::vector<Tri> out;
+    for (const Tri& t : T) {
+        std::array<int, 3> k{t[0], t[1], t[2]};
+        std::sort(k.begin(), k.end());
+        if (seen.insert(k).second) out.push_back(t);
+    }
+    T.swap(out);
+}
+
 }  // namespace
 
 void seal_mesh(const std::vector<Vert>& V, std::vector<Tri>& T, const CellGeo& G) {
@@ -204,6 +218,7 @@ void seal_mesh(const std::vector<Vert>& V, std::vector<Tri>& T, const CellGeo& G
     for (int round = 0; round < kFillRounds; ++round)
         if (!fill_round(V, T, G)) break;
     T = split_t_junctions(V, std::move(T), step);
+    drop_copies(T);
 }
 
 }  // namespace navgrow
