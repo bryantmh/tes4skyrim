@@ -300,16 +300,30 @@ bool gap_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double o
     return true;
 }
 
+namespace {
+
+// The lattice nodes of `all` whose keys `open` holds (gap_graph's bit order).
+std::map<Key, P3> open_nodes(const std::map<Key, P3>& all, std::uint64_t open) {
+    const int count = (int)py_floordiv(4096.0, P().LATTICE_SPACING);
+    std::map<Key, P3> nodes;
+    for (const auto& kv : all)
+        if (open >> (kv.first.second * count + kv.first.first) & 1) nodes.insert(kv);
+    return nodes;
+}
+
+}  // namespace
+
+void open_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy, std::uint64_t open,
+                std::vector<P3>& points, std::vector<std::pair<int, int>>& edges) {
+    flood_lattice(seeds, ground, open_nodes(lattice(ground, ox, oy), open), points, edges);
+}
+
 bool seeds_link(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
                 const std::vector<std::uint64_t>& opens) {
     const std::map<Key, P3> all = lattice(ground, ox, oy);
-    const int count = (int)py_floordiv(4096.0, P().LATTICE_SPACING);
     for (const std::uint64_t open : opens) {
-        std::map<Key, P3> nodes;
-        for (const auto& kv : all)
-            if (open >> (kv.first.second * count + kv.first.first) & 1) nodes.insert(kv);
         std::vector<P3> placed;
-        if (!seed_links(ground, seeds, nodes, placed).empty()) return true;
+        if (!seed_links(ground, seeds, open_nodes(all, open), placed).empty()) return true;
     }
     return false;
 }

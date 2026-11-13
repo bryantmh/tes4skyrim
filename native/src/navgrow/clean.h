@@ -72,6 +72,7 @@ struct CleanOutput {
     std::vector<std::pair<int, int>> flood_edges;  // its edges, indices into `flood`
     std::uint64_t open_lattice = 0;              // gap_graph's uncovered lattice keys (0: no flood ran)
     bool open_known = true;                      // false when the lattice outgrows the 64-bit mask
+    bool flooded = false;                        // the gap flood ran (the first mesh was not empty)
 };
 
 // corridor_clean.finalize plus the rest of corridor.build_corridors.

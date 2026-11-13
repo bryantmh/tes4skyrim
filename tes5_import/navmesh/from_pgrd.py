@@ -1074,13 +1074,13 @@ def _cell_frame(rec, cell_rec):
 def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
                    is_exterior, land_rec, refr_recs, base_model_by_fid,
                    door_fids, doors, geom_cache, cell_rec=None, lone=(), obstacles=(), flood=(), pins=True,
-                   flood_out=None, opens_out=None):
+                   flood_out=None, opens=None):
     """(verts, tris, ledges, geom_cached, geom_key) from real Havok collision.
 
     A cache hit for this cell's input hash, else the pathgrid bridged across `obstacles`,
-    built and stored.  `lone`: edgeless spawn nodes; `flood`: () or (neighbour points,)
-    floods gaps; `pins` false: no pins.  `flood_out` (no cache) gets the flood's graph,
-    `opens_out` its open lattice (cached with it).  `geom_key`: the hash.
+    built and stored.  `lone`: spawn nodes; `flood`: () or (neighbour points,); `pins`
+    false: none; `flood_out` (no cache): the flood's graph; `opens`: (known, out) {first-mesh
+    key: (open lattice, flood ran)} (#regrow-reuse).  `geom_key`: the hash.
 
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
     See: docs/commentary/tes5_import_navmesh.md#a-removed-obstacle-is-bridged
@@ -1090,6 +1090,7 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
     ledges = []
     edits, pin_digest = cell_pins(rec, cell_rec) if pins else ({}, '')
     water_z = open_water_z(cell_rec, is_exterior)
+    first = hashlib.sha1(repr((points, edges)).encode()).hexdigest() if opens is not None else None
     if geom_cache is not None and flood_out is None:
         geom_key = geom_hash(geom_cache[1], points, edges, refr_recs,
                              base_model_by_fid, doors,
@@ -1100,8 +1101,8 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
         cached = geom_cache_load(cache_path, geom_key)
         if cached is not None:
             verts3d, tris, ledges, opened = cached
-            if opens_out is not None:
-                opens_out.append(opened)
+            if opens is not None:
+                opens[1][first] = opened
             return verts3d, tris, ledges, True, geom_key
 
     from ..navmesh import build as navmesh_build
@@ -1110,7 +1111,7 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
 
     land = land_rec if is_exterior else None
     door_bases = set(door_fids.keys()) if isinstance(door_fids, dict) else set(door_fids or ())
-    opened = []
+    opened, known = [], (opens[0].get(first) if opens is not None else None)
     verts3d, tris = navmesh_build.build_navmesh(
         refr_recs or [], base_model_by_fid or {}, get_collision,
         points, edges,
@@ -1119,10 +1120,11 @@ def _cell_geometry(rec, cell_fid, points, edges, origin_x, origin_y,
         doors=[(x, y, z, r, tp, w) for (x, y, z, r, _f, tp, w) in doors],
         ledges_out=ledges,
         door_bases=door_bases,
-        lone=lone, water_z=water_z, obstacles=obstacles, flood=flood, flood_out=flood_out, opens_out=opened)
+        lone=lone, water_z=water_z, obstacles=obstacles, flood=flood, flood_out=flood_out, opens_out=opened,
+        known_open=known[0] if known and known[1] else None)
     opened = opened[0] if opened else None
-    if opens_out is not None:
-        opens_out.append(opened)
+    if opens is not None:
+        opens[1][first] = opened
     if verts3d:
         verts3d = [tuple(v) for v in
                    np.asarray(verts3d, dtype=np.float32).tolist()]
@@ -1152,12 +1154,12 @@ def convert_PGRD(rec: dict, writer=None,
                  seeded: bool = False,
                  edge_seeds: list = None,
                  pins: bool = True,
-                 opens_out: list = None) -> tuple:
+                 opens: tuple = None) -> tuple:
     """One TES4 PGRD as a TES5 NAVM: (navm_bytes, meta), or (None, None) when the pathgrid is too
     sparse or the build has under 3 verts.  `spawns`: points to reach; `obstacles`: pairs to bridge;
     `graph`: the (points, edges) to build over; `door_spots`: {door ref: point} for its triangle;
     `seeded`: no gap flood; `edge_seeds`: neighbour mesh points; `pins` false: no pins;
-    `opens_out` as _cell_geometry.
+    `opens` as _cell_geometry.
 
     See: docs/commentary/tes5_import_navmesh.md#convert-pgrd-arguments
     See: docs/commentary/tes5_import_navmesh.md#collision-geometry-and-the-cache-hit
@@ -1189,7 +1191,7 @@ def convert_PGRD(rec: dict, writer=None,
         land_rec, refr_recs, base_model_by_fid, door_fids, doors, geom_cache,
         cell_rec=cell_rec, lone=lone, obstacles=obstacles,
         flood=(tuple(map(tuple, flood_from)),) if is_exterior and not seeded else (), pins=pins,
-        flood_out=None if seeded else flood_graph, opens_out=opens_out)
+        flood_out=None if seeded else flood_graph, opens=opens)
     if verts3d is None or len(verts3d) < 3 or not tris:
         return None, None
 

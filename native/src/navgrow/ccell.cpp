@@ -116,22 +116,20 @@ bool on_mesh(const CleanOutput& M, const P3& p) {
     return false;
 }
 
-// M, or the cell rebuilt over its pathgrid plus a flood of the ground M leaves, started from `seeds`
-// (where a neighbour's navmesh meets the cell) and from the pathgrid's nodes that stand on open LAND;
-// the flood's nodes are C's flood range.
-CleanOutput with_gaps(CellCtx& C, const Authored& A, CleanOutput M, Ground& ground, const std::vector<P3>& seeds) {
-    std::vector<P3> starts = seeds, points;
+// The gap flood's starts: `seeds` (where a neighbour's navmesh meets the cell) and the pathgrid's
+// nodes that stand on open LAND.
+std::vector<P3> flood_starts(const Authored& A, Ground& ground, const std::vector<P3>& seeds) {
+    std::vector<P3> starts = seeds;
     for (const P3& n : A.nodes) {
         double z;
         if (ground.floor(n[0], n[1], n[2], &z) && ground.open_land(n[0], n[1], z)) starts.push_back(n);
     }
-    std::vector<std::pair<int, int>> edges;
-    std::uint64_t open = 0;
-    const bool known = gap_graph(starts, ground, C.land->ox, C.land->oy, [&](const P3& p) { return on_mesh(M, p); },
-                                 points, edges, &open);
-    M.open_lattice = open;
-    M.open_known = known;
-    if (edges.empty()) return M;
+    return starts;
+}
+
+// The cell rebuilt over its pathgrid plus the flood graph (points, edges): C's flood range.
+CleanOutput rebuilt(CellCtx& C, const Authored& A, std::vector<P3> points, std::vector<std::pair<int, int>> edges,
+                    std::uint64_t open, bool known) {
     C.nodes = A.nodes;
     C.edges = A.edges;
     C.lone = A.lone;
@@ -148,16 +146,34 @@ CleanOutput with_gaps(CellCtx& C, const Authored& A, CleanOutput M, Ground& grou
     out.flood_edges = std::move(edges);
     out.open_lattice = open;
     out.open_known = known;
+    out.flooded = true;
     return out;
+}
+
+// M, or the cell rebuilt over its pathgrid plus a flood of the ground M leaves (flood_starts).
+CleanOutput with_gaps(CellCtx& C, const Authored& A, CleanOutput M, Ground& ground, const std::vector<P3>& seeds) {
+    std::vector<P3> points;
+    std::vector<std::pair<int, int>> edges;
+    std::uint64_t open = 0;
+    const bool known = gap_graph(flood_starts(A, ground, seeds), ground, C.land->ox, C.land->oy,
+                                 [&](const P3& p) { return on_mesh(M, p); }, points, edges, &open);
+    M.open_lattice = open;
+    M.open_known = known;
+    M.flooded = true;
+    if (edges.empty()) return M;
+    return rebuilt(C, A, std::move(points), std::move(edges), open, known);
 }
 
 }  // namespace
 
 // The cell's collision gathered and indexed, the pathgrid bridged across its
 // obstacles (obstacle_bridge), then the corridor build; `flood_gaps` then
-// floods the ground that mesh leaves (with_gaps).
+// floods the ground that mesh leaves (with_gaps).  `known_open` (the open lattice of a flooded build
+// over the same inputs but seeds) stands in for that first mesh: when the flood from it adds ground,
+// the cell is built once, over the flood.
 CleanOutput build_cell(CellCtx& C, const std::vector<PlacedRef>& refs, const std::vector<PlacedRef>& obstacles,
-                       const double* water_z, bool flood_gaps, const std::vector<P3>& seeds) {
+                       const double* water_z, bool flood_gaps, const std::vector<P3>& seeds,
+                       const std::uint64_t* known_open) {
     if (C.nodes.empty() || (C.edges.empty() && obstacles.empty())) return CleanOutput();
     const Soups S = gather_cell(refs, C.land, water_z);
     C.land_from = (int)std::min<size_t>(S.land_from, 0x7fffffff);
@@ -165,6 +181,13 @@ CleanOutput build_cell(CellCtx& C, const std::vector<PlacedRef>& refs, const std
     Ground ground{C.geo, C.land, &S.solids};
     bridge_obstacles(C.nodes, C.edges, obstacles, ground);
     const Authored authored{C.nodes, C.edges, C.lone, C.doors};
+    if (flood_gaps && C.land && known_open) {
+        std::vector<P3> points;
+        std::vector<std::pair<int, int>> edges;
+        open_graph(flood_starts(authored, ground, seeds), ground, C.land->ox, C.land->oy, *known_open, points,
+                   edges);
+        if (!edges.empty()) return rebuilt(C, authored, std::move(points), std::move(edges), *known_open, true);
+    }
     CleanOutput out = build_corridor_cell(C);
     if (flood_gaps && C.land && !out.T.empty()) out = with_gaps(C, authored, std::move(out), ground, seeds);
     return out;

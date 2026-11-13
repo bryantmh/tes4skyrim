@@ -1075,6 +1075,18 @@ next round's job gathers the cell's collision and tests only the seeds it was no
 each mask; when none links, the previous result is returned. A cell with no LAND never floods, so its
 seeds never matter.
 
+When a seed does link, the cell is rebuilt, but not twice. Its first corridor mesh depends on every
+input except the seeds, and the gap flood reads that mesh only through the lattice keys it leaves
+uncovered -- the mask. So each mask is stored under a key hashing the build's graph (points, edges) --
+the only first-mesh input that differs between one cell's builds; its references, LAND, doors, spawns
+and obstacles are the job's own, and pins act only after the build and as flood seeds. Hashing every
+input instead (`geom_hash`) costs Python time on every build under the GIL. With the mask goes
+whether the flood ran (the first mesh was not empty), and a
+rebuild with a known, flooded mask floods from it (`open_graph`) and builds once over the flood
+(`build_cell`'s `known_open`). Only if that flood finds nothing does it fall back to the first build,
+whose result is then the cell's mesh. The first build carries nothing into the second but the grow
+memo, an exact cache.
+
 #### <a id="door-reach"></a>An interior's navmesh reaches its doors
 
 **Code:** `navmesh/door_reach.py`, native `doorreach.cpp`, `pool.py::_emit_interior`.
@@ -5460,6 +5472,15 @@ same 600 jobs (peak above the level at pool start):
 Committing on demand as well (`eager_commit`/`arena_eager_commit` 0) changed
 nothing. After the pool, commit and working set sit slightly BELOW the
 process heap's (4.83 vs 5.06 GB, 3.31 vs 3.37 GB).
+
+<a id="lazy-solid-index"></a>**Each placed object's face index is built on first use** (`world.h` `Solid`,
+`SolidSet::enclosed`). A whole-phase sample of Nehrim (2026-11-12, every thread) put
+`gather_cell` at 16.3% of navgrow time, 6.4% of it building a `TriGrid` per placed object and
+3.5% more tearing them down (mostly mimalloc returning the pages), yet only the enclosure test
+reads them, at a few lattice points per cell. Built lazily, and with `split_by_slope` and the
+gathered soups sized once instead of grown a triangle at a time, `gather_cell` fell to 5.4%;
+with the [regrow reuse](#regrow-reuse) Nehrim's navmesh phase went 290.5 s -> 234.5 s, peak
+commit about +7.5 -> +5.3 GB, output identical on all 3,769 cells.
 
 <a id="biggest-first"></a>**Starting the costliest jobs first was tried and
 reverted.** With the process heap, sorting the pool's jobs by pathgrid points x

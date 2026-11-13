@@ -28,28 +28,41 @@ void place(const SoupView& s, const PlacedRef& r, std::vector<double>& out) {
     }
 }
 
-// The highest Z of soup rows [from, end), or -inf.
-double top_z(const std::vector<double>& s, size_t from) {
+// The highest Z of soup rows [from, to), or -inf.
+double top_z(const std::vector<double>& s, size_t from, size_t to) {
     double t = -INFINITY;
-    for (size_t i = from + 2; i < s.size(); i += 3) t = std::max(t, s[i]);
+    for (size_t i = from + 2; i < to; i += 3) t = std::max(t, s[i]);
     return t;
 }
 
-// world._split_by_slope over the triangles of `soup`, appended to walk / block.
+// 1 walkable, 2 blocking, 0 degenerate: world._split_by_slope's test of one triangle.
+int slope_class(const double* p, double thr) {
+    const double e1[3] = {p[3] - p[0], p[4] - p[1], p[5] - p[2]};
+    const double e2[3] = {p[6] - p[0], p[7] - p[1], p[8] - p[2]};
+    const double n0 = e1[1] * e2[2] - e1[2] * e2[1];
+    const double n1 = e1[2] * e2[0] - e1[0] * e2[2];
+    const double n2 = e1[0] * e2[1] - e1[1] * e2[0];
+    const double ln = std::sqrt((n0 * n0 + n1 * n1) + n2 * n2);
+    if (!(ln > 1e-9)) return 0;
+    return std::fabs(n2) / ln >= thr ? 1 : 2;
+}
+
+// world._split_by_slope over the triangles of `soup`, appended to walk / block (sized once).
 void split_by_slope(const std::vector<double>& soup, std::vector<double>& walk,
                     std::vector<double>* block) {
     const double thr = crt_cos(P().MAX_SLOPE_DEG * (3.14159265358979323846 / 180.0));
-    for (size_t t = 0; t + 9 <= soup.size(); t += 9) {
-        const double* p = &soup[t];
-        const double e1[3] = {p[3] - p[0], p[4] - p[1], p[5] - p[2]};
-        const double e2[3] = {p[6] - p[0], p[7] - p[1], p[8] - p[2]};
-        const double n0 = e1[1] * e2[2] - e1[2] * e2[1];
-        const double n1 = e1[2] * e2[0] - e1[0] * e2[2];
-        const double n2 = e1[0] * e2[1] - e1[1] * e2[0];
-        const double ln = std::sqrt((n0 * n0 + n1 * n1) + n2 * n2);
-        if (!(ln > 1e-9)) continue;
-        std::vector<double>* dst = std::fabs(n2) / ln >= thr ? &walk : block;
-        if (dst) dst->insert(dst->end(), p, p + 9);
+    std::vector<unsigned char> cls(soup.size() / 9);
+    size_t nw = 0, nb = 0;
+    for (size_t t = 0; t < cls.size(); ++t) {
+        cls[t] = (unsigned char)slope_class(&soup[t * 9], thr);
+        nw += cls[t] == 1;
+        nb += cls[t] == 2;
+    }
+    walk.reserve(walk.size() + nw * 9);
+    if (block) block->reserve(block->size() + nb * 9);
+    for (size_t t = 0; t < cls.size(); ++t) {
+        std::vector<double>* dst = cls[t] == 1 ? &walk : cls[t] == 2 ? block : nullptr;
+        if (dst) dst->insert(dst->end(), &soup[t * 9], &soup[t * 9] + 9);
     }
 }
 
@@ -74,18 +87,14 @@ std::vector<double> land_tris(const Land& L) {
 
 }  // namespace
 
-// One object's walkable and blocking triangles joined, with their bounding box.
-static Solid solid_of(const std::vector<double>& w, const std::vector<double>& b) {
-    Solid s;
-    s.tris = w;
-    s.tris.insert(s.tris.end(), b.begin(), b.end());
+// A solid's bounding box from its triangles.
+static void box_of(Solid& s) {
     for (size_t i = 0; i < s.tris.size(); ++i) {
         const int k = (int)(i % 3);
         const double v = s.tris[i];
         s.box[k] = i < 3 ? v : std::min(s.box[k], v);
         s.box[k + 3] = i < 3 ? v : std::max(s.box[k + 3], v);
     }
-    return s;
 }
 
 // Generalised winding number of p against triangles (9 doubles each): 1 inside a closed shape, 0 outside;
@@ -117,8 +126,7 @@ static long long solid_key(long long bx, long long by) { return bx * 1000003LL +
 void SolidSet::index() {
     cells.clear();
     for (size_t i = 0; i < items.size(); ++i) {
-        Solid& s = items[i];
-        s.grid.build(s.tris.data(), s.tris.size() / 9, kSolidFaceBucket);
+        const Solid& s = items[i];
         for (long long bx = (long long)std::floor(s.box[0] / kSolidBucket);
              bx <= (long long)std::floor(s.box[3] / kSolidBucket); ++bx)
             for (long long by = (long long)std::floor(s.box[1] / kSolidBucket);
@@ -135,6 +143,10 @@ bool SolidSet::enclosed(double x, double y, double z) const {
         const Solid& s = items[(size_t)i];
         if (!(s.box[0] <= x && x <= s.box[3] && s.box[1] <= y && y <= s.box[4] && s.box[2] <= z && z <= s.box[5]))
             continue;
+        if (!s.indexed) {
+            s.grid.build(s.tris.data(), s.tris.size() / 9, kSolidFaceBucket);
+            s.indexed = true;
+        }
         bucket_heights(s.grid, x, y, zs);
         if (std::none_of(zs.begin(), zs.end(), [z](double h) { return h > z; })) continue;
         if (winding(s.tris, x, y, z) >= 0.5) return true;
@@ -148,24 +160,39 @@ bool Ground::enclosed(double x, double y, double z) const {
 
 Soups gather_cell(const std::vector<PlacedRef>& refs, const Land* land, const double* water_z) {
     std::vector<double> walk_faces, block_faces, door_faces;
+    size_t nw = 0, nb = 0;
+    for (const PlacedRef& r : refs)
+        if (!r.door) {
+            nw += r.w.n / 9 * 9;
+            nb += r.b.n / 9 * 9;
+        }
+    walk_faces.reserve(nw);
+    block_faces.reserve(nb);
     std::vector<Solid> solids;
+    solids.reserve(refs.size());
     for (const PlacedRef& r : refs) {
-        std::vector<double> w, b;
-        place(r.w, r, w);
-        place(r.b, r, b);
-        if (w.empty() && b.empty()) continue;
-        if (water_z && std::max(top_z(w, 0), top_z(b, 0)) < *water_z - P().AGENT_HEIGHT) continue;
+        Solid s;
+        s.tris.reserve(r.w.n / 9 * 9 + r.b.n / 9 * 9);
+        place(r.w, r, s.tris);
+        const size_t wn = s.tris.size();
+        place(r.b, r, s.tris);
+        if (s.tris.empty()) continue;
+        const size_t end = s.tris.size();
+        if (water_z && std::max(top_z(s.tris, 0, wn), top_z(s.tris, wn, end)) < *water_z - P().AGENT_HEIGHT)
+            continue;
         std::vector<double>& wd = r.door ? door_faces : walk_faces;
         std::vector<double>& bd = r.door ? door_faces : block_faces;
-        wd.insert(wd.end(), w.begin(), w.end());
-        bd.insert(bd.end(), b.begin(), b.end());
-        if (!r.door) solids.push_back(solid_of(w, b));
+        wd.insert(wd.end(), s.tris.begin(), s.tris.begin() + (std::ptrdiff_t)wn);
+        bd.insert(bd.end(), s.tris.begin() + (std::ptrdiff_t)wn, s.tris.end());
+        if (r.door) continue;
+        box_of(s);
+        solids.push_back(std::move(s));
     }
     Soups S;
     S.solids.items = std::move(solids);
     S.solids.index();
-    walk_faces.insert(walk_faces.end(), block_faces.begin(), block_faces.end());
     split_by_slope(walk_faces, S.walk, &S.block);
+    split_by_slope(block_faces, S.walk, &S.block);
     split_by_slope(door_faces, S.walk, nullptr);
     S.land_from = S.walk.size() / 9;
     if (land && land->g) split_by_slope(land_tris(*land), S.walk, &S.block);

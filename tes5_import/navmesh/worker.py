@@ -126,16 +126,17 @@ def convert_job(job: dict, base_model_by_fid: dict, door_fids, geom_cache=None):
     """
     if job.get('previous') and regrow_unchanged(job, base_model_by_fid, door_fids, get_collision):
         return job['previous']
-    opens = []
+    known = ((job.get('previous') or (None, None))[1] or {}).get('flood_opens') or {}
+    opens = (known, {})
     result = _convert_flow(job, base_model_by_fid, door_fids, geom_cache, opens)
     if result[1]:
-        result[1]['flood_opens'] = opens
+        result[1]['flood_opens'] = opens[1]
         result[1]['edge_seeds'] = job.get('edge_seeds')
     return result
 
 
 def _convert_flow(job, base_model_by_fid, door_fids, geom_cache, opens):
-    """convert_job's builds; each build's open lattice goes to `opens`."""
+    """convert_job's builds over `opens`, (known, out) open lattices (from_pgrd._cell_geometry)."""
     graph = None
     if job.get('seeds'):
         graph = seeded_graph(job, base_model_by_fid, door_fids, get_collision)
@@ -196,7 +197,7 @@ def _linked(result) -> int:
 def _build(job, base_model_by_fid, door_fids, cache_opens, graph, door_spots=None, pins=True):
     """(navm_bytes, meta) for one job over `graph` (None: its pathgrid record's own graph).
 
-    `cache_opens` is (geometry cache, list the build's open lattice goes to).
+    `cache_opens` is (geometry cache, convert_PGRD's `opens`).
     """
     geom_cache, opens = cache_opens
     return convert_PGRD(
@@ -216,7 +217,7 @@ def _build(job, base_model_by_fid, door_fids, cache_opens, graph, door_spots=Non
         seeded=bool(job.get('seeds')),
         edge_seeds=job.get('edge_seeds'),
         pins=pins,
-        opens_out=opens,
+        opens=opens,
     )
 
 

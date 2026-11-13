@@ -59,8 +59,10 @@ struct CellCtx {
 CleanOutput build_corridor_cell(CellCtx& C);
 // Gather `refs`, bridge the pathgrid across `obstacles`, then build_corridor_cell; `flood_gaps` (an
 // exterior) also floods the open LAND the pathgrid's mesh leaves, from its nodes and `seeds`.
+// `known_open`, when given, is that mesh's open lattice from an earlier flooded build.
 CleanOutput build_cell(CellCtx& C, const std::vector<PlacedRef>& refs, const std::vector<PlacedRef>& obstacles,
-                       const double* water_z, bool flood_gaps, const std::vector<P3>& seeds);
+                       const double* water_z, bool flood_gaps, const std::vector<P3>& seeds,
+                       const std::uint64_t* known_open = nullptr);
 
 // --- cstrips.cpp --------------------------------------------------------------
 // corridor._build_corridor_strips: the corridor ribbons and node discs.

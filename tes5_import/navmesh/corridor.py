@@ -132,11 +132,12 @@ def ccw_in_plan(verts, tris):
             for t in tris]
 
 
-def _native_corridor_cell(cell, nodes, edges, lone, doors, obstacles, flood=()):
+def _native_corridor_cell(cell, nodes, edges, lone, doors, obstacles, flood=(), known_open=None):
     """build_corridors natively, collision gather and obstacle bridge included.
 
     `cell` is (refr_recs, base_model_by_fid, get_collision, land_rec, origin_x,
-    origin_y, door_bases, water_z); `flood` () or (neighbour mesh points,) floods the mesh's gaps.
+    origin_y, door_bases, water_z); `flood` () or (neighbour mesh points,) floods the mesh's gaps;
+    `known_open` the open lattice of an earlier flooded build over the same inputs but seeds.
     See: docs/plans/navmesh_native_rewrite.md#stages
     """
     refr_recs, base_model, get_collision, land_rec, origin_x, origin_y, door_bases, water_z = cell
@@ -155,20 +156,20 @@ def _native_corridor_cell(cell, nodes, edges, lone, doors, obstacles, flood=()):
         *world.placements(refr_recs, base_model or {}, get_collision, door_bases or ()),
         *world.placements([r for r, _k in obstacles or ()], obstacle_models, get_collision),
         water_z, int(bool(flood)),
-        np.asarray(flood[0], dtype=np.float64).reshape(-1, 3) if flood and flood[0] else None)
+        np.asarray(flood[0], dtype=np.float64).reshape(-1, 3) if flood and flood[0] else None, known_open)
 
 
 def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
                     land_rec=None, origin_x=0.0, origin_y=0.0, doors=None,
                     door_bases=None, lone=(), water_z=None, obstacles=(), flood=(), flood_out=None,
-                    opens_out=None):
+                    opens_out=None, known_open=None):
     """Phase-1 corridor navmesh for one cell: (verts, tris, ledges) lists.
 
     doors: (x, y, z, rot_z, is_teleport, width) door centers.  door_bases: low-24 DOOR base
     FormIDs without collision.  lone: edgeless nodes that still get a disc.  obstacles:
-    (placement, model key) pairs `edges` is bridged across.  flood: () or (neighbour mesh
-    points,) floods the gaps; `flood_out` gets its (points, edges), `opens_out` its open
-    lattice mask (None: unknown).  ledges: Ledge Up/Down links.
+    (placement, model key) pairs `edges` is bridged across.  flood: () or (neighbour points,)
+    floods the gaps; `flood_out` gets its graph, `opens_out` its (open lattice, ran) or None;
+    `known_open` as _native_corridor_cell's.
     See: docs/commentary/tes5_import_navmesh.md#ribbon-construction
     """
     cell = (refr_recs, base_model_by_fid, get_collision, land_rec, origin_x, origin_y,
@@ -176,7 +177,7 @@ def build_corridors(refr_recs, base_model_by_fid, get_collision, nodes, edges,
     if not nodes:
         return [], [], []
     verts, tris, ledges, flood_graph, opened = _native_corridor_cell(cell, nodes, edges, lone, doors, obstacles,
-                                                                     flood)
+                                                                     flood, known_open)
     if flood_out is not None:
         flood_out.append(flood_graph)
     if opens_out is not None:

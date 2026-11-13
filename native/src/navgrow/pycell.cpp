@@ -141,12 +141,14 @@ PyObject* cell_result(const CleanOutput& out) {
 
 PyObject* graph_result(const std::vector<P3>& points, const std::vector<std::pair<int, int>>& edges);
 
-// cell_result plus the gap flood's (points, edges) and its open lattice mask (None: unknown).
+// cell_result plus the gap flood's (points, edges) and (open lattice mask, flood ran) (None: unknown).
 PyObject* cell_result_with_flood(const CleanOutput& out) {
     PyObject* base = cell_result(out);
     PyObject* flood = base ? graph_result(out.flood, out.flood_edges) : nullptr;
     PyObject* open = !flood ? nullptr
-                     : out.open_known ? PyLong_FromUnsignedLongLong(out.open_lattice) : Py_NewRef(Py_None);
+                     : out.open_known ? Py_BuildValue("(KO)", (unsigned long long)out.open_lattice,
+                                                      out.flooded ? Py_True : Py_False)
+                                      : Py_NewRef(Py_None);
     if (!open) {
         Py_XDECREF(base);
         Py_XDECREF(flood);
@@ -191,8 +193,8 @@ bool released(const char* what, F&& body) {
 }  // namespace
 
 // corridor_cell(nodes, edges, lone, doors, land, land_ox, land_oy, cell_clip,
-//               refs, soups, obstacles, obstacle_soups, water_z[, flood_gaps, seeds])
-//   -> (verts, tris, ledges, (flood points, flood edges), open lattice mask or None)
+//               refs, soups, obstacles, obstacle_soups, water_z[, flood_gaps, seeds, known_open])
+//   -> (verts, tris, ledges, (flood points, flood edges), (open lattice mask, flood ran) or None)
 //
 // corridor.build_corridors for one cell, collision gather and obstacle bridge
 // included.  nodes (N, 3) and doors (D, 6: x, y, z, rot_z, is_teleport, width)
@@ -200,14 +202,21 @@ bool released(const char* what, F&& body) {
 // LAND or None; refs / obstacles (R, 14) placement rows (world.placements)
 // with their (w, b) soups; water_z the open water height or None; flood_gaps
 // nonzero floods the open LAND the pathgrid's mesh leaves, also from seeds (S, 3)
-// float64 or None, where a neighbour's navmesh meets the cell.
+// float64 or None, where a neighbour's navmesh meets the cell; known_open an int (a flooded build's
+// mask over the same inputs but seeds) or None.
 PyObject* py_corridor_cell(PyObject*, PyObject* args) {
-    PyObject *o_n, *o_e, *o_lone, *o_d, *o_land, *o_clip, *o_r, *o_rs, *o_o, *o_os, *o_wz, *o_s = Py_None;
+    PyObject *o_n, *o_e, *o_lone, *o_d, *o_land, *o_clip, *o_r, *o_rs, *o_o, *o_os, *o_wz, *o_s = Py_None,
+             *o_k = Py_None;
     double ox, oy;
     int flood_gaps = 0;
-    if (!PyArg_ParseTuple(args, "OOOOOddOOOOOO|iO", &o_n, &o_e, &o_lone, &o_d, &o_land, &ox, &oy,
-                          &o_clip, &o_r, &o_rs, &o_o, &o_os, &o_wz, &flood_gaps, &o_s))
+    if (!PyArg_ParseTuple(args, "OOOOOddOOOOOO|iOO", &o_n, &o_e, &o_lone, &o_d, &o_land, &ox, &oy,
+                          &o_clip, &o_r, &o_rs, &o_o, &o_os, &o_wz, &flood_gaps, &o_s, &o_k))
         return nullptr;
+    std::uint64_t known = 0;
+    if (o_k != Py_None) {
+        known = PyLong_AsUnsignedLongLong(o_k);
+        if (PyErr_Occurred()) return nullptr;
+    }
     std::vector<P3> seeds;
     if (o_s != Py_None) {
         BufView sv(o_s, 'd', 8);
@@ -230,7 +239,10 @@ PyObject* py_corridor_cell(PyObject*, PyObject* args) {
     C.land = land.g ? &land : nullptr;
     CleanOutput out;
     if (!released("corridor_cell",
-                  [&] { out = build_cell(C, refs, obstacles, has_wz ? &wz : nullptr, flood_gaps != 0, seeds); }))
+                  [&] {
+                      out = build_cell(C, refs, obstacles, has_wz ? &wz : nullptr, flood_gaps != 0, seeds,
+                                       o_k != Py_None ? &known : nullptr);
+                  }))
         return nullptr;
     return cell_result_with_flood(out);
 }

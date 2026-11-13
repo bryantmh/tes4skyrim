@@ -36,18 +36,19 @@ struct PlacedRef {
 
 // The gathered soups: walkable rows [0, land_from) are placed, the rest LAND.
 // One placed object's collision, kept whole: its triangles (9 doubles each), bounding box, and an index
-// of them for "is any face of it right above this point".
+// of them for "is any face of it right above this point", built the first time a point asks.
 struct Solid {
     double box[6];                   // xmin, ymin, zmin, xmax, ymax, zmax
     std::vector<double> tris;
-    TriGrid grid;
+    mutable TriGrid grid;
+    mutable bool indexed = false;
 };
 
 // Every placed object of a cell, indexed by plan area.
 struct SolidSet {
     std::vector<Solid> items;
     std::unordered_map<long long, std::vector<int>> cells;  // plan bucket -> items whose box touches it
-    // Build each object's face index and the plan buckets; call once, after `items` is filled.
+    // Build the plan buckets; call once, after `items` is filled.
     void index();
     // True when (x, y, z) lies inside an object: one of its faces is right above it and its winding
     // number there is >= 0.5.  The face test skips the costly winding beside an object.
@@ -99,6 +100,10 @@ void seed_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double 
 bool gap_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy,
                const std::function<bool(const P3&)>& covered,
                std::vector<P3>& points, std::vector<std::pair<int, int>>& edges, std::uint64_t* open = nullptr);
+
+// gap_graph over the lattice keys of `open` (an earlier gap_graph's mask) in place of a coverage test.
+void open_graph(const std::vector<P3>& seeds, Ground& ground, double ox, double oy, std::uint64_t open,
+                std::vector<P3>& points, std::vector<std::pair<int, int>>& edges);
 
 // True when any seed links into a lattice holding only the keys of one of `opens` (gap_graph's masks):
 // a flood that adds those seeds differs from the one each mask came from.

@@ -397,9 +397,10 @@ def regrow_unchanged(job, base_model_by_fid, door_fids, get_collision) -> bool:
     See: docs/commentary/tes5_import_navmesh.md#regrow-reuse
     """
     meta = (job.get('previous') or (None, None))[1]
-    opens = (meta or {}).get('flood_opens')
+    opens = list(((meta or {}).get('flood_opens') or {}).values())
     if not opens or None in opens:
         return False
+    opens = [mask for mask, _ran in opens]
     built = set(map(tuple, meta.get('edge_seeds') or ()))
     new = [p for p in job['edge_seeds'] if tuple(p) not in built]
     if not new or job['land_rec'] is None:
