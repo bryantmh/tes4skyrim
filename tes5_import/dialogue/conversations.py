@@ -59,7 +59,9 @@ _OP_BY_NIBBLE = {0x00: '==', 0x20: '!=', 0x40: '>',
 FUNC_GET_IS_ID = 72
 FUNC_GET_STAGE = 58
 FUNC_GET_QUEST_VARIABLE = 79
-FUNC_GET_ITEM_COUNT = 47          # TES4 index (xEdit wbDefinitionsTES4)
+#: TES4 GetItemCount and GetDistance function indices (xEdit wbDefinitionsTES4).
+FUNC_GET_ITEM_COUNT = 47
+FUNC_GET_DISTANCE = 1
 
 _PLAYER_FIDS = {0x00000014, 0x00000007}
 
@@ -72,7 +74,12 @@ _QUEST_ADVANCING_RE = re.compile(
 _MAX_HOPS = 24
 
 
+# ---------------------------------------------------------------------------
+# Conditions and gates
+# ---------------------------------------------------------------------------
+
 def _raw_fid(rec) -> int:
+    """The record's FormID as an int, 0 when unreadable."""
     try:
         return int(rec.get('FormID', '0') or '0', 16)
     except ValueError:
@@ -103,6 +110,7 @@ def _conds(rec, prefix: str = ''):
 
 
 def _choices(rec):
+    """The INFO's Choice (TCLT) topic FormIDs, in authored order."""
     out, i = [], 0
     while True:
         v = rec.get(f'Choice[{i}]')
@@ -147,52 +155,51 @@ def _build_gates(head_conds, quest_edid_by_fid, script_vars,
     Returns (gates, None) or (None, reason) when a condition falls outside the
     supported set — the chain is then skipped rather than restored with a
     trigger looser than Oblivion's (a conversation firing EARLY is worse than
-    one that stays absent).
+    one that stays absent). Every GetIsID is a participant identity, not a gate.
     """
+    tables = (quest_edid_by_fid, script_vars or {}, scpt_edid_by_qfid)
     gates = []
-    for (t, comp, func, p1, p2) in head_conds:
-        if func == FUNC_GET_IS_ID:
-            if not _is_positive_id(t, comp) and not (t & CTDA_RUN_ON_TARGET):
-                # "not spoken by X" exclusion: the pinned speaker either IS X
-                # (chain impossible) or is not (gate vacuous).  The pinned
-                # positive identity already decides which, so drop it.
-                continue
-            continue                      # consumed as speaker/listener identity
-        if t & CTDA_OR:
-            return None, f'OR-chained gate (func {func})'
-        if t & CTDA_RUN_ON_TARGET:
-            return None, f'run-on-target gate (func {func})'
-        op = _OP_BY_NIBBLE.get(t & _COMPARISON_MASK)
-        if op is None:
-            return None, f'unknown comparison 0x{t:02X}'
-        if func == FUNC_GET_STAGE:
-            qedid = quest_edid_by_fid.get(p1 & 0xFFFFFF)
-            if not qedid:
-                return None, f'GetStage on unknown quest {p1:08X}'
-            gates.append({'kind': 'stage', 'quest_fid': p1,
-                          'quest_edid': qedid, 'op': op,
-                          'value': int(round(comp))})
-        elif func == FUNC_GET_QUEST_VARIABLE:
-            name = (script_vars or {}).get(p1 & 0xFFFFFF, {}).get(p2)
-            qedid = quest_edid_by_fid.get(p1 & 0xFFFFFF)
-            # The var lives as a property on the CONVERTED QUEST SCRIPT, whose
-            # Papyrus name comes from the SCPT EditorID (papyrus_script_name),
-            # not from the quest's.
-            sedid = scpt_edid_by_qfid.get(p1 & 0xFFFFFF)
-            if not name or not qedid or not sedid:
-                return None, f'GetQuestVariable {p1:08X}[{p2}] unresolvable'
-            gates.append({'kind': 'var', 'quest_fid': p1,
-                          'quest_edid': qedid, 'script_edid': sedid,
-                          'var': name, 'op': op, 'value': comp})
-        elif func == FUNC_GET_ITEM_COUNT:
-            # Evaluated against the SPEAKER, same as Oblivion ran it against
-            # the conversation initiator (TG01: Methredhel no longer holds
-            # the stolen diary).
-            gates.append({'kind': 'itemcount', 'item_fid': p1, 'op': op,
-                          'value': int(round(comp))})
-        else:
-            return None, f'unsupported gate func {func}'
+    for cond in head_conds:
+        if cond[2] == FUNC_GET_IS_ID:
+            continue
+        gate, why = _gate(cond, tables)
+        if gate is None:
+            return None, why
+        gates.append(gate)
     return gates, None
+
+
+def _gate(cond, tables) -> tuple:
+    """(gate, None) for one supported head condition, else (None, reason).
+
+    `tables` is (quest EditorID by fid, script vars, quest-script EditorID by quest fid);
+    a quest variable lives on the converted quest SCRIPT, named from its SCPT EditorID.
+    GetItemCount and GetDistance(Player) run on the speaker, as Oblivion ran them on the initiator.
+    See: docs/commentary/tes5_import_dialogue.md#the-npc-to-npc-conversation-scheduler
+    """
+    t, comp, func, p1, p2 = cond
+    quest_edid_by_fid, script_vars, scpt_edid_by_qfid = tables
+    op = _OP_BY_NIBBLE.get(t & _COMPARISON_MASK)
+    if t & (CTDA_OR | CTDA_RUN_ON_TARGET) or op is None:
+        return None, f'OR-chained, run-on-target or unknown-comparison gate 0x{t:02X} (func {func})'
+    qedid = quest_edid_by_fid.get(p1 & 0xFFFFFF)
+    if func == FUNC_GET_STAGE:
+        if not qedid:
+            return None, f'GetStage on unknown quest {p1:08X}'
+        return {'kind': 'stage', 'quest_fid': p1, 'quest_edid': qedid, 'op': op,
+                'value': int(round(comp))}, None
+    if func == FUNC_GET_QUEST_VARIABLE:
+        name = script_vars.get(p1 & 0xFFFFFF, {}).get(p2)
+        sedid = scpt_edid_by_qfid.get(p1 & 0xFFFFFF)
+        if not name or not qedid or not sedid:
+            return None, f'GetQuestVariable {p1:08X}[{p2}] unresolvable'
+        return {'kind': 'var', 'quest_fid': p1, 'quest_edid': qedid, 'script_edid': sedid,
+                'var': name, 'op': op, 'value': comp}, None
+    if func == FUNC_GET_ITEM_COUNT:
+        return {'kind': 'itemcount', 'item_fid': p1, 'op': op, 'value': int(round(comp))}, None
+    if func == FUNC_GET_DISTANCE and (p1 & 0xFFFFFF) in _PLAYER_FIDS:
+        return {'kind': 'distance', 'op': op, 'value': comp}, None
+    return None, f'unsupported gate func {func}'
 
 
 def _stage_compatible(cand_conds, stage_eq):
@@ -364,6 +371,19 @@ def _hop_speaker(inf_conds: list, expected: str, cur_speaker: str,
     return None
 
 
+def _follow_ups(cur: dict, quest_raw: str, visited: set, idx: _ConvIndexes):
+    """(INFO, topic fid) follow-ups of `cur`: every one of `quest_raw` first, then other quests'.
+
+    Oblivion's scheduler took a Choice topic's INFO from any running quest.
+    See: docs/commentary/tes5_import_dialogue.md#the-npc-to-npc-conversation-scheduler
+    """
+    for same_quest in (True, False):
+        for t in _choices(cur):
+            for inf in idx.info_by_dial.get(t, []):
+                if id(inf) not in visited and (inf.get('QSTI.Quest', '') == quest_raw) == same_quest:
+                    yield inf, t
+
+
 def _next_hop(cur: dict, cur_speaker: str, quest_raw: str, stage_eq: dict,
               bases: dict, visited: set, idx: _ConvIndexes) -> tuple:
     """The next (INFO, topic fid, speaker) in the chain, or (None, 0, '')."""
@@ -372,17 +392,13 @@ def _next_hop(cur: dict, cur_speaker: str, quest_raw: str, stage_eq: dict,
     except ValueError:
         next_speaker = 0
     expected = _expected_speaker(cur, cur_speaker)
-    for t in _choices(cur):
-        for inf in idx.info_by_dial.get(t, []):
-            if id(inf) in visited or inf.get('QSTI.Quest', '') != quest_raw:
-                continue
-            ic = _conds(inf)
-            if not _stage_compatible(ic, stage_eq):
-                continue
-            speaker = _hop_speaker(ic, expected, cur_speaker, bases,
-                                   next_speaker)
-            if speaker is not None:
-                return inf, t, speaker
+    for inf, t in _follow_ups(cur, quest_raw, visited, idx):
+        ic = _conds(inf)
+        if not _stage_compatible(ic, stage_eq):
+            continue
+        speaker = _hop_speaker(ic, expected, cur_speaker, bases, next_speaker)
+        if speaker is not None:
+            return inf, t, speaker
     return None, 0, ''
 
 
@@ -417,9 +433,33 @@ def _walk_chain(head: dict, quest_raw: str, stage_eq: dict, bases: dict,
     return hops, undrop
 
 
+def _reply_listener(head: dict, idx: _ConvIndexes) -> int:
+    """The NPC a speaker-only HELLO head addresses, as its reply names it; 0 when none.
+
+    The head names one speaker, no target identity at all (an excluded one marks a
+    player greeting), and hands the turn on (NextSpeaker 0). Its
+    first Choice topic is Conversation-type (only Oblivion's NPC scheduler walks those),
+    every INFO there names its speaker, and together they name exactly one other NPC.
+    See: docs/commentary/tes5_import_dialogue.md#the-npc-to-npc-conversation-scheduler
+    """
+    conds = _conds(head)
+    subj = {p & 0xFFFFFF for p in _subject_ids(conds)}
+    choices = _choices(head)
+    names_target = any(f == FUNC_GET_IS_ID and t & CTDA_RUN_ON_TARGET for t, _v, f, _p1, _p2 in conds)
+    if (len(subj) != 1 or names_target or not choices
+            or head.get('DATA.NextSpeaker', '0') not in ('0', '')
+            or idx.dial_by_fid.get(choices[0], {}).get('DATA.Type') != str(idx.conv_type)):
+        return 0
+    speakers = [_subject_ids(_conds(inf)) for inf in idx.info_by_dial.get(choices[0], [])]
+    others = {p & 0xFFFFFF: p for ids in speakers for p in ids if (p & 0xFFFFFF) not in subj}
+    if not speakers or not all(speakers) or len(others) != 1 or set(others) & _PLAYER_FIDS:
+        return 0
+    return next(iter(others.values()))
+
+
 def _build_one_chain(head: dict, idx: _ConvIndexes, script_vars: dict,
-                     plan: dict, n: int, skip) -> dict:
-    """One chain from its HELLO head, or None when it cannot be built."""
+                     plan: dict, n: int, skip, listener: int = 0) -> dict:
+    """One chain from its HELLO head, or None; `listener` overrides the head's target identity."""
     head_fid = _raw_fid(head)
     head_conds = _conds(head)
     quest_raw = head.get('QSTI.Quest', '')
@@ -440,7 +480,7 @@ def _build_one_chain(head: dict, idx: _ConvIndexes, script_vars: dict,
     if len(set(subj)) != 1:
         skip(head_fid, f'{len(set(subj))} subject identities')
         return None
-    a_base, b_base = subj[0], tgt[0]
+    a_base, b_base = subj[0], listener or tgt[0]
     a_ref, b_ref = idx.unique_ref(a_base), idx.unique_ref(b_base)
     if not a_ref or not b_ref:
         skip(head_fid, 'no unique placed ref for a participant')
@@ -542,6 +582,9 @@ def build_conversation_plan(by_type: dict, script_vars: dict = None,
     output in the import and script pipelines (the VMAD/psc mirroring
     contract).  `script_vars` is packages.aliases.build_script_var_map's
     low-24 fid -> {index: name} table, used to resolve GetQuestVariable gates.
+    Heads naming their listener precede heads whose reply names it: an index
+    is a DIAL FormID, so new chains append.
+    See: docs/commentary/tes5_import_dialogue.md#the-npc-to-npc-conversation-scheduler
     """
     log = log or (lambda *_a, **_k: None)
     stem = re.sub(r'\W', '', plugin_stem or '')
@@ -562,11 +605,12 @@ def build_conversation_plan(by_type: dict, script_vars: dict = None,
         plan['skipped'].append((head_fid, reason))
         log(f'    npc-conversation skip {head_fid:08X}: {reason}')
 
-    for head in idx.info_by_dial.get(idx.hello_fid, []):
-        if not head_is_npc_addressed(head):
-            continue
+    heads = idx.info_by_dial.get(idx.hello_fid, [])
+    pinned = [(h, 0) for h in heads if head_is_npc_addressed(h)]
+    replied = [(h, _reply_listener(h, idx)) for h in heads if not head_is_npc_addressed(h)]
+    for head, listener in pinned + [r for r in replied if r[1]]:
         chain = _build_one_chain(head, idx, script_vars, plan,
-                                 len(plan['chains']), _skip)
+                                 len(plan['chains']), _skip, listener)
         if chain is not None:
             plan['chains'].append(chain)
 
@@ -592,11 +636,10 @@ def chain_property_bindings(chain, remap, resolve_hop_topic):
 
     `remap` maps a RAW TES4 FormID to the output plugin space.
     `resolve_hop_topic(hop)` returns the OUTPUT DIAL FormID a hop's Say must
-    target — the caller owns the mapping because bark topics (GOODBYE) are
-    regrouped per quest and hello-hops point at another chain's synthesized
-    head topic.  The chain's own head topic is bound separately.
-    A resolver returning 0 leaves the property unbound; the generated script
-    guards every topic against None and skips the chain.
+    target (the caller owns it: GOODBYE is regrouped per quest and hello-hops
+    name another chain's head topic); the head topic is bound separately.
+    A resolver returning 0 leaves the property unbound, and the generated
+    script skips the chain. A var gate binds its QUEST (the VM finds the script).
     """
     i = chain['index']
     props = {f'Conv{i}A': remap(chain['subj']['ref_fid']),
@@ -612,60 +655,61 @@ def chain_property_bindings(chain, remap, resolve_hop_topic):
             props[f'Conv{i}I{n_item}'] = remap(g['item_fid'])
             n_item += 1
         elif g['kind'] == 'var':
-            # Script-typed property; the VMAD object is still the QUEST record
-            # (the VM resolves the attached script instance from it).
             props[f'Conv{i}V{n_var}'] = remap(g['quest_fid'])
             n_var += 1
-        elif g['quest_fid'] not in seen_q:
+        elif g['kind'] == 'stage' and g['quest_fid'] not in seen_q:
             seen_q.append(g['quest_fid'])
     for j, qfid in enumerate(seen_q):
         props[f'Conv{i}Q{j}'] = remap(qfid)
     return props
 
 
+def _papyrus_number(val) -> str:
+    """`val` as Papyrus source: an integer when whole."""
+    return str(int(val)) if float(val).is_integer() else f'{val}'
+
+
+def _gate_term(g: dict, i: int, qprop: dict, counts: dict) -> tuple:
+    """(property decl or None, property or None, Papyrus term) for one gate of chain `i`.
+
+    `counts` numbers the item and var properties. script_convert.constants is imported
+    late: script_convert imports tes5_import.
+    """
+    from script_convert.constants import papyrus_script_name, safe_property_name
+    op, kind = g['op'], g['kind']
+    if kind == 'distance':
+        return None, None, f'Conv{i}A.GetDistance(Game.GetPlayer()) {op} {_papyrus_number(g["value"])}'
+    if kind == 'stage':
+        p = qprop[g['quest_fid']]
+        return f'Quest Property {p} Auto', p, f'{p}.GetStage() {op} {g["value"]}'
+    counts[kind] = counts.get(kind, 0) + 1
+    if kind == 'itemcount':
+        p = f'Conv{i}I{counts[kind] - 1}'
+        return f'Form Property {p} Auto', p, f'Conv{i}A.GetItemCount({p}) {op} {g["value"]}'
+    p = f'Conv{i}V{counts[kind] - 1}'
+    return (f'{papyrus_script_name(g["script_edid"])} Property {p} Auto', p,
+            f'{p}.{safe_property_name(g["var"])} {op} {_papyrus_number(g["value"])}')
+
+
 def _gate_exprs(chain):
-    """Papyrus boolean terms for the chain's gates + the property decls."""
+    """Papyrus boolean terms for the chain's gates + the property decls.
+
+    Every gate property is first guarded against None, so a binding divergence
+    disables the chain instead of aborting the whole poll.
+    """
     i = chain['index']
-    decls, terms = [], []
-    seen_q = []
+    qprop = {}
     for g in chain['gates']:
-        if g['kind'] == 'stage' and g['quest_fid'] not in seen_q:
-            seen_q.append(g['quest_fid'])
-    qprop = {qfid: f'Conv{i}Q{j}' for j, qfid in enumerate(seen_q)}
-    from script_convert.constants import (safe_property_name,
-                                          papyrus_script_name)
-    declared = set()
-    n_item = n_var = 0
-    guard = []
+        if g['kind'] == 'stage':
+            qprop.setdefault(g['quest_fid'], f'Conv{i}Q{len(qprop)}')
+    decls, guard, terms, counts = [], [], [], {}
     for g in chain['gates']:
-        if g['kind'] == 'itemcount':
-            p = f'Conv{i}I{n_item}'
-            n_item += 1
-            decls.append(f'Form Property {p} Auto')
-            guard.append(p)
-            terms.append(f'Conv{i}A.GetItemCount({p}) {g["op"]} {g["value"]}')
-        elif g['kind'] == 'stage':
-            p = qprop[g['quest_fid']]
-            if p not in declared:
-                decls.append(f'Quest Property {p} Auto')
-                declared.add(p)
-                guard.append(p)
-            terms.append(f'{p}.GetStage() {g["op"]} {g["value"]}')
-        else:                                   # quest-variable gate
-            p = f'Conv{i}V{n_var}'
-            n_var += 1
-            sname = papyrus_script_name(g['script_edid'])
-            decls.append(f'{sname} Property {p} Auto')
-            guard.append(p)
-            var = safe_property_name(g['var'])
-            val = g['value']
-            vtxt = str(int(val)) if float(val).is_integer() else f'{val}'
-            terms.append(f'{p}.{var} {g["op"]} {vtxt}')
-    for p in reversed(guard):
-        # A None property (binding divergence) must disable the chain, not
-        # abort the whole poll function.
-        terms.insert(0, f'{p} != None')
-    return decls, terms
+        decl, prop, term = _gate_term(g, i, qprop, counts)
+        if decl is not None and decl not in decls:
+            decls.append(decl)
+            guard.append(prop)
+        terms.append(term)
+    return decls, [f'{p} != None' for p in guard] + terms
 
 
 def _chain_body(chain, i: int, cond: str, say) -> str:

@@ -27,6 +27,7 @@ twins move identically), while the residual body clipping is cancelled.
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -136,6 +137,9 @@ from asset_convert.character.wrap_mesh import (
     geom_bone_weights as _geom_bone_weights, geom_triangles,
     group_mean as _group_mean, smooth_group_field as _smooth_group_field,
     weld_groups)
+from asset_convert.character.skin_retarget import (
+    SKEL_OBLIVION, deform_vertices_animation_fk, load_animation_deltas, load_skeleton, m44_to_np)
+from asset_convert.character import head_fit
 
 
 # ---------------------------------------------------------------------------
@@ -431,252 +435,192 @@ def _blended_clearance(field, pts, verts_surf, tri_normals, tree,
     return c_out, n_out, rel_out
 
 
-def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool,
-                      weight: int = 0, race=None, src_skel: dict = None) -> int:
-    """FK deform + exact body-fit correction for all non-PRN skinned geoms.
+def _shape_world(block, skel_root):
+    """(world transform, whether it is the identity) of a shape under `skel_root`."""
+    try:
+        world = m44_to_np(block.get_transform(skel_root))
+    except (ValueError, RuntimeError):
+        world = np.eye(4)
+    return world, np.allclose(world, np.eye(4), atol=1e-6)
 
-    Drop-in replacement for skin_retarget's FK Phase B: runs the standard FK
-    animation deform first (smooth base), then cancels its measured error
-    against the Skyrim body via the wrap correction field.  `weight` selects
-    the _0 (thin) or _1 (heavy) Skyrim body target.  `race` selects a beast
-    head pack for the head-gear correction (head_fit.BEAST_RACES).
-    `src_skel`, the source rest skeleton, selects the pose-delta cache.
-    See: docs/commentary/asset_convert_falloutnv.md#fnv-body-fitting
 
-    ALL blocks are solved as ONE system — a single cross-block weld, one
-    correction query, one deficit diffusion graph.  Per-block solving split
-    armor seams (cuirass/pauldron boundary verts got different corrections
-    and visibly came apart).  Returns the number of geometries corrected
-    (0 = caller should run plain FK)."""
-    from asset_convert.character.skin_retarget import (deform_vertices_animation_fk,
-                                load_animation_deltas, load_skeleton,
-                                SKEL_OBLIVION, m44_to_np)
-    bone_deltas, alias = load_animation_deltas(src_skel), oblivion_alias_map(src_skel)
-    if not bone_deltas:
-        return 0    # wrap needs the FK base; fall back entirely
+def _world_verts(block, skel_root) -> np.ndarray:
+    """A shape's vertices in skeleton (world) space."""
+    world, is_id = _shape_world(block, skel_root)
+    v = np.array([[p.x, p.y, p.z] for p in block.data.vertices], dtype=np.float64)
+    return v if is_id else v @ world[:3, :3] + world[3, :3]
 
-    # capture pre-FK (authored T-pose) world verts for clearance enforcement
-    # PRN-attached rigid pieces are EXCLUDED: their verts are BONE-LOCAL
-    # (near the origin — _add_prn_skin's contract), not skeleton-space, so a
-    # field query for them lands nowhere meaningful.  Rigid head gear is
-    # fitted by asset_convert.character.head_fit in its own frame instead.
-    pre_fk: dict = {}
-    for block, is_prn, _pb in skinned_geoms:
-        if is_prn or block.data is None or block.data.num_vertices == 0:
-            continue
-        try:
-            G = m44_to_np(block.get_transform(skel_root))
-        except (ValueError, RuntimeError):
-            G = np.eye(4)
-        v = np.array([[p.x, p.y, p.z] for p in block.data.vertices],
-                     dtype=np.float64)
-        if not np.allclose(G, np.eye(4), atol=1e-6):
-            v = v @ G[:3, :3] + G[3, :3]
-        pre_fk[id(block)] = v
 
-    deform_vertices_animation_fk(skinned_geoms, skel_root, bone_deltas)
+def _pre_fk_world(skinned_geoms, skel_root) -> dict:
+    """id(shape) -> authored world verts of each non-PRN shape with verts.
 
-    ob_skel = load_skeleton(SKEL_OBLIVION)
-    # ---- gather every eligible block into one concatenated system --------
-    metas = []          # (block, G_id, G, start, nv)
-    vw_parts, pre_parts, abc_parts, hf_parts, tri_parts = [], [], [], [], []
-    hwf_parts = []
-    hg_parts = []
-    off = 0
-    for block, is_prn, _prn_bone in skinned_geoms:
-        if is_prn:
-            continue
-        geom_data = block.data
-        skin = block.skin_instance
-        if (geom_data is None or skin is None or skin.data is None
-                or geom_data.num_vertices == 0):
-            continue
-        v0 = pre_fk.get(id(block))
-        nv = geom_data.num_vertices
-        if v0 is None or len(v0) != nv:
-            continue
+    See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
+    """
+    return {id(block): _world_verts(block, skel_root) for block, is_prn, _pb in skinned_geoms
+            if not is_prn and block.data is not None and block.data.num_vertices}
 
-        try:
-            G = m44_to_np(block.get_transform(skel_root))
-        except (ValueError, RuntimeError):
-            G = np.eye(4)
-        G_id = np.allclose(G, np.eye(4), atol=1e-6)
 
-        verts = np.array([[v.x, v.y, v.z] for v in geom_data.vertices],
-                         dtype=np.float64)
-        vw = verts if G_id else verts @ G[:3, :3] + G[3, :3]
+def _head_weights(bones_w, nv, ob_skel, vw):
+    """(bone-centroid anchor per vertex, head-weight fraction per vertex, whether the shape is head gear).
 
-        bones_w = _geom_bone_weights(block, alias)
-        abc = np.zeros((nv, 3), dtype=np.float64)
-        absum = np.zeros(nv)
-        head_w = np.zeros(nv)
-        tot_w = np.zeros(nv)
-        for bone, (idx, w) in bones_w.items():
-            valid = (idx < nv) & (w > 1e-6)
-            np.add.at(tot_w, idx[valid], w[valid])
-            if bone in HEAD_BONES:
-                np.add.at(head_w, idx[valid], w[valid])
-            if bone not in ob_skel:
-                continue
-            head = ob_skel[bone][3, :3]
-            np.add.at(abc, idx[valid], np.outer(w[valid], head))
+    A shape is head gear when over half its total skin weight is on HEAD_BONES; a vertex
+    with no bone in `ob_skel` anchors on itself.
+    See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
+    """
+    abc, absum, head_w, tot_w = np.zeros((nv, 3)), np.zeros(nv), np.zeros(nv), np.zeros(nv)
+    for bone, (idx, w) in bones_w.items():
+        valid = (idx < nv) & (w > 1e-6)
+        np.add.at(tot_w, idx[valid], w[valid])
+        if bone in HEAD_BONES:
+            np.add.at(head_w, idx[valid], w[valid])
+        if bone in ob_skel:
+            np.add.at(abc, idx[valid], np.outer(w[valid], ob_skel[bone][3, :3]))
             np.add.at(absum, idx[valid], w[valid])
-        has = absum > 1e-6
-        abc[has] /= absum[has][:, None]
-        abc[~has] = vw[~has]
-        hwf = head_w / np.maximum(tot_w, 1e-6)   # head-weight fraction
-        # head-gear gating is a PER-GEOMETRY decision: a helmet (majority
-        # head-weighted) keeps plain FK everywhere, but a shirt whose collar
-        # verts carry partial head weights (authored for neck-turn deform)
-        # must NOT lose correction/enforcement exactly at the collar
-        # HEAD GATING IS OFF once the field carries a head surface.
-        #
-        # This used to force head-weighted geometry back to the plain FK result
-        # (hf=1 suppresses both the correction and the clearance enforcement),
-        # because the field was built from body/hands/feet only and corrections
-        # interpolated from neck and shoulder triangles dragged helmets into
-        # the middle of the skull.  That left EVERY head-attached piece --
-        # helmets, hoods, and converted hair -- fitted by the hand-tuned
-        # ARMOR_PIECE_OFFSETS constants instead of a measurement, which is why
-        # helmets let the back of the head poke through and why hair needed a
-        # guessed scale factor.
-        #
-        # The field now includes a fitted head (and ears), so head-weighted
-        # verts have real coverage and take the same exact correction as
-        # everything else.  Keep the fraction computed for the fallback below.
-        # Measure the head fraction against the geometry's TOTAL skin weight.
-        # absum only accumulates bones found in the Oblivion skeleton, so a
-        # mesh already skinned to renamed Skyrim bones has absum == 0 and any
-        # ratio against it is meaningless.
-        w_total = sum(float(w[(idx < nv) & (w > 1e-6)].sum())
-                      for idx, w in bones_w.values())
-        hw_total = float(head_w.sum())
-        geom_is_head = w_total > 1e-6 and hw_total / w_total > 0.5
-        gate_head = geom_is_head and not getattr(field, 'has_head', False)
-        hf = np.full(nv, 1.0 if gate_head else 0.0)
-        # HEAD GEAR IS A PROPERTY OF THE GEOMETRY, NOT OF A VERTEX.  The
-        # head-fit blend below must see this per vertex, so carry the
-        # per-geometry verdict out with the other parts.
-        hg = np.full(nv, 1.0 if geom_is_head else 0.0)
+    has = absum > 1e-6
+    abc[has] /= absum[has][:, None]
+    abc[~has] = vw[~has]
+    w_total = float(tot_w.sum())
+    is_head = w_total > 1e-6 and float(head_w.sum()) / w_total > 0.5
+    return abc, head_w / np.maximum(tot_w, 1e-6), is_head
 
-        metas.append((block, G_id, G, off, nv))
-        vw_parts.append(vw)
-        pre_parts.append(v0)
-        abc_parts.append(abc)
-        hf_parts.append(hf)
-        hwf_parts.append(hwf)
-        hg_parts.append(hg)
-        tri_parts.append(geom_triangles(block) + off)
-        off += nv
 
+def _shape_parts(block, skel_root, v0, alias, gate):
+    """One shape's rows: (world verts, authored verts, anchors, head gate, head fraction, head-gear flag)."""
+    nv = len(v0)
+    vw = _world_verts(block, skel_root)
+    abc, hwf, is_head = _head_weights(_geom_bone_weights(block, alias), nv,
+                                      load_skeleton(SKEL_OBLIVION), vw)
+    return (vw, v0, abc, np.full(nv, float(is_head and gate)), hwf, np.full(nv, float(is_head)))
+
+
+def _gather(skinned_geoms, skel_root, pre_fk, alias, field):
+    """Every non-PRN skinned shape as ONE system, or None when there is none.
+
+    The namespace holds `metas` [(shape, start, nv)] and the stacked rows VW (posed world
+    verts), PRE (authored), ABC (anchors), HF (head gate), HW (head fraction), HG (head
+    gear) and TRIS. Head gear is gated only when `field` has no head surface.
+    See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
+    """
+    gate = not getattr(field, 'has_head', False)
+    metas, rows, tris, off = [], [], [], 0
+    for block, is_prn, _pb in skinned_geoms:
+        v0 = None if is_prn else pre_fk.get(id(block))
+        skin = block.skin_instance
+        if v0 is None or skin is None or skin.data is None or len(v0) != block.data.num_vertices:
+            continue
+        rows.append(_shape_parts(block, skel_root, v0, alias, gate))
+        metas.append((block, off, len(v0)))
+        tris.append(geom_triangles(block) + off)
+        off += len(v0)
     if not metas:
-        return 0
+        return None
+    cols = [np.vstack(c) if c[0].ndim == 2 else np.concatenate(c) for c in zip(*rows)]
+    return SimpleNamespace(metas=metas, VW=cols[0], PRE=cols[1], ABC=cols[2], HF=cols[3],
+                           HW=cols[4], HG=cols[5], TRIS=np.vstack(tris))
 
-    VW = np.vstack(vw_parts)
-    PRE = np.vstack(pre_parts)
-    ABC = np.vstack(abc_parts)
-    HF = np.concatenate(hf_parts)
-    TRIS = np.vstack(tri_parts) if tri_parts else np.zeros((0, 3), np.int64)
 
-    # single cross-block weld: seam twins across blocks (pauldron/torso)
-    # must receive identical output positions
-    wg = weld_groups(VW)
-    n_g = int(wg.max()) + 1
-    ABC = _group_mean(ABC, wg, n_g)[wg]
-    HF = _group_mean(HF[:, None], wg, n_g)[wg][:, 0]
+def _weld(s) -> None:
+    """Weld the system once across shapes; seam twins share ABC, HF, HW and HG.
 
-    corr = _field_corrections(field, VW, ABC, weight)
-    corr = corr * (1.0 - HF)[:, None]
-    new_w = VW + corr
+    See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
+    """
+    s.wg = weld_groups(s.VW)
+    s.n_g = int(s.wg.max()) + 1
+    s.ABC = _group_mean(s.ABC, s.wg, s.n_g)[s.wg]
+    for name in ('HF', 'HW', 'HG'):
+        setattr(s, name, _group_mean(getattr(s, name)[:, None], s.wg, s.n_g)[s.wg][:, 0])
 
-    # HEAD-WEIGHTED GEOMETRY TAKES THE HEAD-FIT FIELD DIRECTLY.  The wrap's
-    # correction field is graph-smoothed (DELTA_SMOOTH_PASSES), which smears
-    # the real jaw/cheek widening across the whole head — a skinned guard
-    # helmet's head band shipped +2.5 units wide ("comically large").  Head-
-    # weighted verts instead map exactly as a rigid PRN helmet would: their
-    # authored position samples head_fit's scalp displacement field, so the
-    # shell keeps its authored standoff everywhere.  Blending by head-weight
-    # fraction hands the shoulder drape (clavicle/spine weights) back to the
-    # wrap, seamlessly at the mixed-weight collar ring.
-    HW = _group_mean(np.concatenate(hwf_parts)[:, None], wg, n_g)[wg][:, 0]
-    # ONLY ACTUAL HEAD GEAR TAKES THE HEAD-FIT FIELD.  head_fit's field is a
-    # SCALP displacement map: it is defined on the head surface and means
-    # nothing below it.  Keying the blend on per-VERTEX head weight fed it
-    # the collar ring of ordinary body armor, which carries head weights so
-    # the neck deforms with the head -- and those verts sit ~3 units off the
-    # OB head surface and well below the scalp, so the sampled delta is an
-    # extrapolation.  Measured on the iron cuirass: 157 collar verts (hwf up
-    # to 1.00) were moved 6.78 mean / 7.98 max, lifting them from z
-    # 105.6-113.0 to 111.9-120.2 -- armor visibly dragged up toward the head
-    # (in-game 2026-08-25).  The mythic dawn robe showed the same thing.
-    # `geom_is_head` is the existing per-GEOMETRY test (>50% of the mesh's
-    # skin weight on the head) that already distinguishes a helmet from a
-    # cuirass; requiring it here means helmets and hoods still fit through
-    # the head field exactly as before, and no body piece is touched by it.
-    HG = _group_mean(np.concatenate(hg_parts)[:, None], wg, n_g)[wg][:, 0]
-    m_head = (HW > 1e-3) & (HG > 0.5)
-    if m_head.any():
-        from asset_convert.character import head_fit
-        hfit = head_fit._get(female)
-        if hfit is not None:
-            delta = head_fit.field_deltas(PRE[m_head] - hfit.o_ob, female,
-                                          race=race)
-            if delta is not None:
-                tgt = PRE[m_head] + (hfit.o_sk - hfit.o_ob) + delta
-                w_h = HW[m_head][:, None]
-                new_w[m_head] = (1.0 - w_h) * new_w[m_head] + w_h * tgt
-                HF = np.maximum(HF, HW)   # field-fitted verts skip the push
 
-    # --- minimum-clearance enforcement ------------------------------------
-    # authored clearance (T-pose vert vs OB body) must be preserved, plus an
-    # outward safety margin near the body: residual field noise must never
-    # leave armor under the Skyrim body skin.  The deficit is DIFFUSED over
-    # the (global) armor mesh graph before pushing: per-vertex estimator
-    # noise cancels against neighbouring slack, while genuine deficit
-    # regions survive and get pushed out coherently.
-    c0, _n0, _r0 = _blended_clearance(field, PRE, field.src,
-                                      field.src_tri_n, field.src_tree,
-                                      k=CLEAR_K)
-    # outward margin fades with authored clearance in BOTH directions:
-    # far-off verts (hoods, hems) get none, and verts authored inside the
-    # body (collar necklines) get none either — but their authored depth is
-    # still enforced (target = c0), so a sinking collar gets pushed back.
-    margin = CLEAR_MARGIN * np.exp(
-        -(np.maximum(c0, 0.0) / CLEAR_MARGIN_RANGE) ** 2) * np.exp(
+def head_origin(src_skel, default):
+    """The source rig's Bip01 Head world position, else `default`.
+
+    See: docs/commentary/asset_convert_armor.md#head-gear-fit
+    """
+    if src_skel and 'Bip01 Head' in src_skel:
+        return np.asarray(src_skel['Bip01 Head'], dtype=np.float64)[3, :3]
+    return default
+
+
+def _fit_head_gear(s, new_w, female, race, src_skel):
+    """`new_w` with head gear's head-weighted verts mapped through head_fit's scalp field.
+
+    Verts are taken head-local about the SOURCE rig's head bone and blended by head-weight
+    fraction; fitted verts are exempted from the clearance push (HF raised).
+    See: docs/commentary/asset_convert_armor.md#head-gear-fit
+    """
+    m_head = (s.HW > 1e-3) & (s.HG > 0.5)
+    hfit = head_fit._get(female) if m_head.any() else None
+    if hfit is None:
+        return new_w
+    o_src = head_origin(src_skel, hfit.o_ob)
+    delta = head_fit.field_deltas(s.PRE[m_head] - o_src, female, race=race)
+    if delta is None:
+        return new_w
+    tgt = s.PRE[m_head] + (hfit.o_sk - o_src) + delta
+    w_h = s.HW[m_head][:, None]
+    new_w[m_head] = (1.0 - w_h) * new_w[m_head] + w_h * tgt
+    s.HF = np.maximum(s.HF, s.HW)
+    return new_w
+
+
+def _push_clear(s, new_w, field, weight):
+    """`new_w` pushed out to the authored clearance plus margin from the fitted Skyrim body.
+
+    PUSH_ITERS rounds; each deficit is diffused over the armor graph, keeping PUSH_RAW_KEEP
+    of the raw deficit as a floor.
+    See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
+    """
+    c0, _n0, _r0 = _blended_clearance(field, s.PRE, field.src, field.src_tri_n,
+                                      field.src_tree, k=CLEAR_K)
+    margin = CLEAR_MARGIN * np.exp(-(np.maximum(c0, 0.0) / CLEAR_MARGIN_RANGE) ** 2) * np.exp(
         -(np.minimum(c0, 0.0) / CLEAR_INNER_FADE) ** 2)
     prox = np.exp(-(np.maximum(c0, 0.0) / CLEAR_PROX) ** 2)
-    a_idx = a_ptr = None
-    if len(TRIS):
-        a_idx, a_ptr = _build_adjacency(TRIS, wg, n_g)
+    adj = _build_adjacency(s.TRIS, s.wg, s.n_g) if len(s.TRIS) else None
     for _ in range(PUSH_ITERS):
-        c1, n1, rel1 = _blended_clearance(field, new_w, field.dst[weight],
-                                          field.dst_tri_n[weight],
-                                          field.dst_tree[weight],
-                                          field.tri_rel[weight], k=CLEAR_K)
-        raw = ((c0 + margin) - c1) * prox * rel1 * (1.0 - HF)
-        deficit = raw
-        if a_idx is not None:
-            deficit_g = _group_mean(raw[:, None], wg, n_g)
-            deficit_g = _smooth_group_field(deficit_g, a_idx, a_ptr,
-                                            PUSH_SMOOTH_PASSES)
-            # diffusion cancels per-vertex noise but also dilutes genuine
-            # isolated deficits (collar rings) — keep a floor of the raw
-            deficit = np.maximum(deficit_g[wg][:, 0], PUSH_RAW_KEEP * raw)
-        push = np.clip(deficit, 0.0, PUSH_CAP)
-        new_w = new_w + n1 * push[:, None]
+        c1, n1, rel1 = _blended_clearance(field, new_w, field.dst[weight], field.dst_tri_n[weight],
+                                          field.dst_tree[weight], field.tri_rel[weight], k=CLEAR_K)
+        deficit = raw = ((c0 + margin) - c1) * prox * rel1 * (1.0 - s.HF)
+        if adj is not None:
+            smooth = _smooth_group_field(_group_mean(raw[:, None], s.wg, s.n_g), adj[0], adj[1],
+                                         PUSH_SMOOTH_PASSES)
+            deficit = np.maximum(smooth[s.wg][:, 0], PUSH_RAW_KEEP * raw)
+        new_w = new_w + n1 * np.clip(deficit, 0.0, PUSH_CAP)[:, None]
+    return new_w
 
-    # weld final positions (coincident twins must stay coincident)
-    new_w = _group_mean(new_w, wg, n_g)[wg]
 
-    for block, G_id, G, start, nv in metas:
+def _write_back(metas, new_w, skel_root) -> None:
+    """Store each shape's rows of `new_w` back into its own vertex frame."""
+    for block, start, nv in metas:
+        world, is_id = _shape_world(block, skel_root)
         seg = new_w[start:start + nv]
-        out = seg if G_id else (seg - G[3, :3]) @ np.linalg.inv(G[:3, :3])
-        geom_data = block.data
+        out = seg if is_id else (seg - world[3, :3]) @ np.linalg.inv(world[:3, :3])
         for vi in range(nv):
-            geom_data.vertices[vi].x = float(out[vi, 0])
-            geom_data.vertices[vi].y = float(out[vi, 1])
-            geom_data.vertices[vi].z = float(out[vi, 2])
-    return len(metas)
+            vert = block.data.vertices[vi]
+            vert.x, vert.y, vert.z = (float(c) for c in out[vi])
+
+
+def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool,
+                      weight: int = 0, race=None, src_skel: dict = None) -> int:
+    """FK deform + exact body-fit correction for all non-PRN skinned shapes; how many (0 = run plain FK).
+
+    FK first, then the wrap field cancels FK's measured error against the Skyrim body,
+    all shapes solved as one system. `weight` picks the _0/_1 body, `race` a beast head
+    pack, `src_skel` (the source rest skeleton) the pose cache and head origin.
+    See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
+    """
+    bone_deltas, alias = load_animation_deltas(src_skel), oblivion_alias_map(src_skel)
+    if not bone_deltas:
+        return 0
+    pre_fk = _pre_fk_world(skinned_geoms, skel_root)
+    deform_vertices_animation_fk(skinned_geoms, skel_root, bone_deltas)
+    s = _gather(skinned_geoms, skel_root, pre_fk, alias, field)
+    if s is None:
+        return 0
+    _weld(s)
+    new_w = s.VW + _field_corrections(field, s.VW, s.ABC, weight) * (1.0 - s.HF)[:, None]
+    new_w = _push_clear(s, _fit_head_gear(s, new_w, female, race, src_skel), field, weight)
+    _write_back(s.metas, _group_mean(new_w, s.wg, s.n_g)[s.wg], skel_root)
+    return len(s.metas)
 
 
 def morph_converted_to_weight1(data, female: bool) -> int:

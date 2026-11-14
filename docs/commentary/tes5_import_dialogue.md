@@ -735,6 +735,33 @@ within a topic is decided by that INFO's own converted conditions — exactly
 Oblivion's rule. So per-line CTDA fidelity is preserved and the INFO End
 fragments (the `setstage` payloads) fire as they do for any other `Say()`.
 
+### Heads the old plan missed (#82)
+
+Three authored shapes were dropped or cut short; each is restored generically:
+
+* **The reply names the listener** (`_reply_listener`). TG04Mistake's head
+  "You are in good spirits today, milady" names only Hlidara; Countess Alessia
+  is named only by the reply lines. Accepted only when the head has one
+  subject, no target-side `GetIsID` at all (a negative one marks a player
+  greeting), `NextSpeaker` 0, a Conversation-type first Choice, and every INFO
+  there names a speaker, together exactly one other NPC. A looser first rule
+  restored ~30 SEConversations chatter chains.
+* **A reply filed under another quest** (`_follow_ups`). MQ15's Orthe opens,
+  but the replies, including Eldamil's "Of course, kynreeve." that sets 58,
+  belong to MQConversations. Oblivion's scheduler took a Choice topic's INFO
+  from any running quest; same-quest follow-ups are still tried first.
+* **`GetDistance(Player)` gates** are kept, run on the speaker as Oblivion ran
+  them on the initiator (`Conv<N>A.GetDistance(Game.GetPlayer()) < 400`), so
+  the talk waits for the player instead of firing anywhere.
+
+Chain indexes are DIAL FormIDs, so reply-named chains append after the
+identity-pinned ones: no existing id moves. Oblivion.esm: 15 -> 16 chains.
+Verified on the test instance (3/3 each, `TG04Mistake` 50 and `MQ15` 58; the
+pre-fix ESM stays at 10 and 56). TG04 plays only at castle dinner, 20-23,
+the one time Hlidara and the Countess share a room in Leyawiin.
+SE05EavesDropDetected cannot run in Oblivion either and stays dropped.
+Regression: `tests/test_dialog.py::TestNpcConversationChains`.
+
 ### The MQ04 gate conversation: what actually stalled it
 <a id="chain-atomicity"></a>
 

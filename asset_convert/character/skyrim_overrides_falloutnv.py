@@ -9,7 +9,11 @@ Bip01 spine, limb and finger names still map through Oblivion's entries.
 See: docs/commentary/asset_convert_falloutnv.md#fnv-skeleton-bones
 """
 
-from asset_convert.character.skyrim_overrides import OBLIVION_TO_SKYRIM_BONE_MAP
+from asset_convert.character.skyrim_overrides import (MORROWIND_SKIN_BONE_MAP,
+                                                      OBLIVION_TO_SKYRIM_BONE_MAP)
+
+#: The Bip01 table plus Morrowind's extra skin bones, whose names no other source uses.
+_BASE_BONE_MAP = {**OBLIVION_TO_SKYRIM_BONE_MAP, **MORROWIND_SKIN_BONE_MAP}
 
 #: FO3/FNV bone -> Skyrim bone, for the names Oblivion's table does not cover.
 FALLOUT_TO_SKYRIM_BONE_MAP = {
@@ -51,8 +55,8 @@ def bone_map_for(skel: dict) -> dict:
     See: docs/commentary/asset_convert_falloutnv.md#fnv-skeleton-bones
     """
     if not is_fallout_skeleton(skel):
-        return OBLIVION_TO_SKYRIM_BONE_MAP
-    return {**OBLIVION_TO_SKYRIM_BONE_MAP, **FALLOUT_TO_SKYRIM_BONE_MAP}
+        return _BASE_BONE_MAP
+    return {**_BASE_BONE_MAP, **FALLOUT_TO_SKYRIM_BONE_MAP}
 
 
 def oblivion_alias_map(skel: dict) -> dict:

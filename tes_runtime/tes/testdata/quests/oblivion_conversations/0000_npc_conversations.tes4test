@@ -1,0 +1,36 @@
+# Issue #82: quest-advancing NPC-to-NPC conversations the importer used to drop.
+# Each case stands in for the quest's earlier progress with setstage, puts the player where a player would be, and
+# waits for the stage the conversation's last line sets. No NPC is moved or touched.
+
+# TG04Mistake: Hlidara's HELLO "You are in good spirits today, milady" (INFO 0000A173) names only its speaker; Alessia
+# Caro (the Countess) is named by the reply. Gate: stage 10-69 and Hlidara within 400 of the player. Hlidara's last
+# line "Do not worry, milady..." (INFO 00035FBB) sets 50. tdetect stands in for the thief sneaking: without it the
+# Count's guard arrests the player for trespassing and the arrest menu holds the game.
+# In Leyawiin the two share a room only at dinner, 20-23 (LeyawiinCastleDinnerHlidara/Alessia); by day Hlidara has
+# no package and the Countess holds audience at the throne. The TES4 runner has no `rest`, so GameHour stands in for
+# the player waiting until evening by Hlidara's dining chair.
+case tg04_hlidara_alessia
+run
+setstage TG04Mistake 10
+set GameHour to 19.5
+tdetect
+approach HlidaraMothrilDiningChairRef
+until 3000 GetStageDone TG04Mistake 50
+end
+
+# MQ15: Orthe's HELLO "What's going on here? Who's this?" (INFO 0003EAAA, sets 57) opens a conversation whose replies
+# belong to MQConversations; Eldamil's last line "Of course, kynreeve." (INFO 0003EABD) sets 58. 20 (Paradise arrival,
+# which enables Orthe and Eldamil), 50, 54 and 56 (the player plays Eldamil's prisoner) stand in for the quest so far.
+# The player walks to Orthe and Eldamil's escort package brings him along, as in the quest. Orthe's own lair check
+# force-greets the player; that greeting sets 51 and, once 57 is done, 58 as well (authored race).
+case mq15_orthe_eldamil
+run
+setstage MQ15 20
+setstage MQ15 50
+setstage MQ15 54
+setstage MQ15 56
+approach EldamilRef
+walk OrtheRef
+hear 3600 OrtheRef Who's this
+until 3600 GetStageDone MQ15 58
+end

@@ -201,12 +201,12 @@ def _bind_world(shape, weights, part_root) -> tuple:
                   weights, chains)
 
 
-def _flat_bone(root, name: str):
-    """A bone placeholder directly under the root, as `add_prn_skin` builds."""
+def _flat_bone(parent, name: str):
+    """A new bone node named `name` under `parent`, as `add_prn_skin` builds."""
     node = NifFormat.NiNode()
     node.name = name.encode('latin-1')
     node.flags = NIF_FLAGS
-    root.add_child(node)
+    parent.add_child(node)
     return node
 
 
@@ -472,13 +472,43 @@ def _adopt_rigid(shape, part, bone, skel, root, flat) -> None:
     root.add_child(shape)
 
 
+def _graft(bone, part_root, skel, bones) -> tuple:
+    """(node, rest world) for a skin bone the shared tree lacks, hung from its nearest shared ancestor.
+
+    Morrowind skins also bind to attach nodes (`Weapon Bone`, `Shield Bone`)
+    and beast bones (`Bip01 Tail`) that base_anim's Bip01 tree does not hold.
+    The bone takes the bind skeleton's rest when it has one, else keeps its
+    authored offset from the ancestor. Raises ValueError without an ancestor.
+    See: docs/commentary/asset_convert_armor.md#morrowind-armor-assembly
+    """
+    name = get_block_name(bone)
+    parents = {id(c): n for n in part_root.tree() if isinstance(n, NifFormat.NiNode)
+               for c in n.children if c is not None}
+    anc = parents.get(id(bone))
+    while anc is not None and get_block_name(anc).lower() not in bones:
+        anc = parents.get(id(anc))
+    if anc is None:
+        raise ValueError(f'skinned part names unknown bone {name!r}')
+    shared = bones[get_block_name(anc).lower()]
+    anc_world = skel.rest_world(get_block_name(shared))
+    target = skel.bind.get(name)
+    if target is None:
+        target = (_full_transform(bone, part_root)
+                  @ np.linalg.inv(_full_transform(anc, part_root)) @ anc_world)
+    node = _flat_bone(shared, name)
+    write_node_transform(node, local_for_world(target, anc_world))
+    bones[name.lower()] = node
+    return node, target
+
+
 def _adopt_skinned(shape, part_root, skel, root, bones) -> list:
     """Re-bind a skinned part to the shared skeleton at its rest (bind) pose.
 
     Bind-pose vertices are moved from the part's own bind skeleton onto the
     shared rest bone by bone (linear blend; a no-op for the vanilla parts,
     which share one bind skeleton), then bound to the tree `hierarchy` builds
-    in that pose. Returns the shared bones the shape now uses.
+    in that pose; a bone the tree lacks is grafted on. Returns the shared
+    bones the shape now uses.
     """
     skin = shape.skin_instance
     weights = _weights(shape, skin)
@@ -487,10 +517,10 @@ def _adopt_skinned(shape, part_root, skel, root, bones) -> list:
     for i in range(skin.num_bones):
         node = bones.get(get_block_name(skin.bones[i]).lower())
         if node is None:
-            raise ValueError(f'skinned part names unknown bone '
-                             f'{get_block_name(skin.bones[i])!r}')
+            node, target = _graft(skin.bones[i], part_root, skel, bones)
+        else:
+            target = skel.rest_world(get_block_name(node))
         rest = _full_transform(skin.bones[i], part_root)
-        target = skel.rest_world(get_block_name(node))
         deltas.append(np.linalg.inv(rest) @ (rest if target is None else target))
         shared.append(node)
     verts, normals = _blend(np.hstack([verts, np.ones((len(verts), 1))]),

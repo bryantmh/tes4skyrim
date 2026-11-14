@@ -48,7 +48,6 @@ OBLIVION_TO_SKYRIM_BONE_MAP: dict[str, str] = {
     'Bip01 L Toe0':    'NPC L Toe0 [LToe]',
     # Alternate spine name (some Oblivion NIFs use Spine0 instead of Spine)
     'Bip01 Spine0':    'NPC Spine [Spn0]',
-    # Weapon / attachment bone nodes
     'Bip01 L Weapon':  'WeaponLeft',
     'Bip01 R Weapon':  'WeaponRight',
     'Bip01 L Shield':  'SHIELD',
@@ -85,6 +84,16 @@ OBLIVION_TO_SKYRIM_BONE_MAP: dict[str, str] = {
     'Bip01 L Finger4':  'NPC L Finger40 [LF40]',
     'Bip01 L Finger41': 'NPC L Finger41 [LF41]',
     'Bip01 L Finger42': 'NPC L Finger42 [LF42]',
+}
+
+#: Morrowind skin bones outside the Bip01 body rig -> Skyrim (beast skeleton tail); skins only, never animations.
+MORROWIND_SKIN_BONE_MAP: dict[str, str] = {
+    'Weapon Bone': 'WEAPON',
+    'Shield Bone': 'SHIELD',
+    'Bip01 Tail':  'TailBone01',
+    'Bip01 Tail1': 'TailBone02',
+    'Bip01 Tail2': 'TailBone03',
+    'Bip01 Tail3': 'TailBone04',
 }
 
 # ---------------------------------------------------------------------------

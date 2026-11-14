@@ -2403,6 +2403,54 @@ class TestNpcConversationChains:
         done1 = [l for l in psc.splitlines() if l.strip() == '_done1 = True']
         assert len(done1) == 2      # its own block and chain 0's
 
+    def _speaker_only_head(self, by_type, mid_speakers=None):
+        """`by_type` with a head naming only A plus a player-distance gate, and Mid lines by `mid_speakers`."""
+        by_type['INFO'][0] = self._info(0x000AAA30, self.HELLO_D, 'You are in good spirits today', [
+            _tes4_ctda(func=72, p1=self.A_BASE),
+            _tes4_ctda(func=58, comp=self._f(26.0), p1=self.QUEST),
+            _tes4_ctda(type_byte=0x80, comp=self._f(400.0), func=1, p1=0x14),
+        ], choices=(self.MID_D,))
+        for k, spk in enumerate(mid_speakers or ()):
+            by_type['INFO'].append(self._info(0x000AAA40 + k, self.MID_D, 'Indeed.', [
+                _tes4_ctda(func=72, p1=spk),
+                _tes4_ctda(func=58, comp=self._f(26.0), p1=self.QUEST),
+            ], choices=(self.GBYE_D,)))
+        return by_type
+
+    def test_reply_named_listener_is_restored(self):
+        """A head naming only its speaker takes its listener from the reply (TG04 Hlidara/Alessia).
+
+        Its GetDistance(Player) gate is kept and runs on the speaker.
+        See: docs/commentary/tes5_import_dialogue.md#the-npc-to-npc-conversation-scheduler
+        """
+        from tes5_import.dialogue.conversations import build_conversation_plan, generate_driver_psc
+        plan = build_conversation_plan(self._speaker_only_head(self._by_type()), plugin_stem='Test')
+        assert len(plan['chains']) == 1
+        c = plan['chains'][0]
+        assert (c['subj']['ref_edid'], c['tgt']['ref_edid']) == ('ARef', 'BRef')
+        assert [h['speaker'] for h in c['hops']] == ['B', 'A']
+        assert {'kind': 'distance', 'op': '<', 'value': 400.0} in c['gates']
+        assert 'Conv0A.GetDistance(Game.GetPlayer()) < 400' in generate_driver_psc(plan, {})
+
+    def test_reply_naming_two_npcs_names_no_listener(self):
+        """Reply lines spoken by two different NPCs name no single listener: no chain."""
+        from tes5_import.dialogue.conversations import build_conversation_plan
+        by_type = self._speaker_only_head(self._by_type(), mid_speakers=(0x000AAA03,))
+        assert build_conversation_plan(by_type, plugin_stem='Test')['chains'] == []
+
+    def test_follow_up_in_another_quest_continues_the_chain(self):
+        """A reply filed under another quest still continues the chain (MQ15 -> MQConversations).
+
+        As in MQ15, the head itself advances its quest.
+        """
+        by_type = self._by_type()
+        by_type['INFO'][0]['ResultScript'] = 'setstage MyQuest 27'
+        by_type['INFO'][2]['QSTI.Quest'] = '000AAA11'
+        by_type['QUST'].append({'Signature': 'QUST', 'FormID': '000AAA11', 'EditorID': 'Talk'})
+        from tes5_import.dialogue.conversations import build_conversation_plan
+        hops = build_conversation_plan(by_type, plugin_stem='Test')['chains'][0]['hops']
+        assert [h['topic_edid'] for h in hops] == ['MidTopic', 'GOODBYE']
+
 
 class TestStartConversationWalk:
     """`StartConversation A B topic` continues through each played line's Choice list.

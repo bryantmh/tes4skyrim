@@ -112,6 +112,16 @@ off the skull stays exactly 2 units off, and the skull can no longer poke
 through anything that covered it in Oblivion. Converted hair is fitted upstream
 in `hair_pipeline.bake_hair_variant` and must not be touched again.
 
+Skinned head gear is fitted inside the body wrap (`body_wrap._fit_head_gear`),
+head-local about the **source rig's own `Bip01 Head`** (`body_wrap.head_origin`),
+not a fixed Oblivion head. The field was built about Oblivion's head (z 112.44),
+which is what Oblivion's rig reports, so Oblivion output is byte-identical
+(town guard helmet and beast variants, Arch-Mage hood, iron cuirass checked).
+Morrowind's head sits at z 118.98: measured about Oblivion's, every Morrowind
+helmet landed ~6.5 units high and floated above the head in game. FNV's head
+is at z 112.82, y 0.40, so FNV head gear moves up to ~1.6 units (not checked
+in game). Regression: `tests/test_armor_source_rigs.py`.
+
 Everything else keeps the previous rules: skinned geometry is exact under the
 wrap (offsets suppressed), non-head Prn pieces such as shields keep their
 near-zero PRN offsets, and the FK-tuned constants remain the fallback whenever
@@ -509,7 +519,16 @@ The attach rules are OpenMW's `SceneUtil::attach`, reproduced per part:
   parts) and bound to the `Bip01` tree in that pose, pruned to the bones
   used; the retarget then runs from Morrowind's own rig
   ([pose cache](#morrowind-pose-cache)). Bone names match
-  case-insensitively (`Bip01 R Upperarm` on a shirt).
+  case-insensitively (`Bip01 R Upperarm` on a shirt). A skin bone the
+  `Bip01` tree lacks -- the attach bones `Weapon Bone`/`Shield Bone` and a
+  beast robe's `Bip01 Tail`..`Tail3` -- is grafted under its nearest shared
+  ancestor (`_graft`) at the bind skeleton's rest, else its authored offset;
+  these used to raise "unknown bone" and drop the robe (#120/#121).
+  `MORROWIND_SKIN_BONE_MAP` sends them to Skyrim's `WEAPON`, `SHIELD` and
+  `TailBone01`-`04`, and the generated Skyrim skeleton tables carry the beast
+  skeleton's tail at its offset from the pelvis
+  (`extract_skeleton_bones.with_beast_tail`), since only `skeletonbeast.nif`
+  has it.
 - **Shield**: geometry in the `Bip01 L Forearm` local frame. Measured on the
   iron shields of both games, Morrowind's forearm frame carries the shield
   exactly as Oblivion's `Bip01 L ForearmTwist` frame does (X along the arm,

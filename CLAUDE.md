@@ -182,9 +182,11 @@ These protect things that are hard or impossible to get back.
   wrong** — it will not reach the goal with more iteration. Drop it and find
   another one.
 - **While iterating on a repeated in-game failure, write no tests or docs** until
-  the user confirms the fix in-game. Each round trip costs them a full
+  the fix is confirmed in game. Each round trip costs them a full
   build-and-play cycle, and tests written against an unconfirmed theory encode the
-  wrong theory. After confirmation, add the regression test and the doc note.
+  wrong theory. Confirmed means the user's game OR your own before/after pass on
+  the headless test instance; either way, add the regression test and the doc
+  note at once, without waiting for the user.
   Don't then delete prose written for a wrong theory; do revert regressing code.
 - A theory must predict what the user saw; a census deviation is not a diagnosis.
 - Never trade working behavior for an unproven fix of a lesser defect.
