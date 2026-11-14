@@ -40,8 +40,31 @@ way, with no `cell_regions.txt`, and its weather never changed.
 
 The exe is the unpacked `SkyrimSE.1.6.1170.unpacked.exe` from the depot
 folder; `build --steam-exe` switches to Steam's. Both reach the main menu
-identically. `steam_appid.txt` plus `SteamAppId`/`SteamGameId` keep the
-Steam API from relaunching through Steam.
+identically. The instance writes no `steam_appid.txt` and sets no
+`SteamAppId`/`SteamGameId`, so Steam does not see Skyrim running or count
+playtime. The unpacked exe imports no `SteamAPI_RestartAppIfNecessary` (the
+stripped DRM stub did the relaunch), and its `SteamAPI_Init` caller (1.6.1170
+RVA 0x1532020) only stores the failed result at `+0x1e8` and returns.
+
+### <a id="checking-out-an-instance"></a>Checking out an instance
+
+**Code:** `tools/live/instance_lock.py`
+
+Several sessions share instances 1-3, so each one must be checked out before
+use. `checkout --who "<task>"` leases the first free instance and prints its
+number and a token. Every other subcommand except `checkouts` and `status`
+refuses to run unless it gets both `--instance N` and the matching `--token T`.
+`checkin` stops that game and releases the lease. Leases are files in
+`C:\Other Games\Skyrim Test checkouts\<N>.json`. Each use of the lease refreshes
+it. A lease that has gone unused for 2 hours, on an instance whose game is not
+running, is stale, and the next `checkout` takes it over and prints that it did.
+
+```bash
+python -m tools.live.test_instance checkout --who "Hlaalu quest run"   # -> instance 2  token 1a2b3c4d
+python -m tools.live.test_instance --instance 2 --token 1a2b3c4d build --mod Morrowind.esm
+python -m tools.live.test_instance --instance 2 --token 1a2b3c4d checkin
+python -m tools.live.test_instance checkouts
+```
 
 ### <a id="parallel-instances"></a>Parallel instances
 
@@ -49,7 +72,16 @@ Steam API from relaunching through Steam.
 `C:\Other Games\Skyrim Test N`, with its own profile, bridge pipe
 (`tes_test_bridgeN`) and hidden desktop (`TESConversionTestN`), so two runs
 go side by side. Each is built separately (`--instance 2 build --mod ...`) and
-may hold a different plugin set. Instance N's `Saves` is a **junction** to
+may hold a different plugin set. The runtime DLLs and their INIs are
+**copies**, not hard links, so each instance keeps the runtime it was built
+with: rebuilding `tes_runtime` (or another instance) never touches a running
+game, and a new runtime reaches an instance only on its next `build`. The
+bridge DLL and the converted **plugins** (`.esm`/`.esp`/`.esl`) are copies for
+the same reason: a linked bridge DLL could not be relinked while any instance
+ran, and the game holds its plugin open, so a linked plugin made the next
+`--import-only` fail at its final rename ("file is locked"). Assets and
+scripts stay hard links.
+Instance N's `Saves` is a **junction** to
 instance 1's, so a checkpoint saved by one loads in the other. Never run the
 same folder with `--checkpoints` in both at once (same checkpoint names), and
 never `rmtree` an instance profile: it follows the junction into instance 1's saves.
@@ -404,9 +436,64 @@ Oblivion.esm (10,875) and Nehrim.esm (6,645) resolves. Each case's line also
 lists the Papyrus error lines logged during it (`questtest` turns on
 `bEnableLogging`).
 
-Not yet supported: `persuade`. MorrowindRuntime still runs its own copy of the step loop
-(`morrowind/plugin/test_runner.cpp`); moving it onto the shared core is the
-next step.
+Both runtimes run this one step loop, so a `.tes4test` uses exactly the
+`.mwtest` grammar: MorrowindRuntime's `plugin/test_backend.cpp` hands it the
+in-game MWScript judge and its game hooks. TESRuntime has `approach` (MoveTo
+in front of the NPC, as MorrowindRuntime's) and `pace` (MorrowindRuntime's
+frame governor, which runs in every converted game, through its `TESTestPace`
+export); a step whose hook TESRuntime lacks (`defend`, `follow`, `punch`)
+fails naming it. `persuade` needs the in-game judge.
+
+### <a id="failure-snapshot"></a>Failure snapshot
+
+**Code:** `tools/live/fail_snapshot.py`, called from `test_instance.tes4_game`.
+
+A failed TES4 case is snapshotted the moment its result line arrives, through
+the bridge the harness already holds, before the runner goes on or the game
+stops: open menus, the player's position and combat state, every script
+variable (`sqv`) and the stage of each quest the case's expectations read, and
+position / distance / combat / AI procedure of each reference the case names
+or that spoke in it. The lines print under the `FAIL` and go to
+`_profile/fail_<case>.txt`, with a screenshot beside it
+(`fail_<case>.png`). An intermittent failure is therefore captured on its
+first occurrence; no `--keep` rerun is needed to see the state. The harness
+owns the bridge pipe for the whole run, so an outside probe cannot read the
+game while cases run -- anything worth reading at a failure belongs in the
+snapshot.
+
+### <a id="new-game-click"></a>The New Game click is sent once
+
+`start_new_game` calls the main menu's New Game handler through the bridge.
+The handler runs on the main thread and starts the load, which reads the whole
+converted plugin; on a busy machine that outlasts the bridge's wait and the
+call comes back `E_LOADING` while it is still running (dump
+`temp/crash/nostart_1112_213858`: main thread inside the call, in `fread`).
+`Bridge.request` retries `E_LOADING`, which for this call would queue a second
+New Game, so the click goes out with one attempt and the harness then waits
+for the game to be ready (300 s). It also waits for the game to answer BEFORE
+the click. When the load outlasts the bridge's wait, the New Game still
+happens (`bridge: new game` in TESGameBridge.log), but the bridge's task
+faults as the call returns to a request the harness side already gave up
+(`main thread: task faulted, code C0000005 at TESGameBridge.dll+0x8d0a`, runs
+17b, 17c) and the next request answers with an error; `ready_after_load`
+keeps asking until the game answers. The fault itself is a bridge defect that
+is still open. A bridge that never connects, or any other
+bridge error before the cases start, leaves a `nostart_*` dump in
+`temp/crash/`.
+
+### <a id="drafting-a-case"></a>Drafting a case
+
+**Code:** `tools/live/quest_brief.py`.
+
+`python -m tools.live.quest_brief --export export/<plugin> --quest <EDID>
+[--skeleton]` prints one block per stage of a TES4 quest, as comment lines
+ready to paste above a case: the journal text, the stage's own result script,
+and every place that sets the stage -- a script with the `begin` block it sits
+in, another quest stage, or a dialogue line with its topic, first spoken line,
+stage / speaker conditions and the choices it offers. `--skeleton` adds a
+draft `case` per stage. What a case still needs from its author is what the
+player does between stages (where they stand, whom they fight), which the
+export cannot say.
 
 ## Known limits
 

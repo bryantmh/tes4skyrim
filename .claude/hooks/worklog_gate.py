@@ -1,8 +1,9 @@
-"""Locks every tool after a compaction or resume until the whole mwscript full-run worklog is read.
+"""After a compaction or resume, locks a session's tools until it has re-read the run worklog IT was using.
 
-SessionStart (compact/resume) arms the lock with the worklog's line count. PreToolUse refuses every
-tool except a Read of that worklog while armed. PostToolUse on a successful Read records the lines
-it covered; the lock lifts only when lines 1..N are all covered.
+PostToolUse on a Read/Edit/Write of a worklog remembers that worklog for the session. SessionStart
+(compact/resume) arms the lock only for a session with a remembered worklog. PreToolUse then refuses that
+session's tools except a Read of its worklog; the lock lifts once lines 1..N are all read. State is per
+session, so one session's compaction never locks another.
 """
 
 import json
@@ -10,14 +11,12 @@ import os
 import sys
 
 ROOT = os.environ.get('CLAUDE_PROJECT_DIR', os.getcwd())
-STATE = os.path.join(ROOT, 'temp', 'worklog_gate_state.json')
+STATE_DIR = os.path.join(ROOT, 'temp', 'worklog_gate')
+SESSIONS = os.path.join(STATE_DIR, 'sessions.json')
 DEFAULT_LIMIT = 2000
-WORKLOG = os.path.join(ROOT, 'docs', 'audits', 'mwscript_full_runs.md')
-
-
-def active_worklog():
-    """The worklog's path (WORKLOG), or None when it is missing."""
-    return WORKLOG if os.path.exists(WORKLOG) else None
+#: The run worklogs, one per test lane family.
+WORKLOGS = tuple(os.path.join(ROOT, 'docs', 'audits', name)
+                 for name in ('mwscript_full_runs.md', 'oblivion_quest_runs.md'))
 
 
 def same_file(a, b):
@@ -25,20 +24,30 @@ def same_file(a, b):
     return bool(a and b) and os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
-def load():
-    """The armed state, or None."""
+def worklog_named(path):
+    """The worklog `path` names, or None."""
+    return next((w for w in WORKLOGS if same_file(path, w)), None)
+
+
+def read_json(path, default):
+    """The JSON in `path`, or `default`."""
     try:
-        with open(STATE, encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             return json.load(f)
     except (OSError, ValueError):
-        return None
+        return default
 
 
-def save(state):
-    """Writes the state file."""
-    os.makedirs(os.path.dirname(STATE), exist_ok=True)
-    with open(STATE, 'w', encoding='utf-8') as f:
-        json.dump(state, f)
+def write_json(path, value):
+    """Writes `value` to `path` as JSON."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(value, f)
+
+
+def lock_path(event):
+    """The session's lock file."""
+    return os.path.join(STATE_DIR, 'lock_%s.json' % event.get('session_id', 'none'))
 
 
 def unread(state):
@@ -57,46 +66,57 @@ def unread(state):
 
 
 def arm(event):
-    """SessionStart: arm the lock and tell the model why."""
-    path = active_worklog()
-    if not path or event.get('source') not in ('compact', 'resume'):
+    """SessionStart: arm the lock when this session was using a worklog."""
+    path = read_json(SESSIONS, {}).get(event.get('session_id', ''))
+    if not path or not os.path.exists(path) or event.get('source') not in ('compact', 'resume'):
         return 0
     with open(path, encoding='utf-8', errors='replace') as f:
         lines = sum(1 for _ in f)
-    save({'path': path, 'lines': lines, 'read': []})
-    print('WORKLOG LOCK: every tool is blocked until you Read ALL %d lines of %s, in offset chunks. '
-          'Do it now, first, before anything else.' % (lines, path))
+    write_json(lock_path(event), {'path': path, 'lines': lines, 'read': []})
+    print('WORKLOG LOCK: every tool is blocked until you Read ALL %d lines of %s (the worklog this session '
+          'was using), in offset chunks. Do it now, first.' % (lines, path))
     return 0
 
 
 def gate(event):
-    """PreToolUse: refuse everything but a Read of the worklog while armed."""
-    state = load()
+    """PreToolUse: refuse everything but a Read of the session's worklog while armed."""
+    state = read_json(lock_path(event), None)
     if not state:
         return 0
-    tool = event.get('tool_name', '')
-    if tool == 'Read' and same_file(event.get('tool_input', {}).get('file_path'), state['path']):
+    if event.get('tool_name') == 'Read' and same_file(event.get('tool_input', {}).get('file_path'), state['path']):
         return 0
     sys.stderr.write('WORKLOG LOCK: read the WHOLE worklog %s before any other tool. Unread lines: %s. '
                      'Use Read with offset/limit.\n' % (state['path'], ', '.join(unread(state))))
     return 2
 
 
+def remember(event, path):
+    """Notes `path` as the worklog this session is using."""
+    sessions = read_json(SESSIONS, {})
+    if sessions.get(event.get('session_id')) != path:
+        sessions[event.get('session_id', 'none')] = path
+        write_json(SESSIONS, sessions)
+
+
 def record(event):
-    """PostToolUse: mark the lines a successful worklog Read covered; lift the lock when all are read."""
-    state = load()
+    """PostToolUse: remember a touched worklog; mark the lines a Read covered and lift a finished lock."""
     args = event.get('tool_input', {})
-    if not state or event.get('tool_name') != 'Read' or not same_file(args.get('file_path'), state['path']):
+    path = worklog_named(args.get('file_path'))
+    if not path:
+        return 0
+    remember(event, path)
+    state = read_json(lock_path(event), None)
+    if not state or event.get('tool_name') != 'Read' or not same_file(path, state['path']):
         return 0
     first = max(1, int(args.get('offset') or 1))
     last = first + int(args.get('limit') or DEFAULT_LIMIT) - 1
     state['read'].append([first, min(last, state['lines'])])
     gaps = unread(state)
     if gaps:
-        save(state)
+        write_json(lock_path(event), state)
         print('WORKLOG LOCK: still unread: %s' % ', '.join(gaps))
     else:
-        os.remove(STATE)
+        os.remove(lock_path(event))
         print('WORKLOG LOCK lifted: all %d lines read.' % state['lines'])
     return 0
 

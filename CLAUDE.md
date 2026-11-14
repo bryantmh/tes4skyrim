@@ -75,8 +75,13 @@ These protect things that are hard or impossible to get back.
 ## Working with the user
 
 - 🛑 **After a compaction or resume, `.claude/hooks/worklog_gate.py` blocks every
-  tool until the whole worklog [docs/audits/mwscript_full_runs.md](docs/audits/mwscript_full_runs.md)
-  has been Read** (it tracks the lines covered). Read it all, first, every time; update a quest's entry in place.
+  tool until the whole run worklog that session was using has been Read** (it tracks the lines covered):
+  [mwscript_full_runs.md](docs/audits/mwscript_full_runs.md) for Morrowind-format runs,
+  [oblivion_quest_runs.md](docs/audits/oblivion_quest_runs.md) for TES4 runs. A session that never read or
+  edited a worklog is not locked. Update a quest's entry in place. **Past ~1200
+  lines, compact it before adding more:** one ledger line per run, ~10 lines per
+  quest entry (status, proven cause, fix, failed attempts); move superseded detail
+  to the next `temp/full_run_*/WORKLOG_ARCHIVE_<n>.md`, never delete it.
 
 - Spawn subagents only when it clearly saves cost: focused or repetitive work a
   smaller model can do from a complete prompt. Rarely more than 3. Haiku for
@@ -122,7 +127,10 @@ These protect things that are hard or impossible to get back.
 - **Reply in plain, ordinary words** — "I keep my own list", not "the queue is
   DLL-owned state". American spelling ("color", "center"). Say whitelist and
   blacklist, not allowlist/blocklist. Reports stand alone (goal, status, changes,
-  open items); every image is a clickable markdown link.
+  open items); every image must actually open for the user: a markdown link
+  with a workspace-relative path to a file INSIDE the repo (copy scratchpad or
+  instance images into `temp/<task>/` first; AppData or absolute paths do not
+  open), or send the file itself. Use proper grammar. "They" is not a singular pronoun.
 - Other sessions' transcripts are files on disk — you can read them.
 
 ## Approaching a bug
@@ -278,7 +286,10 @@ comes from what actually solved 46 recent bugs
 - **A clean audit is not an alibi.** If every check passes and the symptom is
   real, suspect a value the engine chokes on, not a structure it rejects.
 - 🛑 **Reproduce an in-game bug on the headless test instance, rerun after the
-  fix, and show before/after screenshots as links.** Untested = say so.
+  fix, and show before/after screenshots as links.** Untested = say so. Load
+  the `test-instances` skill first and use its tools (`questtest --fast` with a
+  `.tes4test`/`.mwtest` case, `shot`). Check out an instance first
+  (`test_instance checkout`) and check it back in when done.
 - Verify every case a change touches, not one; never fit a constant to one cell.
 - **The user's live game:** probe at once when offered; for steps they must do,
   end the turn and start on their "go". Never freeze it (no cdb sampling, `help`
@@ -539,8 +550,8 @@ ordinary fixes the edit gate is enough.
   the user's pins. Your own pins must be clean (no overlaps, holes, slivers),
   proven by the walk, and shipped via `tools.cellview.bake.mesh_to_esm`, never a
   reimport.
-- 🛑 **Ask before any whole-plugin navmesh rebuild.** The one build is cellview's
-  (`world.plugin_meshes`).
+- **Be mindful of whole-plugin navmesh rebuilds:** run one when the work needs
+  it, never several in a row. The one build is cellview's (`world.plugin_meshes`).
 - A navmesh regression gets the smallest fix in the step that regressed.
 - Navmesh logic is C++ only (`native/src/navgrow/`), in the per-cell build
   cellview runs. Changes touch only the cells that need them and keep speed.

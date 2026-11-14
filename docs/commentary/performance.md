@@ -931,6 +931,40 @@ here, in the order worth checking:
 4. **RAM exhaustion.** Historically real (see the `navm_worker` docstring: a
    heavy worker module cost several GB of RSS per child), which is why that
    module is deliberately light.
+5. **Commit exhaustion from the math library's thread buffers.** See below.
+
+### <a id="one-blas-thread-per-process"></a>One math-library thread per process
+
+**Code:** `core/__init__.py` (`limit_blas_threads`), also called by `tools/validate/safe_run.py`.
+
+numpy and scipy each load their own OpenBLAS, and each copy reserves buffers for
+every CPU thread when it is imported. Measured on a 32-thread PC
+(`temp/import_cost.py`, private commit of one process):
+
+| Import | Commit added |
+|---|---|
+| `numpy` | 743 MB |
+| `scipy.linalg` (reached through `asset_convert.character.body_slots`) | 741 MB |
+| everything a navmesh pool worker imports | 1,608 MB |
+| the same with `OPENBLAS_NUM_THREADS=1` | 129 MB |
+
+A pool of 31 workers therefore asked for about 50 GB of commit against a 66.7 GB
+limit. The buffers are reserved, not touched, so Task Manager shows free RAM
+while workers die with `MemoryError`, "The paging file is too small" on a DLL
+load, or a `BrokenProcessPool`.
+
+The limit costs nothing the converter uses. Every linear-algebra call in the
+pipeline is a 3x3 or 4x4 matrix or a tall, thin fit; 180 character-conversion
+tests ran in 60.36 s / 60.35 s with all threads and 60.38 s / 61.00 s with one.
+The one operation that slows is a bulk point transform (200,000 points by a 3x3,
+50 times: 0.047 s to 0.064 s). A large dense product does need the threads
+(1500 x 1500: 0.015 s to 0.090 s) — nothing in the pipeline does one; a step
+that ever does must lift the limit for itself.
+
+The variable must be set before numpy is first imported in a process, and
+workers inherit it from their parent, so it is set when the `core` package is
+imported: `convert.py` and the GUI both import `core` before anything that
+imports numpy. `setdefault` leaves a value the user exported alone.
 
 ### A native extension that aborts (Nehrim import, fixed 2026-07-29)
 

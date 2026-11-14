@@ -22,10 +22,10 @@ VANILLA_MASTERS = ('skyrim.esm', 'update.esm', 'dawnguard.esm', 'hearthfires.esm
 #: The TES4 header flag that makes a plugin light: it takes no full load index.
 LIGHT_FLAG = 0x200
 #: Steps whose argument is a single reference the runner acts on.
-TARGET_STEPS = ('talk', 'activate', 'take')
+TARGET_STEPS = ('talk', 'activate', 'take', 'approach', 'defend', 'follow')
 COMPARE = re.compile(r'^(.*?)\s*(==|!=|>=|<=|>|<)\s*(-?\d+(?:\.\d+)?)\s*$')
 QUEST_VAR = re.compile(r'^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$')
-TARGETED = re.compile(r'^([A-Za-z_]\w*)\.(.+)$')
+TARGETED = re.compile(r'^([A-Za-z_]\w*|[0-9A-Fa-f]{8})\.(.+)$')
 NUMBER = re.compile(r'(?:>>|=)\s*(-?\d+(?:\.\d+)?)')
 TOKEN = re.compile(r'\w+')
 HEX_ID = re.compile(r'^[0-9A-Fa-f]{8}$')
@@ -36,6 +36,10 @@ RENAMED = 'tes4'
 KEPT_NAMES = (b'QUST', b'GLOB')
 #: The engine's text, which `ask` and `hear` compare bytes against: cp1252, as the plugins store it.
 GAME_ENCODING = 'cp1252'
+#: Console keywords never swapped for a same-named record (Oblivion.esm has EditorIDs `z` and `player`).
+CONSOLE_WORDS = frozenset(('player', 'x', 'y', 'z'))
+#: Console commands that find their cell or worldspace by EditorID, so their arguments are never swapped.
+BY_NAME_COMMANDS = frozenset(('coc', 'cow'))
 #: How `sqv` prints a Papyrus bool.
 BOOLS = {'true': 1.0, 'false': 0.0}
 
@@ -193,10 +197,14 @@ def resolved(text: str, names: Names) -> tuple:
     if targeted and targeted.group(1).lower() != 'player':
         ref, command = names.target(targeted.group(1)), targeted.group(2)
     function, _, args = command.partition(' ')
+    if function.lower() in BY_NAME_COMMANDS:
+        return ref, command
 
     def swap(match) -> str:
         """A name's or TES4 FormID's runtime id, a quest's EditorID, else the token."""
         token = match.group(0)
+        if token.lower() in CONSOLE_WORDS:
+            return token
         fid = names.runtime(token) or (names.from_tes4(token) if HEX_ID.match(token) else 0)
         return '%08X' % fid if fid else names.quest(token) or token
 
@@ -240,7 +248,17 @@ def left_value(bridge: Bridge, left: str, names: Names):
 
 
 def judge(bridge: Bridge, condition: str, names: Names) -> str:
-    """The runner's answer to a `judge`: `<1|0|-1> <left value or null>`."""
+    """The runner's answer to a `judge`: the first ` || ` alternative that holds, else the last one's."""
+    verdict = '-1 null'
+    for choice in condition.split(' || '):
+        verdict = judge_one(bridge, choice, names)
+        if verdict.startswith('1 '):
+            break
+    return verdict
+
+
+def judge_one(bridge: Bridge, condition: str, names: Names) -> str:
+    """One comparison's verdict: `<1|0|-1> <left value or null>`."""
     compared = COMPARE.match(condition.strip())
     left, op, right = compared.groups() if compared else (condition, '!=', '0')
     value = left_value(bridge, left, names)

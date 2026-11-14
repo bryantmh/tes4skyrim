@@ -1,5 +1,6 @@
 """An isolated Skyrim for headless, automated in-game tests.
 
+    python -m tools.live.test_instance checkout --who "<task>"   # then --instance N --token T on every command
     python -m tools.live.test_instance build [--steam-exe] [--plugin X.esm ...]
     python -m tools.live.test_instance launch
     python -m tools.live.test_instance status
@@ -36,7 +37,7 @@ from asset_convert.lod.esm_scan import plugin_masters
 from core.chargen_source import candidates
 from core.subprocess_flags import POPEN_FLAGS
 from source_paths import find_game_path
-from tools.live import crash_capture, hidden_launch, obs_record, tes4_cases
+from tools.live import crash_capture, fail_snapshot, hidden_launch, instance_lock, obs_record, tes4_cases
 from tools.live.game_bridge import Bridge, BridgeError
 from tools.navmesh import navmesh_rescue
 from tools.release.package_runtime_dll import (EXPORT_ROOT, MOD_NAME, MODS, chargen_table,
@@ -68,7 +69,6 @@ NEW_GAME_ID = 52118
 BUTTON_PRESS_ID = 52279
 #: Startup popups that pause the game, RTTI class -> registered menu name.
 STARTUP_POPUPS = (('MessageBoxMenu', 'MessageBoxMenu'), ('loginMenu@LoginMenu', 'Login Menu'))
-APP_ID = '489830'
 UNPACKED_EXE = (r'C:\Program Files (x86)\Steam\steamapps\content\app_489830'
                 r'\depot_489833\SkyrimSE.1.6.1170.unpacked.exe')
 SKSE_DLL = 'skse64_1_6_1170.dll'
@@ -209,9 +209,11 @@ def write_profile(root: str, plugins) -> None:
 
 
 def link_mod(name: str, data: str) -> list:
-    """Links the converted `output/<name>` tree into `data`; the plugins at its root.
+    """Links the converted `output/<name>` tree into `data` and COPIES the plugins at its root.
 
-    The root's other files (manifests, voice maps) are build records, not game data.
+    The game holds a plugin open, so a linked one made the next import fail at
+    its final rename. The root's other files are build records, not game data.
+    See: docs/commentary/headless_testing.md#parallel-instances
     """
     root = os.path.join(REPO, 'output', name)
     if not os.path.isdir(root):
@@ -223,19 +225,31 @@ def link_mod(name: str, data: str) -> list:
             is_plugin = file.lower().endswith(('.esm', '.esp', '.esl'))
             if rel == '.' and not is_plugin:
                 continue
+            place = copy_runtime_file if rel == '.' else link
             if rel == '.':
                 plugins.append(file)
-            link(os.path.join(folder, file), os.path.normpath(os.path.join(data, rel, file)))
+            place(os.path.join(folder, file), os.path.normpath(os.path.join(data, rel, file)))
     return plugins
 
 
+def copy_runtime_file(src: str, dst: str) -> None:
+    """Copies `src` to `dst`, so a runtime rebuild or another instance never shares this instance's file.
+
+    See: docs/commentary/headless_testing.md#parallel-instances
+    """
+    if os.path.exists(dst):
+        os.remove(dst)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+
+
 def link_runtime(data: str, plugins: list) -> None:
-    """Links the runtime DLLs and their INIs, and writes the menus and tables the package composes,
+    """Copies the runtime DLLs and their INIs, and writes the menus and tables the package composes,
     with the chargen of the first of `plugins` that has one (else the config's)."""
     required, optional = MODS[MOD_NAME]
     for source, target in required + optional:
         if os.path.isfile(source):
-            link(str(source), os.path.join(data, str(target)))
+            copy_runtime_file(str(source), os.path.join(data, str(target)))
     games = {name.lower() for name in candidates(EXPORT_ROOT)}
     chosen = next((name for name in plugins if name.lower() in games), None)
     composed = ((morrowind_menus(EXPORT_ROOT, configured_choice(), chosen) or [])
@@ -290,6 +304,7 @@ def link_extra_skse(data: str, dlls) -> None:
             os.remove(os.path.join(folder, name))
     for dll in dlls:
         link(dll, os.path.join(folder, os.path.basename(dll)))
+    os.makedirs(PROFILE, exist_ok=True)
     with open(listed, 'w', encoding='utf-8') as f:
         f.write('\n'.join(os.path.basename(dll) for dll in dlls))
 
@@ -312,11 +327,11 @@ def build(steam_exe: bool, plugins, mods=(), skse_plugins=()) -> None:
     for name in list(DATA_FILES) + archives + list(plugins):
         link(os.path.join(root, 'Data', name), os.path.join(data, name))
     link(os.path.join(root, 'Data', ADDRESS_LIBRARY), os.path.join(data, ADDRESS_LIBRARY))
-    link(BRIDGE_DLL, os.path.join(data, 'SKSE', 'Plugins', 'TESGameBridge.dll'))
+    copy_runtime_file(BRIDGE_DLL, os.path.join(data, 'SKSE', 'Plugins', 'TESGameBridge.dll'))
     link_extra_skse(data, skse_plugins)
     link_skse_scripts(data)
-    with open(os.path.join(INSTANCE, 'steam_appid.txt'), 'w') as f:
-        f.write(APP_ID)
+    if os.path.exists(os.path.join(INSTANCE, 'steam_appid.txt')):
+        os.remove(os.path.join(INSTANCE, 'steam_appid.txt'))
     enabled = loadable(data, enabled)
     write_profile(root, enabled)
     share_saves()
@@ -334,6 +349,12 @@ def running_pid() -> int:
     return pid if hidden_launch.process_image(pid) else 0
 
 
+def slot_running(slot: int) -> bool:
+    """Whether instance `slot`'s game runs; points the module at that instance."""
+    use_instance(slot)
+    return bool(running_pid())
+
+
 def launch(extra_env=None, prefs=()) -> None:
     """Starts the instance hidden, muted, sandboxed and under SKSE; refuses a second copy.
 
@@ -344,7 +365,7 @@ def launch(extra_env=None, prefs=()) -> None:
         sys.exit('test instance already running (pid %d)' % running_pid())
     apply_ini('Skyrim.ini', SKYRIM_INI)
     apply_ini('SkyrimPrefs.ini', PREFS_INI + tuple(prefs))
-    env = {'SteamAppId': APP_ID, 'SteamGameId': APP_ID, 'TES_BRIDGE_PIPE': PIPE,
+    env = {'TES_BRIDGE_PIPE': PIPE,
            'TES_SANDBOX_MUTE': '1',
            'TES_SANDBOX_DOCUMENTS': DOCUMENTS, 'TES_SANDBOX_LOCALAPPDATA': LOCAL_APPDATA,
            **(extra_env or {})}
@@ -611,7 +632,6 @@ FAST_INI = ['Skyrim.ini:General:iFPSClamp=60', 'Skyrim.ini:Display:iVSyncPresent
 PAPYRUS_INI = ['Skyrim.ini:Papyrus:bEnableLogging=1', 'SkyrimPrefs.ini:Interface:bGeneralSubtitles=1',
                'SkyrimPrefs.ini:Interface:bDialogueSubtitles=1']
 
-
 def checkpoint_name(case: str) -> str:
     """The sandbox save made after `case` passed."""
     return 'mwtest_' + re.sub(r'\W', '_', case)
@@ -682,9 +702,17 @@ def handle_lines(bridge: Bridge, results: str, lines: list, handled: int, checkp
 HUNG_SECONDS = 180
 
 
+def game_answers(bridge: Bridge) -> bool:
+    """True when the game's main thread still runs a console line (a long quiet `until` is not a hang)."""
+    try:
+        return bool(bridge.console('GetCurrentTime'))
+    except BridgeError:
+        return False
+
+
 def wait_results(path: str, seconds: float, bridge: Bridge, checkpoints: bool, game) -> list:
     """The result lines in `path` once its `done` line lands, the game exits or hangs (its runtime log
-    unchanged for HUNG_SECONDS), or `seconds` pass, answering the runner's requests (`game.respond`)."""
+    unchanged for HUNG_SECONDS and no answer to a console line), or `seconds` pass, answering the runner's requests (`game.respond`)."""
     deadline = time.time() + seconds
     lines, handled = [], 0
     respond = game.respond(bridge) if game.respond else None
@@ -700,6 +728,8 @@ def wait_results(path: str, seconds: float, bridge: Bridge, checkpoints: bool, g
             break
         if file_state(log_path) != log_state:
             log_state, log_moved = file_state(log_path), time.time()
+        elif time.time() - log_moved > HUNG_SECONDS and game_answers(bridge):
+            log_moved = time.time()
         elif time.time() - log_moved > HUNG_SECONDS:
             print('GAME HUNG after %d result line(s): %s unchanged for %d s' % (len(lines), game.log, HUNG_SECONDS))
             crash_capture.snapshot(running_pid(), tag='hang_%s' % time.strftime('%m%d_%H%M%S'))
@@ -750,12 +780,43 @@ def wait_message_box(bridge: Bridge, seconds: float) -> bool:
     return False
 
 
+def ready_after_load(bridge: Bridge, seconds: float) -> None:
+    """Waits until the game answers again, through the bridge errors a long load leaves behind.
+
+    See: docs/commentary/headless_testing.md#new-game-click
+    """
+    deadline = time.time() + seconds
+    while True:
+        try:
+            bridge.wait_ready(120000)
+            return
+        except BridgeError as error:
+            if time.time() > deadline:
+                raise
+            print('new game: bridge not ready yet (%s); waiting' % error)
+            time.sleep(2)
+
+
 def start_new_game(bridge: Bridge, settle: float, game: int) -> None:
-    """Clicks New at the main menu and answers TESGameSelect's prompt with button `game`."""
+    """Clicks New at the main menu and answers TESGameSelect's prompt with button `game`.
+
+    The click is sent ONCE: the load it starts can hold the main thread longer
+    than the bridge waits (E_LOADING), and a resent click is a second New Game.
+    See: docs/commentary/headless_testing.md#new-game-click
+    """
+    bridge.wait_ready(300000)
     time.sleep(settle)
     dismiss_popups(bridge)
-    bridge.call(id=NEW_GAME_ID, args_=[0])
-    bridge.wait_ready(120000)
+    retries, bridge.loading_retries = bridge.loading_retries, 1
+    try:
+        bridge.call(id=NEW_GAME_ID, args_=[0])
+    except BridgeError as error:
+        if error.code not in ('E_LOADING', 'E_TRANSPORT'):
+            raise
+        print('new game: still loading after the click (%s); waiting' % error.code)
+    finally:
+        bridge.loading_retries = retries
+    ready_after_load(bridge, 300)
     if not wait_message_box(bridge, 120):
         raise SystemExit('no game selector prompt after New Game; is TESGameSelect.esp linked?')
     time.sleep(1)
@@ -839,6 +900,19 @@ def mw_respond(_bridge: Bridge):
 MW_GAME = CaseGame('TES_MW_TEST_', '.mwtest', 'MorrowindRuntime.log', 0.5, mw_respond)
 
 
+def print_failure(bridge: Bridge, line: dict, names) -> None:
+    """Prints and files the game's state for the failed case `line`, with a screenshot.
+
+    See: docs/commentary/headless_testing.md#failure-snapshot
+    """
+    try:
+        for text in fail_snapshot.snapshot(bridge, line, names, open_menus, PROFILE):
+            print('  state: %s' % text)
+        shot(os.path.join(PROFILE, 'fail_%s.png' % line['case']))
+    except (OSError, ValueError, BridgeError) as error:
+        print('  state: snapshot failed: %s' % error)
+
+
 def tes4_game() -> CaseGame:
     """TESRuntime's runner for converted TES4 plugins: the harness resolves names,
     runs console lines and judges conditions, and reports each case's Papyrus errors.
@@ -859,6 +933,8 @@ def tes4_game() -> CaseGame:
                 line['papyrus'] = papyrus.new_errors()
                 for error in line['papyrus']:
                     print('  papyrus: %s' % error)
+                if not line['ok']:
+                    print_failure(bridge, line, names)
             return tes4_cases.answer(bridge, line, names) if 'run' in line or 'judge' in line else None
         return reply
 
@@ -892,14 +968,40 @@ def run_cases(args, game: CaseGame) -> int:
     env.update({name: '1' for name, on in flags.items() if on})
     with recording(args.record):
         launch(env, RECORD_SIZE if args.record else ())
+        debugger_attach(args)
         try:
-            with connect(120) as bridge:
+            with connect(300) as bridge:
                 enter_game(bridge, args, cases)
                 lines = wait_results(results, args.timeout, bridge, args.checkpoints, game)
+        except BridgeError:
+            crash_capture.snapshot(running_pid(), tag='nostart_%s' % time.strftime('%m%d_%H%M%S'))
+            raise
         finally:
             if not args.keep:
                 stop()
-    return report(lines, results, game)
+    return report(lines, results, game) | debugger_report(args)
+
+
+def debugger_attach(args) -> None:
+    """With `--crash-capture`, cdb on the game, logging faults and `--break` hits.
+
+    See: docs/reference/python_tools.md#crash-capture
+    """
+    if args.crash_capture:
+        crash_capture.attach(str(running_pid()), args.crash_capture, 'run',
+                             crash_capture.break_commands(args.break_at))
+
+
+def debugger_report(args) -> int:
+    """Prints the `--break` hit count and any fault's stack; 1 when the game faulted."""
+    if not args.crash_capture:
+        return 0
+    log = os.path.join(args.crash_capture, 'run.txt')
+    hits, faulted = crash_capture.run_summary(log)
+    print('breakpoint hits: %d; game %s (%s)' % (hits, 'FAULTED' if faulted else 'did not fault', log))
+    if faulted:
+        crash_capture.report(log, 'MARKER_STACK', 40)
+    return int(faulted)
 
 
 @contextlib.contextmanager
@@ -987,6 +1089,11 @@ def _case_options(parser) -> None:
     parser.add_argument('--to', dest='to_case', help='stop after this case (`--from X --to X` runs just X)')
     parser.add_argument('--load', help='start from this sandbox save (e.g. mwtest_chargen_class)')
     parser.add_argument('--record', metavar='DIR', help='record the run with OBS at 1440p60, High preset, into DIR')
+    parser.add_argument('--crash-capture', metavar='DIR',
+                        help="attach cdb: a fault's stack and full dump, and --break hits, land in DIR/run.*")
+    parser.add_argument('--break', dest='break_at', action='append', default=[], metavar='RVA[|COND[|CMDS]]',
+                        help='with --crash-capture: log registers and stack at SkyrimSE+RVA when the cdb '
+                             'condition holds, e.g. "0xd976b0|@dl==0xff"')
 
 
 def parse_args():
@@ -994,7 +1101,13 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--instance', type=int, default=1,
                         help='which test instance: 1 is the first; N > 1 is "Skyrim Test N", run in parallel')
+    parser.add_argument('--token', help="the lease token `checkout` printed; every subcommand but "
+                                        "checkout, checkouts and status needs it")
     sub = parser.add_subparsers(dest='cmd', required=True)
+    sub.add_parser('checkout', help='lease a free instance; prints its --instance and --token').add_argument(
+        '--who', required=True, help='what the lease is for, shown to other sessions')
+    sub.add_parser('checkouts', help='list who holds each instance')
+    sub.add_parser('checkin', help='stop the instance and release its lease')
     b = sub.add_parser('build', help='link the instance and write its profile')
     b.add_argument('--steam-exe', action='store_true', help="use Steam's exe, not the unpacked one")
     b.add_argument('--plugin', action='append', default=[], help='plugin to link and enable')
@@ -1015,7 +1128,16 @@ def parse_args():
 def main() -> int:
     """Command-line entry point."""
     args = parse_args()
+    if args.cmd in ('checkout', 'checkouts'):
+        return (instance_lock.checkout(FIRST_INSTANCE, args.who, slot_running) if args.cmd == 'checkout'
+                else instance_lock.print_leases(FIRST_INSTANCE) or 0)
+    if args.cmd not in instance_lock.OPEN_COMMANDS:
+        instance_lock.require(FIRST_INSTANCE, args.instance, args.token)
     use_instance(args.instance)
+    if args.cmd == 'checkin':
+        stop()
+        instance_lock.checkin(FIRST_INSTANCE, args.instance)
+        return 0
     extra =(FAST_INI if getattr(args, 'fast', False) else []) + (PAPYRUS_INI if args.cmd == 'questtest' else [])
     with ini_overrides(getattr(args, 'ini', []) + extra):
         return run(args)

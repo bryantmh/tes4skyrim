@@ -15,6 +15,7 @@ import os
 import sys
 
 import numpy as np
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -141,13 +142,16 @@ def edge_mark(cv, box, p, col, name):
     cv.draw.text((tx, ty), text, fill=col)
 
 
-def legend(cv):
-    """The colour key, bottom right."""
-    x, y = cv.img.width - 384, cv.img.height - 40 - 16 * len(LEGEND)
-    cv.draw.rectangle([x, y, x + 380, y + 10 + 16 * len(LEGEND)], fill=(0, 0, 0), outline=(255, 255, 255))
+def with_key(img):
+    """The map with the colour key in its own strip underneath, so the key never covers the map."""
+    sheet = Image.new('RGB', (max(img.width, 400), img.height + 12 + 16 * len(LEGEND)), (0, 0, 0))
+    sheet.paste(img, (0, 0))
+    draw = ImageDraw.Draw(sheet)
     for i, (col, text) in enumerate(LEGEND):
-        cv.draw.rectangle([x + 6, y + 6 + 16 * i, x + 18, y + 18 + 16 * i], fill=col)
-        cv.draw.text((x + 24, y + 6 + 16 * i), text, fill=(255, 255, 255))
+        y = img.height + 6 + 16 * i
+        draw.rectangle([6, y, 18, y + 12], fill=col)
+        draw.text((24, y), text, fill=(255, 255, 255))
+    return sheet
 
 
 def frame(args, pts, track):
@@ -221,8 +225,7 @@ def main():
         cv.draw.line([cv.px(p[0], p[1]) for p in track], fill=TRACK_C, width=3)
     mark_points(args, cv, box, world)
     draw_axes(cv)
-    legend(cv)
-    cv.img.save(args.out)
+    with_key(cv.img).save(args.out)
     print('wrote', args.out, 'cells', sorted(v for v in cells.values() if v), flush=True)
 
 

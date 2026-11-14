@@ -41,7 +41,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Read",
+        "matcher": "Read|Edit|Write",
         "hooks": [
           {
             "type": "command",

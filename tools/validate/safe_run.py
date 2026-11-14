@@ -24,6 +24,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 
+from core import limit_blas_threads
 from tools.validate import code_rules as CR
 
 #: Exit code the harness reads as "blocked"; the child's own code otherwise.
@@ -94,6 +95,7 @@ def main(argv: list) -> int:
         print(__doc__, file=sys.stderr)
         return BLOCKED
     before = digests()
+    limit_blas_threads()
     code = run(spawn)
     changed = written(before, digests())
     if not changed:

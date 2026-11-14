@@ -51,7 +51,7 @@ class World(object):
     """Every navmesh of a built ESM, by FormID, exterior grid and interior cell."""
 
     def __init__(self, esm):
-        """Read every NAVM and every interior cell's FULL name from `esm`."""
+        """Read every NAVM and every interior cell's EditorID and FULL name from `esm`."""
         with open(esm, 'rb') as fh:
             data = fh.read()
         self.navs, self.by_grid, self.by_cell, self.cell_names = {}, defaultdict(list), defaultdict(list), {}
@@ -59,9 +59,9 @@ class World(object):
         for rec, stack in walk(data, b'NAVM', b'CELL', b'REFR'):
             subs = rec.sub_map()
             if rec.sig == b'CELL':
-                full = subs.get(b'FULL')
-                if full and not stack.worldspace:
-                    self.cell_names[full.split(b'\0')[0].decode('cp1252', 'replace').lower()] = rec.form_id
+                for name in (subs.get(b'EDID'), subs.get(b'FULL')):
+                    if name and not stack.worldspace:
+                        self.cell_names[name.split(b'\0')[0].decode('cp1252', 'replace').lower()] = rec.form_id
                 continue
             if rec.sig == b'REFR':
                 if b'XTEL' in subs:

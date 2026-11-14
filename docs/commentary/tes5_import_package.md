@@ -918,6 +918,25 @@ when no root is installed (a master built before this change). Adding the root
 moved no FormID (1,187,406 records before, the same plus one after). Test:
 `tests/test_escort_when_near.py`.
 
+## A quest package that ran today steps aside
+<a id="once-per-day-completion-latch"></a>
+
+**Code:** `packages/done_latch.py`, `static_scripts/TES4_PackageDone.psc`. NOT yet confirmed in game by the
+user (found by the headless main-quest run 24g-24j, 2026-11-13).
+
+Oblivion's Once Per Day retires a package once it has COMPLETED, until the next day. Quest designers sequence
+with it: Baurus's `MQ05BaurusGoToSewerGate` (escort to within 300 of the wheel) and `MQ05BaurusOpenSewerDoor`
+(use the wheel) carry the SAME conditions (`GetStage MQ05 == 75`, wheel `opened == 0`) and sit in that order in
+his list; the first completing is what lets the second run. `convert_flags` strips Skyrim's own Once Per Day
+from quest-gated packages (the Renault regression: Skyrim's flag dropped a package it had only just started),
+so the converted escort completed, was picked again at once, and Baurus stood 415 from the wheel for good
+(measured live: on GoToSewerGate, not moving, player beside him and then at the wheel).
+
+Fix: such a package (TES4 Once Per Day, quest-gated, not a force greet, which keeps Skyrim's flag) gets its own
+short GLOB `TES4PackDone_<fid>`, a first condition `GetGlobalValue(GameDaysPassed) >= <that global>` (0 at
+start, so it passes), and an OnEnd fragment that sets the global to the next whole day and re-evaluates the
+actor. OnEnd fires on completion only, never on an interruption, which is Oblivion's rule.
+
 ## Follow with a destination is FollowTo
 <a id="follow-with-a-destination-is-followto"></a>
 

@@ -256,7 +256,7 @@ def generate(plugin, src, lattice, ledges=None, edits=None, doors=None):
     if lattice:
         verts, tris = src.build(ledges_out=raw, lattice=True) if src.has_pathgrid else ([], [])
     else:
-        verts, tris, door_pts, raw = world.cell_mesh(plugin, src.fid, pin_grids(plugin))
+        verts, tris, door_pts, raw = world.cell_mesh(plugin, src.fid, pin_grids(plugin), cell_grid(src) is None)
     if lattice or not reaches_edge(edits or {}, cell_grid(src)):
         verts, tris, raw = apply_hand_edits([tuple(float(c) for c in v[:3]) for v in verts], tris, raw,
                                             edits or {})
@@ -454,7 +454,7 @@ def frozen_indices(verts, tris, frozen):
 
 def flood_json(plugin, src, lattice):
     """`{'nodes', 'edges'}` of the graph the import generated for this cell (gap flood or seeding), else None."""
-    got = None if lattice else world.cell_flood(plugin, src.fid, pin_grids(plugin))
+    got = None if lattice else world.cell_flood(plugin, src.fid, pin_grids(plugin), cell_grid(src) is None)
     if not got:
         return None
     points, edges = got

@@ -41,14 +41,15 @@ class Collision(object):
     """Collision of an export's cells, by exterior grid square or interior name, built on first use."""
 
     def __init__(self, export):
-        """Index the export's exterior cells by grid and its interiors by name."""
+        """Index the export's exterior cells by grid and its interiors by EditorID and FULL name."""
         self.idx = NavIndex(export)
         self.grid, self.names, self.cache = {}, {}, {}
         for rec in self.idx.cells:
             if rec.get('XCLC.X') not in (None, ''):
                 self.grid[(int(rec['XCLC.X']), int(rec['XCLC.Y']))] = rec.get('FormID')
-            elif rec.get('FULL'):
-                self.names[rec['FULL'].lower()] = rec.get('FormID')
+            else:
+                self.names.update({name.lower(): rec.get('FormID')
+                                   for name in (rec.get('EditorID'), rec.get('FULL')) if name})
 
     def soup(self, fid):
         """(walkable, blocking) collision triangles of one export cell, cached."""

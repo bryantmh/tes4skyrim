@@ -177,7 +177,7 @@
     <div><i style="background:#3ba0ff"></i>pathgrid / <i
         style="background:#b46cff"></i>in mesh mode</div>
     <div><i style="background:#ff8c1a"></i>generated flood graph / <i
-        style="background:#ff3cff"></i>pinned flood node (<kbd>n</kbd>)</div>
+        style="background:#ff3cff"></i>pinned flood node (<kbd>shift</kbd>+<kbd>n</kbd>)</div>
     <div><i style="background:#7ee0a0"></i>edited / added</div>
     <div><i style="background:#3fc8e0"></i>frozen (pinned) — <kbd>u</kbd> unpins</div>
     <div><i style="background:#e0a33c"></i>node off mesh</div>
@@ -1564,7 +1564,7 @@ function buildClick(ev) {
   return true;
 }
 
-/* Node-pin mode (`n`): a click on the ground pins a flood node there -- the cell's generated flood
+/* Node-pin mode (`shift+n`): a click on the ground pins a flood node there -- the cell's generated flood
    also starts from it -- and a click within NODE_PICK of a pinned one removes it.  It changes the
    build, so the cell re-opens from a fresh build. */
 let mNodePin = false;
@@ -1721,7 +1721,7 @@ function meshStatus() {
   $('mode').textContent = 'Mesh · ' + M.plugin + ' · ' + M.cell +
     (M.nodes.length === 0 ? ' · NO PATHGRID (nothing to generate from)' : '') +
     (mBuild ? ' · BUILD ' + mRing.length + '/3' : '') +
-    (mNodePin ? ' · NODE PIN (click ground: pin / click a magenta node: unpin)' : '') +
+    (mNodePin ? ' · NODE PIN (click ground: pin / click a magenta node: unpin · esc leaves)' : '') +
     (mSelVert >= 0 ? ' · vert ' + mSelVert : '') +
     (mSelTri >= 0 ? ' · tri ' + mSelTri : '') +
     (mSnapFrom >= 0 ? ' · welding ' + mSnapFrom : '') +
@@ -1733,7 +1733,8 @@ function meshStatus() {
       '<kbd>shift</kbd>+click two verts = weld · <kbd>g</kbd> snap to floor · ' +
       '<kbd>del</kbd> delete tri · <kbd>d</kbd> door · ' +
       '<kbd>b</kbd> build a triangle · <kbd>l</kbd> link two tris (upper first) · ' +
-      '<kbd>u</kbd> unpin area at selection · <kbd>shift</kbd>+<kbd>u</kbd> unpin whole cell';
+      '<kbd>u</kbd> unpin area at selection · <kbd>shift</kbd>+<kbd>u</kbd> unpin whole cell · ' +
+      '<kbd>shift</kbd>+<kbd>n</kbd> pin flood nodes (each click rebuilds the cell)';
 }
 
 /* The collision toggle and the authored underlay are CORPUS concepts: an
@@ -1834,14 +1835,15 @@ function stopPoll() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
+/* A poll still in flight when the next job starts must not write onto, or stop, the new job's bar. */
 function pollProgress(job) {
   stopPoll();
-  pollTimer = setInterval(async () => {
+  const timer = setInterval(async () => {
     let d;
     try {
       d = await (await fetch('/progress?job=' + encodeURIComponent(job))).json();
     } catch (e) { return; }
-    if (d.missing || !$('pFill')) return;
+    if (pollTimer !== timer || d.missing || !$('pFill')) return;
     $('pFill').style.width = d.percent + '%';
     $('pSub').textContent = d.done
       ? 'done in ' + d.elapsed + 's'
@@ -1849,6 +1851,7 @@ function pollProgress(job) {
         d.elapsed + 's';
     if (d.done) stopPoll();
   }, 250);
+  pollTimer = timer;
 }
 
 /* An error that times out is an error the user never reads -- a slow lookup
@@ -2059,7 +2062,7 @@ function meshKey(e) {
     meshUnpin(e.key === 'U');
     return true;
   }
-  if (e.key === 'n') {
+  if (e.key === 'N') {
     mNodePin = !mNodePin;
     el.style.cursor = mNodePin ? 'crosshair' : 'default';
     status();
@@ -2097,7 +2100,7 @@ function meshKey(e) {
     return true;
   }
   if (e.key === 'Escape') {
-    mSnapFrom = -1; mLinkFrom = -1; dropRing(); mBuild = false; mLinkNote = '';
+    mSnapFrom = -1; mLinkFrom = -1; dropRing(); mBuild = false; mNodePin = false; mLinkNote = '';
     el.style.cursor = 'default';
     meshRebuild(); status();
     return true;

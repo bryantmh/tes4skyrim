@@ -946,6 +946,18 @@ Vanilla never leaves one dangling: across **80** meshes carrying shader float
 controllers, **481/481** are reachable from `shader.controller`. The pass mirrors
 that — the controller goes on the shader's chain, targeted at the shader.
 
+The controller is also put under the sequence's control the way vanilla's are.
+In vanilla `meshes/magic`, **11,215/11,215** controllers that a sequence entry
+names have the manager bit (`0x20`, so flags are `0x6c`/`0x68`) and their own
+`NiBlend*Interpolator`. The sequence's keyed interpolator stays on the
+controlled block. Our retargeted alpha/emissive/UV controllers used to ship
+`0x48|cycle` with the block's own `NiFloatInterpolator` as the controller's
+interpolator. That was 173 controllers in 22 Oblivion magic-effect NIFs (fireball,
+drain, shockshield, bindmythicdawn). A player's three crashes in fort fights all
+died in `NiControllerSequence` deactivate (1.5.97 `+0CCC1A5`,
+`NiBlendInterpolator::RemoveInterpInfo` called with blend slot 255, which means
+"never attached"), one of them on `tes4\magiceffects\fireball_area.nif`.
+
 ## Ambient animation: Oblivion's Idle becomes vanilla's AutoPlay pair
 <a id="autoplay-ambient-sequences"></a>
 

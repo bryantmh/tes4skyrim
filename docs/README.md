@@ -147,6 +147,8 @@ A dated sweep over a corpus, with counts. Frozen once written; a re-audit is a N
 | [morrowind_opcode_testplan_morrowind.md](audits/morrowind_opcode_testplan_morrowind.md) | The same opcode test plan over Morrowind.esm's journal quests |
 | [morrowind_opcode_testplan_merged.md](audits/morrowind_opcode_testplan_merged.md) | One opcode test plan over Morrowind.esm and TR_Mainland.esm's quests together |
 | [mwscript_full_runs.md](audits/mwscript_full_runs.md) | The mwscript full-run worklog: standing rules, generic mechanisms, every quest's status and failed attempts |
+| [oblivion_quest_runs.md](audits/oblivion_quest_runs.md) | The Oblivion (.tes4test) quest-run worklog: TES4-specific lessons, launch, run ledger, every quest's status |
+| [navmesh_since_0.686.md](audits/navmesh_since_0.686.md) | Navmesh release chart: area, cracks, islands, time and memory, 0.686 against the current build on six plugins |
 | [mwscript_opcodes.md](audits/mwscript_opcodes.md) | Which of MWScript's 298 commands MorrowindRuntime implements, by call-site cost |
 | [wiring.md](audits/wiring.md) | Script-to-record wiring in converted plugins: unbound/dangling/mistyped properties, hosts, conditions, coverage, verified findings |
 | [script_command_fidelity.md](audits/script_command_fidelity.md) | How each TES4 command converts to Papyrus (native, inline, polyfill, partial, dropped), by call site, from real converter runs |

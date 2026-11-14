@@ -1,6 +1,6 @@
 """Runs one case (or a case range) several times in a row from its checkpoint; a fix counts only when every run passes.
 
-    python -m tools.live.repeat_case --cases <folder> --case <name> [--times 3] [--instance 2] [--out DIR]
+    python -m tools.live.repeat_case --cases <folder> --case <name> --instance N --token T [--times 3] [--out DIR]
     python -m tools.live.repeat_case --cases <folder> --from <a> --to <b> --tool questtest --new-game 3
 
 Each run's runner output and runtime log are kept as `<out>/<label>_<n>.out` / `.log`. Stops at the
@@ -30,6 +30,7 @@ def parse_args():
     p.add_argument('--to', dest='to_case')
     p.add_argument('--times', type=int, default=3)
     p.add_argument('--instance', type=int, default=1)
+    p.add_argument('--token', required=True, help="the instance's lease token from `test_instance checkout`")
     p.add_argument('--tool', choices=sorted(RUNTIME_LOG), default='mwtest')
     p.add_argument('--timeout', type=float, default=3600)
     p.add_argument('--out', default=os.path.join(test_instance.REPO, 'temp', 'repeat_case'))
@@ -44,7 +45,8 @@ def command(args) -> list:
     folder's first case (a folder's first case has no checkpoint before it, so `--from` would be refused)."""
     first = None if '--load' in args.extra else args.case or args.from_case
     last = args.case or args.to_case
-    cmd = [sys.executable, '-m', 'tools.live.test_instance', '--instance', str(args.instance), args.tool,
+    cmd = [sys.executable, '-m', 'tools.live.test_instance', '--instance', str(args.instance),
+           '--token', args.token, args.tool,
            '--cases', args.cases, '--fast', '--stop-on-fail', '--timeout', str(args.timeout)]
     cmd += ['--from', first] if first else []
     cmd += ['--to', last] if last else []

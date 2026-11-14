@@ -24,6 +24,7 @@ See: docs/reference/python_tools.md#crash-capture
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -202,6 +203,30 @@ def armed(log: str) -> bool:
         return False
     with open(log, 'r', encoding='utf-8', errors='replace') as handle:
         return 'MARKER_ARMED' in handle.read()
+
+
+def break_commands(specs, module: str = 'SkyrimSE') -> str:
+    """cdb lines for `attach(first=...)`: each `RVA[|condition[|commands]]` spec breaks at `module`+RVA and,
+    when the cdb condition holds (always without one), logs MARKER_BREAK, the registers, the commands and the
+    stack, then continues. Exit-process is ignored, so stopping the game writes no dump.
+
+    See: docs/reference/python_tools.md#crash-capture
+    """
+    lines = ['sxi epr']
+    for spec in specs:
+        rva, cond, extra = (spec.split('|') + ['', ''])[:3]
+        body = '.echo MARKER_BREAK; r; %skb 12; gc' % (extra + '; ' if extra else '')
+        lines.append('bp %s+%s ".if (%s) {%s} .else {gc}"' % (module, rva, cond or '1', body))
+    return ''.join(line + '\n' for line in lines)
+
+
+def run_summary(log: str) -> tuple:
+    """(breakpoint hits logged, whether the target faulted) for capture log `log`."""
+    if not os.path.exists(log):
+        return 0, False
+    with open(log, 'r', encoding='utf-8', errors='replace') as handle:
+        text = handle.read()
+    return len(re.findall(r'(?m)^MARKER_BREAK\s*$', text)), bool(re.search(r'Last event: .*code c0', text))
 
 
 def report(log: str, section: str = 'MARKER_CRASH', limit: int = 80) -> None:

@@ -1970,6 +1970,35 @@ body at OnEnd breaks it four different ways, each fixed by one helper.
   steps that counter — a line the quest script advances for is not a sequencer
   and must never be gated.
 
+- <a id="remote-write-runs"></a>**`hold_runs` — a run of writes to another
+  script is one step.** Oblivion ran one script at a time, so `set Q.speaker`,
+  `set Q.target`, `set Q.convCount` in a stage result and the same three in a
+  line's result could not mix. In Papyrus each is its own call into the owning
+  script and two fragments interleave: measured in run 17d (failure snapshot
+  of `chargen_renote_at_marker_a`): `convCount=9 Speaker=2 Target=4`, the
+  stage-12 reset (`speaker 2, target 3, convCount 8`) crossed with the
+  Emperor's line handing over (`+1, speaker 2, target 4`), after which no
+  line qualifies and the scene stalls (about 1 run in 7). Every script that
+  carries an add helper (`TES4Add_<var>`) also carries `TES4Hold` /
+  `TES4Release`; a stage fragment's run of two or more plain writes to such
+  a script, and a line's OnBegin handoff (its gate test included), sit between
+  them. The hold wraps only plain writes, never a call, so it cannot nest;
+  a release lost to an aborted thread frees itself after 100 waits of 0.01 s.
+  NOT yet confirmed in game by the user.
+- <a id="lost-line-ends"></a>**`_end_watch` (pipeline.py) — a line's result
+  must not depend on the player hearing it.** Measured in run 23c (the Blades'
+  welcome at Cloud Ruler Temple, player left at the gate ~3,000 units away):
+  every line's OnBegin ran (`MQ04.convCount` reached 16) but no OnEnd did
+  after the "Hail" lines -- stage 43 ("Jauffre.", OnEnd of INFO 00037C3C) and
+  44 never came, and Jauffre and Martin still carried their line lengths in
+  Variable09. Oblivion ran a result script whether or not the line was
+  heard. So an INFO whose OnEnd has a body counts lines begun and not ended
+  (`TES4_pending`), and its OnBegin waits the line's length plus 3 s (12 s
+  for an unvoiced line) and then runs `Fragment_0` itself if the count is
+  still up; a real OnEnd that arrives afterwards finds the count at 0 and
+  returns. The count, not a flag, keeps overlapping speakers of ONE INFO
+  apart (six Blades say the same "Hail"). NOT yet confirmed in game by the
+  user.
 - <a id="turn-handoff"></a>**`split_turn_handoff` — the handoff cannot wait for
   OnEnd.** In TES4 the result script set `convCount`/`speaker` and charged
   `convTimer` in the frame the line started, so the next speaker's guard

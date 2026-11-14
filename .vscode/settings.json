@@ -12,5 +12,16 @@
         "**/temp/**": true,
         "**/references/**": true,
     },
+    "python.analysis.exclude": [
+        "output",
+        "export",
+        "temp",
+        "references",
+        "external",
+        "native",
+        "**/__pycache__",
+    ],
+    "python.analysis.diagnosticMode": "openFilesOnly",
+    "python.analysis.indexing": false,
     "diffEditor.diffAlgorithm": "legacy"
 }

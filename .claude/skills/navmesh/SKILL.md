@@ -12,7 +12,8 @@ description: >-
 # Navmesh
 
 The hard rules are in CLAUDE.md ("Navmesh changes"): protected cells, pinned
-cells, no whole-plugin rebuilds without asking. This is the how-to.
+cells, being mindful of whole-plugin rebuilds (one when needed, never several
+in a row). This is the how-to.
 
 ## A navmesh problem in a cell: show the user
 
@@ -82,6 +83,28 @@ Bad mesh on a quest route gets a pin, not a generator change or a case workaroun
 Code is C++ in `native/src/navgrow/` (`python native/build.py --module _navgrow_native`),
 inside the per-cell build cellview runs. A regression gets the smallest fix in the
 step that regressed.
+
+🛑 **The user reviews a navmesh change in cellview and nowhere else.** A fix that
+exists only in a scratch build, a pickle or a picture cannot be tested by them.
+Before you report a change as ready to look at:
+
+1. The change is in `native/src/navgrow/` (or `tes5_import/navmesh/`) in the
+   working tree, and `python native/build.py --module _navgrow_native` has
+   rebuilt `native/dist/`. Cellview loads the module from there.
+2. If the link step fails with `LNK1104 cannot open ... .pyd`, some process has
+   the module loaded. `tools/cellview/server.py` and `world.py --serve <plugin>`
+   are background workers the converter GUI starts and stops by itself; seeing
+   them does NOT mean the user has cellview open, so never tell the user it is.
+   Look at the process list again and retry the build: they are usually gone
+   within a minute. Only if one stays, say which process holds the file.
+3. Say plainly which state cellview will show: "applied and built" or "not
+   built yet". Never describe a defect as visible to the user when it exists
+   only in your own build.
+
+Scratch builds are for narrowing down a cause, not for review: build the
+extension elsewhere by pointing `native/build.py`'s `OUT_DIR` at a scratch
+folder and register that `.pyd` as `sys.modules['_navgrow_native']` before
+importing `tes5_import` (the loader reuses a module already registered).
 
 All three checks use `tools/navmesh/navmesh_ab.py`: `build` rebuilds cells with the
 current code into a pickle (run it before your change and after); the other

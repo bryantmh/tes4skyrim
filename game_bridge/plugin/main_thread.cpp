@@ -24,6 +24,11 @@ struct Shared {
     std::mutex              m;
     std::condition_variable cv;
     bool                    done = false;
+    // The handler captures the waiter's locals by reference, so it may run only
+    // while the waiter is still there: a task not yet started when the waiter
+    // times out is cancelled, and a started one is waited for.
+    bool                    started = false;
+    bool                    cancelled = false;
     std::function<void()>   fn;
 };
 
@@ -56,8 +61,14 @@ public:
     explicit Task(std::shared_ptr<Shared> s) : s_(std::move(s)) {}
 
     void Run() override {
+        bool run = false;
+        {
+            std::lock_guard<std::mutex> lk(s_->m);
+            run = !s_->cancelled;
+            s_->started = run;
+        }
         // Never let an exception escape into the game's task pump.
-        if (s_->fn) RunGuarded(s_->fn);
+        if (run && s_->fn) RunGuarded(s_->fn);
         {
             std::lock_guard<std::mutex> lk(s_->m);
             s_->done = true;
@@ -84,8 +95,13 @@ MainThreadStatus RunOnMainThread(std::function<void()> fn, unsigned timeoutMs) {
     std::unique_lock<std::mutex> lk(shared->m);
     const bool ran = shared->cv.wait_for(
         lk, std::chrono::milliseconds(timeoutMs), [&] { return shared->done; });
-
-    return ran ? MainThreadStatus::Ok : MainThreadStatus::Timeout;
+    if (ran) return MainThreadStatus::Ok;
+    if (!shared->started) {
+        shared->cancelled = true;
+        return MainThreadStatus::Timeout;
+    }
+    shared->cv.wait(lk, [&] { return shared->done; });
+    return MainThreadStatus::Ok;
 }
 
 }  // namespace bridge

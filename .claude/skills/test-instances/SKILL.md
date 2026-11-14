@@ -23,8 +23,21 @@ untested fix. Quest-run rules live at the top of the worklogs
 
 ## Commands
 
-`--instance N` goes **before** the subcommand (instances 1 and 2 run side by side;
-their `Saves` are shared through a junction).
+🛑 **Check out an instance first; never use one you have not checked out.**
+`checkout` leases a free instance (1-3) and prints its number and token; every
+other command needs both `--instance N --token T`, placed **before** the
+subcommand. Check it in when done. Never delete another session's lease file;
+if all three are taken, wait or coordinate. Instances run side by side and
+share `Saves` through a junction.
+[Details](../../../docs/commentary/headless_testing.md#checking-out-an-instance).
+
+```bash
+python -m tools.live.test_instance checkout --who "<task>"     # -> instance N  token T
+python -m tools.live.test_instance checkouts                   # who holds what
+python -m tools.live.test_instance --instance N --token T checkin   # stops the game, releases it
+```
+
+Below, `--instance 2` stands for `--instance N --token T`:
 
 ```bash
 python -m tools.live.test_instance --instance 2 build --mod <output folder> [--plugin X.esp]
@@ -49,7 +62,7 @@ python -m tools.live.test_instance --instance 2 mwtest --cases <folder> --fast -
 # TES4 cases (Oblivion, Nehrim); folder = tes_runtime/tes/testdata/quests/<quest>/
 python -m tools.live.test_instance --instance 2 questtest --cases <folder> --new-game <button> --fast --checkpoints --stop-on-fail --timeout 3600
 # 3 passes in a row from the checkpoint (a fix counts only at 3/3; a flaky history needs ~10)
-python -m tools.live.repeat_case --cases <folder> --case <case> --times 3 --instance 2 --out temp/<task>/rc [--tool questtest]
+python -m tools.live.repeat_case --cases <folder> --case <case> --times 3 --instance 2 --token T --out temp/<task>/rc [--tool questtest]
 ```
 
 - `--fast` = iFPSClamp 6 + god mode. Never slow a run globally; a case may lower
