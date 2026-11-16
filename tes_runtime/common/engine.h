@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "addresses.h"
@@ -97,6 +98,11 @@ void ForEachLegacySidecar(const char* folder, const char* suffix,
 
 // Drops a heap TaskDelegate onto the game's main-thread task queue.
 void RunOnMainThread(TaskDelegate* task);
+
+// Queues `fn` for the UI's next message processing (SKSE AddUITask), the only
+// time a menu's movie may be read or written: an AddTask task can run on a job
+// thread while the menus are drawn. False, and `fn` dropped, without one.
+bool PostToUiTask(std::function<void()> fn);
 
 // Runs `fn` on the game's main thread every `ms` milliseconds, paused or not,
 // through g_api.task (main_tick.h). False, and nothing started, without a task

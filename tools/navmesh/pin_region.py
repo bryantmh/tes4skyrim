@@ -292,14 +292,18 @@ def floor_of(points, k=6):
         w = 1.0 / dist ** 2
         return float((w * arr[idx, 2]).sum() / w.sum())
     floor.measured = lambda x, y: tree.query((x, y))[0] <= FLOOR_REACH
+    floor.on_floor = lambda x, y, z: any(abs(arr[i, 2] - z) <= OFF_FLOOR
+                                         for i in tree.query_ball_point((x, y), FLOOR_REACH))
     return floor
 
 
 def plan_part(verts, poly, ring, floor, points, margin):
     """Print one part's plan; `(ring, ring z, new points, triangles)`. Notch holes join the ring as new points;
-    an old ring vertex keeps its z unless it is more than OFF_FLOOR off a measured floor."""
+    an old ring vertex keeps its z unless it is more than OFF_FLOOR off a measured floor and on no floor point
+    within reach (a vertex on a wall's top keeps the top's height, not a blend across the wall)."""
     ring = ring + [(None, x, y) for h in poly.interiors for x, y in list(h.coords)[:-1]]
-    zs = [floor(x, y) if k is None or (abs(verts[k][2] - floor(x, y)) > OFF_FLOOR and floor.measured(x, y))
+    zs = [floor(x, y) if k is None or (abs(verts[k][2] - floor(x, y)) > OFF_FLOOR and floor.measured(x, y)
+                                       and not floor.on_floor(x, y, verts[k][2]))
           else verts[k][2] for k, x, y in ring]
     moved = ['v%d %.0f->%.0f' % (k, verts[k][2], z) for (k, _x, _y), z in zip(ring, zs)
              if k is not None and z != verts[k][2]]

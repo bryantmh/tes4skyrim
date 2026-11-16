@@ -23,6 +23,12 @@ void SetTaskInterface(SKSETaskInterface* task);
 // call was dropped rather than failing silently.
 bool CanPostToMainThread();
 
+// Queues `fn` for the UI's next message processing (SKSE AddUITask), the only
+// time a menu's movie may be read or written: a PostToMainThread task can run
+// on a job thread while the menus are drawn. False when `fn` was not queued.
+// See: docs/commentary/morrowind_runtime.md#movies-are-touched-at-ui-time
+bool PostToUiThread(std::function<void()> fn);
+
 // Queues `fn` to run on the game's main thread and returns immediately.
 // Returns false when there is no task interface and `fn` was NOT run.
 bool PostToMainThread(std::function<void()> fn);

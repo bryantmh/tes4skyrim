@@ -12,11 +12,9 @@ expect GetQuestRunning MQ01
 end
 
 # Menu expected: "RaceSex Menu" (TESGameSelect BeginChosenGame calls Game.ShowRaceMenu 0.5 s after the hand-off).
-# God mode stands in for the player being strong enough for the later fights (it is not a story change).
 case chargen_race_menu
 wait 60
 close RaceSex Menu
-console tgm
 end
 
 # MQ01 stage 5 enables controls and sets its own stage 10 two seconds later; stage 10 sets Charactergen 6.
@@ -27,7 +25,12 @@ end
 
 # Valen Dreth taunts from the next cell (CharGenTaunt2 conversation INFO sets stage 9), then the Emperor's group
 # conversation chain runs on the speaker/target handshake (INFO 00032B04 sets stage 10).
+# ValenDrethScript starts only once the player is within 610 of CGValenDrethTauntMarker; the start spot is 619 away,
+# and a player moves about the cell during the movement tutorial. The player steps toward the cell door (CGPlayerCellDoor
+# x 352), still inside the cell.
 case chargen_prisoners_talk
+run
+player.setpos x 490
 until 3600 GetStage Charactergen >= 9
 until 3600 GetStage Charactergen >= 10
 end
@@ -39,34 +42,27 @@ until 3600 GetStage Charactergen >= 13
 end
 
 # Stage 13 waits for the player to be inside the CGTriggerZoneCell trigger box, away from the cell door. The player
-# walks into the middle of the cell; moveto stands in for the walk. The ref has no EditorID in Oblivion.esm, so the
-# TES4 FormID of the placed trigger (00097A3B, Imperial Prison cell) is used.
-case chargen_step_into_cell
-run
-player.moveto 00097A3B
-until 600 GetStage Charactergen >= 14
-end
-
-# Glenroy opens the cell door (15) and the Emperor walks to marker B and speaks to the player (16); the quest script
-# then sets 17 and the Emperor force-greets with "Let me see your face...".
-case chargen_cell_door_opens
-until 1800 GetStage Charactergen >= 15
-until 1800 GetStage Charactergen >= 16
-until 1800 GetStage Charactergen >= 17
-hear 1800 UrielSeptimRef Let me see your face
-end
-
+# walks into the middle of the cell (a player placed inside the box is thrown out of the cell). The ref has no EditorID
+# in Oblivion.esm, so the TES4 FormID of the placed trigger (00097A3B, Imperial Prison cell) is used.
+# Glenroy then opens the cell door (15) and the Emperor walks to marker B and speaks to the player (16); the quest
+# script sets 17 and the Emperor force-greets with "Let me see your face...".
 # The Emperor's force-greet opens the dialogue menu on its own (no talk). The player asks the three questions that set
 # Charactergen.what / .who / .why, then "What should I do?" (only offered once all three are 1) which hands the
-# conversation to Renote.
+# conversation to Renote. Each variable is set by its answer's result script, which runs after the answer's last line.
+# ONE case from the step into the cell to the questions: once the player is in the box the quest waits for nobody,
+# and at test pace 14 -> 17 and the greeting all fit inside the walk (run 5a: the first judge already read 17, and
+# the checkpoint save of the case that used to end there closed the conversation).
 case chargen_emperor_in_cell
+walk 00097A3B
+until 1800 GetStage Charactergen >= 17
+hear 1800 UrielSeptimRef Gods give me strength
 wait 30
 ask "What's going on?"
 ask "Who are you?"
 ask "Why am I in jail?"
-expect Charactergen.what == 1
-expect Charactergen.who == 1
-expect Charactergen.why == 1
+until 300 Charactergen.what == 1
+until 300 Charactergen.who == 1
+until 300 Charactergen.why == 1
 ask "What should I do?"
 bye
 end

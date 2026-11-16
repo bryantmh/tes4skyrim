@@ -514,3 +514,16 @@ def property_declarations(property_refs, declared) -> list:
         declared.add(safe.lower())
         out.append('%s Property %s Auto' % (ptype, safe))
     return out
+
+
+#: EditorID of the import's FormList of references a script has just activated by its own call.
+SCRIPTED_USES = 'TES4ScriptedUses'
+
+
+def scripted_uses_formlist(conv) -> str:
+    """Register SCRIPTED_USES as a FormList property of this script; its name.
+
+    See: docs/commentary/script_convert.md#a-scripted-activation-runs-the-door-script
+    """
+    conv.sc.property_refs[SCRIPTED_USES] = 'FormList'
+    return SCRIPTED_USES

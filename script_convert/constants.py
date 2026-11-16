@@ -16,6 +16,12 @@ PLAYER_ALIAS_EXTENDS = 'ReferenceAlias'
 #: Set once a statement's expression fails to evaluate. See: docs/commentary/script_convert.md#missing-operand-halts
 HALTED_VAR = 'TES4_Halted'
 
+#: Name prefix of the function through which another script adds to one of a script's variables.
+REMOTE_ADD_PREFIX = 'TES4Add_'
+#: Functions on a script other scripts write to: a run of such writes sits between them, one writer at a time.
+REMOTE_HOLD = 'TES4Hold'
+REMOTE_RELEASE = 'TES4Release'
+
 #: The object's last activator, recorded by OnActivate. See: docs/commentary/script_convert.md#last-activator
 LAST_ACTIVATOR_VAR = 'TES4_LastActivator'
 

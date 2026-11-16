@@ -46,6 +46,12 @@ constexpr int kPersuadeTries = 30;
 // How long a menu other than the conversation may hold a step that needs the
 // world before the case fails naming it, rather than the run hanging.
 constexpr int kHeldTicks = 300;
+// Moves one `approach` may post before the case fails: a passing one lands on
+// its first, and an unbounded retry held a run for 47 minutes.
+constexpr int kApproachMoves = 10;
+// How long a box holds a step before a game's dismissNotice clicks its only button: a box the case
+// itself expects is answered by its next step well before then.
+constexpr int kNoticeTicks = 30;
 // How long `ask` waits for its topic: a several-line answer plays in real time before the next topics list.
 constexpr int kAskTicks = 900;
 // The farthest from a door's ORIGIN a player can use it. The reach itself is the
@@ -116,6 +122,7 @@ struct Progress {
     bool asked = false;        // a harness request for this step is out
     int heldTicks = 0;         // ticks a menu has held a step that needs the world
     int loadTicks = 0;         // ticks a talk or activate has waited for its target's 3D
+    int approachMoves = 0;     // moves one `approach` has posted without landing in reach
     bool expectsHeld = true;
     std::string error;
     std::string expects;
@@ -341,9 +348,14 @@ bool Approached(const std::string& npc) {
     }
     if (Talking() || MenuStillOpening()) return true;
     const int moved = g_game.approach(npc);
-    if (moved > 0) return false;
+    if (moved > 0) {
+        if (++g_case.approachMoves <= kApproachMoves) return false;
+        g_case.error = "approach: the player never came within reach of " + npc;
+        return true;
+    }
     if (moved == 0) {
         g_case.loadTicks = 0;
+        g_case.approachMoves = 0;
         return true;
     }
     if (++g_case.loadTicks <= kHeldTicks) return false;
@@ -889,13 +901,24 @@ void KeepFollowing() {
     if (trail.empty() || Apart(trail.back(), at) >= kTrailStep) trail.push_back(at);
     while (trail.size() > kTrailPoints) trail.pop_front();
     const float gap = g_game.distance("player", npc);
-    if (gap <= kFollowSlack || gap == std::numeric_limits<float>::max()) return;
+    const float slack = g_game.followSlack > 0.0f ? g_game.followSlack : kFollowSlack;
+    const float behind = g_game.followBehind > 0.0f ? g_game.followBehind : kFollowBehind;
+    if (gap <= slack || gap == std::numeric_limits<float>::max()) return;
     const Spot* spot = &trail.front();
     for (const Spot& point : trail) {
-        if (Apart(point, at) >= kFollowBehind) spot = &point;
+        if (Apart(point, at) >= behind) spot = &point;
     }
     // Already there: a move every tick would hold every `until` (MoveLanding) forever.
     const Spot me{g_game.position("player", 0), g_game.position("player", 1), 0.0f};
+    // A `fillTrail` game: with no trail behind the NPC yet (it has not moved since a door), the only point is
+    // the NPC itself, and a player put there lands beside it, in its way (55b). The player closes in along
+    // its own line to the NPC instead, staying on the side it came from.
+    Spot closer;
+    if (g_game.fillTrail && Apart(*spot, at) < behind) {
+        const float part = slack / (std::max)(Apart(me, at), slack);
+        closer = {at.x + (me.x - at.x) * part, at.y + (me.y - at.y) * part, at.z};
+        spot = &closer;
+    }
     if (Apart(me, *spot) < kTrailStep) return;
     Log("follow: the player moves to (%g, %g, %g), %g behind %s", spot->x, spot->y, spot->z, gap, npc.c_str());
     g_game.placeHere("player", spot->x, spot->y, spot->z, std::atan2(at.x - spot->x, at.y - spot->y) * 57.29578f);
@@ -981,9 +1004,14 @@ bool RouteCut(const TestCase& test) {
 }
 
 // Whether `step` must wait for the world while a menu holds the game; an `until`
-// already true does not (its verdict and left side go to `verdict`/`left`).
+// already true does not (its verdict and left side go to `verdict`/`left`). A `run`
+// whose harness request is out has run already: only its answer is left to read,
+// and a menu its own command opened (`setlevel` -> the level-up dialog) must not
+// hold it. Only a game without an in-game `run` hook asks the harness.
 bool WaitsOnMenu(const TestCase& test, const TestStep& step, int* verdict, std::string* left) {
-    const bool needsWorld = step.kind == Kind::kRun || step.kind == Kind::kActivate || step.kind == Kind::kUntil ||
+    const bool sent = step.kind == Kind::kRun && g_case.asked;
+    const bool needsWorld = (step.kind == Kind::kRun && !sent) || step.kind == Kind::kActivate ||
+                            step.kind == Kind::kUntil ||
                             step.kind == Kind::kWalk || step.kind == Kind::kSteer ||
                             (step.kind == Kind::kTalk && g_case.ticksLeft < 0);
     if (!needsWorld) return false;
@@ -999,6 +1027,10 @@ void RunSteps(const TestCase& test, bool held) {
         int verdict = -1;
         std::string left = "null";
         if (held && !Talking() && WaitsOnMenu(test, step, &verdict, &left)) {
+            if (g_case.heldTicks >= kNoticeTicks && g_game.dismissNotice && g_game.dismissNotice()) {
+                g_case.heldTicks = 0;
+                return;
+            }
             // A sleep runs its hours in real time at 1x, far past what any other menu may hold.
             const int limit = MenuUp(kSleepWaitMenu) ? kHeldTicks * kSleepHeldFactor : kHeldTicks;
             if (++g_case.heldTicks > limit) g_case.error = HeldMenuError();

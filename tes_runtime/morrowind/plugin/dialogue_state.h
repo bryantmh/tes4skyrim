@@ -85,6 +85,11 @@ struct GameHooks {
                       const std::string& item) = nullptr;
     // The test runner's player kills every nearby actor attacking it.
     void (*killPlayerAttackers)() = nullptr;
+    void (*killAttackersOf)(std::uint32_t ally) = nullptr;
+    // The test runner's `follow` for another runtime's cases: references by runtime FormID, 0 for the player.
+    float (*testPosition)(std::uint32_t ref, int axis) = nullptr;
+    float (*testDistance)(std::uint32_t from, std::uint32_t to) = nullptr;
+    void (*testPlaceHere)(std::uint32_t ref, float x, float y, float z, float zRot) = nullptr;
     // A brawler's reference has loaded: it gets the ability that stops the
     // player's bare fists wounding it.
     void (*armBrawler)(std::uint32_t runtimeFormId) = nullptr;

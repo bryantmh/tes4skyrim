@@ -621,24 +621,33 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
         for sub in sorted(blocks[block]):
             for cell_rec in blocks[block][sub]:
                 _emit_interior(jobs, by_type, cell_rec, indexes, landings, master_cells)
+    if seedable is None:
+        seedable = {}
     _gather_exteriors(jobs, by_type, cells, indexes, pers_doors, overhang, seedable, regrow)
-    _attach_landings(jobs, landings, {get_formid(c, 'FormID') for c in cells if get_formid(c, 'ParentWRLD')})
+    _attach_landings(jobs + list(seedable.values()), landings,
+                     {get_formid(c, 'FormID'): get_formid(c, 'ParentWRLD') for c in cells if get_formid(c, 'ParentWRLD')})
     return jobs
 
 
-def _attach_landings(jobs, landings, world_cells) -> None:
-    """Give each job the door landings in its cell: an interior's by cell, an exterior's by its grid square,
-    since a persistent door's landings are filed under the worldspace's persistent cell."""
+def _attach_landings(jobs, landings, world_of) -> None:
+    """Give each job the door landings in its cell: an interior's by cell, an exterior's by worldspace and grid
+    square, since a persistent door's landings are filed under the worldspace's persistent cell.  `jobs`
+    includes the seeded cells' templates: a door there whose origin hangs above its floor links at its landing
+    too.  `world_of` maps each exterior cell to its worldspace.
+    See: docs/commentary/tes5_import_navmesh.md#door-reach
+    """
     by_square = defaultdict(list)
     for cell_fid, points in landings.items():
-        if cell_fid not in world_cells:
+        wrld = world_of.get(cell_fid)
+        if not wrld:
             continue
         for p in points:
-            by_square[(int(p[0] // _CELL_SIZE), int(p[1] // _CELL_SIZE))].append(p)
+            by_square[(wrld, int(p[0] // _CELL_SIZE), int(p[1] // _CELL_SIZE))].append(p)
     for job in jobs:
         cell = job['cell_rec']
-        if get_formid(cell, 'ParentWRLD'):
-            job['landings'] = list(by_square.get((get_int(cell, 'XCLC.X'), get_int(cell, 'XCLC.Y')), ()))
+        wrld = get_formid(cell, 'ParentWRLD')
+        if wrld:
+            job['landings'] = list(by_square.get((wrld, get_int(cell, 'XCLC.X'), get_int(cell, 'XCLC.Y')), ()))
         else:
             job['landings'] = list(landings.get(get_formid(cell, 'FormID'), ()))
 
@@ -981,14 +990,14 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
                          door_fids: set, collision_cache: str = '',
                          master_index=None, master_export: dict = None,
                          activator_fids: frozenset = frozenset(),
-                         master_navms: dict = None) -> dict:
+                         master_navms: dict = None, stamp: bool = True) -> dict:
     """Run every PGRD->NAVM conversion in parallel; return {key: (bytes, meta)}.
 
-    FormIDs are pre-allocated serially in builder-visit order, so results are
-    byte-identical to the single-threaded path.  The worker context is
-    initialized HERE because `navm_verify.prepare` re-keys entries from it.
-    `collision_cache` is a path or a masters-first chain whose LAST entry is
-    this plugin's own.  `master_navms` is master_navm_grid's map.
+    Results are byte-identical to the single-threaded path.  The worker
+    context is initialized HERE because `navm_verify.prepare` re-keys entries
+    from it.  `collision_cache` is a path or a masters-first chain whose LAST
+    entry is this plugin's own.  `master_navms` is master_navm_grid's map.
+    `stamp` False (a partial build) leaves the cache tag unstamped.
 
     See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
     """
@@ -1027,6 +1036,6 @@ def precompute_navmeshes(by_type: dict, writer, base_model_by_fid: dict,
     navm_verify.report_verification(cache, geom_cache)
     if navm_verify.report_failures(cache):
         navm_verify.uncertify(geom_cache)
-    else:
+    elif stamp:
         stamp_navmesh_cache_tag(geom_cache)
     return cache

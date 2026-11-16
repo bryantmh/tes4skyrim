@@ -1,0 +1,107 @@
+# MQ16 "Light the Dragonfires". MQ15 100 set MQ16 5: the player takes Martin to the Elder Council Chamber (9, 10).
+# Chancellor Ocato accepts his claim (14, 15); a messenger brings word of the attack (16 .. 19) and Ocato calls the
+# guards (20, 21). The party fights its way out of the Palace (25, 26, 27) into the Temple District (29), where
+# Mehrunes Dagon stands (30). Martin has a plan (35); inside the Temple of the One (40) he says farewell (45, 46),
+# shatters the Amulet (50) and as the avatar of Akatosh casts Dagon out (54 .. 65, 80). Ocato closes the story
+# (100).
+# DRAFT from tools/live/quest_brief.py (2026-11-13): not run yet. The two trigger boxes (29, 30) have no names; the
+# case goes to the markers beside them and may need a short walk once they are located.
+
+# The ride to the Imperial City is the player's travel with Martin (MQ16MartinFollowPCToPalace): both are placed
+# in the Chamber. MQ16Script sets 9 with Martin in ICPalaceElderCouncilChambers and 10 with Martin and the player
+# within 600 of MQ16MartinElderCouncilMarker. Ocato's greeting at 10 ("I have been expecting you. ...", INFO
+# 000146ED) sets 14; his word to Martin sets 15, the messenger arrives (16) and the exchange runs to 20 and 21.
+case mq16_elder_council
+until 300 GetStage MQ16 >= 5
+defend MartinRef
+run
+player.moveto MQ16MartinElderCouncilMarker
+wait 120
+run
+MartinRef.moveto player
+until 600 GetStage MQ16 >= 10
+# Ocato speaks his greeting to the party by himself (a goodbye line: no menu), run 37o.
+until 1800 GetStage MQ16 >= 14
+until 1800 GetStage MQ16 >= 15
+until 1800 GetStage MQ16 >= 16
+until 3600 GetStage MQ16 >= 20
+until 300 GetStageDone MQ16 21
+end
+
+# Out of the Palace: MQ16Script sets 25 when the player has left the Chamber and 26 when Martin has; Martin going
+# through MQ16PalaceToTempleDistrictDoor sets 27. In the Temple District the player crosses the trigger boxes that
+# set 29 and 30 (Mehrunes Dagon). The fight through the Palace district is the player's, beside Martin.
+case mq16_to_temple_district
+defend MartinRef
+# Martin ESCORTS the player (MQ16MartinEscortPCToTempleDistrict, stages 21 .. 29) and walks only with the player
+# beside him (37p, 37q): the player keeps to him, through the one door out of the Chamber
+# (ICPalaceInteriorToMQ16ExteriorDoor) and across the Palace district.
+approach MartinRef
+follow MartinRef
+until 3600 MartinRef.GetInCell ICPalaceElderCouncilChambers == 0
+approach MartinRef
+until 600 GetStageDone MQ16 25
+until 600 GetStageDone MQ16 26
+until 7200 GetStageDone MQ16 27
+follow
+# Martin is through the door by 27 and `follow` leaves the player where his trail stopped, often out of the
+# door's loaded range (53b): the player walks to the door first.
+run
+player.moveto MQ16PalaceToTempleDistrictDoor
+wait 60
+activate MQ16PalaceToTempleDistrictDoor
+wait 120
+# The two trigger boxes are thin planes across the way west (TrigZone02 at scale 4, turned 103 degrees): 0000CF24
+# (MQ16LeginoAttackTriggerZoneSCRIPT, 29) at x 24873 and 00094167 (MQ16MehrunesDagonTriggerZoneSCRIPT, 30) at x 24264.
+# Their centres are above the ground, so the walk goes to a marker on the ground past both.
+walk MQ16Gate1SpawnMarker
+until 1800 GetStage MQ16 >= 29
+until 1800 GetStage MQ16 >= 30
+# At 30 Martin comes to the player (MQ16MartinAskPC, a force-greet), so no case boundary here. His greeting
+# ("We're too late... Mehrunes Dagon is here!", INFO 000152ED) offers "Can we cast him back into Oblivion?" ->
+# "What about the Amulet of Kings?" (INFO 0004BFBD) -> "But you said it was no use..." -> "I'll get you to the
+# Temple." (INFO 0004BFBF, 35) -> "Follow me.". With the player and Martin in ICTempleDistrictTempleOfTheOneMQ16
+# the script sets 40.
+hear 3600 MartinRef too late
+wait 30
+talk MartinRef
+ask "Can we cast him back into Oblivion?"
+ask "What about the Amulet of Kings?"
+ask "But you said it was no use..."
+ask "I'll get you to the Temple."
+until 300 GetStage MQ16 >= 35
+ask "Follow me."
+bye if open
+run
+player.moveto MQ16MartinWaitInTempleMarker
+wait 120
+run
+MartinRef.moveto player
+until 1800 GetStage MQ16 >= 40
+end
+
+# In the Temple of the One: Martin reaches his marker (MartinScript OnPackageDone MQ16MartinToTempleWaitMarker: 45)
+# and comes to the player with his farewell ("I do what I must do. ...", INFO 0008E11F, a force-greet that sets 46
+# by itself, run 37u); he lights the Dragonfires (50), and the end game plays out by itself (54, 58: Martin
+# disabled, 60, 65). MQ16Script sets 80 (then 100) 15 s after 65.
+# Ocato in the ruined Temple: at 65 he is given MQ16OcatoToTempleEND (a force-greet), so no case boundary here. His
+# greeting ("What happened? Where's Martin? ...", INFO 000ADC5C, MQ16 >= 60) offers "Martin is gone." -> "Yes. He
+# shattered the Amulet..." -> "...and Martin's blood, too...", which offers "But the gates are sealed." (INFO
+# 000ADD45), which offers "What about the Empire?" (INFO 000ADD1E).
+case mq16_dragonfires
+until 3600 GetStage MQ16 >= 45
+until 1800 GetStageDone MQ16 46
+until 3600 GetStage MQ16 >= 50
+until 7200 GetStage MQ16 >= 60
+until 3600 GetStage MQ16 >= 65
+hear 3600 OcatoRef What happened
+wait 30
+talk OcatoRef
+ask "Martin is gone."
+ask "Yes. He shattered the Amulet..."
+ask "...and Martin's blood, too..."
+ask "But the gates are sealed."
+ask "What about the Empire?"
+until 600 GetStageDone MQ16 100
+bye if open
+end

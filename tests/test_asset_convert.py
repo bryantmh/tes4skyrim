@@ -3720,96 +3720,98 @@ class TestShaderControllerTarget:
     @pytest.mark.skipif(not _MW_EXPORT_MESHES.exists(),
                         reason='Morrowind export meshes not available')
     def test_stale_palette_entry_does_not_emit_null_target(self, tmp_path):
-        import time
-        if not hasattr(time, '_original_clock'):
-            time.clock = time.perf_counter
-        from pyffi.formats.nif import NifFormat as NF
-
+        """The chandelier's dangling colour entry converts to a live controller with its curve intact."""
         src = _MW_EXPORT_MESHES / _STALE_PALETTE_SAMPLE
         if not src.exists():
             pytest.skip(f'{src} not found')
-
-        # The source must actually exhibit the defect, or the test proves
-        # nothing: its sequence must name a node the mesh does not contain.
-        src_data = NF.Data()
-        with open(str(src), 'rb') as f:
-            src_data.read(f)
-        node_names = {bytes(getattr(b, 'name', b'') or b'')
-                      for b in src_data.blocks}
-        palettes = [b.string_palette for b in src_data.blocks
-                    if isinstance(b, NF.NiControllerSequence)
-                    and b.string_palette is not None]
-        assert palettes, 'sample has no string palette — test is stale'
-        pal = bytes(palettes[0].palette.palette)
-        # The color controller targets "CandleSkinny01:0", which — unlike the
-        # bare "CandleSkinny01" NiNode carrying the transform tracks — is not a
-        # node in this mesh at all, so no shader can ever be found for it.
-        assert b'CandleSkinny01:0' in pal, \
-            'sample palette changed — test is stale'
-        assert b'CandleSkinny01:0' not in node_names, \
-            'sample no longer has a dangling palette name — test is stale'
-
+        src_data = _read_nif_data(src)
+        _assert_dangling_palette(src_data)
         dst = tmp_path / 'out.nif'
         convert_nif(str(src), str(dst))
-
-        dst_data = NF.Data()
-        with open(str(dst), 'rb') as f:
-            dst_data.read(f)
+        dst_data = _read_nif_data(dst)
 
         ctrls = self._shader_ctrls(dst_data)
         nulls = [type(c).__name__ for c in ctrls if c.target is None]
         assert not nulls, f'NULL-target shader controllers emitted: {nulls}'
-
-        # FAITHFUL CONVERSION: the emissive flicker must SURVIVE.  Deleting the
-        # entry was the earlier (wrong) fix -- it cost the chandelier its
-        # animation and stranded the manager with 0 sequences, which the engine
-        # dereferences just the same (vanilla ships no 0-sequence manager).
         assert ctrls, 'emissive animation was dropped instead of retargeted'
-
-        empty = [bytes(b.name) for b in dst_data.blocks
-                 if isinstance(b, NF.NiControllerSequence)
-                 and b.num_controlled_blocks == 0]
-        assert not empty, f'empty sequences left in file: {empty}'
-        for mgr in dst_data.blocks:
-            if isinstance(mgr, NF.NiControllerManager):
-                assert mgr.num_controller_sequences > 0, \
-                    'NiControllerManager left with 0 sequences (engine derefs it)'
-                assert all(s is not None for s in mgr.controller_sequences), \
-                    'manager references a dropped sequence'
-
-        # The curve itself must come across unchanged (5 keys, 0 -> 3s loop).
-        src_keys = []
-        for b in src_data.blocks:
-            if isinstance(b, NF.NiControllerSequence):
-                for cb in b.controlled_blocks:
-                    it = cb.interpolator
-                    if it is not None and type(it).__name__ == 'NiPoint3Interpolator':
-                        src_keys = [(round(k.time, 4),
-                                     (round(k.value.x, 4), round(k.value.y, 4),
-                                      round(k.value.z, 4)))
-                                    for k in it.data.data.keys]
+        _assert_sequences_kept(dst_data)
+        src_keys = _point3_entry_curve(src_data)
         assert src_keys, 'source has no color curve — test is stale'
-        got_keys = []
-        for c in ctrls:
-            it = c.interpolator
-            if it is not None and getattr(it, 'data', None) is not None:
-                got_keys = [(round(k.time, 4),
-                             (round(k.value.x, 4), round(k.value.y, 4),
-                              round(k.value.z, 4)))
-                            for k in it.data.data.keys]
-        assert got_keys == src_keys, \
-            f'color curve changed: {src_keys} -> {got_keys}'
+        assert _point3_entry_curve(dst_data, ctrls) == src_keys, 'color curve changed'
+        _assert_entries_name_nodes(dst_data)
 
-        # The entry must name a block that exists, or the engine cannot bind it.
-        names = {bytes(getattr(b, 'name', b'') or b'') for b in dst_data.blocks}
-        for b in dst_data.blocks:
-            if not isinstance(b, NF.NiControllerSequence):
+
+def _read_nif_data(path):
+    """A pyffi NifFormat.Data read from `path`."""
+    import time
+    if not hasattr(time, 'clock'):
+        time.clock = time.perf_counter
+    from pyffi.formats.nif import NifFormat
+    data = NifFormat.Data()
+    with open(str(path), 'rb') as f:
+        data.read(f)
+    return data
+
+
+def _sequences(data):
+    """The NiControllerSequence blocks of `data`."""
+    return [b for b in data.blocks if type(b).__name__ == 'NiControllerSequence']
+
+
+def _assert_dangling_palette(src_data):
+    """The sample's colour entry names "CandleSkinny01:0", a node the mesh lacks, or the test proves nothing."""
+    node_names = {bytes(getattr(b, 'name', b'') or b'') for b in src_data.blocks}
+    palettes = [s.string_palette for s in _sequences(src_data) if s.string_palette is not None]
+    assert palettes, 'sample has no string palette — test is stale'
+    assert b'CandleSkinny01:0' in bytes(palettes[0].palette.palette), 'sample palette changed — test is stale'
+    assert b'CandleSkinny01:0' not in node_names, 'sample no longer has a dangling palette name — test is stale'
+
+
+def _assert_sequences_kept(dst_data):
+    """No empty sequence, and every manager keeps its sequences (the engine derefs a 0-sequence manager)."""
+    empty = [bytes(s.name) for s in _sequences(dst_data) if s.num_controlled_blocks == 0]
+    assert not empty, f'empty sequences left in file: {empty}'
+    for mgr in dst_data.blocks:
+        if type(mgr).__name__ == 'NiControllerManager':
+            assert mgr.num_controller_sequences > 0, 'NiControllerManager left with 0 sequences'
+            assert all(s is not None for s in mgr.controller_sequences), 'manager references a dropped sequence'
+
+
+def _point3_entry_curve(data, ctrls=None):
+    """Keys of the colour entry's NiPoint3Interpolator; with `ctrls`, its controller must hold its own blend.
+
+    See: docs/commentary/asset_convert_nif.md#controller-owns-its-interpolator
+    """
+    keys = []
+    for seq in _sequences(data):
+        for cb in seq.controlled_blocks:
+            it = cb.interpolator
+            if type(it).__name__ != 'NiPoint3Interpolator' or (ctrls is not None and cb.controller not in ctrls):
                 continue
-            for cb in b.controlled_blocks:
-                nm = bytes(cb.node_name or b'')
-                if nm:
-                    assert nm in names, \
-                        f'sequence entry names a missing node: {nm!r}'
+            if ctrls is not None:
+                assert type(cb.controller.interpolator).__name__ == 'NiBlendPoint3Interpolator'
+            keys = [(round(k.time, 4), (round(k.value.x, 4), round(k.value.y, 4), round(k.value.z, 4)))
+                    for k in it.data.data.keys]
+    return keys
+
+
+def _assert_entries_name_nodes(dst_data):
+    """Every sequence entry names a block that exists, or the engine cannot bind it."""
+    names = {bytes(getattr(b, 'name', b'') or b'') for b in dst_data.blocks}
+    for seq in _sequences(dst_data):
+        for cb in seq.controlled_blocks:
+            nm = bytes(cb.node_name or b'')
+            assert not nm or nm in names, f'sequence entry names a missing node: {nm!r}'
+
+
+class TestShaderControllerTargetSamples:
+    """Further shader-controller samples (split from TestShaderControllerTarget when its first test was split)."""
+
+    def _shader_ctrls(self, data):
+        """The shader-property controllers of `data`."""
+        return [b for b in data.blocks
+                if 'ShaderProperty' in type(b).__name__
+                and 'Controller' in type(b).__name__]
 
     @pytest.mark.skipif(not _MW_EXPORT_MESHES.exists(),
                         reason='Morrowind export meshes not available')
@@ -4425,6 +4427,33 @@ class TestAnimationBlockLayout:
         assert blend.unknown_short == 0x0201
         # idempotent -- a second pass must find nothing left to fix
         assert normalize_blend_interpolators(root) == 0
+
+    def test_palette_gains_every_sequence_target(self):
+        """A target missing from the palette (Oblivion's claw stand: Box02:2) is added once; listed ones stay."""
+        from asset_convert.nif.morphs import complete_object_palette
+        NF = self._nif()
+        root, mgr, pal, seq = NF.NiNode(), NF.NiControllerManager(), NF.NiDefaultAVObjectPalette(), \
+            NF.NiControllerSequence()
+        shapes = [NF.NiTriShape(), NF.NiTriShape()]
+        root.num_children = 2
+        root.children.update_size()
+        seq.num_controlled_blocks = 2
+        seq.controlled_blocks.update_size()
+        for i, (shape, name) in enumerate(zip(shapes, (b'Box01:2', b'Box02:2'))):
+            shape.name = name
+            root.children[i] = shape
+            seq.controlled_blocks[i].node_name = name
+        pal.num_objs = 1
+        pal.objs.update_size()
+        pal.objs[0].name, pal.objs[0].av_object = b'Box01:2', shapes[0]
+        mgr.object_palette = pal
+        mgr.num_controller_sequences = 1
+        mgr.controller_sequences.update_size()
+        mgr.controller_sequences[0] = seq
+        root.controller = mgr
+        assert complete_object_palette(root) == 1
+        assert [(bytes(o.name), o.av_object) for o in pal.objs] == [(b'Box01:2', shapes[0]), (b'Box02:2', shapes[1])]
+        assert complete_object_palette(root) == 0
 
     def _tripwire_root_and_vis(self):
         """(converted ctrigtripwire01 root, its NiVisController entries); skips if unexported."""

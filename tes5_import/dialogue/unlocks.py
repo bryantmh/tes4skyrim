@@ -48,6 +48,9 @@ from ..overrides.adoption import generated_formid
 
 _RE_ADDTOPIC = re.compile(r'\baddtopic[\s,]+(\w+)', re.IGNORECASE)
 
+#: EditorID prefix of the per-INFO said-once completion globals (see _said_once_reveals).
+SAID_ONCE_PREFIX = 'TES4SaidOnce_'
+
 
 def _low24(fid_str: str) -> int:
     """The low 24 bits of a hex FormID string, 0 when unparseable."""
@@ -360,12 +363,69 @@ def _drop_orphan_gates(gated: dict, info_reveals: dict,
     return {f: g for f, g in gated.items() if g in revealed}
 
 
+def _info_choices(rec: dict) -> set:
+    """Low-24 FormIDs of the topics one INFO's choices link to."""
+    out = {_low24(v) for v in _indexed_values(rec, 'Choice')}
+    out.add(_low24(rec.get('TCLT.Choice', '')))
+    out.discard(0)
+    return out
+
+
 def _choice_targets(infos: list) -> set:
     """Low-24 FormIDs of every topic an INFO choice links to."""
-    out = {_low24(v) for rec in infos for v in _indexed_values(rec, 'Choice')}
-    out.update(_low24(rec['TCLT.Choice']) for rec in infos
-               if rec.get('TCLT.Choice'))
+    return {fid for rec in infos for fid in _info_choices(rec)}
+
+
+def said_once_global(fid24: int) -> str:
+    """The completion global of a say-once INFO with choices."""
+    return f'{SAID_ONCE_PREFIX}{fid24:06X}'
+
+
+def _answer_topics(rec: dict, infos_by_topic: dict, dial_by_fid24: dict,
+                   should_skip_dial, classify_topic) -> set:
+    """The choice topics of a SAY-ONCE INFO that answer it: spoken, kept, not barks."""
+    if not int(rec.get('DATA.Flags') or 0) & 0x04:
+        return set()
+    return {t for t in _info_choices(rec)
+            if infos_by_topic.get(t) and dial_by_fid24.get(t) is not None
+            and not should_skip_dial(dial_by_fid24[t])
+            and not _is_bark_topic(dial_by_fid24[t], classify_topic)}
+
+
+def _said_once_reveals(infos: list, dial_by_fid24: dict, should_skip_dial,
+                       classify_topic) -> dict:
+    """{INFO fid24 -> said-once globals its Begin fragment writes}.
+
+    A say-once INFO with answer topics loses the engine's Say Once: its own
+    global goes 0 -> 1 when it begins, and every INFO of its answer topics
+    moves it 1 -> 2. Only 2 retires the line, so a conversation left before
+    an answer offers it again.
+    """
+    infos_by_topic = defaultdict(list)
+    for rec in infos:
+        infos_by_topic[_low24(rec.get('ParentDIAL', ''))].append(
+            _low24(rec.get('FormID', '')))
+    out = defaultdict(set)
+    for rec in infos:
+        fid24 = _low24(rec.get('FormID', ''))
+        topics = _answer_topics(rec, infos_by_topic, dial_by_fid24,
+                                should_skip_dial, classify_topic)
+        if not fid24 or not topics:
+            continue
+        gname = said_once_global(fid24)
+        out[fid24].add(gname)
+        for answer in (f for t in topics for f in infos_by_topic[t]):
+            if answer and answer != fid24:
+                out[answer].add(gname)
     return out
+
+
+def _merge_said_once(info_reveals: dict, said_once: dict) -> dict:
+    """info_reveals with each INFO's said-once globals added, names sorted."""
+    merged = dict(info_reveals)
+    for fid24, gnames in said_once.items():
+        merged[fid24] = sorted(set(merged.get(fid24, ())) | gnames)
+    return merged
 
 
 def _unreachable_topics(dials: list, added: set, infos: list, own_index: int,
@@ -405,15 +465,13 @@ def _mentioned_phrases(infos: list, phrases) -> set:
 
 
 def build_unlock_plan(by_type: dict, own_index: int = 0) -> dict:
-    """Analyze the export and return the unlock plan:
+    """The unlock plan of an export:
 
-    {
-      'gated':         {topic_fid24: global_name},
-      'info_reveals':  {info_fid24: sorted [global_name, ...]},
-      'stage_reveals': {(quest_edid_lower, stage_index): sorted [global_name]},
-      'script_added':  {topic_fid24, ...}  -- visibility only, never gated
-      'unreachable':   {topic_fid24, ...}  -- never listed (own_index = first own raw index)
-    }
+    gated {topic: global}; info_reveals {info: sorted globals, said-once
+    ones included}; stage_reveals {(quest_edid_lower, stage): sorted
+    globals}; script_added {topic} (visible, never gated); unreachable
+    {topic} (never listed; own_index = first own raw index); said_once
+    {info: global} (see _said_once_reveals). Keys are low-24 FormIDs.
     """
     from .converter import should_skip_dial, classify_topic
     from .quest import quest_stage_fragments
@@ -447,18 +505,24 @@ def build_unlock_plan(by_type: dict, own_index: int = 0) -> dict:
     unreachable = _unreachable_topics(
         by_type.get('DIAL', []), explicit | script_added | _choice_targets(infos),
         infos, own_index, classify_topic)
-    return {'gated': gated, 'info_reveals': info_reveals,
+    said_once = _said_once_reveals(infos, dial_by_fid24, should_skip_dial,
+                                   classify_topic)
+    return {'gated': gated,
+            'info_reveals': _merge_said_once(info_reveals, said_once),
             'stage_reveals': stage_reveals, 'script_added': script_added,
-            'unreachable': unreachable}
+            'unreachable': unreachable,
+            'said_once': {f: said_once_global(f) for f, gs in said_once.items()
+                          if said_once_global(f) in gs}}
 
 
 def create_unlock_globals(writer, plan: dict) -> dict:
-    """Create one GLOB (float, 0.0) per gated topic. Returns {name: formid}."""
+    """One GLOB (float, 0.0) per gated topic and said-once INFO. Returns {name: formid}."""
     import struct as _struct
     from ..record_types.common import (pack_record, pack_string_subrecord,
                                       pack_subrecord)
     name_to_fid = {}
-    for name in sorted(set(plan['gated'].values())):
+    for name in sorted(set(plan['gated'].values())
+                       | set(plan.get('said_once', {}).values())):
         fid = generated_formid(writer, 'GLOB', name, 'UNLOCK_GLOB', name)
         subs = pack_string_subrecord('EDID', name)
         subs += pack_subrecord('FNAM', b'f')

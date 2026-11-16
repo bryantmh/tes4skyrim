@@ -145,6 +145,13 @@ void PlaceHere(const std::string& id, float x, float y, float z, float zRot) {
     if (void* ref = OwnerRef(id)) PlaceAt(ref, x, y, z, zRot);
 }
 
+// `follow` for another runtime's cases, which name a reference by runtime FormID (0 for the player).
+float TestPosition(std::uint32_t id, int axis) { return RefPosition(TestRef(id), SafeAxis(axis)); }
+
+void TestPlaceHere(std::uint32_t id, float x, float y, float z, float zRot) {
+    if (void* ref = TestRef(id)) PlaceAt(ref, x, y, z, zRot);
+}
+
 // The chain `ref` is gliding in when it asked last tick or this one, else null.
 Goal* LiveGoal(void* ref) {
     const std::size_t tick = TicksRun();
@@ -662,6 +669,8 @@ void InstallMoveCalls(GameHooks& hooks) {
     hooks.moveToCell = MoveRefToCell;
     hooks.moveInCell = MoveRefInCell;
     hooks.placeHere = PlaceHere;
+    hooks.testPosition = TestPosition;
+    hooks.testPlaceHere = TestPlaceHere;
     hooks.moveBy = MoveRefBy;
     hooks.rotateBy = RotateRefBy;
     hooks.moveTick = MoveTick;

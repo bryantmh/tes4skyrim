@@ -61,9 +61,11 @@ from ..record_types.common import (
     pack_uint8_subrecord,
     pack_uint32_subrecord,
 )
-from ..base.conditions import (convert_ctda_list_with_strings,
+from ..base.conditions import (FUNC_GET_GLOBAL_VALUE, build_ctda,
+                               convert_ctda_list_with_strings,
                                order_condition_groups)
 from ..base.tes5_reader import subrecords
+from .unlocks import said_once_global
 
 _PLAYER_FORMID = 0x14
 _PLAYER_BASE_FID = 0x07     # NPC_ Player — see text_reader.PLAYER_BASE_FID
@@ -610,11 +612,14 @@ def convert_INFO(rec: dict, *, injected_ctdas: bytes = b'',
         subs += pack_string_subrecord('EDID', edid)
     subs += _info_vmad(rec, reveal_props, service_menu, xref,
                        well_known_props)
-    subs += _info_enam(rec, bark_dial_fids)
+    said_once = _said_once_gate(rec, reveal_props)
+    tclt = _info_tclt(rec, bark_dial_fids, menu_topic_fids)
+    offers = tclt or get_int(rec, 'ChoiceCount') > 0 or get_formid(rec, 'TCLT.Choice')
+    subs += _info_enam(rec, bark_dial_fids if not offers else None, bool(said_once))
     subs += pack_subrecord('CNAM', struct.pack('<B', 0))
-    subs += _info_tclt(rec, bark_dial_fids, menu_topic_fids)
+    subs += tclt
     subs += _info_responses(rec)
-    subs += _info_conditions(rec, injected_ctdas, script_vars)
+    subs += _info_conditions(rec, injected_ctdas + said_once, script_vars)
     subs += speaker
     return pack_record('INFO', get_formid(rec, 'FormID'),
                        get_int(rec, 'RecordFlags'), subs)
@@ -658,12 +663,28 @@ def _info_vmad(rec: dict, reveal_props, service_menu: str, xref,
         info_fid, property_values=prop_vals or None))
 
 
-def _info_enam(rec: dict, bark_dial_fids) -> bytes:
+#: CTDA comparison operator `<` (high bits of the type byte).
+_CTDA_LESS = 0x80
+
+
+def _said_once_gate(rec: dict, reveal_props) -> bytes:
+    """`GetGlobalValue(<said-once global>) < 2` for an answer-retired line, else b''."""
+    gfid = (reveal_props or {}).get(
+        said_once_global(get_formid(rec, 'FormID') & 0xFFFFFF))
+    if not gfid:
+        return b''
+    return pack_subrecord('CTDA', build_ctda(
+        FUNC_GET_GLOBAL_VALUE, param1=gfid, comp_value=2.0, operator=_CTDA_LESS))
+
+
+def _info_enam(rec: dict, bark_dial_fids, said_once_gated: bool = False) -> bytes:
     """ENAM (Flags U16 + Reset U16) from TES4 DATA.Flags.
 
     Reset is the re-play lockout TES4 has no field for; an ambient bark line
     gets _BARK_RESET_TICKS, except SAY-ONCE (0x04) lines, which are already
-    permanently locked after one play.
+    permanently locked after one play, and a line the TES4 record gives choices,
+    kept as TCLT or not (the caller passes no bark set). A said-once global replaces
+    the engine's Say Once flag.
 
     See: docs/commentary/tes5_import_dialogue.md#info-enam-reset-timer
     """
@@ -671,8 +692,10 @@ def _info_enam(rec: dict, bark_dial_fids) -> bytes:
     reset = 0
     if bark_dial_fids is not None and not (tes4_flags & 0x04):
         reset = _BARK_RESET_TICKS
-    return pack_subrecord('ENAM', struct.pack(
-        '<HH', tes4_flags & _ENAM_COMPATIBLE_MASK, reset))
+    flags = tes4_flags & _ENAM_COMPATIBLE_MASK
+    if said_once_gated:
+        flags &= ~0x04
+    return pack_subrecord('ENAM', struct.pack('<HH', flags, reset))
 
 
 def _info_tclt(rec: dict, bark_dial_fids, menu_topic_fids=()) -> bytes:

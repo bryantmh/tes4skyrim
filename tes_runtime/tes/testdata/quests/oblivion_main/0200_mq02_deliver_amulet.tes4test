@@ -2,31 +2,32 @@
 # Weynon Priory). MQ02Script polls: stage 30 when the player stands in the Chorrol exterior cell, stage 40 in the
 # WeynonPriory exterior cell (both only while OUTSIDE). Jauffre's topic chain then ends in "Where can I find Uriel's
 # son?", which sets MQ02 50 (-> 100) and starts MQ03 (stage 10).
-# The ride from the sewer exit to Chorrol and the priory is the player's walk; coc into the exterior cells stands in
-# for it (the cells are the TES4 EditorIDs Chorrol and WeynonPriory).
+# The ride from the sewer exit to Chorrol and the priory is the player's walk; cow into the exterior cells stands in
+# for it. The cells NAMED Chorrol and WeynonPriory are Oblivion's dummy interiors ("Dummy Cell"), which GetInCell
+# only uses for its name-prefix match, and the script wants the player outside: the real places are the Tamriel
+# cells -18,21 (Chorrol's gate) and -14,21 (the priory). Tamriel is TES4Tamriel once converted.
 
 case mq02_chorrol
 expect GetStageDone MQ02 20
 run
-coc Chorrol
+cow TES4Tamriel -18 21
 wait 90
 until 600 GetStageDone MQ02 30
 end
 
 case mq02_weynon_priory_exterior
 run
-coc WeynonPriory
+cow TES4Tamriel -14 21
 wait 90
 until 600 GetStageDone MQ02 40
 end
 
-# The player goes into the priory house, where Jauffre is (JauffreRef, WeynonPrioryHouse). Brother Piner / Prior
-# Maborel (stage 42) are optional and not visited.
-case mq02_enter_priory_house
+# The player goes to Jauffre. His schedule moves him around the priory, so moveto JauffreRef stands in for finding him
+# (the TES4 runner has no `approach`). Brother Piner / Prior Maborel (stage 42) are optional and not visited.
+case mq02_find_jauffre
 run
-coc WeynonPrioryHouse
+player.moveto JauffreRef
 wait 90
-expect player.GetInCell WeynonPrioryHouse
 end
 
 # Jauffre's greeting offers "I brought you the Amulet of Kings." (MQ02JauffreA1). Each answer leads to the next topic:
@@ -35,7 +36,7 @@ case mq02_give_amulet
 talk Jauffre
 ask "I brought you the Amulet of Kings."
 ask "[Give Jauffre the Amulet]"
-expect player.GetItemCount AmuletofKings == 0
+until 300 player.GetItemCount AmuletofKings == 0
 ask "Tell the emperor's last words."
 ask "Who is the Prince of Destruction?"
 ask "How can Oblivion threaten us, then?"

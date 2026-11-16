@@ -40,7 +40,11 @@ from concurrent.futures import ProcessPoolExecutor
 
 from .registry import IMPORT_DISPATCH, TYPE_MAP
 from .overrides.nested import (build_nested_overrides)
-from .dialogue.quest import compute_quest_priorities, convert_QUST
+from .dialogue.quest import compute_quest_priorities, convert_QUST, package_host
+from .packages.converter import latches_when_done
+from .record_types.items import is_engine_form
+from .packages.done_latch import create_latch, latch_condition, latch_vmad
+from .packages.hosts import armed_gate, create_armed_faction, write_forced_lists
 from .dialogue.morrowind_sidecar import is_tes3_export, write_morrowind_sidecar
 from .actors.attribute_tables import (write_attribute_tables, write_chargen_table,
                                       write_stats_table)
@@ -186,7 +190,6 @@ def _phase1_simple_records(st, export_dir: str, phase_done, skip_types) -> None:
             edid = get_str(rec, 'EditorID', '?')
             print(f"  ERROR converting {sig} '{edid}': {e}")
             st.errors += 1
-    _stage_runtime_sidecars(st, export_dir)
     phase_done(f'simple records ({len(work_items)})')
 
 
@@ -305,6 +308,44 @@ def _convert_qust(st, export_dir: str, phase_done, skip_types) -> None:
                 st.errors += 1
 
 
+def _write_package_hosts(st) -> None:
+    """Writes the package host quest."""
+    if st.pack_plan and st.pack_plan.hosts:
+        st.writer.add_record('QUST', package_host(st.pack_plan, st.fid_to_edid))
+        print("  Package host written")
+
+
+def _write_forced_lists(st) -> None:
+    """Writes the forced-package FormLists when this plugin owns them."""
+    fids, own = st.pack_plan.forced_lists if st.pack_plan else ({}, False)
+    if own:
+        write_forced_lists(st.writer, fids, st.pack_plan.armed_factions)
+
+
+def _without_marker_doors(by_type: dict) -> dict:
+    """`by_type` for the navmesh build: engine-form DOOR bases out, their references without a teleport.
+
+    A reference counts as a door there by its base or by its XTEL alone.
+    See: docs/commentary/tes5_import_world.md#nameless-doors
+    """
+    doors = [r for r in by_type.get('DOOR', []) if not is_engine_form(r)]
+    markers = {r.get('FormID') for r in by_type.get('DOOR', [])} - {r.get('FormID') for r in doors}
+    refs = [{k: v for k, v in r.items() if not k.startswith('XTEL.')} if r.get('NAME') in markers else r
+            for r in by_type.get('REFR', [])]
+    return dict(by_type, DOOR=doors, REFR=refs)
+
+
+def _latch_pack(st, rec: dict) -> None:
+    """Gives a package its (VMAD, CTDA) completion gate: armed faction, or Once Per Day latch global."""
+    fid = get_formid(rec, 'FormID')
+    if fid in st.pack_plan.armed:
+        faction = st.pack_plan.armed_factions[fid] = create_armed_faction(st.writer, fid)
+        st.pack_ctx.done_latches[fid] = armed_gate(faction)
+    elif latches_when_done(rec, st.pack_ctx):
+        latch = create_latch(st.writer, fid)
+        st.pack_ctx.done_latches[fid] = (latch_vmad(latch), latch_condition(latch))
+
+
 def _convert_pack(st, export_dir: str, phase_done, skip_types) -> None:
     """Phase 3b2: PACK, then the phase-3c LCTN pass."""
     pack_records = st.by_type.get('PACK', [])
@@ -319,6 +360,7 @@ def _convert_pack(st, export_dir: str, phase_done, skip_types) -> None:
                         st.writer.add_record('PACK', ov.record_bytes)
                         st.converted += 1
                     continue
+                _latch_pack(st, rec)
                 for _pack_bytes in convert_PACK_records(rec, st.pack_ctx):
                     st.writer.add_record('PACK', _pack_bytes)
                 st.converted += 1
@@ -332,11 +374,14 @@ def _convert_pack(st, export_dir: str, phase_done, skip_types) -> None:
 
 def _phases23_records(st, export_dir: str, phase_done,
                       skip_types) -> None:
-    """Phases 2-3: LTEX, SOUN, QUST and PACK."""
+    """Phases 2-3: LTEX, SOUN, QUST and PACK, then the runtime sidecars (they list converted packages)."""
     _convert_ltex(st, export_dir, phase_done, skip_types)
     _convert_soun(st, export_dir, phase_done, skip_types)
     _convert_qust(st, export_dir, phase_done, skip_types)
+    _write_package_hosts(st)
     _convert_pack(st, export_dir, phase_done, skip_types)
+    _write_forced_lists(st)
+    _stage_runtime_sidecars(st, export_dir)
 
 
 
@@ -360,7 +405,7 @@ def _phase4a_navmesh(st, export_dir: str, phase_done, skip_types) -> None:
         st.by_type, st.ctx.master_export if st.ctx else None))
     st.navm_metas = []
     st.navm_cache, st.base_model_by_fid, st.door_fids, relinked = build_navmeshes(
-        st.by_type, st.writer, st.ctx, export_dir, os.path.basename(st.output_path))
+        _without_marker_doors(st.by_type), st.writer, st.ctx, export_dir, os.path.basename(st.output_path))
     if st.ctx is not None:
         st.ctx.relinked_master_navms = relinked
 

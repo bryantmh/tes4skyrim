@@ -55,7 +55,15 @@ public:
     virtual void Dispose() = 0;
 };
 
-class UIDelegate_v1;
+// The same shape for AddUITask, whose tasks run inside the UI's own message
+// processing on the thread that draws the menus -- the one place a movie may be
+// touched. AddTask's can run on a job thread while a menu is being drawn.
+// See: docs/commentary/morrowind_runtime.md#movies-are-touched-at-ui-time
+class UIDelegate_v1 {
+public:
+    virtual void Run() = 0;
+    virtual void Dispose() = 0;
+};
 
 struct SKSETaskInterface {
     enum { kInterfaceVersion = 2 };

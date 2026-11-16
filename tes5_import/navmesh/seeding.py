@@ -16,6 +16,7 @@ import numpy as np
 from ..base.text_reader import get_float, get_formid, get_hex_bytes, get_int
 from . import native_loader, params
 from .corridor_grow import walkable_sampler, wall_slab_sampler
+from .door_reach import join_missing_doors
 from .edge_links import CELL_SIZE, border_edges, exterior_views, master_view
 from .world import land_field, open_water_z, placements
 
@@ -43,8 +44,11 @@ MAX_SEA_CELLS = 2
 #: CELL DATA flag: the cell has water.
 _HAS_WATER = 0x02
 
-#: WRLD DATA flag Small world: its pathgrids already cover all of it that is played.
+#: WRLD DATA flag Small world: its pathgrids cover what is played, except cells a door lands travellers in.
 _SMALL_WORLD = 0x01
+
+#: The offer key a seeded cell's own door landings take beside its neighbours' seam squares.
+_LANDINGS = ('landings',)
 
 #: REGN record flag Border Region: the player never leaves its areas.
 _BORDER_REGION = 0x40
@@ -91,12 +95,13 @@ def _within(polys, squares):
 def drop_unplayable(seedable: dict, worlds, regions) -> None:
     """Remove the squares outside the authored playable area from `seedable`.
 
-    A Small world is skipped whole; where a worldspace authors Border regions, only cells
-    touching their areas stay. `worlds` and `regions` are WRLD and REGN records, masters' included.
+    A Small world is skipped except for the cells a door lands travellers in (template `landings`);
+    where a worldspace authors Border regions, only cells touching their areas stay. `worlds` and
+    `regions` are WRLD and REGN records, masters' included.
     See: docs/commentary/tes5_import_navmesh.md#seeded-cells
     """
     small = {get_formid(w, 'FormID') for w in worlds if get_int(w, 'DATA.Flags') & _SMALL_WORLD}
-    for square in [s for s in seedable if s[0] in small]:
+    for square in [s for s in seedable if s[0] in small and not seedable[s].get('landings')]:
         del seedable[square]
     for wrld, polys in _border_polygons(regions).items():
         squares = [s for s in seedable if s[0] == wrld]
@@ -276,7 +281,8 @@ def grow_into_empty(cache, seedable, sources, derive_fid, run, regrow=None) -> l
 
     `seedable` maps (wrld, gx, gy) to a job template, `regrow` a pathgrid cell's square to its job,
     rebuilt with the seeds its own mesh does not meet. A cell rebuilds from every seed it was offered
-    when a new neighbour offers some, at most once per side. `run(jobs)` builds jobs.
+    when a new neighbour offers some, at most once per side; a seeded cell's door landings are offered
+    too (a walled-off cell meshes where its doors land). `run(jobs)` builds jobs.
     See: docs/commentary/tes5_import_navmesh.md#seeded-cells
     """
     regrow = regrow or {}
@@ -284,8 +290,13 @@ def grow_into_empty(cache, seedable, sources, derive_fid, run, regrow=None) -> l
     built, sides, sea = {}, {}, {}
     meshed = {key[:3] for key in sources}
     own = _own_views(sources, regrow)
+    landed = {sq: {_LANDINGS: list(t['landings'])} for sq, t in seedable.items()
+              if sq not in regrow and t.get('landings')}
     while True:
-        jobs = _wave_jobs(seam_seeds(sources, targets, own), targets, sides, sea, meshed)
+        offers = seam_seeds(sources, targets, own)
+        for square, offer in landed.items():
+            offers.setdefault(square, {}).update(offer)
+        jobs = _wave_jobs(offers, targets, sides, sea, meshed)
         if not jobs:
             return list(built.values())
         _prepare(jobs, regrow, derive_fid, cache)
@@ -384,11 +395,23 @@ def _ground_args(job, base_model_by_fid, door_fids, get_collision) -> tuple:
 
 
 def seeded_graph(job, base_model_by_fid, door_fids, get_collision):
-    """The job's flooded (points, edges) in pathgrid order, or None when nothing walks in."""
+    """The job's flooded (points, edges) in pathgrid order, or None when nothing walks in.
+
+    When the lattice floods nothing, the job's door landings are walked to its other seeds: a porch
+    smaller than the lattice still meshes where a door lands travellers beside a neighbour's seam.
+    See: docs/commentary/tes5_import_navmesh.md#seeded-cells
+    """
     points, edges = native_loader.native_core().seed_graph(
         *_ground_args(job, base_model_by_fid, door_fids, get_collision),
         np.asarray(job['seeds'], dtype=np.float64).reshape(-1, 3))
-    return pathgrid_order(points, edges) if edges else None
+    if edges:
+        return pathgrid_order(points, edges)
+    landed = {tuple(p) for p in job.get('landings') or ()}
+    others = [tuple(p) for p in job['seeds'] if tuple(p) not in landed]
+    graph = None
+    if landed and others:
+        graph = join_missing_doors(job, (others, []), sorted(landed), base_model_by_fid, door_fids, get_collision)
+    return pathgrid_order(*graph) if graph and graph[1] else None
 
 
 def regrow_unchanged(job, base_model_by_fid, door_fids, get_collision) -> bool:

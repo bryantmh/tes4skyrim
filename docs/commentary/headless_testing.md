@@ -444,6 +444,21 @@ frame governor, which runs in every converted game, through its `TESTestPace`
 export); a step whose hook TESRuntime lacks (`defend`, `follow`, `punch`)
 fails naming it. `persuade` needs the in-game judge.
 
+TESRuntime's `talk` / `activate` on an ACTOR walks the player up to it again
+when it has left talking reach since `approach`. At test pace a wandering NPC
+crosses a room, or goes out a door, between two steps: run 47a met Jauffre on
+his once-a-day patrols at 17:30, and the talk opened nothing from 523 away. It
+does not turn a player who is already in reach. A SetAngle that lands as the
+conversation opens closes it (47d, 47e: every conversation closed after 10
+ticks with no line). It also waits while the engine's topic manager still names
+a speaker (+0x68). A scene spoken at the player without a menu holds one until
+its last line, and the engine opens no new conversation until then. Run 48a's
+talk with Martin opened nothing during Savlian's chapel speech.
+
+Every movie call the runner makes (`ask`, `choose`, `bye`, `button`, `pick`) runs
+at UI time
+([morrowind_runtime.md](morrowind_runtime.md#movies-are-touched-at-ui-time)).
+
 ### <a id="failure-snapshot"></a>Failure snapshot
 
 **Code:** `tools/live/fail_snapshot.py`, called from `test_instance.tes4_game`.

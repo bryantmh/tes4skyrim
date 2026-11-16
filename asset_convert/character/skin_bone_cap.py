@@ -10,9 +10,13 @@ articulation; splitting the shape instead froze the game.
 See: docs/commentary/asset_convert_armor.md#creature-skin-render-crash-80
 """
 
+import os
+
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from pyffi.formats.nif import NifFormat
+
+from asset_convert.character.skin_retarget import regen_skin_partition
 
 #: Skin bones one shape may carry before SSE's matrix buffer overflows.
 SSE_MAX_SKIN_BONES = 80
@@ -148,14 +152,16 @@ def _reduce_shape(shape, parent_name, max_bones) -> bool:
     return True
 
 
-def merge_oversized_skin_bones(root, max_bones: int = SSE_MAX_SKIN_BONES) -> int:
+def merge_oversized_skin_bones(root, max_bones: int = SSE_MAX_SKIN_BONES, rig_parents=None) -> int:
     """Reduce every skinned shape under `root` to <= max_bones skin bones; how many changed.
 
     Bones are matched to their parents BY NAME: during part conversion a
     skin's bone pointers may not be members of the current tree, but node
-    names are stable. Callers must regenerate the NiSkinPartition afterwards.
+    names are stable. `rig_parents` ({name: parent name}, the creature's
+    skeleton) outranks the mesh's own tree, where a body part hangs its bones
+    flat off the root. Callers must regenerate the NiSkinPartition afterwards.
     """
-    parent_name = _parent_names(root)
+    parent_name = {**_parent_names(root), **(rig_parents or {})}
     reduced = 0
     for shape in list(root.tree()):
         if not isinstance(shape, (NifFormat.NiTriShape, NifFormat.NiTriStrips)):
@@ -165,3 +171,44 @@ def merge_oversized_skin_bones(root, max_bones: int = SSE_MAX_SKIN_BONES) -> int
             continue
         reduced += _reduce_shape(shape, parent_name, max_bones)
     return reduced
+
+
+def _oversized(roots, max_bones) -> list:
+    """The skinned shapes under `roots` with more than `max_bones` bones."""
+    return [b for root in roots if root is not None for b in root.tree()
+            if getattr(getattr(b, 'skin_instance', None), 'num_bones', 0) > max_bones]
+
+
+def _rig_parents(skeleton_path) -> dict:
+    """{bone name: parent name} of the skeleton NIF at `skeleton_path`, empty when there is none."""
+    if not skeleton_path or not os.path.isfile(skeleton_path):
+        return {}
+    data = NifFormat.Data()
+    with open(skeleton_path, 'rb') as stream:
+        data.read(stream)
+    parents = {}
+    for root in data.roots:
+        if root is not None:
+            parents.update(_parent_names(root))
+    return parents
+
+
+def cap_skin_bones(roots, skeleton_path=None) -> int:
+    """Fit every skinned shape under `roots` into SSE's bone buffer and rebuild the partitions it changed.
+
+    Returns how many shapes changed. A creature body part stores its skin bones flat; its folder's skeleton NIF
+    (`skeleton_path`) gives the hierarchy the merge needs.
+    See: docs/commentary/asset_convert_armor.md#creature-skin-render-crash-80
+    """
+    shapes = _oversized(roots, SSE_MAX_SKIN_BONES)
+    if not shapes:
+        return 0
+    before = [s.skin_instance.num_bones for s in shapes]
+    rig = _rig_parents(skeleton_path)
+    for root in roots:
+        if root is not None:
+            merge_oversized_skin_bones(root, rig_parents=rig)
+    merged = [s for s, n in zip(shapes, before) if s.skin_instance.num_bones < n]
+    for shape in merged:
+        regen_skin_partition(shape, shape.skin_instance, _node_name(shape))
+    return len(merged)

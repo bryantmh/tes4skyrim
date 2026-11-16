@@ -23,6 +23,7 @@
 
 #include "activation.h"
 #include "addresses.h"
+#include "chargen_menu.h"
 #include "conversation.h"
 #include "game_calls.h"
 #include "game_calls_internal.h"
@@ -166,7 +167,41 @@ void DivertEngineDialogue() {
     BeginConversation(SpeakerId(baseId), DisplayName(base), PlayerName());
 }
 
+// A force-greet that comes due while Skyrim's dialogue menu is still closing
+// is only spoken, never opened, and a say-once greeting is then spent. So
+// converted force-greet packages test a global held at 1 while that menu is
+// up; once it has gone the last speaker re-checks its packages. A greeting
+// that comes due the tick an asked class or birthsign menu closes over an
+// ended conversation is dropped the same way, so the gate also holds while
+// one of those menus is up, while the engine still names a speaker, and for
+// kGateSettleTicks quiet ticks after all of that.
+constexpr int kGateSettleTicks = 15;
+// The last speaker by runtime FormID: a pointer kept across the settle ticks may be gone by then.
+std::uint32_t g_gateSpeaker = 0;
+bool g_gateOpen = false;
+int g_gateQuiet = 0;
+
+void DialogueGateTick() {
+    void* speaker = nullptr;
+    if (g_getSpeaker && g_topicManager && *g_topicManager) g_getSpeaker(*g_topicManager, &speaker);
+    const bool busy = EngineMenuOpen(ids::kVanillaDialogueMenu) || ChargenMenuOpen() || speaker;
+    if (speaker) g_gateSpeaker = FormIdOf(speaker);
+    g_gateQuiet = busy ? 0 : g_gateQuiet + 1;
+    const bool open = busy || (g_gateOpen && g_gateQuiet < kGateSettleTicks);
+    for (const FormRef& gate : DialogueGateGlobals()) {
+        float* slot = Hooks().globalSlot ? Hooks().globalSlot(gate.plugin, gate.formId) : nullptr;
+        if (slot) *slot = open ? 1.0f : 0.0f;
+    }
+    if (g_gateOpen && !open) {
+        Log("dialogue: conversation and menus over -- the speaker re-checks its packages");
+        if (g_gateSpeaker) ReevaluatePackage(RefByRuntimeId(g_gateSpeaker));
+    }
+    if (!open) g_gateSpeaker = 0;
+    g_gateOpen = open;
+}
+
 void CrimeTick() {
+    DialogueGateTick();
     DivertEngineDialogue();
     ServeSentence();
 }

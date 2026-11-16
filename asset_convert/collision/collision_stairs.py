@@ -28,6 +28,8 @@ _REACH = _GAP + _MAX_RISE
 _OVERLAP_SHARE = 0.5
 #: Inner treads a flight needs; a bed's mattress-pillow-headboard has one.
 _MIN_INNER_TREADS = 2
+#: XY area (u²) a first step off the floor needs: a foothold (real ones >= 645), not a statue's ledge (<= 30).
+_MIN_GROUND_TREAD = 256.0
 #: Grid cell (game units) for pairing nearby treads.
 _CELL = 64.0
 
@@ -177,10 +179,16 @@ def _treads_and_steps(flat, tris, scale):
     return parent, tread_area, steps
 
 
-def _flight_treads(tread_area, steps):
+def _flight_treads(tread_area, steps, grounded=frozenset()):
     """Tread roots of every flight with at least _MIN_INNER_TREADS inner treads
     (a step both below and above), keeping only treads no larger than twice
-    the flight's median inner tread (a floor or wide landing is not a tread)."""
+    the flight's median inner tread (a floor or wide landing is not a tread).
+
+    A `grounded` tread's step below is the floor the mesh stands on, and its
+    equal rise above makes two steps: one is enough for a flight, which takes
+    its limit from its smallest inner tread, so its top landing stays plain.
+    See: docs/commentary/asset_convert_collision.md#first-step-off-the-floor
+    """
     up, down, flight = defaultdict(set), defaultdict(set), {}
     for a, b in steps:
         up[a].add(b)
@@ -188,12 +196,51 @@ def _flight_treads(tread_area, steps):
         flight.setdefault(a, a)
         flight.setdefault(b, b)
         flight[_find(flight, a)] = _find(flight, b)
-    inner = defaultdict(list)
+    inner, with_floor = defaultdict(list), defaultdict(list)
     for t in flight:
-        if up[t] and down[t]:
-            inner[_find(flight, t)].append(tread_area[t])
-    limit = {f: 2.0 * sorted(a)[len(a) // 2] for f, a in inner.items() if len(a) >= _MIN_INNER_TREADS}
+        if up[t] and (down[t] or (t in grounded and tread_area[t] >= _MIN_GROUND_TREAD)):
+            (inner if down[t] else with_floor)[_find(flight, t)].append(tread_area[t])
+    limit = {f: 2.0 * min(a + inner[f]) for f, a in with_floor.items()}
+    limit.update({f: 2.0 * sorted(a)[len(a) // 2] for f, a in inner.items() if len(a) >= _MIN_INNER_TREADS})
     return {t for t in flight if tread_area[t] <= limit.get(_find(flight, t), -1.0)}
+
+
+def _grounded(tris, flat, parent, steps, scale):
+    """Tread roots that rise off the mesh's own floor (z 0) by one step: a near-vertical face runs from z 0 up to
+    the tread within _GAP of it, and that rise matches the next step up from the tread (a bed's mattress does not).
+    See: docs/commentary/asset_convert_collision.md#first-step-off-the-floor
+    """
+    heights = defaultdict(list)
+    for i in flat:
+        heights[_find(parent, i)].append(sum(v[2] for v in tris[i]) * scale / 3.0)
+    tread_z = {r: sum(z) / len(z) for r, z in heights.items()}
+    next_rise = defaultdict(lambda: math.inf)
+    for a, b in steps:
+        next_rise[a] = min(next_rise[a], tread_z[b] - tread_z[a])
+    wanted = {r for r, z in tread_z.items() if _MIN_RISE <= z <= _MAX_RISE and abs(next_rise[r] - z) <= _MIN_RISE}
+    walls = [(_xy(t, scale), max(v[2] for v in t) * scale) for t in tris if wanted and _floor_wall(t, scale)]
+    out = set()
+    for i in flat:
+        r = _find(parent, i)
+        if r not in wanted or r in out:
+            continue
+        p = _xy(tris[i], scale)
+        box = _bbox(p)
+        if any(top >= tread_z[r] - _MIN_RISE and _within_gap(box, _bbox(w)) and _contact(w, p)[0] <= _GAP
+               for w, top in walls):
+            out.add(r)
+    return out
+
+
+def _within_gap(ba, bb):
+    """True if XY boxes come within _GAP of each other."""
+    return not (ba[0] - _GAP > bb[2] or bb[0] - _GAP > ba[2] or ba[1] - _GAP > bb[3] or bb[1] - _GAP > ba[3])
+
+
+def _floor_wall(t, scale):
+    """True for a near-vertical triangle whose foot is on z 0."""
+    tilt = _tilt(t)
+    return tilt is not None and tilt[0] >= 60.0 and abs(min(v[2] for v in t) * scale) <= 1.0
 
 
 def _step_ends(tris, flat, parent, steps, scale):
@@ -272,7 +319,7 @@ def stairs_materials(tris, materials, scale):
     if len(flat) < 3:
         return list(materials)
     parent, tread_area, steps = _treads_and_steps(flat, tris, scale)
-    treads = _flight_treads(tread_area, steps)
+    treads = _flight_treads(tread_area, steps, _grounded(tris, flat, parent, steps, scale))
     tread_tris = [i for i in flat if _find(parent, i) in treads]
     steps = [(a, b) for a, b in steps if a in treads or b in treads]
     ends = _step_ends(tris, flat, parent, steps, scale)

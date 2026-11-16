@@ -1999,6 +1999,16 @@ body at OnEnd breaks it four different ways, each fixed by one helper.
   returns. The count, not a flag, keeps overlapping speakers of ONE INFO
   apart (six Blades say the same "Hail"). NOT yet confirmed in game by the
   user.
+  OnEnd also waits (at most 2 s, `TES4_stepped`) until its OnBegin's steps are
+  done. Run 57c: Mankar's 0001F876 ("Praise be to your Brothers ...") was cut at
+  once and never heard, yet `MQ06.mankarSpeech` stood at 3 with `nextSpeaker` 1,
+  a state no authored line can leave (Mankar has no line at 3; Ruma speaks only
+  on `speaker == 2`), so the speech stopped for good. Reading: the OnEnd of the
+  cut line ran while OnBegin was paused in its calls, found the counter still at
+  2, judged the turn not its own and skipped `nextspeaker = 2`; OnBegin then
+  stepped 2 -> 3, and its own fallback found the count already spent. (Cut, most
+  likely, by Mankar's next poll Say: SayLine had given up before the engine
+  began the line.) Failed in 1 of 7 runs of the speech; not reproduced on demand.
 - <a id="turn-handoff"></a>**`split_turn_handoff` — the handoff cannot wait for
   OnEnd.** In TES4 the result script set `convCount`/`speaker` and charged
   `convTimer` in the frame the line started, so the next speaker's guard
@@ -2031,9 +2041,11 @@ body at OnEnd breaks it four different ways, each fixed by one helper.
   ran, and the quest stalled forever — the Emperor greeted generically and
   offered only 'Rumors', with nothing in the Papyrus log because a rejected
   gate is silent by design. Advances are lifted OUTSIDE the gate behind a
-  monotonic guard, which is safe because TES4 stages are flags and `GetStage`
-  returns the highest set: past N already → skipped; turn rejected but the
-  advance still owed → it runs. Only TOP-LEVEL
+  `!GetStageDone(N)` guard: stage N already set → skipped; turn rejected but
+  the advance still owed → it runs. The guard was `GetStage() < N` until
+  headless run 29q (2026-11-14, not yet confirmed in game by the user): MQ12
+  sets 25, 26 and 27 while it already stands at 30, so the last line of the
+  Jauffre / Martin exchange never set 26. Only TOP-LEVEL
   `<quest>.SetStage(<literal>)` lines are lifted.
 
 - <a id="writes-before-setstage"></a>**`state_writes_before_setstage` —
@@ -4128,11 +4140,40 @@ the consume and the door-relock preamble (`ND04TitanSCRIPT`,
 `ARLesserWelkyndStoneStaticScript`). `events()` now keeps a block that
 `_consumes_activation` reports, body or not.
 
-**`TES4Polyfill.EnterOblivionGate` was never emitted.** The gate's identity is
+<a id="poll-pile-up"></a>**A GameMode poll never starts on top of its own running pass
+(`assemble._pass_guard`; headless runs 31e / 31f before, 32a after, 2026-11-14; NOT yet confirmed
+in game by the user).** MQ14 stage 100 (`stopquest MQ14`, `stopquest MQ13`,
+`setstage MQ15 10`) never got past its first `Stop()`: the fragment sat in "Waiting on other stack
+for call" while the Papyrus log dumped stacks -- 42,889 frames of `TES4_MQ13SoldierScript.OnUpdate`
+(about 2,500 live stacks parked on one instruction, a read of the MQ13 quest script), 5,152 of
+`TES4_MQ13Script.OnUpdate`, 13,500 of the three small gates' polls. Every converted poll opens with
+a 5 s watchdog `RegisterForSingleUpdate` and closes with its real one (0.1 s here); a run that
+blocks on another script's lock for longer than the watchdog gets a SECOND run started on top of
+it, which blocks too, and the queue into the busy script only grows. At the headless pace 5 game
+seconds are about 0.23 real seconds, which makes it certain; a long save or a heavy battle can do
+it at normal pace. Moving the fragment's own `Stop()` last was tried on the theory of a shutdown
+race and changed nothing (reverted).
+
+The fix is the guard box-showing scripts already had
+([one box at a time](#one-box-at-a-time)), now on every poll: `OnUpdate` re-arms the watchdog,
+then returns when `TES4_PassAt` (the real time its last pass started) is set and under 60 s old;
+the pass stamps it and clears it at every exit (each `Return` and the bottom). A pass that died
+without clearing is taken for dead after the 60 s. Run 32a, the same battle on the guarded scripts:
+MQ14 stage 100 ran through to MQ15 10 and the Papyrus log holds 0 stack dumps (530,240 before).
+
+<a id="oblivion-gate-capture"></a>**`TES4Polyfill.EnterOblivionGate` was never emitted.** The gate's identity is
 known only on the authored line that discards it (`set MQ00.nearOblivionGate
 to 0`), so the capture must precede the body. Re-added as
 `assemble.gate_capture`; without it `CloseCurrentOblivionGate` had nowhere to
 send the player back to.
+
+That line is not the authored marker of a gate, only a habit of some gate scripts. The marker is
+the DOOR's Oblivion Gate flag (FNAM bit 0): Oblivion.esm flags 24 door bases, 15 with a script that
+has an OnActivate, and only 10 of those carry the line. `MQ13OblivionGate4Script` (the Great Gate
+at Bruma) does not, so taking the Great Sigil Stone closed nothing and the player stayed in the
+citadel at MQ14 45 (headless run 29x; NOT yet confirmed in game by the user). `gate_capture` now
+also takes a script on a flagged door whose OnActivate calls `Activate` (`cross_ref.gate_scripts`,
+`_gate_door_lets_in`); the three small Bruma gates only show a message and capture nothing.
 
 **`ModPCSkill`/`AdvancePCSkill` emitted `(Self as Actor).ModActorValue(...)`**
 — `None` on the Quest scripts that call it, so 12 scripts' skill gains did
@@ -4693,6 +4734,18 @@ every poll -- the first attempt, same day -- put `PlayerIsInDialogue` on ~210
 quest polls at 0.1 s and the VM starved: End fragments ran 11-17 s late and
 "Yessir" played twice. A poll that never speaks cannot cut a line, so it does
 not need the gate.
+
+**A poll that raises a MessageBox carries it too** (`conv.sc.shows_box`; Actor,
+Quest and ObjectReference scripts). Run 46a: Blade1Script's practice reward,
+"By observing these Blades at practice ... raised by 2 points", opened OVER
+Jauffre's greeting. Its GameMode had counted 60 s within 400 of a practicing
+Blade, and the box held the conversation, so his topic never answered. In
+Oblivion that box could only come after the dialogue closed.
+
+The exception is a script whose bare `MenuMode` block shares the poll: that work
+must run in menus. The change moved Oblivion.esm from 151 gated scripts to 249.
+The new ones are altars, Doomstones, Daedric statues, Arena combatants,
+runestones and gate scripts, almost all object and actor polls at 0.5 s.
 
 ### A worldspace property must use the CONVERTED EditorID
 <a id="worldspace-property-rename"></a>
@@ -6588,3 +6641,75 @@ Blast radius on the rebuild: Oblivion 6 scripts (the three artifact spells,
 SE13Ally, SE13KnightOfOrder, SE14VoiceofSheogorathSpell), no CharacterGen or
 MQ script; Nehrim's arena fighters, the beggar and the IsPlayable2 line in
 AAGeneralUpdateQuest; Morrowind_ob 2 OnKnockout scripts. Everything compiles.
+
+### <a id="a-scripted-activation-runs-the-door-script"></a>A scripted activation runs the door's script
+
+**Code:** `commands.py::activate`, `assemble.py::door_preamble`, `TES4Polyfill.ActivateScripted`,
+`owned_records.py::create_scripted_use_formlist`. NOT yet confirmed in game by the user (found by the
+headless main-quest run 29e, 2026-11-13).
+
+`MankarCamoranScript` ends his Dagon Shrine speech with `MQ06ParadisePortalRef.activate MankarCamoranRef 1`:
+the trailing 1 runs the portal's OnActivate block, which opens it and sets MQ06 49 and 50. The portal's
+base is a DOOR, and a converted door script starts with the "an NPC opening a door does not run the
+door's script" preamble, which took this call for a walk-through and returned; the portal stayed at its
+script stage 0. A scripted `Activate ref 1` with a named target now goes through
+`TES4Polyfill.ActivateScripted`, which lists the target in the `TES4ScriptedUses` FormList before
+activating it; the preamble runs the block (and unlists the door) when it finds itself listed.
+
+### <a id="an-npc-that-used-a-scripted-object-re-evaluates"></a>An NPC that used a scripted object re-evaluates its packages
+
+**Code:** `assemble.py::user_rethinks`. NOT yet confirmed in game by the user (found by the headless
+main-quest runs 27c / 27g / 28l, 2026-11-13).
+
+Baurus's `MQ05BaurusOpenSewerDoor` is a UseItemAt on the sewer gate wheel, conditioned on the wheel
+script's `opened == 0`. In 3 of 12 runs he stood at the wheel for good: the wheel's `opened` was 1 (its
+OnActivate had run for him), so the package was no longer valid, but he was still on it, and a console
+`evp` moved him on at once. Oblivion's UseItemAt ends on the activation. Skyrim's Activate procedure on
+an object whose script takes the activation (the converted script blocks the default activation) does
+not reliably end, and nothing else re-picks the package. A converted OnActivate that consumes the
+activation now ends with `EvaluatePackage()` on a non-player activator.
+
+<a id="unequip-on-removal"></a>
+### An OnUnequip block does not run when a script takes the item away
+
+**Code:** `script_convert/unequip_guard.py`. Headless run 37h, 2026-11-14; NOT yet confirmed in game by the user.
+
+Skyrim sends OnUnequipped when RemoveItem takes a worn item. `MQ15BracersScript` (`OnUnequip player`: "The Bands are locked
+around your wrists, and will not come off.") then showed its box at the moment Eldamil removes the Bands (MQ15 stage 70,
+`player.removeItem MQ15Bracers 1`), and the box held the game over his dialogue. The block is authored for the wearer taking
+the item off, so a converted OnUnequipped waits 0.1 s and returns when the actor no longer holds the item
+(`akActor.GetItemCount(TES4_SelfBase) < 1`). `TES4_SelfBase` is a Form property the importer binds per base record to the
+record the script sits on (`base/object_scripts.py` `_plan_record`): a script in a container has no usable Self. First
+attempt, dropped: noting the container left in OnContainerChanged; run 37i showed the box still came, so that event does
+not arrive for an item RemoveItem destroys. 22 Oblivion.esm scripts have an OnUnequip block. Oblivion not running
+the block on RemoveItem is inferred from this script, not read from the exe.
+
+<a id="door-scripts-that-name-an-npc-user"></a>
+### A door script that names an NPC user runs for NPCs
+
+**Code:** `assemble.py` `door_preamble`, `_names_npc_user`. Headless run 37r, 2026-11-14; NOT yet confirmed in game by the user.
+
+A converted door OnActivate starts by letting a non-player actor through with the default open and returning, without
+running the block. `MQ16PalaceDistToTempleDistDoorSCRIPT` is written for NPC users: it disables the palace guards and
+soldiers that use the door and sets MQ16 27 when Martin does (`isactionref MartinRef`). Martin and his escort went through
+the door and 27 never came. When the block reads its activator for anything but the player test or the bare default
+`Activate`, the bypass is left out and the block runs for every activator. Not settled: whether the bypass is right for
+the other door scripts (it rests on "an NPC opening a door does not run the door script", which this script contradicts).
+
+<a id="choice-gate-writes-run-at-begin"></a>
+### A write that a line's choices test runs when the line begins
+
+**Code:** `conversation_sequence.py` `choice_tested_vars`, `split_choice_writes`; `pipeline.py` `_info_fragment_psc`.
+Found in headless run 51a, confirmed headless in the full run 53a (mq09_first_blade), 2026-11-15; NOT yet confirmed in game
+by the user. Tests: `test_a_choice_topic_tests_what_its_lines_test`, `test_a_choice_tested_write_moves_to_begin`.
+
+Skyrim builds a line's choice list (TCLT) as the line ends and does not wait for an OnEnd fragment still running; Oblivion
+ran the result script before it listed the choices. In MQ09 the Blade ghost's line "What happened to you?" ends with
+`set MQ09.ghostTalk to MQ09.ghostTalk + 1`, and its choice "Is the Underking still here?" needs `ghostTalk == 2`. Run 51a
+listed only the old topic; asking it again pushes the counter to 3 and the quest is stuck.
+
+A TES4 choice names a topic, not an INFO, so the tested set is per topic: the union of the `GetQuestVariable` conditions
+of that topic's INFOs. A top-level literal write or counter step (`_STATE_WRITE_RE` with no base, `_step_delta`) to a
+variable in an INFO's set moves to the Begin fragment, unless an earlier line reads that variable or returns. Census:
+3,353 Oblivion INFOs have choices that test a variable, 1,666 of them write one, 1,656 fragments change; samples read
+(MQ09 ghostTalk, MS16 brotalk, SE10 ConvoVAR, TG04 PChasBloodPrice, the polled DarkConversations / FGD08 chains).

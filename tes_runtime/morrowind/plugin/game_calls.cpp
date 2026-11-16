@@ -574,7 +574,7 @@ void PlayerWait() {
 }
 
 void SleepFor(int hours) {
-    PostToMainThread([hours]() {
+    PostToUiThread([hours]() {
         void* view = nullptr;
         if (!EngineMenuObject(ids::kSleepWaitMenu, &view) || !view) return;
         MovieSetNumber(view, ids::kSleepHoursPath, hours);
@@ -661,9 +661,7 @@ float DistanceFromDeathSpot(void* dead, void* other) {
 // A reference Skyrim has not loaded stands in another cell, where OpenMW's
 // GetDistance answers FLT_MAX: 0 would pass every `GetDistance < x` test.
 // A player whose script move is landing stands where it lands, as in OpenMW.
-float Distance(const std::string& from, const std::string& to) {
-    void* a = OwnerRef(from);
-    void* b = OwnerRef(to);
+float RefDistance(void* a, void* b) {
     void* player = PlayerRef();
     const float landing = a == player ? DistanceToLanding(b) : b == player ? DistanceToLanding(a) : -1.0f;
     if (landing >= 0.0f) return landing;
@@ -672,6 +670,13 @@ float Distance(const std::string& from, const std::string& to) {
     const float apart = DistanceBetween(a, b);
     return apart < 0.0f ? std::numeric_limits<float>::max() : apart;
 }
+
+float Distance(const std::string& from, const std::string& to) { return RefDistance(OwnerRef(from), OwnerRef(to)); }
+
+// The reference another runtime's test cases name: a runtime FormID, 0 for the player.
+void* TestRef(std::uint32_t id) { return id ? RefByRuntimeId(id) : PlayerRef(); }
+
+float TestDistance(std::uint32_t from, std::uint32_t to) { return RefDistance(TestRef(from), TestRef(to)); }
 
 int Tes3GridIndex(float v) { return static_cast<int>(std::floor(v / kTes3CellSize)); }
 
@@ -759,25 +764,29 @@ void KillIfDrained(void* ref, void* name) {
 // thread. The kills come after the walk, since a death changes the process
 // lists being walked. An actor whose script is staged but not yet bound has not
 // run its first frame, which may disable it (a TES3 script runs before the AI).
-void KillPlayerAttackers() {
+// `ally` (a runtime FormID, 0 for none) is an actor the player fights beside: its attackers die too.
+void KillAttackersOf(std::uint32_t ally) {
     void* player = PlayerRef();
     if (!player || !g_kill) return;
     std::vector<void*> party = PlayerParty();
     party.push_back(player);
     std::vector<void*> attackers;
-    ForEachHighActor([&party, &attackers](void* actor) {
+    ForEachHighActor([&party, &attackers, ally](void* actor) {
         const std::uint32_t id = FormIdOf(actor);
         if (InstanceByLocal(id) && !InstanceForRef(id)) return;
         void* target = IsDead(actor) ? nullptr : CombatTargetOf(actor);
-        if (target && std::find(party.begin(), party.end(), target) != party.end()) {
+        if (!target) return;
+        if ((ally && FormIdOf(target) == ally) || std::find(party.begin(), party.end(), target) != party.end()) {
             attackers.push_back(actor);
         }
     });
     for (void* actor : attackers) {
-        Log("test: the player kills %08X, which attacked the player or a follower", FormIdOf(actor));
+        Log("test: the player kills %08X, which attacked the player, a follower or an ally", FormIdOf(actor));
         g_kill(PapyrusVm(), 0, actor, player);
     }
 }
+
+void KillPlayerAttackers() { KillAttackersOf(0); }
 
 // OpenMW's OpSetDynamic: the base becomes `value` and the current value is
 // filled to the new maximum. Skyrim's SetActorValue moves only the base and
@@ -1417,6 +1426,8 @@ void InstallGameCalls() {
     hooks.itemCount = ItemCount;
     hooks.itemFormId = ItemFormId;
     hooks.killPlayerAttackers = KillPlayerAttackers;
+    hooks.killAttackersOf = KillAttackersOf;
+    hooks.testDistance = TestDistance;
     hooks.setEnabled = SetEnabled;
     hooks.isDisabled = IsDisabled;
     InstallMoveCalls(hooks);

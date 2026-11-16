@@ -14,9 +14,12 @@ until 600 GetStageDone MQ01 76
 end
 
 # The sewer exit gate is a door with CGSewerExitScript and no EditorID: its placed ref's TES4 FormID (0004BED7) is used.
+# It is in ImperialSewers03, not the goblin door's ImperialDungeon04, so moveto the gate stands in for the walk there.
 # Menu expected: the "Before exiting the sewers, you may revise your character." MessageBox; buttons 0 Edit Race,
 # 1 Edit Birthsign, 2 Edit Class, 3 Finished - Exit Sewers.
 case sewers_exit_gate
+run
+player.moveto 0004BED7
 activate 0004BED7
 wait 60
 button 3

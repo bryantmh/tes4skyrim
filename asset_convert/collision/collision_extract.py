@@ -96,13 +96,14 @@ PRIM_TO_GAME = 70.0
 # Only real world collision supports/obstructs an NPC.
 OL_STATIC = 1
 OL_ANIM_STATIC = 2
+OL_UNIDENTIFIED = 0
 OL_TRANSPARENT = 3
 OL_TERRAIN = 13
 OL_GROUND = 17
 OL_STAIRS = 19
 
-#: Layers that block actors; transparent (3) is invisible collision. Clutter, biped, trigger etc. are pushed aside.
-_PATHING_LAYERS = frozenset({OL_STATIC, OL_ANIM_STATIC, OL_TRANSPARENT,
+#: Layers that block actors; 0 is architecture Bethesda left unset, 3 invisible collision. Clutter etc. is pushed aside.
+_PATHING_LAYERS = frozenset({OL_UNIDENTIFIED, OL_STATIC, OL_ANIM_STATIC, OL_TRANSPARENT,
                              OL_TERRAIN, OL_GROUND, OL_STAIRS})
 
 WALKABLE = 0
@@ -466,6 +467,11 @@ def _unwrap_shapes(shape, depth=0):
     yield shape
 
 
+def _can_move(body) -> bool:
+    """True for a rigid body with mass: clutter, which an actor pushes aside."""
+    return float(getattr(body, 'mass', 0.0) or 0.0) > 0.0
+
+
 def _body_tris(body):
     """Game-unit triangles for one rigid body, or [] if it does not path.
 
@@ -478,7 +484,7 @@ def _body_tris(body):
         layer = int(body.havok_col_filter.layer)
     except AttributeError:
         layer = OL_STATIC
-    if layer not in _PATHING_LAYERS:
+    if layer not in _PATHING_LAYERS or (layer == OL_UNIDENTIFIED and _can_move(body)):
         return []
 
     shape = getattr(body, 'shape', None)
@@ -625,7 +631,7 @@ def _worker_both(args: tuple):
 COLLISION_SCHEMA_VERSION = 7
 
 #: Cache format id; its trailing digits carry COLLISION_SCHEMA_VERSION.
-_MAGIC = b'TESCOL10'
+_MAGIC = b'TESCOL11'
 _COLLISION: Dict[str, dict] = {}
 # path_key -> short collision digest, memoised by collision_digest().  Cleared
 # with _COLLISION so a reload cannot serve digests for the previous cache.

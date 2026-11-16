@@ -134,6 +134,12 @@ constexpr const char* kFileAttributes = "attributes_formid.txt";
 constexpr const char* kAttributeNames[] = {"strength", "intelligence", "willpower", "agility",
                                            "speed", "endurance", "personality", "luck"};
 std::vector<AttributeGlobal> g_attributeGlobals;
+constexpr const char* kDialogueGateRow = "dialogueopen";
+std::vector<FormRef> g_dialogueGates;
+constexpr const char* kPlayerEscortRow = "escortplayer";
+std::vector<FormRef> g_playerEscorts;
+constexpr const char* kEscortHoldRow = "escorthold";
+std::vector<FormRef> g_escortHolds;
 
 // The same file's `faction.<TES4 actor value>` rows: each stat faction.
 // See: docs/commentary/morrowind_runtime.md#npc-attributes
@@ -537,6 +543,9 @@ void ClearScriptTables() {
     g_skills.clear();
     g_races.clear();
     g_attributeGlobals.clear();
+    g_dialogueGates.clear();
+    g_playerEscorts.clear();
+    g_escortHolds.clear();
     g_statFactions.clear();
 }
 
@@ -781,6 +790,9 @@ void LoadWorldRows(int layer, const std::string& pluginDir) {
                                           ParseFormRef(value));
                        return;
                    }
+                   if (key == kDialogueGateRow) g_dialogueGates.push_back(ParseFormRef(value));
+                   if (key == kPlayerEscortRow) g_playerEscorts.push_back(ParseFormRef(value));
+                   if (key == kEscortHoldRow) g_escortHolds.push_back(ParseFormRef(value));
                    for (int a = 0; a < 8; ++a) {
                        if (key != kAttributeNames[a]) continue;
                        g_attributeGlobals.push_back({a, ParseFormRef(value)});
@@ -838,6 +850,12 @@ const SkillDef* FindSkill(int index) {
 std::size_t SkillCount() { return g_skills.size(); }
 
 const std::vector<AttributeGlobal>& AttributeGlobals() { return g_attributeGlobals; }
+
+const std::vector<FormRef>& DialogueGateGlobals() { return g_dialogueGates; }
+
+const std::vector<FormRef>& PlayerEscortPackages() { return g_playerEscorts; }
+
+const std::vector<FormRef>& EscortHoldFactions() { return g_escortHolds; }
 
 const FormRef* StatFaction(int attribute) {
     return g_statFactions.Find(std::to_string(attribute));

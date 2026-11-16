@@ -14,6 +14,7 @@ apply_patches()
 from pyffi.formats.nif import NifFormat
 
 from asset_convert.nif.nif_flags import NIF_FLAGS
+from asset_convert.character.skin_bone_cap import cap_skin_bones
 
 #: Oblivion havok -> game units; the box is written pre-rescale.
 _PILE_HAVOK_SCALE = 7.0
@@ -431,23 +432,6 @@ def _graft_part(src_root, root, bones, prn, hidden_nodes):
     return grafted
 
 
-def _cap_skin_bones(root):
-    """Merge leaf bones until every shape is inside SSE's 80-bone buffer.
-
-    Runs after grafting: only the merged rig has bone hierarchy, and the merge
-    invalidates the parts' NiSkinPartitions.
-    See: docs/commentary/asset_convert_creature.md#merged-shapes-stay-at-the-root
-    """
-    from asset_convert.character.skin_bone_cap import merge_oversized_skin_bones
-    from asset_convert.character.skin_retarget import regen_skin_partition
-    if not merge_oversized_skin_bones(root):
-        return
-    for shape in _shape_blocks(root):
-        si = shape.skin_instance
-        if si is not None:
-            regen_skin_partition(shape, si, _node_name(shape))
-
-
 def merge_creature_body(part_paths, dst_path, skeleton_path=None,
                         attachments=None, hidden_nodes=None):
     """Merge the converted creature body-part NIFs into ONE skinned NIF.
@@ -484,7 +468,7 @@ def merge_creature_body(part_paths, dst_path, skeleton_path=None,
                    or _part_attachment_node(src_root))
             grafted += _graft_part(src_root, root, bones, prn, hidden_nodes)
 
-    _cap_skin_bones(root)
+    cap_skin_bones([root])
 
     out_data = datas[0][1]
     out_data.roots = [root]

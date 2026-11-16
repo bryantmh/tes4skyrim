@@ -16,6 +16,7 @@
 #include "leveling.h"
 #include "levelup_menu.h"
 #include "log.h"
+#include "main_thread.h"
 #include "menu.h"
 #include "menu_widgets.h"
 #include "script_tables.h"
@@ -668,8 +669,8 @@ void Opened(int kind) {
     kind == kClassKind ? PushClass() : PushSign();
 }
 
-// A headless run's pick: the row named `name` in the open menu, then OK.
-bool PickNamed(const std::string& name) {
+// The row named `name` in the open menu, then OK; false when nothing takes it.
+bool PickNow(const std::string& name) {
     if (PickLevelUp(name)) return true;
     if (ClassMenu().IsOpen() && RowNamed(Classes(), name) >= 0) {
         g_classes.chosen = RowNamed(Classes(), name);
@@ -683,6 +684,18 @@ bool PickNamed(const std::string& name) {
         return true;
     }
     return false;
+}
+
+// A headless run's pick, made at UI time: the runner ticks on a thread that can
+// run while the menu is drawn. False while no class, birthsign or level-up menu
+// is open; a name the open menu lacks is logged when the pick lands.
+// See: docs/commentary/morrowind_runtime.md#movies-are-touched-at-ui-time
+bool PickNamed(const std::string& name) {
+    if (!LevelUpOpen() && !ClassMenu().IsOpen() && !SignMenu().IsOpen()) return false;
+    Log("chargen: pick '%s' queued", name.c_str());
+    return PostToUiThread([name]() {
+        Log("chargen: pick '%s' %s", name.c_str(), PickNow(name) ? "made" : "-- nothing in the open menu has that name");
+    });
 }
 
 }  // namespace

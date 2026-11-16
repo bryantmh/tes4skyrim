@@ -313,6 +313,13 @@ constexpr std::uint32_t kMenuPausesGame = 0x1;
 constexpr std::uint64_t kMenuTopicManager = 401099;
 constexpr std::size_t kOffTopicList = 0x20;
 constexpr std::size_t kOffTopicSkipFirst = 0xb7;
+// Whom the open conversation is with: the speaker's reference handle at +0x68. A handle's low 20 bits are
+// the reference's handle index, which the reference keeps above the 11 count bits of its u32 at +0x28
+// (measured live: speaker 0x00110AD7, that actor's +0x28 = 0x0856BC04).
+constexpr std::size_t kOffTopicSpeaker = 0x68;
+constexpr std::uint32_t kHandleIndexMask = 0xfffff;
+constexpr std::size_t kOffRefHandleCount = 0x28;
+constexpr int kHandleIndexShift = 11;
 
 // The Dialogue Menu's movie callbacks, registered beside 'TopicClicked' and
 // 'CloseMenu' (0x914690): TopicClicked (0x914880) takes one number, the
@@ -321,6 +328,13 @@ constexpr std::size_t kOffTopicSkipFirst = 0xb7;
 // called with FxDelegateArgs: the handler (the menu) at +0x18, the GFxValue
 // array at +0x28 and its count at +0x30. A GFxValue is 0x18 bytes, its type
 // at +8 (3 is a number) and the double at +0x10.
+// The engine's queue of message boxes waiting to show (the open one is last): a BSTArray of MessageBoxData*
+// with its u32 count at +0x10, read by buttonPress (0x8ecc88 on 1.6.659). A box keeps its body BSString at
+// +0x10 and its button BSTArray's u32 size at +0x30 (measured live: Blade1Script's notice, 1 button "OK").
+constexpr std::uint64_t kMessageBoxQueue = 406362;
+constexpr std::size_t kOffQueueCount = 0x10;
+constexpr std::size_t kOffBoxBody = 0x10;
+constexpr std::size_t kOffBoxButtonCount = 0x30;
 constexpr std::uint64_t kDialogueTopicClicked = 51509;
 constexpr std::uint64_t kDialogueCloseMenu = 51511;
 constexpr std::uint64_t kMessageBoxButtonPress = 52279;

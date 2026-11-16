@@ -900,6 +900,17 @@ void StillAtNewSpot(void* actor) {
 
 }  // namespace
 
+void ReevaluatePackage(void* actor) {
+    if (!actor || !g_evaluatePackage || !IsActorRef(actor)) return;
+    // The task runs later: the actor is looked up again by id then, since a
+    // pointer kept across a teleport or an unload may be gone.
+    const std::uint32_t id = FormIdOf(actor);
+    PostToMainThread([id]() {
+        void* now = RefByRuntimeId(id);
+        if (now && IsActorRef(now)) g_evaluatePackage(PapyrusVm(), 0, now);
+    });
+}
+
 // 🛑 A moved actor re-evaluates its package, posted after the move lands.
 // Skyrim keeps a running package's "current location" from where it STARTED,
 // so a stand-still actor a script moves walks back to its old spot -- the

@@ -22,6 +22,7 @@ apply_patches()
 from pyffi.formats.nif import NifFormat
 
 from asset_convert.havok.kf_decode import DEFAULT_FPS
+from asset_convert.nif.morphs import object_palette
 from asset_convert.nif.sequences import (CYCLE_CLAMP, CYCLE_LOOP, INTRO_SUFFIX,
                                          OUTRO_SUFFIX, transform_manager)
 from asset_convert.nif.timeline_morrowind import (XYZ_ROTATION_KEY, chain,
@@ -353,16 +354,11 @@ def _detach(node, ctrl) -> None:
 
 def _palette(root):
     """The object palette naming every named NiAVObject, first of each name."""
-    palette = NifFormat.NiDefaultAVObjectPalette()
     named = {}
     for block in root.tree():
         if isinstance(block, NifFormat.NiAVObject) and block.name:
             named.setdefault(bytes(block.name), block)
-    palette.num_objs = len(named)
-    palette.objs.update_size()
-    for entry, (name, block) in zip(palette.objs, named.items()):
-        entry.name, entry.av_object = name, block
-    return palette
+    return object_palette(named.values())
 
 
 def animate_timeline(data, root, keyed: bool) -> int:

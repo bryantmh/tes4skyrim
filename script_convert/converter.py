@@ -8,7 +8,7 @@ from script_convert.tes4 import nodes as _tes4_nodes
 from script_convert.blocks import BLOCK_FILTER_PARAM
 from script_convert.constants import (
     COMBAT_APPROACH_QUEST, FALL_DAMAGE_SPELL, KNOWN_GLOBALS, LAST_ACTIVATOR_VAR, LOOSE_OPS, UDF_RESULT_VAR, PAPYRUS_BOOL_FUNCTIONS, PLACED_REF_SIGS,
-    PLAYER_ALIAS_EXTENDS, RETURN_TYPES, SELF_NAMES, TYPE_MAP, _REF_TYPES,
+    PLAYER_ALIAS_EXTENDS, REMOTE_ADD_PREFIX, RETURN_TYPES, SELF_NAMES, TYPE_MAP, _REF_TYPES,
     _canonical_global, digit_stripped_formid, _record_type_to_base_papyrus,
     generated_script_stem, is_generated_script_type, safe_property_name, papyrus_script_name,
     resolve_property_formid,
@@ -42,6 +42,9 @@ from script_convert import symbols as _symbols
 # (`"1TrapFireMineWorldRef"`, `"2akulaSdoorSa"`), and leaving those quoted here
 # is exactly the `_MQ01Tate_` trap described below.
 _QUOTED_NAME_RE = re.compile(r'^"(\w+)"$')
+
+#: A converted `Owner.var = Owner.var +/- X` line: the target, the sign, X, a trailing comment.
+_REMOTE_ADD_LINE = re.compile(r'^([\w.]+\.\w+) = \1 ([+-]) ([^;\n]+?)(\s*;.*)?$')
 
 #: Any `ACTOR_ONLY_FUNCTIONS` name called BARE, longest-first.
 _ACTOR_ONLY_ANY_RE = re.compile(
@@ -789,9 +792,24 @@ class ScriptConverter:
         # whether the rendering happens to contain a decimal point.
         self._value_type = _symbols.type_of_expr(stmt.value, self.type_of)
         try:
-            return self._mirror_page_stat(stmt, target, self._assign(stmt, target, extends))
+            line = self._mirror_page_stat(stmt, target, self._assign(stmt, target, extends))
+            return self._remote_add(stmt, line)
         finally:
             self._value_type = ''
+
+    def _remote_add(self, stmt, line: str) -> str:
+        """`Owner.var = Owner.var +/- X` as a call of the owner's add function, else `line`.
+
+        Oblivion ran one script at a time; in Papyrus two scripts doing that
+        read and write at once lose a count, so the owner does both.
+        """
+        found = _REMOTE_ADD_LINE.match(line)
+        owner, _, var = _expr.emit_source(stmt.target).partition('.')
+        if not found or not var or not self.xref or not self.xref.adds_remotely(owner, var):
+            return line
+        receiver, _, name = found.group(1).rpartition('.')
+        amount = found.group(3) if found.group(2) == '+' else f'0 - {found.group(3)}'
+        return f'{receiver}.{REMOTE_ADD_PREFIX}{name}({amount}){found.group(4) or ""}'
 
     def _mirror_page_stat(self, stmt, target: str, line: str) -> str:
         """`line`, followed by a write of the new value into the mirror global of

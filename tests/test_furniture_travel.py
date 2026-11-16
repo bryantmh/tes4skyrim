@@ -4,13 +4,14 @@ See: docs/commentary/asset_convert_falloutnv.md#stool-entries
 """
 import math
 import os
+import struct
 
 import pytest
 
 from asset_convert.nif.furniture_markers import marker_seats
 from asset_convert.nif.furniture_travel import sit_travels
 from pyffi.formats.nif import NifFormat
-from tes5_import.record_types.items import IS_BAR_STOOL_KYWD, furn_keywords
+from tes5_import.record_types.items import IS_BAR_STOOL_KYWD, IS_TABLE_KYWD, furn_keywords, furn_markers
 
 #: StoolEnter.kf's Bip01 travel, entry to seat: 18.95 left, 47.20 ahead.
 STOOL_TRAVEL = (-18.952112840799214, 47.199537034663)
@@ -55,6 +56,27 @@ def test_an_authored_seat_takes_the_bar_stool_keyword():
     chair = marker_seats([_marker(0.0, 0.0, 0, 14)], lambda: (0.0, 0.0), {15: STOOL_TRAVEL})[0]
     assert furn_keywords(stool) == [IS_BAR_STOOL_KYWD] == [0x00074EC7]
     assert furn_keywords(chair) == [] and furn_keywords(None) == []
+
+
+def test_a_record_leaving_only_the_behind_entry_is_a_bar_stool():
+    """Oblivion MCStool01B (middlestool01.nif's four entries, MNAM marker 2 = ref 13) sits from behind only."""
+    markers = [_marker(-0.7, 51.6, 3141, 11), _marker(-0.7, -51.4, 0, 12),
+               _marker(-55.9, 0.1, 1570, 13), _marker(54.3, 0.1, 4712, 14)]
+    seats = marker_seats(markers, lambda: (0.0, 0.0))[0]
+    assert furn_keywords(seats, 0x40000004) == [IS_BAR_STOOL_KYWD]
+    assert furn_keywords(seats, 0x40000000) == [] and furn_keywords(seats, 0x40000008) == []
+
+
+def test_a_bench_with_a_behind_only_seat_is_a_table_and_closes_seats_the_record_leaves_out():
+    """Oblivion LCBench01BmidR (MNAM markers 1 and 3 of lowerclassbench01.nif's three seats): seat 0 is off,
+    seat 1 opens right, seat 2 behind only, so the bench takes IsTable as vanilla benches do."""
+    seats = [{'sleep': False, 'entry_flags': 0xB, 'members': [(0, 8), (4, 2), (7, 1)]},
+             {'sleep': False, 'entry_flags': 0x7, 'members': [(1, 4), (2, 2), (6, 1)]},
+             {'sleep': False, 'entry_flags': 0x3, 'members': [(3, 2), (5, 1)]}]
+    assert furn_keywords(seats, 0x4000000A) == [IS_TABLE_KYWD] == [0x0009B9A9]
+    mnam = struct.unpack('<I', furn_markers(seats, 0x4000000A)[6:10])[0]
+    assert mnam == 0x40000006
+    assert struct.unpack('<I', furn_markers(seats, 0x40000000)[6:10])[0] == 0x40000007
 
 
 def test_fnv_stool_travel_is_read_from_the_idle_tree_and_kf():

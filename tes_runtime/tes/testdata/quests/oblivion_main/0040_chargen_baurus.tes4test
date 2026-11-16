@@ -4,46 +4,65 @@
 # chain (CGBaurusA..I); "The sewers?" sets 87, which opens the class menu; "What about you?" sets 88, which starts MQ02
 # (stages 10 and 20) and adds the Amulet/Blades/Jauffre topics.
 
-case baurus_emperor_dies
+# One case from marker J to the end of Baurus's speech. The harness's checkpoint save between cases closes an open
+# conversation, and the game runs on between a resumed save's load and the case's first step: at test pace the whole
+# fight and Baurus's force-greet (86) played out there (runs 1w, 1y-2d, 2f, 2g). The case starts at 68, where the
+# quest waits for the player to come within 300 of the Emperor at J (68 -> 70); moveto CGMarkerJ2Baurus (190 from his
+# marker) stands in for that -- not his own marker, which is where his stage-73 force-greet (CGEmperorGiveAmulet,
+# location CGMarkerJEmperor radius 300) sends him (2h: no greeting with the player standing on it).
+# Glenroy and Baurus find the gate locked (INFO 0001D113 sets 71), a pause (72), then the Emperor force-greets the
+# player (73); the player walks up to him, as to his Nine question. That GREETING (INFO 00054824) sets 74: he hands
+# over the Amulet of Kings and the final assassin comes out of the secret wall (the player is held by
+# disableplayercontrols until the Emperor dies).
+# Baurus's 86 force-greet (CGBaurusToPlayerA) did not start in 2j and 2q -- only ambient HELO barks ("There's no time
+# to talk now"). `talk` passes at once when the force-greet already opened.
+# The assassin is hostile to the player from stage 80; kill stands in for the fight (god mode is on). Baurus kneels
+# (85, 86) and force-greets ("We've failed..."); the topics are the CGBaurus chain, each choice leading to the next:
+# A "The Emperor gave it to me." -> B -> C -> D (gives the sewer key) -> E "The sewers?" (stage 87), whose fragment
+# opens the class menu (TES4_Chargen.Ask, so `pick` names the CLAS FULL row) over the still-open dialogue. The
+# fragment then re-greets him; his stage-87 greeting (3 variants, all "... any trouble") offers "After the sewers,
+# then what?". `hear` must not wait for "rats and goblins": E's own answer says that too (2i). His re-greet
+# (CGBaurusToPlayerB) came 2 ticks after the pick in 2o and not at all in 2p; a player then talks to him, and
+# GREETING offers the unspoken say-once 87 line -- `talk` passes at once if the re-greet already opened.
+case baurus_speech
+run
+player.moveto CGMarkerJ2Baurus
+until 900 GetStage Charactergen >= 70
+until 3600 GetStage Charactergen >= 73
+walk UrielSeptimRef
+until 900 GetStage Charactergen >= 74
+expect player.GetItemCount AmuletofKings >= 1
 until 3600 GetStage Charactergen >= 76
 expect UrielSeptimRef.GetDead
 until 900 GetStage Charactergen >= 80
-end
-
-# The assassin is hostile to the player from stage 80; kill stands in for the fight (god mode is on).
-case baurus_kill_assassin
 run
+player.moveto CGMarkerJ2Baurus
 CGAssassinFinal.kill
 until 900 GetStage Charactergen >= 84
-until 3600 GetStage Charactergen >= 85
 until 3600 GetStage Charactergen >= 86
-hear 1800 BaurusRef We've failed
-end
-
-# Baurus's force-greet ("We've failed...") opens the dialogue on its own; the topics are the CGBaurus chain, each choice
-# leading to the next: A "The Emperor gave it to me." -> B -> C -> D (gives the sewer key) -> E "The sewers?" (stage 87).
-case baurus_topics
+wait 150
+walk BaurusRef
+talk BaurusRef
+hear 300 BaurusRef We've failed
+hear 600 BaurusRef where's the Amulet of Kings
 wait 30
 ask "The Emperor gave it to me."
 ask "I must take it to Jauffre."
 ask "There is another heir."
 ask "How do I get there?"
-expect player.GetItemCount CGExitKey >= 1
+until 900 player.GetItemCount CGExitKey >= 1
 ask "The sewers?"
-until 300 GetStage Charactergen >= 87
-end
-
-# Menu expected: the class menu, asked through TES4_Chargen.Ask like the birthsign, so `pick` names the row (CLAS
-# FULL). Baurus then re-greets ("I thought so. A few rats and goblins ...").
-case baurus_class_menu
+until 900 GetStage Charactergen >= 87
 pick Warrior
-hear 900 BaurusRef I thought so
+wait 150
+talk BaurusRef
+hear 300 BaurusRef any trouble
 wait 30
 ask "After the sewers, then what?"
 ask "Yes, I understand."
 ask "What about you? What will you do?"
-until 300 GetStage Charactergen >= 88
-expect GetStageDone MQ02 10
-expect GetStageDone MQ02 20
+until 900 GetStage Charactergen >= 88
+until 600 GetStageDone MQ02 20
+until 600 GetStageDone MQ02 10
 expect GetQuestRunning MQ02
 end

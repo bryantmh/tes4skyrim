@@ -1,0 +1,122 @@
+# MQ09 "Blood of the Divines". With the Bruma Gate closed (MQ10 > 50) Martin's greeting names the second item, the
+# blood of a Divine (10). Jauffre gives the key to Sancre Tor (20). At its door (30) the player goes in, frees the
+# four undead Blades (50 .. 53), whose ghosts lift the enchantment on the Shrine of Tiber Septim (55, 56, 70), takes
+# the Armor (80) and gives it to Martin (90 -> 100).
+# DRAFT from tools/live/quest_brief.py (2026-11-13): not run yet.
+
+# Martin's greeting ("I've figured out another item ...", INFO 00026D58) sets 10. Jauffre's greeting at 10 ("So,
+# Martin wants you to recover the Armor of Tiber Septim? ...", INFO 00036645) offers "What evil lurks in Sancre
+# Tor?" (INFO 00036668), which sets 20 and gives MQ09SancreTorKey.
+case mq09_martin_jauffre
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+until 600 GetStage MQ09 >= 10
+bye if open
+# From 16:00 Jauffre first walks his two once-a-day patrols out to the steps (JauffreCloudRulerRandomPatrol3 / 4,
+# 30% each, TES4 Find packages) and then settles into the Great Hall (JauffreCloudRulerDefault). At test pace he
+# crosses the hall and the door within a second, and a conversation begun mid-walk ends as he goes on (runs
+# 47a / 47d), so the player talks to him once he has settled, as a player would.
+until 3600 JauffreRef.GetIsCurrentPackage JauffreCloudRulerDefault == 1
+run
+player.moveto JauffreRef
+wait 120
+approach JauffreRef
+talk JauffreRef
+ask "What evil lurks in Sancre Tor?"
+until 300 GetStage MQ09 >= 20
+expect player.GetItemCount MQ09SancreTorKey >= 1
+bye if open
+end
+
+# The door of Sancre Tor (REFR 00092E65, MQ09SancreTorDoorScript): within 300 of it at 20 sets 30; activating it
+# with the key takes the key, unlocks it and lets the player in. The ride there is the player's travel.
+case mq09_sancre_tor_door
+run
+player.moveto 00092E65
+until 600 GetStage MQ09 >= 30
+activate 00092E65
+until 600 player.GetItemCount MQ09SancreTorKey == 0
+end
+
+# The first undead Blade (MQ09GhostBladeSpawn1): its death hands MQ09Script the ghost MQ09GhostBladeEntry, which is
+# moved to the body and, 3 s later, greets the player ("At long last ... you have freed me.", INFO 00036647).
+# "Who are you?" and "What happened to you?" each add 1 to MQ09.ghostTalk; at 2 "Is the Underking still here?"
+# (INFO 00036667) sets 50. kill stands in for the fight.
+case mq09_first_blade
+run
+player.moveto MQ09GhostBladeSpawn1
+wait 120
+run
+MQ09GhostBladeSpawn1.kill
+until 600 MQ09.ghostCount == 1
+approach MQ09GhostBladeEntry
+talk MQ09GhostBladeEntry
+ask "Who are you?"
+ask "What happened to you?"
+until 300 MQ09.ghostTalk == 2
+ask "Is the Underking still here?"
+until 300 GetStage MQ09 >= 50
+bye if open
+end
+
+# The other three (Spawn2 the Great Hall, Spawn3 the Stockade, Spawn4 the Catacombs): each death sets the next
+# stage (51, 52, 53) once MQ09Script's 3 s timer runs out, and sends its ghost toward the Shrine.
+case mq09_other_blades
+run
+player.moveto MQ09GhostBladeSpawn2
+wait 120
+run
+MQ09GhostBladeSpawn2.kill
+until 600 GetStageDone MQ09 51
+run
+player.moveto MQ09GhostBladeSpawn3
+wait 120
+run
+MQ09GhostBladeSpawn3.kill
+until 600 GetStageDone MQ09 52
+run
+player.moveto MQ09GhostBladeSpawn4
+wait 120
+run
+MQ09GhostBladeSpawn4.kill
+until 600 GetStageDone MQ09 53
+until 300 MQ09.ghostCount == 4
+end
+
+# The Shrine (SancreTorTomb): with the player in the Tomb and each ghost within 100 of its marker, MQ09Script sets
+# 55, then 56 and 70 five seconds apart; the barrier is gone and the Armor (MQ09ArmorofTiberSeptim) can be taken
+# (MQ09ArmorScript OnAdd: 80). The four ghosts walk here from their own halls.
+case mq09_shrine
+run
+player.moveto MQ09LastGhostWaitMarker
+wait 120
+until 7200 GetStage MQ09 >= 55
+until 1800 GetStage MQ09 >= 70
+run
+player.moveto MQ09ArmorofTiberSeptim
+wait 120
+activate MQ09ArmorofTiberSeptim
+until 600 GetStage MQ09 >= 80
+expect player.GetItemCount TiberSeptimCuirass >= 1
+end
+
+# Martin: "Armor of Tiber Septim" at 80 (INFO 00026D6E) sets 90, whose result takes the Armor and sets 100,
+# and offers "What else can I do to help?" (INFO 00026EF5, MQ08 and MQ09 at 100): the Great Welkynd Stone of
+# Miscarcand (MQ12 10).
+case mq09_give_armor
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+ask "Armor of Tiber Septim"
+until 300 GetStage MQ09 >= 90
+until 300 GetStageDone MQ09 100
+expect player.GetItemCount TiberSeptimCuirass == 0
+ask "What else can I do to help?"
+until 300 GetStage MQ12 >= 10
+bye if open
+end

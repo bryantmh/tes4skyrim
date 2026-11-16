@@ -200,6 +200,26 @@ void* LookupForm(std::uint32_t formId) {
 // `player.getpos x` printed a real value. Commands still returned success, so
 // the failure was invisible: `moveto player` on a quest actor reported ok and
 // moved nothing at all.
+// The last fault caught in ExecOne: its code and its address as an offset into the game exe (0 = outside it).
+DWORD g_faultCode = 0;
+std::uintptr_t g_faultOffset = 0;
+
+int NoteFault(const EXCEPTION_POINTERS* info) {
+    g_faultCode = info->ExceptionRecord->ExceptionCode;
+    const auto at = reinterpret_cast<std::uintptr_t>(info->ExceptionRecord->ExceptionAddress);
+    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    g_faultOffset = at >= base && at - base < 0x8000000 ? at - base : at;
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+void FaultMessage(std::string* err) {
+    if (!err) return;
+    char where[96];
+    std::snprintf(where, sizeof where, " (code %08lX at SkyrimSE+0x%llx)", static_cast<unsigned long>(g_faultCode),
+                  static_cast<unsigned long long>(g_faultOffset));
+    *err = std::string("engine raised an exception executing the command") + where;
+}
+
 bool ExecOne(const std::string& cmd, std::string* err, void* target = nullptr) {
     void* script = AllocScriptObject(cmd);
     if (!script) {
@@ -265,8 +285,8 @@ bool ExecOne(const std::string& cmd, std::string* err, void* target = nullptr) {
             auto fn = reinterpret_cast<ConsoleExecute_t>(g_addr.consoleExecute);
             ok = fn(reinterpret_cast<void*>(ctx), script, target, kCompilerTypeConsole);
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        if (err) *err = "engine raised an exception executing the command";
+    } __except (NoteFault(GetExceptionInformation())) {
+        FaultMessage(err);
         ok = false;
     }
 

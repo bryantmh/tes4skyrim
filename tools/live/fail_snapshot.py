@@ -6,6 +6,7 @@ import os
 import re
 
 from tools.live import tes4_cases
+from tools.live.game_bridge import BridgeError
 
 #: `GetStage Q` / `GetStageDone Q n` in an expectation: the quest it reads.
 STAGE_READ = re.compile(r'\bGetStage(?:Done)?\s+([A-Za-z_]\w*)')
@@ -48,12 +49,15 @@ def short(output: str) -> str:
 def read_ref(bridge, ref: str, names) -> str:
     """One line of `ACTOR_READS` for `ref` (a TES4 name or a runtime FormID in hex)."""
     values = []
-    for command in ACTOR_READS:
-        if tes4_cases.HEX_ID.match(ref):
-            output = bridge.console(command, ref=int(ref, 16))
-        else:
-            output = tes4_cases.console(bridge, '%s.%s' % (ref, command), names)[1]
-        values.append('%s=%s' % (command.replace('Get', '').replace(' ', ''), short(output)))
+    try:
+        for command in ACTOR_READS:
+            if tes4_cases.HEX_ID.match(ref):
+                output = bridge.console(command, ref=int(ref, 16))
+            else:
+                output = tes4_cases.console(bridge, '%s.%s' % (ref, command), names)[1]
+            values.append('%s=%s' % (command.replace('Get', '').replace(' ', ''), short(output)))
+    except BridgeError as error:
+        values.append('unreadable (%s)' % error)
     return '%s: %s' % (ref, ' '.join(values))
 
 

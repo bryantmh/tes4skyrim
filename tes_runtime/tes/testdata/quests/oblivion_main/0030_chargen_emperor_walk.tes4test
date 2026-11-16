@@ -4,17 +4,43 @@
 # within 300 of him at marker J. moveto to the Emperor's marker stands in for the player's walk behind him.
 # After the talk at J the Emperor force-greets (73) and hands over the Amulet of Kings (74).
 
+# Baurus first walks up with the torch ("You may as well make yourself useful...", his say-once greeting between
+# 40 and 80): a real conversation since the dialogue-gate fix, which the party waits out (run 5b: left open, 52
+# never came). The player hears him and leaves it.
+# Five assassins (CGGenericAssassin1-3, 0001774A, 00017734) attack on the road to F. The player finishes them
+# (kill stands in for the fight), once as they attack and once at 52 for any that came late: one left alive held up
+# 50 -> 52 (6c) or 52 -> 54 (13e).
 case walk_marker_f
+hear 900 BaurusRef stick close
+wait 30
+bye if open
+wait 60
+run
+CGGenericAssassin1.kill
+CGGenericAssassin2.kill
+CGGenericAssassin3.kill
+0001774A.kill
+00017734.kill
 until 3600 GetStage Charactergen >= 52
 run
+CGGenericAssassin1.kill
+CGGenericAssassin2.kill
+CGGenericAssassin3.kill
+0001774A.kill
+00017734.kill
 player.moveto CGMarkerFEmperor
 until 900 GetStage Charactergen >= 54
 end
 
+# Marker G is in the next cell (ImperialDungeon03), and a player walks there with the party. Left behind at F,
+# the party arrives in a cell that is not loaded, where Glenroy's escort never reports its end (run 5g: both stood
+# at G with 54 still set; 56 and 58 came the moment the player was moved there). Sent ahead to G, the party never
+# sets out from the unloaded cell behind (5i). So the player waits at F until the Emperor is at G, then joins him.
 case walk_marker_g
-until 3600 GetStage Charactergen >= 56
+until 3600 UrielSeptimRef.GetDistance CGMarkerGEmperor < 400
 run
 player.moveto CGMarkerGEmperor
+until 900 GetStage Charactergen >= 56
 until 900 GetStage Charactergen >= 58
 until 900 GetStage Charactergen >= 59
 end
@@ -28,23 +54,5 @@ until 3600 GetStage Charactergen >= 64
 until 3600 GetStage Charactergen >= 65
 until 3600 GetStage Charactergen >= 66
 until 3600 GetStage Charactergen >= 67
-end
-
-case walk_marker_j
 until 3600 GetStage Charactergen >= 68
-run
-player.moveto CGMarkerJEmperor
-until 900 GetStage Charactergen >= 70
-end
-
-# Glenroy and Baurus find the gate locked (INFO 0001D113 sets 71), a pause (72), then the Emperor force-greets the
-# player (73). The force-greet line is the stage-73 GREETING (INFO 00054824), which sets 74: the Emperor gives the
-# player the Amulet of Kings and the final assassin comes out of the secret wall (the player is held by
-# disableplayercontrols until the Emperor dies).
-case walk_emperor_amulet
-until 3600 GetStage Charactergen >= 71
-until 3600 GetStage Charactergen >= 72
-until 3600 GetStage Charactergen >= 73
-until 900 GetStage Charactergen >= 74
-expect player.GetItemCount AmuletofKings >= 1
 end

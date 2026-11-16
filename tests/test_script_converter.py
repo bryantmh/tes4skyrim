@@ -3077,6 +3077,16 @@ class TestSayTimerConversion:
         name = decls[0].split()[1]
         assert all(name in g for g in guards), guards
 
+    def test_stage_latch_runs_before_an_early_return(self, converter):
+        """A pass that leaves by `return` still records the stage (MQ16 60 -> 65 -> 80)."""
+        src = ('scn T\n\nfloat timer\nshort setup\n\nbegin gamemode\n'
+               'if getstage MQ16 == 65 && timer <= 0\nsetstage MQ16 80\nendif\n'
+               'if setup == 0\nreturn\nendif\nset setup to 0\nend\n')
+        out = converter.convert_standalone('T', src, 'Quest', 'T')
+        lines = [l.strip() for l in out[out.index('Event OnUpdate()'):].split('\n')]
+        ret = lines.index('Return', lines.index('If setup == 0'))
+        assert lines[ret - 2] == 'TES4_LastStage_MQ16 = MQ16.GetStage()', lines[ret - 3:ret + 1]
+
     def test_stage_guard_without_a_timer_is_untouched(self, converter):
         """Only the timer-gated shape races; a plain stage test must not change."""
         src = ('scn T\n\nshort x\n\nbegin gamemode\n'
@@ -3170,6 +3180,26 @@ class TestSayTimerConversion:
         for ext in ('Actor', 'Quest'):
             out = converter.convert_standalone('T', silent, ext, 'T')
             assert 'PlayerIsInDialogue' not in out
+
+    def test_the_runtime_dialogue_global_holds_a_speaking_poll(self, converter):
+        """A greeting with no fragment stamps no speaker (Kathutet, run 41e), so the
+        runtime's TES4DialogueOpen global holds actor and quest polls too."""
+        src = 'scn T\n\nshort x\n\nbegin gamemode\nset x to 1\nsayto player SomeTopic\nend\n'
+        for ext in ('Actor', 'Quest'):
+            out = converter.convert_standalone('T', src, ext, 'T')
+            assert 'GlobalVariable Property TES4DialogueOpen Auto' in out
+            assert '(TES4DialogueOpen && TES4DialogueOpen.GetValue() > 0)' in out
+
+    def test_a_poll_that_raises_a_message_box_holds_during_dialogue(self, converter):
+        """Blade1Script's practice box opened over Jauffre's greeting (run 46a): a MessageBox poll is gated too,
+        unless MenuMode work shares the poll."""
+        box = ('scn T\n\nshort x\n\nbegin gamemode\nif x == 0\nmessagebox "Learned."\nset x to 1\nendif\nend\n')
+        for ext in ('Actor', 'ObjectReference'):
+            out = converter.convert_standalone('T', box, ext, 'T')
+            assert 'TES4 GameMode did not run while a menu was open' in out
+        menu = box + 'begin menumode\nset x to 2\nend\n'
+        out = converter.convert_standalone('T', menu, 'ObjectReference', 'T')
+        assert 'TES4 GameMode did not run while a menu was open' not in out
 
     def test_say_driving_script_polls_fast(self, converter):
         """The `T <= 0` guard is what starts the next line, so the poll tick
@@ -3506,15 +3536,12 @@ End
         assert body.lstrip().startswith('RegisterForSingleUpdate(5.0)')
 
     def test_early_return_re_arms_at_the_real_interval(self, converter):
+        """The authored Return re-arms at the real interval and ends the pass; the bottom arm stays."""
         out = converter.convert_standalone('T', self.SRC, 'Quest', 'T')
         body = out.split('Event OnUpdate()')[1].split('EndEvent')[0]
-        # (the IsRunning() gate's own Return keeps the 5s insurance: a quest
-        # that is not running need not poll faster)
         ret = body.index('Return', body.index('foo == 0'))
-        # the statement immediately before the authored Return is the arm
-        before = body[:ret].rstrip().splitlines()[-1].strip()
-        assert before == 'RegisterForSingleUpdate(0.5)'
-        # and the bottom arm is still there
+        before = [line.strip() for line in body[:ret].rstrip().splitlines()[-2:]]
+        assert before == ['RegisterForSingleUpdate(0.5)', 'TES4_PassAt = 0.0']
         assert body.rstrip().endswith('RegisterForSingleUpdate(0.5)')
 
     def test_object_script_uses_the_load_gated_form(self, converter):
@@ -3524,7 +3551,7 @@ End
         out = converter.convert_standalone('T', self.SRC, 'ObjectReference',
                                            'T')
         body = out.split('Event OnUpdate()')[1].split('EndEvent')[0]
-        idx = body.index('Return')
+        idx = body.index('Return', body.index('TES4_PassAt = TES4_passNow'))
         before = body[:idx]
         assert before.count('If (TES4Polyfill.SafeGameModeGate(Self)') == 2
         assert 'RegisterForSingleUpdate(5.0)' in before
@@ -5095,6 +5122,18 @@ class TestInfoFragmentSkipping:
     used to get one (19,278 .pex against vanilla Skyrim's ~5,500).
     """
 
+    def test_a_cut_lines_end_waits_for_its_begin_steps(self):
+        """OnEnd of a line cut at once can run while OnBegin is still stepping the counter; it must wait for the
+        step, or its `turn still ours` test fails and the hand-off is lost (run 57c, Mankar's 0001F876)."""
+        from script_convert import pipeline
+        begin = ['Function Fragment_1(ObjectReference akSpeakerRef)', '  MQ.TES4Add_n(1)', 'EndFunction', '']
+        end = ['Function Fragment_0(ObjectReference akSpeakerRef)', '  If MQ.n == 3', '    MQ.next = 2', '  EndIf',
+               'EndFunction', '']
+        out = pipeline._end_watch(begin, end, 5.0)
+        assert out.index('  TES4_stepped += 1') > out.index('  MQ.TES4Add_n(1)')
+        assert out.index('  While TES4_stepped <= 0 && TES4_waits < 40') < out.index('  If MQ.n == 3')
+        assert 'Int TES4_stepped' in out
+
     def _emit(self, tmp_path, rec, say_topics=(), info_reveals=None,
               service_topics=None):
         from script_convert import pipeline
@@ -5306,12 +5345,38 @@ class TestQuestStartDoesNotClobberSeededWrites:
             < body.index('Return done')
 
     def test_polyfill_stage_advance_is_lifted(self):
-        """A scriptless quest's `TES4Polyfill.SetStage` is still lifted behind its GetStage guard."""
+        """A scriptless quest's `TES4Polyfill.SetStage` is still lifted behind its GetStageDone guard."""
         from script_convert.conversation_sequence import split_stage_advances
         gated, advances = split_stage_advances(['  x = 1', '  TES4Polyfill.SetStage(MQ00, 20)'])
         assert gated == ['  x = 1']
-        assert advances == ['  If MQ00.GetStage() < 20  ; advance survives a rejected turn',
+        assert advances == ['  If !MQ00.GetStageDone(20)  ; advance survives a rejected turn',
                             '    TES4Polyfill.SetStage(MQ00, 20)', '  EndIf']
+
+    def test_a_choice_topic_tests_what_its_lines_test(self):
+        """An INFO's tested set is the GetQuestVariable conditions of its choice topic's INFOs.
+
+        See: docs/commentary/script_convert.md#choice-gate-writes-run-at-begin
+        """
+        from script_convert.conversation_sequence import choice_tested_vars
+        raw = struct.pack('<BxxxfHxxII', 0, 2.0, 79, 0x36660, 3).hex()
+        infos = [{'FormID': '00036666', 'ParentDIAL': '00036600', 'Choice[0]': '00036700'},
+                 {'FormID': '00036667', 'ParentDIAL': '00036700', 'Condition[0].Raw': raw}]
+        tested = choice_tested_vars(infos, {0x36660: {3: 'ghostTalk'}}, {0x36660: 'MQ09'})
+        assert tested == {0x36666: {'MQ09.ghostTalk'}}
+
+    def test_a_choice_tested_write_moves_to_begin(self):
+        """A top-level step of a tested variable moves; one after a read or a return stays.
+
+        See: docs/commentary/script_convert.md#choice-gate-writes-run-at-begin
+        """
+        from script_convert.conversation_sequence import split_choice_writes
+        tested = {'MQ09.ghostTalk'}
+        step = '  MQ09.TES4Add_ghostTalk(1)'
+        assert split_choice_writes(['  Foo()', step], tested) == ([step], ['  Foo()'])
+        read = ['  If MQ09.ghostTalk == 1', '    Foo()', '  EndIf', step]
+        assert split_choice_writes(read, tested) == ([], read)
+        returned = ['  Return', step]
+        assert split_choice_writes(returned, tested) == ([], returned)
 
     def test_object_script_has_no_restart(self, converter):
         """Only a quest script is restarted, so only it carries TES4Start."""

@@ -176,4 +176,36 @@ __declspec(dllexport) bool TESTestPick(const char* name) {
     return name && pick && pick(name);
 }
 
+// `pace <speed>` in a converted TES4 game's cases: this runtime's frame governor
+// steers every game it is loaded in, so TESRuntime's runner sets its speed here.
+__declspec(dllexport) bool TESTestPace(float speed) {
+    const auto pace = tesruntime::mw::Hooks().setPaceTarget;
+    if (pace) pace(speed);
+    return pace != nullptr;
+}
+
+// The test runner's `defend` for another runtime's cases: the player kills whatever attacks it, a follower, or
+// the actor with runtime FormID `ally` (0 for none).
+__declspec(dllexport) bool TESTestKillPlayerAttackers(std::uint32_t ally) {
+    const auto kill = tesruntime::mw::Hooks().killAttackersOf;
+    if (kill) kill(ally);
+    return kill != nullptr;
+}
+
+// The test runner's `follow` for another runtime's cases: a reference is a runtime FormID, 0 for the player.
+__declspec(dllexport) float TESTestPosition(std::uint32_t ref, int axis) {
+    const auto position = tesruntime::mw::Hooks().testPosition;
+    return position ? position(ref, axis) : 0.0f;
+}
+
+__declspec(dllexport) float TESTestDistance(std::uint32_t from, std::uint32_t to) {
+    const auto distance = tesruntime::mw::Hooks().testDistance;
+    return distance ? distance(from, to) : 0.0f;
+}
+
+__declspec(dllexport) void TESTestPlaceHere(std::uint32_t ref, float x, float y, float z, float zRot) {
+    const auto place = tesruntime::mw::Hooks().testPlaceHere;
+    if (place) place(ref, x, y, z, zRot);
+}
+
 }  // extern "C"

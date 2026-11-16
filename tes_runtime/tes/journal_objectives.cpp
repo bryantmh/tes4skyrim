@@ -128,10 +128,11 @@ void RecordShown(void* objective, std::uint32_t instance) {
 void InstallIntoOpenMenus();
 
 // Every tick, on the game thread, paused or not: equip any open patched
-// journal movie, then record objectives -- nothing to do there unless the
-// array grew or its newest entry changed.
+// journal movie (at UI time, the only time a movie may be touched), then record
+// objectives -- nothing to do there unless the array grew or its newest entry
+// changed.
 void PollJournal() {
-    InstallIntoOpenMenus();
+    PostToUiTask(InstallIntoOpenMenus);
     std::uint32_t count = 0;
     char* entries = PlayerObjectives(&count);
     if (!entries) count = 0;

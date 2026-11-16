@@ -27,7 +27,9 @@ map exactly, which degrade, and why).
 
 import struct
 
-from .escort_when_near import escort_template
+from .ambush_near import ambush_template, place_reference
+from .sit_at import sit_at_template
+from .escort_when_near import NPC_NEAR_RADIUS, NPC_WAIT, escort_template, note_player_escort
 from .templates import (
     ACQUIRE,
     EAT,
@@ -54,7 +56,9 @@ from .templates import (
     Template,
 )
 from ..base.conditions import convert_ctda_list_with_strings
+from ..base.owned_records import DIALOGUE_OPEN_GLOBAL, WELL_KNOWN_PROPERTIES
 from .interrupt_morrowind import morrowind_interrupt
+from .use_magic import spell_item_inputs
 from .location_morrowind import standing_wander_location
 from ..base.text_reader import (get_formid, get_int, get_str, remap_formid,
                           PLAYER_REF_FID, PLAYER_BASE_FID)
@@ -71,13 +75,8 @@ PLAYER_FID = PLAYER_REF_FID
 
 
 def _targets_player(rec: dict) -> bool:
-    """True when this package's PTDT names the player, either spelling.
-
-    Oblivion writes "the player" as the REFERENCE 0x14 or, just as often, as
-    Object-ID + the player's base NPC_ 0x07.  Every player-specific branch
-    below has to accept both or it silently takes the generic path.
-    """
-    return get_formid(rec, 'PTDT.Target') in (PLAYER_REF_FID, PLAYER_BASE_FID)
+    """Does PTDT name the player (reference 0x14 or base 0x07, not a type code)?"""
+    return get_int(rec, 'PTDT.Type', -1) != 2 and get_formid(rec, 'PTDT.Target') in (PLAYER_REF_FID, PLAYER_BASE_FID)
 
 # Fallback SEARCH area for an Object-ID target when no interior cell can be
 # named (see PackContext.search_ground): a wide radius around the actor's own
@@ -228,6 +227,9 @@ ANY_TIME_PSDT = struct.pack('<bbBbb3xi', -1, -1, 0, -1, -1, 0)
 # does with one.  ('CHAI'/'BED ' used to be listed here, but those are TES5
 # wbObjectTypeEnum names, never TES4 signatures — only FURN can match.)
 FURNITURE_SIGS = frozenset({'FURN'})
+
+#: Search radius round a seat an actor is sent to; 500 in vanilla's Sit instances on one named reference.
+SEAT_SEARCH_RADIUS = 500
 # Carriable items: what a TES4 Find(Object ID) picks UP -> TES5 Acquire.
 ITEM_SIGS = frozenset({'WEAP', 'ARMO', 'CLOT', 'BOOK', 'INGR', 'ALCH', 'MISC',
                        'KEYM', 'LIGH', 'SGST', 'SLGM', 'AMMO', 'APPA'})
@@ -261,9 +263,9 @@ def _operate_target(rec: dict, ctx: 'PackContext') -> bool:
     if not target or target == PLAYER_FID:
         return False
     sig = ctx.base_sig_of(target)
-    if not sig:
-        return False
     ptype = get_int(rec, 'PKDT.Type', -1)
+    if not sig or (ptype == T4_USEITEMAT and ctx.starts_disabled(target)):
+        return False
     if ptype == T4_USEITEMAT:
         # A static is "operated" too: Relmyna studying her atronach STAT
         # (SE09RelmynaStudyAtronach) walks up to it and stays; Activate on a
@@ -672,6 +674,7 @@ class PackContext:
         # hunts expanded into a Follow chain (import_main fills this from
         # hunt_chain_targets + writer.derive_formid).
         self.hunt_chains = {}
+        self.done_latches = {}
         self.script_vars = script_vars or {}
         # Converted FormID of the GREETING topic (TES4 DIAL 0x000000C8).  A
         # ForceGreet package opens THIS -- Oblivion's force-greet raised the
@@ -791,6 +794,14 @@ class PackContext:
         if self.plan is None:
             return None
         return self.plan.owner_quest.get(pack_fid)
+
+    def greet_quest(self, pack_fid: int, edid: str, gated: int):
+        """The quest whose GREETING the force-greet opens, else None."""
+        return self.plan.greet_quest(pack_fid, edid, gated) if self.plan else gated or None
+
+    def starts_disabled(self, ref_fid: int) -> bool:
+        """Does the placed reference start the game disabled?"""
+        return bool(self.plan) and ref_fid & 0x00FFFFFF in self.plan.starts_disabled
 
     def alias_for(self, pack_fid: int, ref_fid: int):
         q = self.quest_of(pack_fid)
@@ -998,8 +1009,35 @@ def _sandbox(loc, **flags) -> Inputs:
     return i
 
 
+def _seat_travelled_to(p: _Pick) -> int:
+    """The furniture reference a Travel names as its exact destination, or 0."""
+    ref = get_formid(p.rec, 'PLDT.Location')
+    exact = get_int(p.rec, 'PLDT.Type', -1) == 0 and not p.radius
+    return ref if exact and ref and p.ctx.base_sig_of(ref) in FURNITURE_SIGS else 0
+
+
+def _sit_in(p: _Pick, seat: int) -> Inputs:
+    """Sit, searching round furniture reference `seat` for that reference alone (its alias in a quest package).
+
+    SitTarget does not walk an actor to a seat across a room; Sit travels first. Radius as vanilla's
+    WindhelmJarlSitInThrone. The converter's TES4SitAt root (vanilla Sit whose Find waits until the seat is
+    near) reaches a seat in another cell; vanilla Sit when it is not installed.
+    See: docs/commentary/tes5_import_package.md#sit-in-a-seat-in-another-cell
+    """
+    alias = p.ctx.alias_for(p.pack_fid, seat)
+    i = Inputs(sit_at_template() or SIT)
+    i.set('location', build_alias_location(alias, SEAT_SEARCH_RADIUS) if alias is not None
+          else build_location(0, seat, SEAT_SEARCH_RADIUS))
+    for slot in ('chair_target', 'seat') if 'seat' in i.t.slots else ('chair_target',):
+        i.set(slot, build_alias_target(alias) if alias is not None else build_target(0, seat))
+    return i
+
+
 def _pick_travel(p: _Pick) -> Inputs:
-    """Travel: exact."""
+    """Travel: exact; to a furniture reference itself it is SitTarget, as Oblivion sits the actor in it."""
+    seat = _seat_travelled_to(p)
+    if seat:
+        return _sit_in(p, seat)
     i = Inputs(TRAVEL)
     i.set('location', p.loc)
     if p.use_horse:
@@ -1081,10 +1119,15 @@ def _pick_follow(p: _Pick) -> Inputs:
 
 
 def _pick_escort(p: _Pick) -> Inputs:
-    """Escort: exact, restarting whenever the escorted target returns in range."""
+    """Escort: exact, restarting whenever the escorted player returns in range; an NPC is escorted from anywhere."""
     i = Inputs(escort_template())
     i.set('target', p.tgt)
     i.set('location', p.loc)
+    if 'radius' in i.t.slots and not _targets_player(p.rec):
+        i.set('radius', NPC_NEAR_RADIUS)
+        i.set('wait', NPC_WAIT)
+    elif 'radius' in i.t.slots:
+        note_player_escort(get_formid(p.rec, 'FormID'))
     if p.use_horse:
         i.set('ride_horse', 1)
     return i
@@ -1124,7 +1167,9 @@ def _pick_ambush(p: _Pick) -> Inputs:
     TES4 Ambush means "wait for the target to come near, then act on it" --
     Oblivion uses it for scripted approaches as well as literal ambushes.
     An actor is approached to PTDT.Count, the authored talking distance;
-    PLDT.Radius is only the watch area around the location.
+    with a location the actor waits there until the target is within
+    PLDT.Radius (TES4AmbushNear).
+    See: docs/commentary/tes5_import_package.md#ambush-at-a-place
     """
     if not _has_target(p.rec):
         i = Inputs(HOLD_POSITION)
@@ -1134,8 +1179,13 @@ def _pick_ambush(p: _Pick) -> Inputs:
     if _targets_player(p.rec):
         return force_greet_inputs(p.greet_topic or 0, radius)
     reach = float(get_int(p.rec, 'PTDT.Count', 0) or 0) or radius
-    i = Inputs(FOLLOW)
+    at_place = ambush_template() if _has_location(p.rec) and (radius or reach) else None
+    i = Inputs(at_place or FOLLOW)
     i.set('target', p.tgt)
+    if at_place:
+        i.set('location', p.loc)
+        i.set('radius', radius or reach)
+        i.set('place_ref', place_reference(p.loc))
     if reach > 0:
         i.set('min_radius', max(64.0, reach * 0.5))
         i.set('max_radius', reach)
@@ -1177,7 +1227,13 @@ def _use_item_at_is_furniture(p: _Pick) -> bool:
 
 
 def _pick_use_item(p: _Pick) -> Inputs:
-    """UseItemAt: sit at furniture, operate an activator, else sandbox."""
+    """UseItemAt: sit at furniture, operate an activator, cast a spell item, else sandbox.
+
+    A target that starts disabled cannot be operated: the actor goes to it.
+    See: docs/commentary/tes5_import_package.md#use-item-at-a-disabled-reference
+    """
+    if get_int(p.rec, 'PTDT.Type', -1) == 0 and p.ctx.starts_disabled(get_formid(p.rec, 'PTDT.Target')):
+        return _pick_travel(p)
     if (get_int(p.rec, 'PTDT.Type', -1) == 0
             and get_formid(p.rec, 'PTDT.Target')):
         chosen = _use_item_at_ref(p)
@@ -1188,8 +1244,11 @@ def _pick_use_item(p: _Pick) -> Inputs:
         i.set('location', p.loc)
         i.set('chair_target', p.tgt)
         return i
-    return _sandbox(p.loc, allow_sitting=1, allow_special_furniture=1,
-                    allow_idle_markers=1, allow_wandering=0)
+    seat = _seat_travelled_to(p)
+    if seat:
+        return _sit_in(p, seat)
+    return spell_item_inputs(p, Inputs) or _sandbox(
+        p.loc, allow_sitting=1, allow_special_furniture=1, allow_idle_markers=1, allow_wandering=0)
 
 
 def _find_resolved_target(p: _Pick) -> tuple:
@@ -1246,10 +1305,15 @@ def _find_by_ref_sig(p: _Pick, target: int, ref_sig: str) -> Inputs:
 def _pick_find(p: _Pick) -> Inputs:
     """Find: force-greet, operate, sit, acquire, seek, or sandbox.
 
-    One TES4 type covering five idioms; the target decides which.
+    One TES4 type covering five idioms; the target decides which. With no
+    location the player is sought anywhere.
+    See: docs/commentary/tes5_import_package.md#find-the-player-anywhere
     """
     if _targets_player(p.rec):
-        return force_greet_inputs(p.greet_topic or 0, _pldt_radius_f(p.rec))
+        i = force_greet_inputs(p.greet_topic or 0, _pldt_radius_f(p.rec))
+        if not _has_location(p.rec):
+            i.set('trigger_location', _location(2, 0, int(NPC_NEAR_RADIUS)))
+        return i
     if _operate_target(p.rec, p.ctx):
         i = Inputs(ACTIVATE)
         i.set('target', p.tgt)
@@ -1314,6 +1378,16 @@ def _choose(rec: dict, ctx: PackContext, pack_fid: int) -> Inputs:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def latches_when_done(rec: dict, ctx: PackContext) -> bool:
+    """True for a quest-gated Once Per Day package that is not a force greet.
+
+    See: docs/commentary/tes5_import_package.md#once-per-day-completion-latch
+    """
+    if not get_int(rec, 'PKDT.Flags') & T4_ONCE_PER_DAY or ctx.quest_of(get_formid(rec, 'FormID')) is None:
+        return False
+    return not (get_int(rec, 'PKDT.Type', -1) in (T4_AMBUSH, T4_FIND) and _targets_player(rec))
+
+
 def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     """TES4 PACK -> TES5 PACK (a Type-18 template instance).
 
@@ -1329,6 +1403,8 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     edid = get_str(rec, 'EditorID')
     if edid:
         subs += pack_string_subrecord('EDID', edid)
+    done_vmad, done_gate = ctx.done_latches.get(pack_fid, (b'', b''))
+    subs += done_vmad
 
     ptype = get_int(rec, 'PKDT.Type', -1)
     # An Ambush aimed at the PLAYER is Oblivion's scripted-approach idiom, not
@@ -1358,18 +1434,13 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
             flags, speed, morrowind_interrupt(rec, DEFAULT_INTERRUPT)))
     subs += pack_subrecord('PSDT', build_psdt(rec))
 
-    # Conditions carry the activation logic and ARE the package's gate.  A
-    # GetScriptVariable condition becomes GetVMScriptVariable + a CIS2 naming
-    # the Papyrus property — see dialog_conditions; the legacy function is dead
-    # in Skyrim, so without this the package could never fire.
-    subs += _source_conditions(rec, ctx)
+    inputs = _choose(rec, ctx, pack_fid)
+    t = inputs.t
+    subs += dialogue_gate(t) + done_gate + _source_conditions(rec, ctx)
 
     owner = ctx.quest_of(pack_fid)
     if owner:
         subs += pack_formid_subrecord('QNAM', owner)
-
-    inputs = _choose(rec, ctx, pack_fid)
-    t = inputs.t
 
     # PKCU: DataInputCount u32, PackageTemplate formid, VersionCounter u32.
     # The template lives in Skyrim.esm (master index 0) so it is written
@@ -1380,12 +1451,7 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     subs += package_markers()
 
     if inputs.t is FORCE_GREET:
-        # The greeting topic does not exist yet (Phase 5); remember which quest
-        # this package belongs to so patch_forcegreet_topics can bind it.
-        # Only 120 of 7,209 packages are quest-OWNED, so fall back to the quest
-        # the package's own conditions test (GetStage/GetQuestVariable) — that
-        # is the quest whose greeting the force-greet is part of.
-        _FORCEGREET_PENDING[pack_fid] = owner or _condition_quest(rec)
+        _FORCEGREET_PENDING[pack_fid] = ctx.greet_quest(pack_fid, get_str(rec, 'EditorID'), _condition_quest(rec))
 
     return pack_record('PACK', pack_fid, get_int(rec, 'RecordFlags'), subs)
 
@@ -1465,9 +1531,24 @@ CTDA_GET_DISABLED = 35       # GetDisabled
 CTDA_GET_DEAD = 46           # GetDead
 
 
+CTDA_GET_GLOBAL_VALUE = 74
+
+
+def dialogue_gate(template) -> bytes:
+    """A ForceGreet instance's wait for Skyrim's dialogue menu to close, or b''."""
+    gate = WELL_KNOWN_PROPERTIES.get(DIALOGUE_OPEN_GLOBAL) if template is FORCE_GREET else 0
+    return pack_subrecord('CTDA', _subject_ctda(CTDA_GET_GLOBAL_VALUE, gate, 0.0)) if gate else b''
+
+
 def _source_conditions(rec: dict, ctx: PackContext) -> bytes:
+    """The package's own gates: each TES4 condition, a script-variable test as GetVMScriptVariable + CIS2.
+
+    A run-on-target test of a package aimed at one reference runs on that reference.
+    See: docs/commentary/tes5_import_package.md#run-on-target-conditions
+    """
     out = b''
-    for ctda, cis2 in convert_ctda_list_with_strings(rec, ctx.script_vars):
+    target = get_formid(rec, 'PTDT.Target') if get_int(rec, 'PTDT.Type', -1) == 0 else 0
+    for ctda, cis2 in convert_ctda_list_with_strings(rec, ctx.script_vars, run_on_target_ref=target or None):
         out += pack_subrecord('CTDA', ctda)
         if cis2:
             out += pack_string_subrecord('CIS2', cis2)

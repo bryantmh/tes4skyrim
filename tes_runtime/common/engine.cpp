@@ -29,7 +29,8 @@ bool Bind(T& slot, const char* name, std::uint64_t id) {
     return a != 0;
 }
 
-class FunctionTask : public TaskDelegate {
+template <class Base>
+class FunctionTask : public Base {
 public:
     explicit FunctionTask(std::function<void()> fn) : fn_(std::move(fn)) {}
     void Run() override { fn_(); }
@@ -41,11 +42,17 @@ private:
 
 bool PostToTaskInterface(std::function<void()> fn) {
     if (!g_api.task || !fn) return false;
-    g_api.task->AddTask(new FunctionTask(std::move(fn)));
+    g_api.task->AddTask(new FunctionTask<TaskDelegate>(std::move(fn)));
     return true;
 }
 
 }  // namespace
+
+bool PostToUiTask(std::function<void()> fn) {
+    if (!g_api.task || !g_api.task->AddUITask || !fn) return false;
+    g_api.task->AddUITask(new FunctionTask<UIDelegate_v1>(std::move(fn)));
+    return true;
+}
 
 bool ResolveEngine() {
     bool core = true;

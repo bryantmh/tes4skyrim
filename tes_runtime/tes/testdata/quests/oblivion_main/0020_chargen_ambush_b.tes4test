@@ -6,16 +6,37 @@
 # me?" (45) and the group moves on (50).
 
 # Stage 32 is set ONCE by the trigger box, so the case waits for Glenroy at marker D (30) before the player steps in.
-# The trigger ref has no EditorID in Oblivion.esm: its TES4 FormID (000C7603, ImperialDungeon02) is used.
+# The Blades lock the Ambush A gate (00026C11, needs a key) behind them; the player goes through the broken wall and
+# the caverns (ImperialDungeon04/05) and drops through the broken wall (idwallbroken01) into ImperialDungeon02. The
+# trigger (000C7603, 2428 3915, z -498; box x 2408-2449, y 3710-4120, z -644..-352) hangs in that drop; its top is
+# above the ceiling grate, so the player is placed inside its west part over the corridor floor (-736) and falls. The
+# navmesh has no drop-down link here, so no walk can take this drop.
+# The two rats that break through the wall (CGRatA1/A2, set on the player by the tutorial) are killed first, as a
+# player does: left alive they kept attacking the god-mode player, and the Emperor and Glenroy, not yet out of
+# earshot, stood watching the fight (ObserveCombat lines "Look out!" / "Watch out!") and never walked on (13a).
 case ambush_b_trigger
+run
+CGRatA1.kill
+CGRatA2.kill
 until 3600 GetStage Charactergen >= 30
 run
-player.moveto 000C7603
+player.moveto CGMarkerDGlenroy
+wait 60
+run
+player.setpos x 2415
+player.setpos y 3915
+player.setpos z -600
 until 900 GetStage Charactergen >= 32
 end
 
 # Glenroy reaches the Room B door (34). The two assassins CGAssassin05Ref / 06Ref attack the Blades; the player finishes
 # them (kill stands in for the fight). CharGenQuest sets 36 when ambushCount reaches 2.
+# Both die in the same instant on purpose: each assassin's own script adds 1 to the quest's ambushCount, which used
+# to lose a count when two scripts added at once (run 6d: 36 never came). The converter now routes such adds through
+# the owning script (TES4Add_<var>); 5 of 5 with the kills together (runs 9a).
+# Five more assassins (CGGenericAssassin1-3, 0001774A, 00017734, same enable parent) wait on the road to F; they
+# are fought there (walk_marker_f). Killing them from here did not hold: CGGenericAssassin1 was alive and
+# shouting at F in run 13e.
 case ambush_b_assassins
 until 3600 GetStage Charactergen >= 34
 run
@@ -26,18 +47,41 @@ end
 
 # The player walks into Room B: CGAmbushBMarker1 lies inside the CGTrigZoneEmperorBirthsign box (inAmbushBRoom = 1).
 # Glenroy or Baurus detecting the player sets 40.
-case ambush_b_enter_room
+# The second drop: the player falls into Room B, whose trigger (000C7606, TrigZone01 x2.5 at 1395 5072 -944: box
+# ~1040 square, z -1187..-701) fills the room. The player is placed above CGAmbushBMarker1 (1285 5169), just above
+# the box top and below the ceiling grates (~-400), and falls in. No drop-down link exists here.
+
+# Glenroy's reaction scene ends (INFO 000164B9 sets 42). The Emperor, in place in Room B, waits for the player and
+# calls "Come closer. I'd prefer not to have to shout." (INFO 0004F791, GetDistance player >= 400); the player then
+# walks up to him across Room B (a few hundred units; his force-greet ends the walk) and he greets: "They cannot
+# understand why I trust you." The player answers the Nine question; all three answers set 43, whose fragment
+# opens the birthsign menu. (Approaching on landing, stage 40, met him outside Room B, too far from Glenroy's
+# escort to F; a teleport into his force-greet range gave no greeting or lost it: runs 1q, 1r, 1t, 1u.)
+# ONE case from the drop into Room B to the question: once the player is in the room the quest waits for nobody,
+# and the Emperor's say-once greeting can start before a case that ended at 40 has saved its checkpoint, which
+# closes it and leaves only "I need your help. Please come with us." (run 6f). He calls "Come closer" only while
+# the player is 400 away, so the case does not wait for that (6e: the player stood nearer and he greeted at once);
+# it goes up to him and hears the greeting's LAST line. `approach`, not `walk`: the walk sometimes never arrived
+# (6g), and `approach` leaves a conversation that is already opening alone (it used to teleport the player in the
+# same tick the greeting opened, which closed it for good: runs 7a-7c, 8a).
+# The Emperor can still be walking in from the corridor above the drop at 42 (floor -736; Room B floor -864). An
+# `approach` then put the player back up there, where Baurus could not reach them for the torch greeting (11a,
+# 11b: he stood on CGBaurusGreetPlayer 1038 away). From 36 the Emperor walks to CGMarkerEEmperor in Room B
+# (CGEmperorToMarkerE, stage >= 32) and 42 freezes him wherever he is (CGEmperorToPlayerA waits in place; 12a: he
+# stayed at z -665 for 3600 ticks). A player needs longer to find the drop than he needs to walk in, so the case
+# waits for him at his marker before dropping in.
+case ambush_b_nine_question
+until 3600 UrielSeptimRef.GetDistance CGMarkerEEmperor < 300
 run
-player.moveto CGAmbushBMarker1
+player.setpos x 1285
+player.setpos y 5169
+player.setpos z -680
 until 900 GetStage Charactergen >= 40
 expect Charactergen.inAmbushBRoom == 1
-end
-
-# Glenroy's reaction scene ends (INFO 000164B9 sets 42). The Emperor force-greets: "They cannot understand why I trust
-# you." The player answers the Nine question; all three answers set 43, whose fragment opens the birthsign menu.
-case ambush_b_nine_question
 until 3600 GetStage Charactergen >= 42
-hear 900 UrielSeptimRef They cannot understand why I trust you
+expect UrielSeptimRef.GetPos z < -800
+approach UrielSeptimRef
+hear 900 UrielSeptimRef invisible hand
 wait 30
 ask "The Nine guide and protect us."
 until 300 GetStage Charactergen >= 43

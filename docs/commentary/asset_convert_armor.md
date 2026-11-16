@@ -1192,6 +1192,20 @@ every downstream stage sees the same shape of input it always has.
   hierarchy lookup is BY NAME (bone pointers aren't tree members at part
   stage). Affected creatures: imp 85→78, spiderdaedra 88→78, mehrunesdagon
   98→78; all other 151 merged bodies were already ≤80.
+- **Skinned meshes outside the creature pipeline need it too** (2026-11-15, headless run 53c): the MQ16 finale
+  activators `creatures/endgame/battle.nif` and `entry.nif` (EndgameBattle / EndgameEntry) carry Dagon's own
+  98-bone skin and are converted by `nif_converter`, which never capped. The game exited on the main thread in the
+  same memcpy (AddrLib 108322 copies bone count x 48 bytes into constant-buffer slots 10 and 9: 0x1260 = 98 x 48)
+  right after MQ16 stage 35. `skin_bone_cap.cap_skin_bones` is now the one cap-and-repartition step, run by
+  `merge_creature_body` and by `nif_converter` for every skinned non-creature mesh; census of the 10,413 shipped
+  Oblivion meshes: these two were the only shapes over 80 (both now 80). Nehrim: the same two, plus
+  `ptcreatures/firedemon/firedemon.nif` (85) and `ptcreatures/spiderspriggan/sprigganspider.nif` (88, also the
+  model of the placed activator PTCreaturesSpiderSprigganSprigganSpider). Those are creature body parts with their
+  bones flat under the root, so the general converter takes the hierarchy from the folder's `skeleton.nif`, which
+  outranks the mesh's own flat tree; both now 80. (`actors/nehrim/nehrim/imp/scaleimp.nif`, 85, is a creature-folder
+  file no record names.) Old-mesh A/B in game: the finale checkpoint with the 98-bone `battle.nif` / `entry.nif`
+  crashed while loading in the same memcpy (pid29888); with the capped meshes Dagon renders whole
+  (temp/run52/endgame_ab/battle_after_1.png). Merged away: 16 finger joints, `Bip01 L Sholder01`, `Bip01 Eye Lids`.
 - **Shape-SPLITTING does NOT work** (tested in-game: game froze) — don't
   split skinned shapes to duck the cap; merge bones instead.
 - Diagnostics: `tools/nif/skin_partition_dump.py <nif>` (per-shape/partition

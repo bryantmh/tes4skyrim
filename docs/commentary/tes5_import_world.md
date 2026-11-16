@@ -302,6 +302,28 @@ raw TES4 FormID constant never matches (the load-order offset is already applied
 mask with `& 0x00FFFFFF`, and reproduce world logic with
 `set_formid_index_offset(1)`.
 
+## <a id="nameless-doors"></a>A door with no name cannot be used
+
+**Code:** `tes5_import/record_types/items.py` `convert_DOOR`, `_named`. NOT yet confirmed in game by
+the user (found by the headless main-quest runs 29l-29n, 2026-11-14).
+
+Skyrim does nothing when a door whose base has no `FULL` is activated: not for an actor's AI, not
+for a console `activate` by the player, locked or not. Oblivion uses such doors normally. Sancre
+Tor's fourth ghost Blade walks to the hidden load door `MQ09GhostDoorBase` (no name, no sounds,
+Hidden) and stood there for good, so MQ09 never left stage 53. Measured on the test instance's
+plugin copy: clearing the Hidden flag changed nothing; pointing the two door references at a named
+base with the same model let the ghost through and the case passed. Vanilla agrees: of 15 nameless
+`DOOR` bases in Skyrim.esm only `PrisonMarker` has teleport references, and those are arrival
+markers nothing activates.
+
+A nameless TES4 door is written with a one-space `FULL`, so it is usable and still shows no label,
+as in Oblivion. Oblivion.esm has 10 such bases of 501, Nehrim.esm 18 of 433.
+
+The engine's own `PrisonMarker` (FormID 00000004 in both games) is left nameless, as vanilla Skyrim
+leaves it. Named, its teleport pairs joined the door graph: on the way from Bruma Castle to the
+chapel the Countess took the jail's exterior marker into `BrumaCastleDungeon` and stood behind the
+cell doors (run 29w, MQ13 stuck at 20). A source FormID below 0x800 marks an engine form.
+
 ## <a id="land-layers-door-flags"></a>LAND texture layers and DOOR flags
 
 **Code:** `tes5_import/record_types/world.py` (LAND layer run),

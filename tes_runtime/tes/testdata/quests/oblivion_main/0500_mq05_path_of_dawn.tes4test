@@ -1,0 +1,269 @@
+# MQ05 "The Path of Dawn", first half: to Baurus's lead on the Mythic Dawn. MQ04 100 set MQ05 10. Jauffre sends the
+# player to Baurus at Luther Broad's Boarding House (20); Baurus has the player tail the man watching him (25); the
+# agent Astav Wirich follows Baurus to the cellar (30) and attacks (31); with him dead (32) Baurus has the body
+# searched (34), the first "Commentaries" turns up (35), and Baurus names Tar-Meena at the Arcane University (36).
+# The books, the Sponsor and Dagon Shrine (40 .. 100) are not drafted yet.
+# DRAFT from tools/live/quest_brief.py (2026-11-12): not run yet.
+
+# Jauffre at Cloud Ruler Temple first offers a place in the Blades (run 24b: "Yes, I will join the Blades." / "No,
+# not right now." / "What are my duties as a Blade?"); the player joins (INFO 00037CED / 00037CEE: Blades rank 0
+# and an Akaviri longsword). "Amulet of Kings" (INFO 0001EFE3) then sets 20, which moves Baurus to Luther Broad's.
+case mq05_jauffre
+until 300 GetStage MQ05 >= 10
+run
+player.moveto JauffreRef
+wait 120
+approach JauffreRef
+talk JauffreRef
+ask "Yes, I will join the Blades."
+until 300 player.GetFactionRank Blades >= 0
+ask "Amulet of Kings"
+until 300 GetStage MQ05 >= 20
+bye if open
+end
+
+# Baurus sits in Luther Broad's (MQ05BaurusLutherBroadsMarker). His greeting "Listen. I'm going to get up in a
+# minute ..." (INFO 00022B13, MQ05 < 30) offers "The enemy has the Amulet.", "I found Uriel's heir." and "I'm ready
+# when you are." (INFO 00022B16), which sets 25. The travel to the Imperial City is the player's: moveto stands in.
+# To a standing player he only says "Sit down. Don't say anything. Just do what I say." (INFO 00022B11, a goodbye,
+# player.GetSitting == 0; run 24c): the player takes the stool beside his (REFR 000549E1, 92 from MQ05BaurusChair).
+case mq05_baurus_luther
+run
+player.moveto MQ05BaurusLutherBroadsMarker
+wait 120
+activate 000549E1
+until 600 player.GetSitting >= 3
+talk BaurusRef
+ask "I'm ready when you are."
+until 300 GetStage MQ05 >= 25
+bye if open
+end
+
+# Baurus walks out to the cellar; Astav Wirich gets up and follows him (30, MQ05AstavWirichScript) and attacks
+# (31). The player follows and fights beside Baurus (`defend BaurusRef`); Astav's death sets 32.
+case mq05_astav
+defend BaurusRef
+until 3600 GetStage MQ05 >= 30
+# Baurus first walks down to MQ05BaurusWaitMarker in the cellar; MQ05BaurusHeadForAmbush then needs the player in
+# his cell (GetInSameCell player). Run 38b: a moveto at 30 left the player upstairs as he went down.
+until 3600 BaurusRef.GetDistance MQ05BaurusWaitMarker < 100
+run
+player.moveto BaurusRef
+until 3600 GetStage MQ05 >= 31
+until 1800 GetStage MQ05 >= 32
+expect MQ05AstavWirichRef.GetDead
+end
+
+# Baurus's greeting at 32 ("Search his body. I'll keep an eye out ...", INFO 00022B1A) sets 34. The first book is on
+# Astav's body (QSTxMQ05CommentariesV1Script sets 35 when it leaves him); RemoveAllItems stands in for looting.
+# Then Baurus's greeting ("Good work. ...", INFO 00022B1D) offers "What have you learned?" (INFO 00022B1E; run 24e),
+# which offers: "The enemy has the Amulet." (MQ05.toldAmulet 2), "I found Uriel's heir." (toldMartin 2), and "What's
+# our next move?" (INFO 00022B23, needs both), which sets 36.
+case mq05_baurus_book
+approach BaurusRef
+activate BaurusRef
+until 300 GetStage MQ05 >= 34
+bye if open
+run
+MQ05AstavWirichRef.RemoveAllItems player
+until 300 GetStage MQ05 >= 35
+approach BaurusRef
+talk BaurusRef
+ask "What have you learned?"
+ask "The enemy has the Amulet."
+until 300 MQ05.toldAmulet == 2
+ask "I found Uriel's heir."
+until 300 MQ05.toldMartin == 2
+ask "What's our next move?"
+until 300 GetStage MQ05 >= 36
+bye if open
+end
+
+# Tar-Meena at the Arcane University. "Mythic Dawn" (INFO 00024E7F) offers "I found one of their books." (INFO
+# 00022B41), which offers "I need to find the Mythic Dawn." (INFO 00022B42), which offers "Where can I find these
+# books?" (INFO 00022B43): Volume 2 and stage 40.
+case mq05_tar_meena
+run
+player.moveto TarMeenaRef
+wait 120
+approach TarMeenaRef
+talk TarMeenaRef
+ask "Mythic Dawn"
+ask "I found one of their books."
+ask "I need to find the Mythic Dawn."
+ask "Where can I find these books?"
+until 300 GetStage MQ05 >= 40
+expect player.GetItemCount MQ05CommentariesV2 >= 1
+bye if open
+end
+
+# Phintias at First Edition. "Mysterium Xarxes" (INFO 00022B3C) offers "I need volumes 3 and 4." (50: Volume 3 is
+# held for Gwinas, who is moved to MQ05GwinasStartMarker and walks to the shop); "Gwinas" (INFO 00022B46) sets 60.
+# He only speaks of it in his shop (GetInCell ICMarketDistrictFirstEdition; run 24f met him elsewhere at 1 am: only
+# "What have you got for sale?" and "Rumors"), so the player comes in shop hours.
+case mq05_phintias
+run
+set gamehour to 10
+until 7200 PhintiasRef.GetInCell ICMarketDistrictFirstEdition == 1
+run
+player.moveto PhintiasRef
+wait 120
+expect PhintiasRef.GetInCell ICMarketDistrictFirstEdition == 1
+approach PhintiasRef
+talk PhintiasRef
+ask "Mysterium Xarxes"
+ask "I need volumes 3 and 4."
+until 300 GetStage MQ05 >= 50
+ask "Gwinas"
+until 300 GetStage MQ05 >= 60
+bye if open
+end
+
+# Gwinas comes for his book; the player talks him out of it. "Commentaries, Volume Three" (INFO 00022B4C, MQ05 <
+# 72) offers "Tell me about the Mythic Dawn cult." -> "Don't play stupid." -> "They killed the Emperor, you fool!"
+# (INFO 0009532B) -> "You'd better give me that book." (INFO 0009532D: Volume 3 and stage 45) -> "I need the fourth
+# book as well." (INFO 0009532E: 70, whose result hands over the Sponsor's note and sets 72).
+case mq05_gwinas
+run
+player.moveto GwinasRef
+wait 120
+approach GwinasRef
+talk GwinasRef
+ask "Commentaries, Volume Three"
+ask "Tell me about the Mythic Dawn cult."
+ask "Don't play stupid."
+ask "They killed the Emperor, you fool!"
+ask "You'd better give me that book."
+until 300 GetStage MQ05 >= 45
+ask "I need the fourth book as well."
+until 300 GetStage MQ05 >= 70
+until 300 GetStage MQ05 >= 72
+expect player.GetItemCount MQ05CommentariesV3 >= 1
+bye if open
+end
+
+# 72 moves Baurus to MQ05BaurusStage72. "Mythic Dawn meeting" (INFO 00022CF0, 70 <= MQ05 < 75) sets 75: he leads
+# the way to the Sunken Sewer.
+case mq05_baurus_meeting
+run
+player.moveto BaurusRef
+wait 120
+approach BaurusRef
+talk BaurusRef
+ask "Mythic Dawn meeting"
+until 300 GetStage MQ05 >= 75
+bye if open
+end
+
+# Baurus reaches the sewer's lower hall (76, BaurusScript OnPackageDone; the Sponsor, RavenRef, is enabled). His
+# greeting at 76 (INFO 00022CEB / 00022CEC) plans the meeting: "Alright. I'll cover you." (INFO 00022CF3) sets 78
+# (Baurus meets the Sponsor, the player is the backup) and offers "I'm ready when you are."; MQ05Script then sets
+# 79 once Baurus (MQ05.pointRef) sits at the table and the player is in ImperialSewersElvenGardens02: the player
+# takes the backup's place above the room (MQ05BaurusBackupMoveMarker; run 25d stayed in the hall: 78 for good).
+# Baurus leads (an escort: he walks on only while the player is close behind), so the player follows him
+# (`follow`) and arrives after him at each loading door's far side, where a player coming through it stands: the
+# Elven Gardens sewer (01, door 00023D2E: the gate wheel, the tunnel gate), the Sewer Waterworks (03, door 0006B0F7)
+# and 01 again for the lower hall (door 0006AE80). (Run 44b: an `approach` teleport onto him in 01's cramped arrival
+# room pushed him through the wall; 44d: the street door was never loaded once the player was already inside.)
+# Out of the inn the player takes its street door (0002C210) after him, as a player does: an `approach` put the
+# player 80 IN FRONT of him, in the sewer doorway, and he never went through it (55a; 44a the same).
+case mq05_sewer_plan
+defend BaurusRef
+follow BaurusRef
+until 1800 BaurusRef.GetInSameCell player == 0
+activate 0002C210
+wait 60
+until 3600 BaurusRef.GetInCell ImperialSewersElvenGardens01 == 1
+run
+player.moveto 00023D2E
+wait 60
+until 3600 BaurusRef.GetInCell ImperialSewersElvenGardens03 == 1 || GetStage MQ05 >= 76
+run
+player.moveto 0006B0F7
+wait 60
+until 3600 BaurusRef.GetInCell ImperialSewersElvenGardens01 == 1
+run
+player.moveto 0006AE80
+wait 60
+until 3600 GetStage MQ05 >= 76
+approach BaurusRef
+talk BaurusRef
+ask "Alright. I'll cover you."
+until 300 GetStage MQ05 >= 78
+ask "I'm ready when you are."
+bye if open
+# He walks to the table in 02 only while his cell is loaded (54c replay: the player sent ahead to 02 left him
+# standing in 01 for 9000 ticks; loading his cell moved him on), so the player stays with him until he is in 02.
+until 3600 BaurusRef.GetInCell ImperialSewersElvenGardens02 == 1
+follow
+run
+player.moveto MQ05BaurusBackupMoveMarker
+wait 120
+expect player.GetInCell ImperialSewersElvenGardens02 == 1
+# MQ05Script sets 79 once Baurus sits at the table (run 38g: he sat, the meeting ran and he stood to fight before a
+# sitting check was polled, so the case waits for the stage).
+until 9000 GetStage MQ05 >= 79
+end
+
+# The Sponsor comes to the table room (80), the meeting goes wrong (81 or 82, both set 85) and the cultists
+# attack; the player fights beside Baurus. The fourth book is on the Sponsor's body: taking it sets 90
+# (MQ05CommentariesV4Script OnAdd). RemoveAllItems stands in for looting.
+case mq05_sponsor
+defend BaurusRef
+until 3600 GetStage MQ05 >= 80
+until 3600 GetStage MQ05 >= 85
+until 1800 RavenRef.GetDead
+run
+RavenRef.RemoveAllItems player
+until 300 GetStage MQ05 >= 90
+end
+
+# Tar-Meena reads the four books over three days: "Mythic Dawn" gives one hint a day (INFO 00024E6C -> 91, INFO
+# 00024E6B -> 92, each needing MQ05.hintDay < GameDaysPassed), and on the third day (INFO 00022B3F) offers "Yes, I
+# have them right here." (INFO 00024E81). Midnight is passed by setting the hour, as a player waits. Then: "Green Emperor Way Where Tower Touches Midday Sun" (93). The tomb of Prince Camarril (MQ05TombRef,
+# Green Emperor Way) shows the map between 11.8 and 12.5 o'clock; activating it then sets 95 -> 100, which ends
+# MQ05 and sets MQ06 10. `set gamehour` stands in for waiting until noon.
+case mq05_shrine_clue
+run
+player.moveto TarMeenaRef
+wait 120
+approach TarMeenaRef
+talk TarMeenaRef
+ask "Mythic Dawn"
+until 300 GetStageDone MQ05 91 == 1
+bye if open
+run
+set gamehour to 23.9
+wait 300
+run
+set gamehour to 10
+player.moveto TarMeenaRef
+wait 120
+approach TarMeenaRef
+talk TarMeenaRef
+ask "Mythic Dawn"
+until 300 GetStageDone MQ05 92 == 1
+bye if open
+run
+set gamehour to 23.9
+wait 300
+run
+set gamehour to 10
+player.moveto TarMeenaRef
+wait 120
+approach TarMeenaRef
+talk TarMeenaRef
+ask "Mythic Dawn"
+ask "Yes, I have them right here."
+until 300 GetStage MQ05 >= 93
+bye if open
+run
+player.moveto MQ05TombRef
+wait 120
+run
+set gamehour to 12
+wait 60
+activate MQ05TombRef
+until 300 GetStageDone MQ05 100
+until 300 GetStage MQ06 >= 10
+end

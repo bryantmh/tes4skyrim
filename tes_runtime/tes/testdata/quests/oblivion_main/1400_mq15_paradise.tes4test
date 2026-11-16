@@ -1,0 +1,168 @@
+# MQ15 "Paradise". MQ14 100 set MQ15 10. Martin opens the portal (15); the player arrives in Camoran's Paradise
+# (20). The dremora Kathutet guards the way out of the Savage Garden; the player chooses battle (32) and takes the
+# Bands of the Chosen from him (45), which open the Forbidden Grotto (50). There Eldamil offers help (54, 56): the
+# player plays the prisoner in his cage (57 .. 67), goes on (68) and has the Bands removed (70, 72). At Carac
+# Agaialor Camoran's children greet the player (75), Mankar speaks (78 .. 80) and dies (89); Paradise dissolves and
+# the player is back at Cloud Ruler Temple with the Amulet (90 .. 92). Martin puts it on (95) and names the last
+# step, Chancellor Ocato (100).
+# DRAFT from tools/live/quest_brief.py (2026-11-13): not run yet.
+
+# Martin's greeting at 10 ("I have everything in place for the ritual ...", INFO 00027E38) offers "Yes, open the
+# portal to Paradise." (INFO 00027E44, 15); his package MQ15MartinOpenPortal runs the ritual, which enables the door MQRitualMainRef (MQ15PortalRef is only a marker). Stepping through
+# puts the player in the cell Paradise, where MQ15Script sets 20.
+case mq15_portal
+until 300 GetStage MQ15 >= 10
+# Martin walks back to Cloud Ruler Temple; his portal greeting (and its choice) is given only in the Great Hall.
+# The journal at 10 sends the player there ("meet Martin in the Great Hall"), so the player waits in the hall.
+run
+coc CloudRulerTempleGreatHall
+until 7200 MartinRef.GetInCell CloudRulerTempleGreatHall == 1
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+ask "Yes, open the portal to Paradise."
+until 300 GetStage MQ15 >= 15
+bye if open
+until 3600 MQRitualDrawingRef.stage == 2
+run
+player.moveto MQRitualMainRef
+wait 120
+activate MQRitualMainRef
+until 1800 GetStage MQ15 >= 20
+end
+
+# Kathutet (KathutetRef): his greeting ("You destroyed the Sigil Tower at Ganonah ...", INFO 0003C93C) offers "I
+# seek Mankar Camoran." -> "What do you want, then?" (INFO 0003E8F4, MQ15 < 30) -> "I choose battle." (INFO
+# 0003E8F7, 32). The player kills him and takes the Bands from his body (MQ15BracersScript OnAdd: 45); kill and
+# RemoveAllItems stand in for the fight and the looting.
+case mq15_kathutet
+run
+player.moveto KathutetRef
+wait 120
+approach KathutetRef
+talk KathutetRef
+ask "I seek Mankar Camoran."
+ask "What do you want, then?"
+ask "I choose battle."
+until 300 GetStage MQ15 >= 32
+bye if open
+run
+KathutetRef.kill
+wait 60
+run
+KathutetRef.RemoveAllItems player
+until 300 GetStage MQ15 >= 45
+expect player.GetItemCount MQ15Bracers >= 1
+end
+
+# The Forbidden Grotto: the outer door (MQ15GrottoDoorEnter) is plain. The inner door MQ15CAMGrotto1ToGrotto2
+# (MQ15GrottoEntranceScript) opens only to a wearer of the Bands, after its message box "The bands emit a red glow
+# and the door opens." [Done]. MQ15Script sets 50 once the player is in ParadiseGrotto02.
+case mq15_grotto
+defend
+run
+player.equipitem MQ15Bracers
+player.moveto MQ15GrottoDoorEnter
+wait 120
+activate MQ15GrottoDoorEnter
+until 600 player.GetInCell ParadiseGrotto01 == 1
+run
+player.moveto MQ15CAMGrotto1ToGrotto2
+wait 120
+activate MQ15CAMGrotto1ToGrotto2
+button 0
+until 600 GetStage MQ15 >= 50
+end
+
+# Eldamil (EldamilRef): his greeting ("You wear the Bands, but you're no prisoner ...", INFO 00015746) sets 54 and
+# offers "I'm here to kill Mankar Camoran." -> "Why would you help me?" -> "How can you help me?" (INFO 0003FBE2)
+# -> "Fine. I'll play along." (INFO 0003FBE3, 56).
+case mq15_eldamil
+run
+player.moveto EldamilRef
+wait 120
+approach EldamilRef
+talk EldamilRef
+until 300 GetStage MQ15 >= 54
+ask "I'm here to kill Mankar Camoran."
+ask "Why would you help me?"
+ask "How can you help me?"
+ask "Fine. I'll play along."
+until 300 GetStage MQ15 >= 56
+bye if open
+end
+
+# The cage: the dremora Orthe questions Eldamil (57; "Of course, kynreeve." sets 58); the player steps into the
+# cage (within 50 of MQ15PlayerCageMarker: 60), Eldamil works the lever (EldamilScript OnPackageDone
+# MQ15EldamilActivateCage: 62), the cage goes down (65) and comes up (66), and Eldamil's last warning sets 67.
+case mq15_cage
+until 3600 GetStage MQ15 >= 58
+run
+player.moveto MQ15PlayerCageMarker
+until 600 GetStage MQ15 >= 60
+until 3600 GetStage MQ15 >= 62
+# 64 is the alarm (OrtheScript: hit, or the player not in the cage). Past 66 the player is an enemy again and Orthe's
+# OnStartCombat sets it by design, so it is checked here, before the cage comes back up.
+expect GetStageDone MQ15 64 == 0
+until 1800 GetStage MQ15 >= 65
+until 1800 GetStage MQ15 >= 66
+until 1800 GetStage MQ15 >= 67
+end
+
+# ParadiseGrotto03 (door MQ15CAMGrotto2ToGrotto3) sets 68. Eldamil's greeting there ("You made it ...", INFO
+# 00047226) sets 70 and takes the Bands; "Sure. I'd be glad of your help." (INFO 000473C7) sets 72.
+case mq15_bands_off
+defend
+run
+player.moveto MQ15CAMGrotto2ToGrotto3
+wait 120
+activate MQ15CAMGrotto2ToGrotto3
+button 0
+until 600 GetStage MQ15 >= 68
+until 3600 EldamilRef.GetDistance player < 1500
+approach EldamilRef
+talk EldamilRef
+until 300 GetStage MQ15 >= 70
+until 300 player.GetItemCount MQ15Bracers == 0
+ask "Sure. I'd be glad of your help."
+until 300 GetStage MQ15 >= 72
+bye if open
+end
+
+# Carac Agaialor: Ruma and Raven Camoran greet the player (75); within 525 of Mankar the script sets 78, his speech
+# ends at 79 ("Let us see who at last has proved the stronger!") and the script sets 80. kill stands in for the
+# fight: MankarCamoranScript OnDeath sets 89 and, 15 s later, moves the player to MQ15PortalRef at Cloud Ruler
+# Temple, where MQ15Script sets 90, 91 and 92 and the player holds the Amulet of Kings.
+case mq15_mankar
+defend
+run
+player.moveto MankarCamoranRef
+wait 120
+until 1800 GetStage MQ15 >= 78
+until 3600 GetStage MQ15 >= 80
+run
+MankarCamoranRef.kill
+until 600 GetStage MQ15 >= 89
+until 3600 GetStage MQ15 >= 90
+until 1800 GetStage MQ15 >= 92
+expect player.GetItemCount AmuletofKings >= 1
+# At 92 Martin comes to the player (MQ15MartinGreetPlayer, a force-greet), so no case boundary here: the game cannot
+# save with his conversation open. His greeting ("You found a way back! Does this mean... ?", INFO 0003782B) offers
+# "Mankar Camoran is dead." -> "Here. The Amulet belongs to you." -> "Put on the Amulet, your Majesty." (INFO
+# 00037830, 95) -> "You see, you are Uriel's son." -> "You are the Emperor." -> "Why meet Ocato?" (INFO 0004BF99, 100).
+hear 1800 MartinRef You found a way back
+wait 30
+talk MartinRef
+ask "Mankar Camoran is dead."
+ask "Here. The Amulet belongs to you."
+ask "Put on the Amulet, your Majesty."
+until 300 GetStage MQ15 >= 95
+expect player.GetItemCount AmuletofKings == 0
+ask "You see, you are Uriel's son."
+ask "You are the Emperor."
+ask "Why meet Ocato?"
+until 300 GetStageDone MQ15 100
+bye if open
+end

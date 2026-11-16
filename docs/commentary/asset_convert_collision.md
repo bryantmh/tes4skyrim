@@ -1232,6 +1232,31 @@ to the stairs variant of their material, using TES4's own enum pairing
   returns true at once when the contacted triangle's material is stairs, and
   otherwise falls back to its raycast step test, the path that stutters.
 
+<a id="first-step-off-the-floor"></a>**The first step off the floor counts.**
+A tread whose step below is the floor the mesh stands on (z 0, owned by
+another mesh) used to have no step below in the flight count, so a two-step
+piece (floor, one tread, a landing) was never a flight. Oblivion's
+`sewerRoomWallMid02` is exactly that: two 14.7u risers into a tunnel, all
+plain stone. In the Waterworks (ImperialSewersElvenGardens03) Baurus walked
+into the first riser and stood there for good (5 of 9 runs of
+mq05_sewer_plan); live, his controller reported flat support and a full
+walking velocity into the riser; given a 70u run-up he climbed it. Vanilla
+tags such steps: Ratway's `riftenrwroombstairs01` treads and risers are
+StairsStone.
+
+`_grounded` now gives a tread that step when a near-vertical face runs from
+z 0 up to it and its rise off the floor matches the next step up (± 4u).
+Such a flight needs only one inner tread and takes its size limit from its
+smallest inner tread, so a wide landing stays plain; a flight that already
+qualified keeps its old limit. Its tread must be at least 256u²: real ones
+are 645u² and up, a statue's ledges (`minotaurhead01`) 3-30u².
+The rise test is what keeps beds out: `middlesinglebed01`'s mattress is 37u
+off the floor but 7u below its pillow. Census of all 10,126 Oblivion meshes
+(temp/grounded_census.py): 37 change, none loses a tag -- the Ayleid hall kit
+(`arwhall*`, `arrm*`: side strips 10u off the floor, the raised centre 14u
+higher), castle transitions, `kvatchinthallwayentrya`, two Cheydinhal
+interiors, the SE10 aqueduct pieces, `sewerroomwallmid02`.
+
 Measured on converted output: every flight in `castlestairs01`,
 `bravilintstair01`, `stackstairsmid01`, `kvatchspiralstair01`, `arstairs01`,
 `exutustairu01`, `exuimpuwallustairsu01`, `inudaeuhallulustairsu01` and vanilla

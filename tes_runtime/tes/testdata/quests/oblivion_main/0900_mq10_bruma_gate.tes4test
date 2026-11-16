@@ -1,0 +1,87 @@
+# MQ10 "Bruma Gate". Martin's "What else can I do to help?" set MQ10 10. Jauffre: an Oblivion Gate has opened
+# outside Bruma (20); Captain Burd waits there with his guardsmen (30), speaks to them (31 .. 33) and follows the
+# player into the Gate (35). With Burd in the Sigil Stone chamber (40) the player takes the Stone (50). Burd thanks
+# the player (55), Jauffre is pleased (60 -> 100), and MQ11 starts at 10.
+# DRAFT from tools/live/quest_brief.py (2026-11-13): not run yet.
+
+# Jauffre's greeting at 10 ("I've just received word from the Countess of Bruma ...", INFO 00026EA7) offers "Where
+# is this Gate?" (INFO 00026EFB), which sets 20: the Gate, the guardsmen and Burd at MQ10BurdWaitMarker.
+case mq10_jauffre
+until 300 GetStage MQ10 >= 10
+run
+player.moveto JauffreRef
+wait 120
+approach JauffreRef
+talk JauffreRef
+ask "Where is this Gate?"
+until 300 GetStage MQ10 >= 20
+bye if open
+end
+
+# Burd outside Bruma: his greeting at 20 ("Thanks for coming ...", INFO 00026EE9) sets 30 and offers "Let's go."
+# (INFO 0003A853, 31). He then speaks to his men (BurdSCRIPT OnPackageDone MQ10BurdGiveSpeech: 32) and the fight
+# at the Gate starts (33). The walk to Bruma is the player's travel: moveto stands in.
+case mq10_burd
+defend BurdRef
+run
+player.moveto MQ10BurdWaitMarker
+wait 120
+approach BurdRef
+talk BurdRef
+until 300 GetStage MQ10 >= 30
+ask "Let's go."
+until 300 GetStage MQ10 >= 31
+bye if open
+until 3600 GetStage MQ10 >= 33
+end
+
+# The player enters the Gate (MQ10OblivionGateScript OnActivate: MQ10.playerInOblivion 1); MQ10Script sets 35 once
+# the player and Burd are both within 5000 of MQ10BurdWaitInsideGateMarker, so Burd must follow through the Gate.
+case mq10_enter_gate
+defend BurdRef
+run
+player.moveto MQ10OblivionGate
+wait 120
+activate MQ10OblivionGate
+until 600 MQ10.playerInOblivion == 1
+until 600 player.GetDistance MQ10BurdWaitInsideGateMarker < 5000
+until 3600 GetStage MQ10 >= 35
+end
+
+# The climb to the Sigil Stone is the player's fight with Burd at their side: moveto stands in for it and Burd, who
+# follows the player, is brought along. With both in the chamber the Stone's activator sets 40
+# (MQ10SigilStoneActivatorScript); activating it then takes the Stone, which closes the Gate and sets 50.
+case mq10_sigil_stone
+defend BurdRef
+run
+player.moveto MQ10Sigil
+wait 120
+run
+BurdRef.moveto player
+until 600 GetStage MQ10 >= 40
+activate MQ10Sigil
+until 1800 GetStage MQ10 >= 50
+until 600 MQ10.playerInOblivion == 0
+end
+
+# Back outside Bruma, Burd's greeting at 50 ("It was an honor to serve with you ...", INFO 00026EEB / 00026EEC)
+# sets 55. Jauffre's greeting at 55 ("Good work. ...", INFO 00026EA8) sets 60, whose result sets 100; that sets
+# MQ11 10.
+case mq10_report
+run
+player.moveto BurdRef
+wait 120
+approach BurdRef
+talk BurdRef
+until 600 GetStage MQ10 >= 55
+bye if open
+run
+player.moveto JauffreRef
+wait 120
+approach JauffreRef
+talk JauffreRef
+until 600 GetStage MQ10 >= 60
+until 300 GetStageDone MQ10 100
+until 300 GetStage MQ11 >= 10
+bye if open
+end

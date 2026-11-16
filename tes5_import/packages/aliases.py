@@ -36,6 +36,7 @@ from ..base.master_export import records_of
 from ..base.text_reader import (get_formid, get_int, get_str, remap_formid,
                           get_formid_index_offset)
 from .actor_wiring import authored_packages
+from .greet_topic import GreetTopics
 
 
 def master_records(master_export, *sigs):
@@ -475,6 +476,18 @@ def build_script_assigned_packages(by_type: dict, fid_to_edid: dict,
     return out
 
 
+#: TES4 record flag Initially Disabled.
+_INITIALLY_DISABLED = 0x800
+
+
+def initially_disabled(by_type: dict, master_export: dict = None) -> frozenset:
+    """Low-24 FormIDs of the placed references that start disabled."""
+    return frozenset(
+        _raw_fid(rec, 'FormID') & 0x00FFFFFF
+        for sig in ('REFR', 'ACHR', 'ACRE') for rec in masters_then_own(by_type, master_export, sig)
+        if get_int(rec, 'RecordFlags') & _INITIALLY_DISABLED)
+
+
 class PackagePlan:
     """The quest/alias wiring for every converted package.
 
@@ -491,6 +504,14 @@ class PackagePlan:
         self.alias_index = {}      # (qust_fid, ref_fid) -> alias id
         self.actor_packages = {}   # actor_fid -> [pack_fid,...] (TES4 order)
         self.alias_actor = {}      # ref_fid -> base actor fid
+        self.hosts = None
+        self.armed = set()
+        self.armed_factions = {}
+        self.source_quest = {}
+        self.greet_topics = None
+        self.forced_on = {}
+        self.starts_disabled = frozenset()
+        self.forced_lists = ({}, False)
 
     # -- build ----------------------------------------------------------
 
@@ -527,6 +548,10 @@ class PackagePlan:
         scriptvar_owner = scriptvar_owner or {}
 
         self._own_quests(packs, quest_fids, scriptvar_owner)
+        self._read_actor_lists(by_type, master_export)
+        self.greet_topics = GreetTopics(by_type, master_export)
+        self.forced_on = script_assigned or {}
+        self._arm_unlisted(script_assigned)
         base_to_refs = self._wire_actor_packages(by_type, master_export)
         self._wire_script_assigned(base_to_refs, script_assigned)
         self._wire_package_targets(packs)
@@ -556,7 +581,39 @@ class PackagePlan:
                     if owner:
                         break
             if owner:
-                self.owner_quest[fid] = owner
+                self.source_quest[fid] = owner
+                self.owner_quest[fid] = self.hosts.of(owner) if self.hosts else owner
+
+    def greet_quest(self, pack_fid: int, edid: str, gated: int):
+        """The quest whose GREETING force-greet `pack_fid` opens: its gating quest, else its speakers'."""
+        own = self.source_quest.get(pack_fid) or gated or None
+        if self.greet_topics is None:
+            return own
+        actors = [a for a, plist in self.actor_packages.items() if pack_fid in plist]
+        actors += sorted(self.forced_on.get(pack_fid, ()))
+        return self.greet_topics.quest_of(edid, actors, [own]) or own
+
+    def _read_actor_lists(self, by_type: dict, master_export: dict) -> None:
+        """Fill `actor_packages` from every actor's authored list; an override's list wins."""
+        recs = list(master_records(master_export, 'NPC_', 'CREA'))
+        recs += [(get_formid(r, 'FormID'), r) for r in by_type.get('NPC_', []) + by_type.get('CREA', [])]
+        for afid, rec in recs:
+            plist = [p for p in authored_packages(rec) if p]
+            if plist:
+                self.actor_packages[afid] = plist
+
+    def _arm_unlisted(self, script_assigned: dict) -> None:
+        """Move script-forced packages no actor lists to the forced host and mark them armed.
+
+        See: docs/commentary/tes5_import_package.md#package-hosts
+        """
+        if self.hosts is None:
+            return
+        listed = {p for plist in self.actor_packages.values() for p in plist}
+        for pfid in script_assigned or ():
+            if pfid not in listed:
+                self.owner_quest[pfid] = self.hosts.host
+                self.armed.add(pfid)
 
     @staticmethod
     def _build_base_to_refs(by_type: dict, master_export: dict) -> dict:
@@ -591,33 +648,37 @@ class PackagePlan:
         base_to_refs.
 
         A quest alias fills a *reference* (ALFR); actors with no placement
-        (levelled spawns) keep their packages on the base's PKID list.  Actor
-        records are read masters-first, so an override's AIPackage list wins.
+        (levelled spawns) keep their packages on the base's PKID list.
         """
         base_to_refs = self._build_base_to_refs(by_type, master_export)
-        actor_recs = [(fid, r) for fid, r
-                      in master_records(master_export, 'NPC_', 'CREA')]
-        actor_recs += [(get_formid(r, 'FormID'), r)
-                       for r in by_type.get('NPC_', []) + by_type.get('CREA', [])]
-        for afid, rec in actor_recs:
-            plist = [p for p in authored_packages(rec) if p]
-            if plist:
-                self.actor_packages[afid] = plist
+        fallback = self.hosts.host if self.hosts else None
+        for afid, plist in self.actor_packages.items():
             for aref in base_to_refs.get(afid, ()):
-                for pfid in plist:
-                    q = self.owner_quest.get(pfid)
-                    if q is not None:
-                        self._add_alias_package(q, aref, pfid)
-                        self.alias_actor[aref] = afid
+                for pfid in self._alias_list(plist):
+                    self._add_alias_package(self.owner_quest.get(pfid, fallback), aref, pfid)
+                    self.alias_actor[aref] = afid
         return base_to_refs
+
+    def _alias_list(self, plist: list) -> list:
+        """The packages of an authored list that go on the actor's alias.
+
+        With a host and any hosted package in it, the WHOLE list in order;
+        else the list as is, of which only quest-owned packages are wired.
+        See: docs/commentary/tes5_import_package.md#package-hosts
+        """
+        host = self.hosts.host if self.hosts else None
+        if host is None or any(self.owner_quest.get(p) == host for p in plist):
+            return plist
+        return [p for p in plist if self.owner_quest.get(p) is not None]
 
     def _wire_script_assigned(self, base_to_refs: dict,
                               script_assigned: dict) -> None:
-        """Hang `AddScriptPackage` packages off the actor's quest alias.
+        """Hang `AddScriptPackage` packages off the actor's alias on the package's host.
 
         Skyrim has no such call, so an ALPC is the only way arbitration can
         select one.  A call names the placed ref, or a base, which resolves to
         its first placement; anything else cannot take an alias and is skipped.
+        See: docs/commentary/tes5_import_package.md#package-hosts
         """
         ref_to_base = {r: b for b, refs in base_to_refs.items() for r in refs}
         for pfid, refs in (script_assigned or {}).items():
@@ -629,6 +690,9 @@ class PackagePlan:
                 if aref is None:
                     continue
                 self._add_alias_package(q, aref, pfid)
+                if pfid in self.armed:
+                    pkgs = self.quest_packages[q][aref]
+                    pkgs.insert(0, pkgs.pop(pkgs.index(pfid)))
                 self.alias_actor.setdefault(aref, ref_to_base.get(aref, ref))
 
     def _wire_package_targets(self, packs: dict) -> None:

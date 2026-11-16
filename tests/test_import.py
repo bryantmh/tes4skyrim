@@ -1853,14 +1853,22 @@ class TestFurnConversion:
         assert all(t == 1 for t, _ in fnprs)  # Sit
 
     def test_bench_entry_restriction(self):
-        """TES4 record enabling only the front-entry row (bits 5-7 = ref 14
-        entries) must yield front-only FNPR entry points on every seat."""
+        """A front-row-only TES4 record keeps the mesh's sides in FNPR and disables the rest per seat (ENAM + NAM0)."""
         from tes5_import.record_types.items import convert_FURN
         rec = self._furn_rec('Furniture\\LowerClass\\LowerClassBench01.NIF',
                              0x400000E0)
-        mnam, fnprs = self._unpack(convert_FURN(rec))
+        data = convert_FURN(rec)
+        mnam, fnprs = self._unpack(data)
         assert mnam == 0x40000007
-        assert fnprs == [(1, 0x01), (1, 0x01), (1, 0x01)]
+        assert all(e & 0x01 for _, e in fnprs), fnprs
+        disabled = {}
+        j = data.find(b'ENAM')
+        while j >= 0:
+            seat = struct.unpack_from('<I', data, j + 6)[0]
+            k = data.find(b'NAM0', j)
+            disabled[seat] = struct.unpack_from('<H', data, k + 8)[0]
+            j = data.find(b'ENAM', k)
+        assert {s: fnprs[s][1] & ~off for s, off in disabled.items()} == {0: 0x01, 1: 0x01, 2: 0x01}, disabled
 
     def test_bed_single_sleep_seat(self):
         """Bed entries converge to ONE sleep seat: MNAM bit 0 + bed-type +
@@ -3000,6 +3008,33 @@ class TestCKWarningFixes:
         pkdt = build_pkdt(0, SPEED_RUN, interrupt=0xFEFF)
         assert struct.unpack('<IBBBBHH', pkdt)[5] == 0xFEFF
 
+    def test_actor_ambush_at_a_place_waits_there(self):
+        """MQ13NarinaCarvainToMartin: an Ambush on Martin at the Chapel marker (r 500) uses TES4AmbushNear."""
+        from tes5_import.packages import ambush_near
+        from tes5_import.packages.converter import _choose, PackContext, T4_AMBUSH
+        from tes5_import.packages.templates import FOLLOW
+        rec = {'Signature': 'PACK', 'FormID': '000376B9', 'EditorID': 'MQ13NarinaCarvainToMartin',
+               'PKDT.Type': str(T4_AMBUSH), 'PKDT.Flags': '4096',
+               'PLDT.Type': '0', 'PLDT.Location': '00014782', 'PLDT.Radius': '500',
+               'PTDT.Type': '0', 'PTDT.Target': '0001E745', 'PTDT.Count': '180'}
+        ambush_near.set_ambush_template_fid(0x01ABCDEF)
+        try:
+            inp = _choose(rec, PackContext(), 0x010376B9)
+            assert inp.t.formid == 0x01ABCDEF and inp.t.edid == 'TES4AmbushNear'
+            assert inp.values[8] == 500.0 and 6 in inp.values
+            del rec['PLDT.Type'], rec['PLDT.Location'], rec['PLDT.Radius']
+            assert _choose(rec, PackContext(), 0x010376B9).t is FOLLOW
+        finally:
+            ambush_near.set_ambush_template_fid(0)
+
+    def test_ambush_root_record_follows_near_else_travels(self):
+        """The root is a Stacked tree: Follow gated on GetWithinDistance, then a non-completing Travel."""
+        from tes5_import.packages.ambush_near import ambush_root_record
+        blob = ambush_root_record(0x01ABCDEF)
+        assert blob[:4] == b'PACK' and b'TES4AmbushNear' in blob
+        assert blob.index(b'Stacked') < blob.index(b'Follow\0') < blob.index(b'Travel\0')
+        assert struct.pack('<H', 0x027F) in blob
+
     def test_find_at_operable_object_becomes_activate(self):
         """A TES4 "Find" aimed at a lever/switch/door means GO OPERATE IT.
 
@@ -3846,6 +3881,25 @@ class TestBarkResetTimer:
         flags, reset = self._enam(rec, is_bark=True)
         assert flags & 0x04, 'say-once flag must survive'
         assert reset == 0
+
+    def test_greeting_with_choices_keeps_zero(self):
+        """A greeting that offers choices is offered again on every talk (vanilla: 6 of 6 keep 0)."""
+        rec = {'FormID': '00090B4F', 'DATA.Flags': '0', 'ResponseCount': '0',
+               'ChoiceCount': '1', 'Choice[0]': '0001EE18'}
+        _flags, reset = self._enam(rec, is_bark=True)
+        assert reset == 0
+
+    def test_greeting_whose_choices_leave_tclt_keeps_zero(self):
+        """Choices into another bark or menu topic are not written as TCLT, but the line still offers them (run 57a,
+        Jauffre's MQ07 greeting 0002006B)."""
+        import struct
+        from tes5_import.dialogue.converter import convert_INFO
+        rec = {'FormID': '0002006B', 'DATA.Flags': '0', 'ResponseCount': '0',
+               'ChoiceCount': '1', 'Choice[0]': '00020064'}
+        out = convert_INFO(rec, bark_dial_fids={0x00020064})
+        assert b'TCLT' not in out
+        at = out.index(b'ENAM')
+        assert struct.unpack_from('<HH', out, at + 6)[1] == 0
 
 
 class TestNpcToNpcConversationDrop:

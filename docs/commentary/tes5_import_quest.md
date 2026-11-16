@@ -2190,6 +2190,18 @@ Identity and voice conditions are deliberately excluded: the response topic
 already carries its own `GetIsID`, and only the missing TIMING gate is inherited.
 An always-available greeting has no timing conditions and yields an empty list.
 
+A greeting's own `GetInCell` (where the SPEAKER is, not run on target) is inherited too, but
+only by a choice ONE greeting offers and only beside a timing condition. With several revealers the
+flat gate keeps the first revealer's AND group, so a place condition narrowed the choice to that
+greeting's place: the first version changed 30 of 17,471 INFOs and cut `0008DC57` from
+"stage < 10" to "not in cell X and stage < 10". Martin's
+"I have everything in place for the ritual ..." (INFO 00027E38) needs him in
+`CloudRulerTempleGreatHall` and offers "Yes, open the portal to Paradise."; outside the hall he
+gives another greeting with no choices. With only `GetStage MQ15 == 10` inherited the choice was
+listed on the Bruma battlefield, and taking it there ran his ritual package off screen: its latch
+closed, the ritual drawing was never activated and the portal never opened (headless run 30e,
+2026-11-14; NOT yet confirmed in game by the user).
+
 ### <a id="authored-objectives"></a>Authored objectives (FO3/FNV)
 
 **Code:** `tes5_import/dialogue/quest_falloutnv.py`, called from `convert_QUST`.

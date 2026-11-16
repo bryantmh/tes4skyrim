@@ -212,6 +212,19 @@ def test_seed_flood_is_golden():
         assert _digest(graph) == want, seed
 
 
+def test_a_landing_on_a_porch_the_lattice_misses_joins_the_seam_seed():
+    """A porch smaller than the flood lattice (Castle Bruma's door) meshes between its landing and the seam."""
+    collision = {'porch': {'w': np.asarray(_box(-48, -100, -8, 48, 100, 0), np.float32),
+                           'b': np.zeros(0, np.float32)}}
+    refs = [{'NAME': '00000010', 'PosX': 4048.0, 'PosY': 2100.0, 'PosZ': 0.0}]
+    job = {'cell_rec': {'FormID': '00000AAA', 'XCLC.X': '0', 'XCLC.Y': '0'}, 'land_rec': None,
+           'refr_recs': refs, 'seeds': [(4010.0, 2100.0, 0.0), (4092.0, 2100.0, 0.0)],
+           'landings': [(4010.0, 2100.0, 0.0)]}
+    graph = seeded_graph(job, {0x10: 'porch'}, set(), collision.get)
+    assert graph and len(graph[0]) >= 2 and graph[1]
+    assert seeded_graph(dict(job, landings=[]), {0x10: 'porch'}, set(), collision.get) is None
+
+
 def test_corridor_cell_is_golden():
     """The native corridor build of a fixed synthetic cell is the recorded mesh exactly."""
     for seed, want in CORRIDOR_DIGESTS.items():

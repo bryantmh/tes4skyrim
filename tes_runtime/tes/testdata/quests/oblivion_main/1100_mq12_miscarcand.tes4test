@@ -1,0 +1,70 @@
+# MQ12 "Miscarcand". Martin's "What else can I do to help?" set MQ12 10: the third item is a Great Welkynd Stone,
+# in the Ayleid ruin Miscarcand. Entering it sets 20; taking the Stone sets 30 and wakes the King of Miscarcand and
+# his guardians. Back at Cloud Ruler Temple Jauffre and Martin argue (25, 26), greet the player (27), Martin takes
+# the Stone (40 -> 100) and lays out the last item: a Great Sigil Stone, from a Great Gate at Bruma (MQ13 10).
+# DRAFT from tools/live/quest_brief.py (2026-11-13): not run yet.
+
+# MQ12Script sets 20 once the player is in Miscarcand01. The ride there is the player's travel: coc stands in.
+case mq12_enter_miscarcand
+until 300 GetStage MQ12 >= 10
+run
+coc Miscarcand01
+wait 120
+until 600 GetStage MQ12 >= 20
+end
+
+# The Great Welkynd Stone (REFR 0001E6FC, GreatWelkyndStoneScript OnAdd): taking it sets 30, enables the lich
+# MQ12LichREF and the two zombies, and locks the pit doors. The way down is the player's fight: moveto stands in.
+case mq12_great_welkynd_stone
+defend
+run
+coc Miscarcand03
+wait 120
+run
+player.moveto 0001E6FC
+wait 60
+take 0001E6FC
+until 600 GetStage MQ12 >= 30
+expect player.GetItemCount MQ12GreatWelkyndStone >= 1
+until 600 MQ12LichREF.GetDisabled == 0
+end
+
+# Cloud Ruler Temple's Great Hall at 30: MQ12Script sets 25, Jauffre and Martin argue (MQ12JauffreMartin, six
+# lines; the last sets 26), then each greets the player (MQ12Talk) and the script sets 27.
+case mq12_council
+run
+player.moveto MartinRef
+wait 120
+until 1800 GetStage MQ12 >= 25
+until 3600 GetStageDone MQ12 26
+until 3600 GetStageDone MQ12 27
+# Jauffre is still speaking his hello to the player when 27 is set: the engine opens no second conversation.
+until 900 JauffreRef.IsTalking == 0
+until 900 MartinRef.IsTalking == 0
+end
+
+# Martin's greeting at 30 ("You're back. And you've got the Great Stone...", INFO 000270EA) offers "I had a
+# choice?" and "I said I'd get it."; either offers "[Give him the Great Welkynd Stone]" (INFO 000270FF), which
+# sets 40 -> 100. "What is the last item we need?" then runs to "As you command." and "I'll inform the Countess at
+# once." (INFO 00027103), which sets MQ13 10.
+case mq12_give_stone
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+ask "I said I'd get it."
+ask "[Give him the Great Welkynd Stone]"
+until 300 GetStage MQ12 >= 40
+until 300 GetStageDone MQ12 100
+expect player.GetItemCount MQ12GreatWelkyndStone == 0
+ask "What is the last item we need?"
+ask "Sigil stone? What's the catch?"
+ask "So we let them open the Gate?"
+ask "At least you'll be safe here."
+ask "It's too risky. I'll lead the battle."
+ask "As you command."
+ask "I'll inform the Countess at once."
+until 300 GetStage MQ13 >= 10
+bye if open
+end

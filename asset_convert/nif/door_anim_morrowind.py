@@ -19,6 +19,7 @@ from pyffi.formats.nif import NifFormat
 from asset_convert.collision.cms import decode_cms_materials
 from asset_convert.collision.cms_builder import (GAME_UNITS_PER_HAVOK,
                                                  build_cms_collision)
+from asset_convert.nif.morphs import object_palette
 from asset_convert.nif.nif_passes import add_bsx_flags
 from asset_convert.nif.object_anim_morrowind import start_end_keys
 from asset_convert.nif.sequences import (MANAGED_CONTROLLER_FLAGS, palette_bytes,
@@ -138,23 +139,10 @@ def _sequence(name: str, hinge, manager, controller, start: float,
     return seq
 
 
-def _object_palette(root, hinge):
-    """The palette naming every node a sequence may address."""
-    palette = NifFormat.NiDefaultAVObjectPalette()
-    palette.scene = root
-    entries = [hinge] + [c for c in (hinge.children or []) if c is not None]
-    palette.num_objs = len(entries)
-    palette.objs.update_size()
-    for i, node in enumerate(entries):
-        palette.objs[i].name = _name(node)
-        palette.objs[i].av_object = node
-    return palette
-
-
 def _manager(root, hinge):
-    """A NiControllerManager on `root` driving `hinge` through one controller."""
-    return transform_manager(root, _object_palette(root, hinge), [hinge],
-                             MANAGED_CONTROLLER_FLAGS)
+    """A manager on `root` driving `hinge`; its palette names hinge and children."""
+    palette = object_palette([hinge] + [c for c in (hinge.children or []) if c is not None])
+    return transform_manager(root, palette, [hinge], MANAGED_CONTROLLER_FLAGS)
 
 
 def _move_children(root, hinge) -> None:

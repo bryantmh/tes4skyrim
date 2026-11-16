@@ -71,6 +71,7 @@ constexpr int kMoveLandTicks = 30;
 struct Calls {
     GetPlayerFn player = nullptr;
     RefFormFn parentCell = nullptr;
+    RefBoolFn cellIsInterior = nullptr;
     RefBoolFn is3DLoaded = nullptr;
     ActivateFn activate = nullptr;
     AddItemFn addItem = nullptr;
@@ -87,6 +88,7 @@ struct Calls {
     PlaceAtMeFn placeAtMe = nullptr;
     RefCallFn deleteRef = nullptr;
     MoveToFn moveTo = nullptr;
+    char* boxQueue = nullptr;
 };
 
 Calls g_c;
@@ -152,20 +154,29 @@ void* MenuObject(const char* name) {
     return nullptr;
 }
 
-// Calls a movie callback on `menu` as its movie does, with one number or none.
-bool CallMovie(FxCallbackFn callback, void* menu, const double* number) {
-    if (!callback || !menu) return false;
-    alignas(16) char value[ids::kGfxValueSize] = {};
-    alignas(16) char args[0x40] = {};
-    *reinterpret_cast<void**>(args + ids::kOffFxHandler) = menu;
-    if (number) {
-        *reinterpret_cast<std::uint32_t*>(value + ids::kOffGfxType) = ids::kGfxNumber;
-        *reinterpret_cast<double*>(value + ids::kOffGfxNumber) = *number;
-        *reinterpret_cast<void**>(args + ids::kOffFxArgs) = value;
-        *reinterpret_cast<std::uint32_t*>(args + ids::kOffFxArgCount) = 1;
-    }
-    callback(args);
-    return true;
+// Calls a movie callback on the open menu `name` as its movie does, with one number or none, at UI time --
+// the runner ticks on a job thread that can run while that movie is drawn. False when the menu is not open;
+// `then` follows the call in the same task.
+// See: docs/commentary/morrowind_runtime.md#movies-are-touched-at-ui-time
+bool CallMovie(FxCallbackFn callback, const char* name, const double* number, void (*then)() = nullptr) {
+    if (!callback || !MenuObject(name)) return false;
+    const bool numbered = number != nullptr;
+    const double n = numbered ? *number : 0.0;
+    return PostToUiTask([callback, name, numbered, n, then]() {
+        void* menu = MenuObject(name);
+        if (!menu) return;
+        alignas(16) char value[ids::kGfxValueSize] = {};
+        alignas(16) char args[0x40] = {};
+        *reinterpret_cast<void**>(args + ids::kOffFxHandler) = menu;
+        if (numbered) {
+            *reinterpret_cast<std::uint32_t*>(value + ids::kOffGfxType) = ids::kGfxNumber;
+            *reinterpret_cast<double*>(value + ids::kOffGfxNumber) = n;
+            *reinterpret_cast<void**>(args + ids::kOffFxArgs) = value;
+            *reinterpret_cast<std::uint32_t*>(args + ids::kOffFxArgCount) = 1;
+        }
+        callback(args);
+        if (then) then();
+    });
 }
 
 bool InWorld() {
@@ -187,13 +198,40 @@ bool Held() {
     return pausing > 0;
 }
 
+// Whether the open conversation is with `id`; true when that cannot be told, so nothing is closed on a guess.
+bool TalkingWith(const std::string& id) {
+    void* manager = g_c.topicManager ? *g_c.topicManager : nullptr;
+    void* npc = RefNamed(id);
+    const std::uint32_t speaker = manager ? At<std::uint32_t>(manager, ids::kOffTopicSpeaker) : 0;
+    if (!npc || !speaker) return true;
+    return (speaker & ids::kHandleIndexMask) ==
+           (At<std::uint32_t>(npc, ids::kOffRefHandleCount) >> ids::kHandleIndexShift);
+}
+
+// Whether the engine still holds a speaker for the player: a scene spoken at the player without a menu (Savlian's
+// chapel speech) keeps one until its last line, and the engine opens no new conversation until then.
+bool SomeoneSpeaking() {
+    void* manager = g_c.topicManager ? *g_c.topicManager : nullptr;
+    return manager && At<std::uint32_t>(manager, ids::kOffTopicSpeaker) != 0;
+}
+
+int Approach(const std::string& id);
+bool InTalkReach(void* npc, void* player);
+
+// Activates `id` as the player does. Talking to an actor waits, as a player does, while someone is still speaking
+// to the player (run 48a: a talk at the camp opened nothing during Savlian's chapel speech). An actor that has
+// walked out of talking reach since `approach` (at test pace a wandering NPC crosses a room between two steps)
+// is walked up to again first: false until that move lands, as the runner retries. One in reach is not turned
+// to: turning the player as the conversation opens closes it. The re-approach comes before the 3D test: an actor
+// that has gone through a door is unloaded, and the player must follow it (run 53a, Martin at Cloud Ruler).
 bool Activate(const std::string& id) {
     void* ref = RefNamed(id);
     void* player = Player();
-    if (!ref || !player || !g_c.activate || !g_c.is3DLoaded ||
-        !g_c.is3DLoaded(g_api.vm, 0, ref)) {
-        return false;
-    }
+    if (!ref || !player || !g_c.activate || !g_c.is3DLoaded) return false;
+    const bool actor = At<std::uint8_t>(ref, kFormType) == kFormTypeActor;
+    if (actor && SomeoneSpeaking()) return false;
+    if (actor && !InTalkReach(ref, player) && Approach(id) > 0) return false;
+    if (!g_c.is3DLoaded(g_api.vm, 0, ref)) return false;
     g_c.activate(g_api.vm, 0, ref, player, false);
     return true;
 }
@@ -206,7 +244,21 @@ void Take(const std::string& id) {
 
 void PressButton(int button) {
     const double index = button;
-    CallMovie(g_c.buttonPress, MenuObject(ids::kMessageBoxMenuName), &index);
+    CallMovie(g_c.buttonPress, ids::kMessageBoxMenuName, &index);
+}
+
+// A notice holding the game: the open message box, when it has a single button, gets that button clicked, as
+// a player clicks a notice's OK (Blade1Script's practice reward comes whenever the player has stood 60 s near
+// the practicing Blades). A box offering a choice is left for the case to answer.
+bool DismissNotice() {
+    const std::uint32_t queued = g_c.boxQueue ? At<std::uint32_t>(g_c.boxQueue, ids::kOffQueueCount) : 0;
+    if (!queued || !MenuOpen(ids::kMessageBoxMenuName)) return false;
+    char* box = At<char**>(g_c.boxQueue, 0)[queued - 1];
+    if (!box || At<std::uint32_t>(box, ids::kOffBoxButtonCount) != 1) return false;
+    const char* body = At<const char*>(box, ids::kOffBoxBody);
+    Log("test: a one-button box holds the game -- its button is clicked: %.80s", body ? body : "");
+    PressButton(0);
+    return true;
 }
 
 void CloseMenu(const std::string& name) { CloseMenuNamed(name.c_str()); }
@@ -231,7 +283,7 @@ bool ClickTopic(int index) {
     const std::vector<std::string> listed = Topics();
     if (index < 0 || index >= static_cast<int>(listed.size())) return false;
     const double number = index;
-    return CallMovie(g_c.topicClicked, MenuObject(ids::kDialogueMenuName), &number);
+    return CallMovie(g_c.topicClicked, ids::kDialogueMenuName, &number);
 }
 
 // The listed topic whose text is `topic` (any case), else the one topic containing it.
@@ -256,9 +308,8 @@ bool Choose(int index) { return ClickTopic(index - 1); }
 // and the hide message takes the menu down even while a choice list is showing (the callback alone waits for a
 // line to end).
 bool Bye() {
-    const bool asked = CallMovie(g_c.closeDialogue, MenuObject(ids::kDialogueMenuName), nullptr);
-    if (asked) CloseMenuNamed(ids::kDialogueMenuName);
-    return asked;
+    return CallMovie(g_c.closeDialogue, ids::kDialogueMenuName, nullptr,
+                     []() { CloseMenuNamed(ids::kDialogueMenuName); });
 }
 
 std::string HexId(void* form) {
@@ -304,12 +355,23 @@ void FacePlayerTo(void* target) {
 // already within talking reach in the same cell -- as a player walks up to
 // whoever they talk to -- and has them look at it. 1 when a move was posted,
 // 0 when none is needed, -1 while `id` does not resolve.
+// Whether the player stands within talking reach of `npc` in the same place. Two exterior cells count as
+// one place: an NPC beside a cell border is never in the player's cell from 80 away, and the move repeated
+// forever.
+bool InTalkReach(void* npc, void* player) {
+    if (!g_c.parentCell) return true;
+    void* npcCell = g_c.parentCell(g_api.vm, 0, npc);
+    void* playerCell = g_c.parentCell(g_api.vm, 0, player);
+    const bool outdoors = npcCell && playerCell && g_c.cellIsInterior &&
+                          !g_c.cellIsInterior(g_api.vm, 0, npcCell) && !g_c.cellIsInterior(g_api.vm, 0, playerCell);
+    return (npcCell == playerCell || outdoors) && Apart(player, npc) <= kTalkReach;
+}
+
 int Approach(const std::string& id) {
     void* npc = RefNamed(id);
     void* player = Player();
     if (!npc || !player || !g_c.moveTo || !g_c.parentCell) return -1;
-    const bool sameCell = g_c.parentCell(g_api.vm, 0, npc) == g_c.parentCell(g_api.vm, 0, player);
-    if (sameCell && Apart(player, npc) <= kTalkReach) {
+    if (InTalkReach(npc, player)) {
         FacePlayerTo(npc);
         return 0;
     }
@@ -454,6 +516,7 @@ void Bind(T& slot, const char* name, std::uint64_t id) {
 bool ResolveCalls() {
     Bind(g_c.player, "Game.GetPlayer", ids::kGetPlayer);
     Bind(g_c.parentCell, "ObjectReference.GetParentCell", ids::kRefGetParentCell);
+    Bind(g_c.cellIsInterior, "Cell.IsInterior", ids::kCellIsInterior);
     Bind(g_c.is3DLoaded, "ObjectReference.Is3DLoaded", ids::kRefIs3DLoaded);
     Bind(g_c.activate, "ObjectReference.Activate", ids::kRefActivate);
     Bind(g_c.addItem, "ObjectReference.AddItem", ids::kRefAddItem);
@@ -469,6 +532,7 @@ bool ResolveCalls() {
     Bind(g_c.placeAtMe, "ObjectReference.PlaceAtMe", ids::kRefPlaceAtMe);
     Bind(g_c.deleteRef, "ObjectReference.Delete", ids::kRefDelete);
     Bind(g_c.moveTo, "ObjectReference.MoveTo", ids::kRefMoveTo);
+    Bind(g_c.boxQueue, "message box queue", ids::kMessageBoxQueue);
     return g_c.player && g_c.parentCell && g_c.isMenuOpen && g_c.menuManager && ResolveGlide();
 }
 
@@ -503,7 +567,13 @@ void InstallTestRunner() {
     game.position = Position;
     game.distance = Distance;
     game.placeHere = PlaceHere;
+    game.talkingWith = TalkingWith;
+    game.dismissNotice = DismissNotice;
     game.fillTrail = true;
+    // A converted escort that has stopped walks on only with the player inside about 85 (measured); the
+    // runner rests the player up to one trail step (40) short of its spot, so the spot is the NPC's own.
+    game.followSlack = 60.0f;
+    game.followBehind = 1.0f;
     game.moveLanding = MoveLanding;
     game.walkDone = WalkDone;
     game.walkStop = WalkStop;

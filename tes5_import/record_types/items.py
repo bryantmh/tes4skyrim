@@ -1,6 +1,7 @@
 """Item/object converters: STAT, ACTI, MISC, KEYM, DOOR, FLOR, FURN, GRAS, TREE, LIGH, SLGM, ANIO, CONT."""
 
 from asset_convert.game_paths import current_namespace
+from asset_convert.nif.furniture_markers import ENTRY_BEHIND
 import os
 import struct
 
@@ -295,6 +296,32 @@ def patch_sound_descriptor_slots(writer, rectype, own_soun_ids=None,
     return patched
 
 
+# ---------------------------------------------------------------------------
+# Doors and flora
+# ---------------------------------------------------------------------------
+
+#: FULL written for a base the source left nameless: Skyrim will not use a nameless door.
+BLANK_NAME = ' '
+
+#: Source FormIDs below this are the engine's own forms (PrisonMarker is 00000004 in both games).
+ENGINE_FORM_LIMIT = 0x800
+
+
+def is_engine_form(rec: dict) -> bool:
+    """Is the record's AUTHORED FormID (before any load-order shift) an engine form?"""
+    return int(rec.get('FormID') or '0', 16) < ENGINE_FORM_LIMIT
+
+
+def _named(rec: dict) -> dict:
+    """`rec`, with BLANK_NAME as FULL when a non-engine form has none.
+
+    See: docs/commentary/tes5_import_world.md#nameless-doors
+    """
+    if get_str(rec, 'FULL') or is_engine_form(rec):
+        return rec
+    return dict(rec, FULL=BLANK_NAME)
+
+
 def convert_DOOR(rec: dict) -> bytes:
     extra = b''
     # TES5 DOOR has SNAM (open) / ANAM (close) / BNAM (loop), and xEdit plus
@@ -326,7 +353,7 @@ def convert_DOOR(rec: dict) -> bytes:
         # TES4 bits 1-3 (Automatic, Hidden, Minimal Use) map directly to TES5 bits 1-3.
         fnam = fnam & ~0x01
         extra += pack_uint8_subrecord('FNAM', fnam)
-    return _simple_object(rec, 'DOOR', extra_subs=extra)
+    return _simple_object(_named(rec), 'DOOR', extra_subs=extra)
 
 
 def convert_FLOR(rec: dict) -> bytes:
@@ -482,6 +509,9 @@ def load_furniture_models(meshes_dir, by_type, ctx=None, quiet=False,
 #: Skyrim.esm isBarStool: a behind entry plays the stool idles (IdleStoolEnter), as on vanilla WoodenBarStool.
 IS_BAR_STOOL_KYWD = 0x00074EC7
 
+#: Skyrim.esm IsTable: behind entries of a multi-seat bench work, as on vanilla CommonTableTwoBenches.
+IS_TABLE_KYWD = 0x0009B9A9
+
 #: FURN MNAM "Must Exit to Talk"; every vanilla bed sets it.
 MUST_EXIT_TO_TALK = 0x08000000
 
@@ -489,12 +519,27 @@ MUST_EXIT_TO_TALK = 0x08000000
 _PLAIN_WBDT = struct.pack('<Bb', 0, -1)
 
 
-def furn_keywords(seats) -> list:
-    """[isBarStool] when a seat came from an authored enter animation, else [].
+def _behind_only(seat, tes4_flags: int) -> bool:
+    """A sit seat the record leaves open on the behind side alone."""
+    return not seat['sleep'] and _seat_entries(seat, tes4_flags) == ENTRY_BEHIND
 
-    See: docs/commentary/asset_convert_falloutnv.md#stool-entries
+
+def furn_keywords(seats, tes4_flags: int = 0) -> list:
+    """The keyword a behind entry needs: [isBarStool] for a walk-in seat or one behind-only seat, [IsTable]
+    when a behind-only seat is one of several open seats (vanilla benches), else [].
+
+    See: docs/commentary/asset_convert_falloutnv.md#bar-stool-keyword
     """
-    return [IS_BAR_STOOL_KYWD] if any(s.get('authored_entry') for s in seats or ()) else []
+    if not seats:
+        return []
+    bits = _open_seats(seats, tes4_flags)
+    open_seats = [s for i, s in enumerate(seats) if bits >> i & 1]
+    if any(s.get('authored_entry') for s in open_seats):
+        return [IS_BAR_STOOL_KYWD]
+    if not any(_behind_only(s, tes4_flags) for s in open_seats):
+        return []
+    sits = sum(not s['sleep'] for s in open_seats)
+    return [IS_TABLE_KYWD] if sits > 1 else [IS_BAR_STOOL_KYWD]
 
 
 def _seat_entries(seat, tes4_flags: int) -> int:
@@ -506,24 +551,47 @@ def _seat_entries(seat, tes4_flags: int) -> int:
     return enabled or seat['entry_flags']
 
 
-def _furn_markers(seats, tes4_flags: int) -> bytes:
-    """MNAM, WBDT and one FNPR (type, entry flags) per seat.
+def _open_seats(seats, tes4_flags: int) -> int:
+    """MNAM seat bits: seats with a marker the record enables (all when it enables none of any seat's markers)."""
+    bits = 0
+    for i, s in enumerate(seats):
+        if not s['members'] or any(tes4_flags & (1 << m) for m, _ in s['members']):
+            bits |= 1 << i
+    return bits or (1 << len(seats)) - 1
+
+
+def _disabled_entries(seats, tes4_flags: int) -> bytes:
+    """ENAM + NAM0 per seat whose record allows fewer sides than the mesh, as vanilla CommonWritingChair01R."""
+    out = b''
+    for i, s in enumerate(seats):
+        off = s['entry_flags'] & ~_seat_entries(s, tes4_flags)
+        if off:
+            out += pack_uint32_subrecord('ENAM', i) + pack_subrecord('NAM0', struct.pack('<HH', 0, off))
+    return out
+
+
+def furn_markers(seats, tes4_flags: int) -> bytes:
+    """MNAM, WBDT, the record's disabled entry sides, and one FNPR (type, mesh entry flags) per seat.
 
     `seats` None: the NIF is unavailable, so one seat open on every side.
     `[]`: the NIF has no markers, so none is enabled.  Otherwise every seat
-    is enabled and the record's approach restriction (Oblivion enables a
-    subset of entry markers: SEChair01F/R/L share a NIF) rides on FNPR.
+    is enabled; FNPR mirrors the mesh, and the record's approach restriction
+    (Oblivion enables a subset of entry markers: SEChair01F/R/L share a NIF)
+    is ENAM + NAM0 "disabled entry points", the engine's per-record switch.
+    See: docs/commentary/asset_convert_nif.md#furniture-entry-restrictions
     """
     keep = tes4_flags & 0xC0000000
     if seats is None:
         sleep = bool(tes4_flags & 0x80000000)
         mnam = 1 | keep | (MUST_EXIT_TO_TALK if sleep else 0)
         fnpr = [(2 if sleep else 1, 0x0F)]
+        off = b''
     else:
-        mnam = ((1 << len(seats)) - 1) | keep
+        mnam = _open_seats(seats, tes4_flags) | keep
         mnam |= MUST_EXIT_TO_TALK if any(s['sleep'] for s in seats) else 0
-        fnpr = [(2 if s['sleep'] else 1, _seat_entries(s, tes4_flags)) for s in seats]
-    out = pack_uint32_subrecord('MNAM', mnam) + pack_subrecord('WBDT', _PLAIN_WBDT)
+        fnpr = [(2 if s['sleep'] else 1, s['entry_flags']) for s in seats]
+        off = _disabled_entries(seats, tes4_flags)
+    out = pack_uint32_subrecord('MNAM', mnam) + pack_subrecord('WBDT', _PLAIN_WBDT) + off
     return out + b''.join(pack_subrecord('FNPR', struct.pack('<HH', t, e)) for t, e in fnpr)
 
 
@@ -531,10 +599,10 @@ def convert_FURN(rec: dict) -> bytes:
     """FURN: keywords, PNAM (4 empty bytes the engine requires), FNAM 0, then the seat markers."""
     modl = get_str(rec, 'Model.MODL')
     seats = _FURN_SEATS.get(_furn_model_key(modl)) if modl else None
-    keywords = furn_keywords(seats)
+    keywords = furn_keywords(seats, get_int(rec, 'MNAM.Flags'))
     extra = pack_keywords(keywords) if keywords else b''
     extra += pack_subrecord('PNAM', b'\0\0\0\0') + pack_subrecord('FNAM', struct.pack('<H', 0))
-    extra += _furn_markers(seats, get_int(rec, 'MNAM.Flags'))
+    extra += furn_markers(seats, get_int(rec, 'MNAM.Flags'))
     return _simple_object(rec, 'FURN', extra_subs=extra)
 
 

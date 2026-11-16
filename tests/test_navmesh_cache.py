@@ -1658,6 +1658,59 @@ def test_worker_context_is_initialized_before_any_rebuild(monkeypatch):
     assert calls == ['init', 'prepare']
 
 
+def test_a_seeded_cell_template_gets_its_door_landings(monkeypatch):
+    """Castle Bruma's front door: its landing lies in a seeded square (no pathgrid), whose template must carry it."""
+    template = {'cell_rec': {'FormID': '00000B01', 'ParentWRLD': '0001C318', 'XCLC.X': '4', 'XCLC.Y': '36'}}
+
+    def gather_exteriors(jobs, by_type, cells, indexes, pers_doors, overhang, seedable, regrow):
+        seedable[(0x1C318, 4, 36)] = template
+
+    monkeypatch.setattr(navm_pool, '_gather_exteriors', gather_exteriors)
+    monkeypatch.setattr(navm_pool, '_merged', lambda *a: [])
+    monkeypatch.setattr(navm_pool, '_overhang_index', lambda *a: {})
+    monkeypatch.setattr(navm_pool, 'build_base_radius_index', lambda *a: {})
+    monkeypatch.setattr(navm_pool, 'landings_by_cell', lambda refrs: {0x3497: [(20441.4, 148639.9, 27252.2)]})
+    persistent = {'FormID': '00003497', 'ParentWRLD': '0001C318', 'RecordFlags': '1024'}
+    by_type = {'CELL': [persistent], 'PGRD': [{'FormID': '00000C01'}], 'WRLD': []}
+    seedable = {}
+    navm_pool.gather_navm_jobs(by_type, set(), {}, seedable=seedable)
+    assert seedable[(0x1C318, 4, 36)]['landings'] == [(20441.4, 148639.9, 27252.2)]
+
+
+def test_a_small_world_keeps_only_the_cells_a_door_lands_travellers_in():
+    """BrumaWorld is a small world: its castle forecourt (a door landing) is seeded, an empty cell is not."""
+    from tes5_import.navmesh.seeding import drop_unplayable
+    seedable = {(0x1C318, 4, 36): {'landings': [(20441.4, 148639.9, 27252.2)]},
+                (0x1C318, 3, 36): {'landings': []},
+                (0x3C, 4, 36): {}}
+    worlds = [{'FormID': '0001C318', 'DATA.Flags': '1'}, {'FormID': '0000003C', 'DATA.Flags': '0'}]
+    drop_unplayable(seedable, worlds, [])
+    assert sorted(seedable) == [(0x3C, 4, 36), (0x1C318, 4, 36)]
+
+
+def test_a_walled_off_seeded_cell_floods_from_its_door_landing():
+    """Castle Bruma's forecourt: no neighbour seam reaches it, so its landing seeds it, once."""
+    from tes5_import.navmesh.seeding import grow_into_empty
+    template = {'key': 'forecourt', 'pgrd_rec': {}, 'land_rec': None, 'cell_rec': {'XCLC.X': '4', 'XCLC.Y': '36'},
+                'landings': [(20441.4, 148639.9, 27252.2)]}
+    waves = []
+
+    def run(jobs):
+        waves.append(jobs)
+        return {}
+
+    grow_into_empty({}, {(0x1C318, 4, 36): template}, {}, lambda key: 0x01000001, run)
+    assert len(waves) == 1 and waves[0][0]['seeds'] == [(20441.4, 148639.9, 27252.2)]
+
+
+def test_landings_stay_in_their_own_worldspace():
+    """A Tamriel landing at grid 4,36 is not BrumaWorld's 4,36."""
+    tamriel = {'cell_rec': {'FormID': '00000A01', 'ParentWRLD': '0000003C', 'XCLC.X': '4', 'XCLC.Y': '36'}}
+    bruma = {'cell_rec': {'FormID': '00000B01', 'ParentWRLD': '0001C318', 'XCLC.X': '4', 'XCLC.Y': '36'}}
+    navm_pool._attach_landings([tamriel, bruma], {0x3497: [(20441.4, 148639.9, 27252.2)]}, {0x3497: 0x1C318})
+    assert tamriel['landings'] == [] and bruma['landings'] == [(20441.4, 148639.9, 27252.2)]
+
+
 def test_no_pathgrids_gathers_no_jobs_and_still_stamps_cell_grids(monkeypatch):
     """Without PGRDs no master index is built, yet a grid-less exterior CELL still gets XCLC 0,0."""
     monkeypatch.setattr(navm_pool, '_merged', lambda *a: pytest.fail('master merge built'))

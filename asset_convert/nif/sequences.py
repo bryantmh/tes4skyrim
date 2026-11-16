@@ -267,7 +267,7 @@ def _entry_signature(cb):
             getattr(cb.controller, 'type_of_controlled_color', None))
 
 
-def _shallow_clone(block):
+def shallow_clone(block):
     """A same-class copy of a pyffi block, field by declared field."""
     out = block.__class__()
     for m in block._get_names():
@@ -280,7 +280,7 @@ def _shallow_clone(block):
 
 def _clone_sibling_controller(src_ctrl):
     """A per-shape copy of a converted controller, key data shared."""
-    c2 = _shallow_clone(src_ctrl)
+    c2 = shallow_clone(src_ctrl)
     for priv in _CTRL_RESTAMP_MARKERS:
         if hasattr(src_ctrl, priv):
             setattr(c2, priv, getattr(src_ctrl, priv))
@@ -305,7 +305,7 @@ def append_sibling_entry(seq, src_cb, sib):
                 pass
     c2 = _clone_sibling_controller(src_cb.controller)
     if src_cb.interpolator is not None:
-        i2 = _shallow_clone(src_cb.interpolator)
+        i2 = shallow_clone(src_cb.interpolator)
         c2.interpolator = i2
         cb.interpolator = i2
     cb.controller = c2

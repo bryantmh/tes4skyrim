@@ -153,6 +153,9 @@ def _capture_window(hwnd: int) -> Image.Image:
 
 
 PROCESS_TERMINATE_QUERY = 0x1001
+
+#: GetExitCodeProcess's value for a process that has not exited.
+STILL_ACTIVE = 259
 SYNCHRONIZE = 0x100000
 _K32.OpenProcess.restype = wintypes.HANDLE
 _K32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
@@ -161,11 +164,15 @@ _K32.QueryFullProcessImageNameW.argtypes = (wintypes.HANDLE, wintypes.DWORD, win
 
 
 def process_image(pid: int) -> str:
-    """The full exe path of running process `pid`, or "" when it is gone."""
+    """The full exe path of running process `pid`, or "" when it is gone -- exited included, though a
+    debugger (the crash watcher) still holds it open."""
     handle = _K32.OpenProcess(PROCESS_TERMINATE_QUERY, False, pid)
     if not handle:
         return ''
     try:
+        code = wintypes.DWORD(0)
+        if not _K32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value != STILL_ACTIVE:
+            return ''
         size = wintypes.DWORD(1024)
         buf = ctypes.create_unicode_buffer(size.value)
         if not _K32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):

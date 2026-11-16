@@ -23,6 +23,7 @@ from ..base.conditions import (CTDA_OR, CTDA_RUN_ON_TARGET,
                                 convert_ctda_list_with_strings,
                                 convert_script_var_ctda)
 from .objective_text import short_objective
+from ..packages.hosts import host_record
 from .quest_falloutnv import authored_objectives, has_authored_objectives
 from ..base.text_reader import get_formid_index_offset, remap_formid
 from ..base.vanilla_quests import engine_quest_edid
@@ -269,6 +270,26 @@ _PLAYER_PROGRESS_FUNCS = frozenset({71, 73})
 
 _VAR_STATE_FUNCS = frozenset({53, 79})
 
+#: Conditions on WHERE THE SPEAKER IS (GetInCell): a greeting given only there offers its choices only there.
+_SPEAKER_PLACE_FUNCS = frozenset({67})
+
+
+def _inherited(func: int, on_target: bool, place: bool) -> bool:
+    """Whether a revealer's condition on `func` joins the gate its choice inherits."""
+    if func in _QUEST_STATE_FUNCS:
+        return True
+    if on_target:
+        return func in _PLAYER_PROGRESS_FUNCS
+    return place and func in _SPEAKER_PLACE_FUNCS
+
+
+def _timed_only(pairs: list) -> list:
+    """`pairs` with its last OR flag cleared, or [] when no condition is a timing one."""
+    if not any(struct.unpack_from('<H', ctda, 8)[0] not in _SPEAKER_PLACE_FUNCS for ctda, _ in pairs):
+        return []
+    last, cis2 = pairs[-1]
+    return pairs[:-1] + [(bytes([last[0] & ~CTDA_OR]) + last[1:], cis2)]
+
 
 def has_quest_state_condition(rec: dict) -> bool:
     """True if `rec` has any quest-TIMING condition of its own (GetStage etc.)."""
@@ -289,10 +310,10 @@ def has_quest_state_condition(rec: dict) -> bool:
             return True
 
 
-def quest_state_ctdas(rec: dict, offset: int, script_vars: dict = None) -> list:
+def quest_state_ctdas(rec: dict, offset: int, script_vars: dict = None, place: bool = False) -> list:
     """Converted [(32-byte CTDA, cis2-or-None)] for just the TIMING
     conditions on `rec` -- the gates a promoted choice target must
-    inherit. [] when the revealer has none.
+    inherit. [] when the revealer has none. `place` adds where the speaker is.
 
     See: docs/commentary/tes5_import_quest.md#timing-ctdas-a-promoted-target-inherits
     """
@@ -317,9 +338,7 @@ def quest_state_ctdas(rec: dict, offset: int, script_vars: dict = None) -> list:
             if pair is not None:
                 out.append(pair)
             continue
-        if func not in _QUEST_STATE_FUNCS and not (
-                func in _PLAYER_PROGRESS_FUNCS
-                and raw[0] & CTDA_RUN_ON_TARGET):
+        if not _inherited(func, bool(raw[0] & CTDA_RUN_ON_TARGET), place):
             continue
         try:
             ctda = convert_ctda(raw, offset)
@@ -327,10 +346,7 @@ def quest_state_ctdas(rec: dict, offset: int, script_vars: dict = None) -> list:
             continue
         if ctda is not None:
             out.append((ctda, None))
-    if out and (out[-1][0][0] & CTDA_OR):
-        out[-1] = (bytes([out[-1][0][0] & ~CTDA_OR]) + out[-1][0][1:],
-                   out[-1][1])
-    return out
+    return _timed_only(out) if out else out
 
 
 def _pack_gate_pair(pair) -> bytes:
@@ -799,6 +815,20 @@ def quest_aliases(alias_by_fid: dict, alias_packages: dict,
         subs += pack_formid_subrecord('VTCK', 0)
         subs += pack_subrecord('ALED', b'')
     return subs
+
+
+def package_host(pack_plan, fid_to_edid: dict) -> bytes:
+    """The QUST hosting every actor's package alias.
+
+    See: docs/commentary/tes5_import_package.md#package-hosts
+    """
+    host_fid = pack_plan.hosts.host
+    alias_by_fid = {}
+    alias_packages = _quest_alias_packages(pack_plan, host_fid, alias_by_fid)
+    sources = {alias_id: sorted({pack_plan.source_quest[p] for p in pkgs if p in pack_plan.source_quest})
+               for alias_id, pkgs in alias_packages.items()}
+    return host_record(host_fid, sources, len(alias_by_fid),
+                       quest_aliases(alias_by_fid, alias_packages, fid_to_edid))
 
 
 def convert_QUST(rec: dict, fid_to_edid: dict = None,

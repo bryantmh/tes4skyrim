@@ -15,13 +15,13 @@ See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
 
 import numpy as np
 from shapely import STRtree, constrained_delaunay_triangles, get_parts
-from shapely.geometry import Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import unary_union
 
 from tes5_import.navmesh.corridor import ccw_in_plan
 
 #: Bump when `apply_frozen` builds differently, so every patched cell re-caches.
-FROZEN_VERSION = 6
+FROZEN_VERSION = 7
 
 #: Plan area (u^2) below which an overlap or a refill piece is float noise.
 AREA_EPS = 1.0
@@ -34,6 +34,15 @@ SNAP_TOL = 0.5
 
 #: Height tolerance for a frozen corner reusing a generated vertex.
 FROZEN_Z_TOL = 1.0
+
+#: Plan distance and height gap inside which a generated corner is moved onto a patch corner or edge.
+WELD_TOL, WELD_Z = 4.0, 20.0
+
+#: Greatest plan distance inside which a corner beside a patch corner is that corner.
+CORNER_TOL = 8.0
+
+#: Shortest plan altitude a refill triangle may have; a thinner one is a leftover, not floor.
+SLIVER_ALT = 4.0
 
 
 def plan_area(p):
@@ -51,6 +60,12 @@ def plane_z(p, x, y):
     l0 = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d
     l1 = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d
     return l0 * az + l1 * bz + (1.0 - l0 - l1) * cz
+
+
+def altitude(p):
+    """Shortest plan altitude of a triangle given as three points."""
+    longest = max(np.hypot(p[i][0] - p[j][0], p[i][1] - p[j][1]) for i, j in ((0, 1), (1, 2), (2, 0)))
+    return 2.0 * plan_area(p) / longest if longest > 1e-9 else 0.0
 
 
 def _footprint(p):
@@ -80,6 +95,24 @@ def covered_by(tris_pts):
             and abs(plane_z(region[int(j)][0], p[0], p[1]) - p[2]) <= FROZEN_Z_TOL
             for j in tree.query(at))
     return inside
+
+
+def _newest(frozen):
+    """`frozen` without any triangle a LATER one overlaps on its storey.
+
+    A re-pin appends its triangles, so where an edit re-cut an older patch
+    triangle the later pieces are the mesh the human last saw.
+    See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
+    """
+    region = _region(frozen)
+    tree = STRtree([foot for _pts, foot in region])
+    stale = set()
+    for i, (pts, foot) in enumerate(region):
+        for j in tree.query(foot):
+            hit = foot.intersection(region[int(j)][1]) if j > i else None
+            if hit is not None and hit.area > AREA_EPS and _storey_gap(pts, region[int(j)][0], hit) <= STOREY_BAND:
+                stale.add(id(pts))
+    return [pts for pts in frozen if id(pts) not in stale]
 
 
 def _owners(corners, region, tree):
@@ -235,6 +268,78 @@ class _VertexPool(object):
         return self.add(p) if i is None else i
 
 
+def _on_segment(p, a, b):
+    """The point of segment ab nearest `p` in plan, at the segment's own height."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    span2 = dx * dx + dy * dy
+    s = min(1.0, max(0.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / span2)) if span2 > 1e-9 else 0.0
+    return (a[0] + s * dx, a[1] + s * dy, a[2] + s * (b[2] - a[2]))
+
+
+def corner_reach(tris_pts):
+    """`{corner: plan distance}` inside which another corner IS that patch corner.
+
+    CORNER_TOL, but never over a quarter of the shortest patch edge at the
+    corner, so two real corners of a small patch stay two.
+    """
+    out = {}
+    for t in tris_pts:
+        for k in range(3):
+            a, b = tuple(t[k]), tuple(t[(k + 1) % 3])
+            reach = min(CORNER_TOL, 0.25 * np.hypot(b[0] - a[0], b[1] - a[1]))
+            out[a], out[b] = min(out.get(a, reach), reach), min(out.get(b, reach), reach)
+    return out
+
+
+def _weld_target(p, reach, corner_tree, edges, edge_tree):
+    """Where generated corner `p` belongs on the patch: a corner in reach, else a point of an edge; or None."""
+    corners = list(reach)
+    near = Point(p[0], p[1]).buffer(CORNER_TOL)
+    hits = [(np.hypot(c[0] - p[0], c[1] - p[1]), c) for c in (corners[int(j)] for j in corner_tree.query(near))
+            if abs(c[2] - p[2]) <= WELD_Z]
+    hits = [(d, c) for d, c in hits if d <= reach[c]]
+    if hits:
+        return min(hits)[1]
+    hits = [(np.hypot(q[0] - p[0], q[1] - p[1]), q)
+            for q in (_on_segment(p, *edges[int(j)]) for j in edge_tree.query(near)) if abs(q[2] - p[2]) <= WELD_Z]
+    hits = [(d, q) for d, q in hits if d <= WELD_TOL]
+    return min(hits)[1] if hits else None
+
+
+def _welded(verts, tris, region):
+    """`(verts, tris)` with each generated corner near the patch boundary moved onto it.
+
+    A generator that has shifted a few units leaves its edges just beside the
+    patch's; the strip between them refills as slivers. Moving the generated
+    corner onto the patch corner or edge closes the strip. Corners landing on
+    one position share one index.
+    See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
+    """
+    reach = corner_reach(region)
+    edges = [(tuple(t[k]), tuple(t[(k + 1) % 3])) for t in region for k in range(3)]
+    corner_tree = STRtree([Point(c[0], c[1]) for c in reach])
+    edge_tree = STRtree([LineString([a[:2], b[:2]]) for a, b in edges])
+    out, moved = list(verts), set()
+    for i in sorted({k for t in tris for k in t[:3]}):
+        q = _weld_target(out[i], reach, corner_tree, edges, edge_tree)
+        if q is not None and q != out[i]:
+            out[i] = tuple(float(c) for c in q)
+            moved.add(i)
+    first = {}
+    for i, v in enumerate(out):
+        if i not in moved:
+            first.setdefault(v, i)
+    remap = {i: first.setdefault(out[i], i) for i in sorted(moved)}
+    return out, [tuple(remap.get(k, k) for k in t[:3]) + tuple(t[3:]) for t in tris]
+
+
+def _collapsed(verts, tris, before):
+    """Indices of triangles the weld flattened to a line or a point."""
+    return [i for i, t in enumerate(tris)
+            if len(set(t[:3])) < 3 or (plan_area([verts[k] for k in t[:3]]) <= AREA_EPS
+                                       < plan_area([before[k] for k in t[:3]]))]
+
+
 def _place(tris_pts, corner):
     """Index triples for `tris_pts`, dropping any whose corners collapse."""
     out = []
@@ -332,6 +437,65 @@ def _split_open_edge(verts, t, counts, movable):
     return [t]
 
 
+def _apex(verts, t):
+    """`(apex, a, b)` of triangle `t`: the corner opposite its longest plan edge, then that edge."""
+    spans = [(np.hypot(verts[t[k]][0] - verts[t[(k + 1) % 3]][0], verts[t[k]][1] - verts[t[(k + 1) % 3]][1]), k)
+             for k in range(3)]
+    k = max(spans)[1]
+    return t[(k + 2) % 3], t[k], t[(k + 1) % 3]
+
+
+def _on_frozen_corners(verts, frozen_t, kept_t, refill_t):
+    """`refill_t` with each refill-only corner within a frozen corner's reach replaced by it.
+
+    Where a generated edge crosses a frozen edge just beside its end, the
+    refill leaves a corner there; fanning the frozen triangle at it would cut
+    a sliver off the patch.
+    See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
+    """
+    fixed = {v for t in kept_t + frozen_t for v in t}
+    reach = corner_reach([[verts[k] for k in t] for t in frozen_t])
+    anchors = sorted({v for t in frozen_t for v in t})
+    remap = {}
+    for v in sorted({k for t in refill_t for k in t} - fixed):
+        near = [(np.hypot(verts[f][0] - verts[v][0], verts[f][1] - verts[v][1]), f) for f in anchors
+                if abs(verts[f][2] - verts[v][2]) <= WELD_Z]
+        if near and min(near)[0] <= reach[tuple(verts[min(near)[1]])]:
+            remap[v] = min(near)[1]
+    out = [tuple(remap.get(k, k) for k in t) for t in refill_t]
+    return [t for t in out if len(set(t)) == 3]
+
+
+def _dissolved(verts, kept_t, refill_t):
+    """`(kept_t, refill_t)` without refill slivers: each thinner than SLIVER_ALT is removed.
+
+    A flat sliver's long edge belongs to a neighbour, which is split at the
+    sliver's apex so the two sides still meet corner to corner; the new half
+    joins the refill, so kept indices hold. A sliver climbing a wall (its apex
+    more than WELD_Z off its long edge) is the leftover of a triangle the
+    human removed and is only dropped.
+    See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
+    """
+    kept_t, refill_t = list(kept_t), list(refill_t)
+    for _round in range(3):
+        thin = [t for t in refill_t if altitude([verts[k] for k in t]) < SLIVER_ALT]
+        if not thin:
+            break
+        for t in (t for t in thin if t in refill_t):
+            refill_t.remove(t)
+            c, a, b = _apex(verts, t)
+            if abs(verts[c][2] - _on_segment(verts[c], verts[a], verts[b])[2]) > WELD_Z:
+                continue
+            for pool in (kept_t, refill_t):
+                hit = next((n for n, o in enumerate(pool) if a in o and b in o and c not in o), None)
+                if hit is not None:
+                    other = pool[hit]
+                    pool[hit] = tuple(c if k == b else k for k in other)
+                    refill_t.append(tuple(c if k == a else k for k in other))
+                    break
+    return kept_t, refill_t
+
+
 def _stitch(verts, frozen_t, kept_t, refill_t):
     """Frozen triangles with each open edge split where a refill vertex lies on it.
 
@@ -367,7 +531,7 @@ def _open_edges(tris):
 
 
 def _on_edge(verts, a, b, opp, used):
-    """Vertices of `used` lying inside edge ab (SNAP_TOL in plan, STOREY_BAND in height), ordered along it;
+    """Vertices of `used` lying inside edge ab (SNAP_TOL in plan, WELD_Z in height), ordered along it;
     a vertex standing on `opp` is not one, as fanning at it would make a flat triangle."""
     pa, pb, po = verts[a], verts[b], verts[opp]
     dx, dy, dz = pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]
@@ -379,20 +543,23 @@ def _on_edge(verts, a, b, opp, used):
     off = np.abs((p[:, 0] - pa[0]) * dy - (p[:, 1] - pa[1]) * dx) / np.sqrt(span2)
     gap = np.abs(p[:, 2] - (pa[2] + s * dz))
     clear = np.hypot(p[:, 0] - po[0], p[:, 1] - po[1]) > SNAP_TOL
-    hit = (s > 1e-6) & (s < 1 - 1e-6) & (off <= SNAP_TOL) & (gap <= STOREY_BAND) & clear
+    hit = (s > 1e-6) & (s < 1 - 1e-6) & (off <= SNAP_TOL) & (gap <= WELD_Z) & clear
     return [int(used[0][i]) for i in np.argsort(s) if hit[i] and used[0][i] not in (a, b)]
 
 
-def close_t_junctions(verts, tris):
-    """`tris` with every open edge that a used vertex lies on fanned at it; new pieces appended.
+def close_t_junctions(verts, tris, first=0):
+    """`tris` with every open edge that a vertex of `tris[first:]` (the patch) lies on fanned at it; new
+    pieces appended.
 
     A vertex part-way along another triangle's edge leaves the two sides
     unlinked, and the engine does not path across. Nothing moves; the
     triangle keeps its index as the first piece, so ledge indices hold.
+    Only the patch's vertices fan: the generator's own mesh elsewhere is not
+    the patch's business (fanning it laid a triangle over others, 2026-11-15).
     See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
     """
     out = [tuple(t) for t in tris]
-    ids = np.array(sorted({v for t in out for v in t}), dtype=int)
+    ids = np.array(sorted({v for t in out[first:] for v in t}), dtype=int)
     used = (ids, np.asarray([verts[v] for v in ids], dtype=float).reshape(-1, 3))
     counts = _edge_counts(out)
     for i in range(len(out)):
@@ -478,8 +645,12 @@ def apply_frozen(verts, tris, ledges, frozen, voids, links=()):
     if not tris or not (frozen or voids):
         return verts, tris, ledges
     pool = _VertexPool(verts)
-    frozen = _snapped(pool, frozen)
-    claimed = _claims(pool, tris, frozen, _snapped(pool, voids))
+    frozen, voids = _newest(_snapped(pool, frozen)), _snapped(pool, voids)
+    welded, tris = _welded(pool.verts, tris, frozen + voids)
+    flat = _collapsed(welded, tris, pool.verts)
+    pool = _VertexPool(welded)
+    claimed = _claims(pool, tris, frozen, voids)
+    claimed.update({i: [] for i in flat if i not in claimed})
     refill = []
     for group in _groups(tris, claimed):
         sheet = [[pool.verts[k] for k in tris[i][:3]] for i in group]
@@ -491,8 +662,11 @@ def apply_frozen(verts, tris, ledges, frozen, voids, links=()):
               for (u, l, *_r) in ledges or () for i in (u, l)}
     frozen_t = ccw_in_plan(pool.verts, _place(frozen, pool.frozen_corner))
     refill_t = ccw_in_plan(pool.verts, _place(refill, pool.refill_corner))
-    out = kept_t + _stitch(pool.verts, frozen_t, kept_t, refill_t) + refill_t
+    refill_t = _on_frozen_corners(pool.verts, frozen_t, kept_t, refill_t)
+    frozen_t = _stitch(pool.verts, frozen_t, kept_t, refill_t)
+    kept_t, refill_t = _dissolved(pool.verts, kept_t, refill_t)
+    out = kept_t + frozen_t + refill_t
     ledges = _carry_ledges(pool.verts, out, len(kept_t), keep, before, ledges,
                            links)
-    new_verts, new_tris = drop_unused_verts(pool.verts, close_t_junctions(pool.verts, out))
+    new_verts, new_tris = drop_unused_verts(pool.verts, close_t_junctions(pool.verts, out, len(kept_t)))
     return new_verts, new_tris, ledges

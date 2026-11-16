@@ -1,0 +1,91 @@
+# MQ08 "Blood of the Daedra". Martin's greeting at MQ07 90 set MQ08 10: he needs a Daedric artifact. Asked about
+# it he points at the book "Modern Heretics" (15). Any Daedric quest's last stage sets 20; the book names Azura's
+# shrine, so the player does hers (DAAzura): glow dust offered at dawn or dusk, Azura speaks (20), the five vampires
+# of the Gutted Mine die (30), the shrine gives Azura's Star (100 -> MQ08 20). Martin takes the Star (30 -> 100).
+# DRAFT from tools/live/quest_brief.py (2026-11-13): not run yet.
+
+# Martin: "Daedric artifact" at 10 (INFO 00026EFA) sets 15.
+case mq08_martin_artifact
+until 300 GetStage MQ08 >= 10
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+ask "Daedric artifact"
+until 300 GetStage MQ08 >= 15
+bye if open
+end
+
+# Azura's shrine (DaAzuraShrineRef 00098206, DAAzuraStatueScript): between 5 and 7 or 17 and 19 o'clock, with glow
+# dust and level 2 or more, activating it asks "Do you wish to offer Glow Dust to the altar of Azura?"; "Yes"
+# (button 0) takes the dust, Azura speaks four lines with the player's controls off, then sets DAAzura 20. The glow
+# dust is the player's will-o-the-wisp hunt, the level their play so far: additem and setlevel stand in for both.
+case mq08_azura_offering
+run
+player.setlevel 2
+# MorrowindRuntime's level-up menu comes a moment later; `pick` waits for it (a `wait` here failed whenever the menu
+# opened inside it: "a menu holds the game", 31d, 38h).
+pick Strength
+pick Endurance
+pick Agility
+pick OK
+run
+player.additem GlowDust 1
+player.moveto 00098206
+wait 120
+run
+set gamehour to 5.2
+wait 60
+activate 00098206
+button 0
+until 600 player.GetItemCount GlowDust == 0
+until 3600 GetStage DAAzura >= 20
+end
+
+# The Gutted Mine: the five vampires (ACHR 00098207 .. 0009820B, DAAzuraVampScript OnDeath adds 1 to
+# DAAzura.vampsdead); kill stands in for each fight. DAAzuraScript sets 30 at five dead.
+case mq08_gutted_mine
+run
+player.moveto 00098207
+wait 120
+run
+00098207.kill
+00098208.kill
+00098209.kill
+0009820A.kill
+0009820B.kill
+until 300 DAAzura.vampsdead == 5
+until 300 GetStage DAAzura >= 30
+end
+
+# Back at the shrine at 30: activating it makes Azura speak twice, then sets DAAzura 100 and gives Azura's Star;
+# 100's result sets MQ08 20.
+case mq08_azura_star
+run
+player.moveto 00098206
+wait 120
+activate 00098206
+until 3600 GetStage DAAzura >= 100
+expect player.GetItemCount AzurasStar >= 1
+until 300 GetStage MQ08 >= 20
+end
+
+# Martin: "Daedric artifact" at 20 (INFO 00026D6D) offers the artifacts the player holds; "Give Azura's Star."
+# (INFO 00026D6B) sets 30, whose result sets 100, and offers "What else can I do to help?" (INFO 00026EF4, MQ10
+# == 0): Martin sends the player to Jauffre about Bruma (MQ10 10).
+case mq08_give_star
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+ask "Daedric artifact"
+ask "Give Azura's Star."
+until 300 GetStage MQ08 >= 30
+until 300 GetStageDone MQ08 100
+expect player.GetItemCount AzurasStar == 0
+ask "What else can I do to help?"
+until 300 GetStage MQ10 >= 10
+bye if open
+end

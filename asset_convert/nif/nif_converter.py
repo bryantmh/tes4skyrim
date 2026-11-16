@@ -67,6 +67,7 @@ from asset_convert.character.skin_replacement import (apply_armor_offset,
 from asset_convert.character.head_gear import (is_ground_model,
                                                strip_gnd_skin)
 from asset_convert.character.prn_skin import get_prn_bone
+from asset_convert.character.skin_bone_cap import cap_skin_bones
 from asset_convert.nif.nif_passes import (add_animobject_bged, wrap_root_transform,
                                           add_bsx_flags,
                                           collect_sequence_names,
@@ -77,7 +78,7 @@ from asset_convert.nif.nif_passes import (add_animobject_bged, wrap_root_transfo
                                           resolve_palette_strings,
                                           strip_empty_text_keys,
     zero_fallout_root_rotation)
-from asset_convert.nif.morphs import (emulate_morphs,
+from asset_convert.nif.morphs import (complete_object_palette, emulate_morphs,
                                       normalize_blend_interpolators)
 from asset_convert.nif.sequences import (apply_rest_emissive,
                                          apply_rest_visibility,
@@ -505,7 +506,7 @@ def _run_animation_passes(root, stats):
     collection; the autoplay split precedes collect_sequence_names so the
     behaviour graph is built from the final names; shader controllers attach
     after the type match, and the rest emissive follows every entry the morph
-    bake added; interpolator normalizing runs last.
+    bake added; blend normalizing and the palette fill go last.
     See: docs/commentary/asset_convert_nif.md#post-walk-animation-passes
     """
     match_seq_shader_types(root)
@@ -515,6 +516,7 @@ def _run_animation_passes(root, stats):
     attach_seq_shader_controllers(root, stats)
     apply_rest_emissive(root, stats)
     normalize_blend_interpolators(root, stats)
+    complete_object_palette(root, stats)
 
 
 def _demote_billboard_root(root, bb_mode):
@@ -1078,6 +1080,9 @@ def _convert_nif(data, fix_textures=True, src_path='', weight=0,
 
     if _is_bow_weapon:
         add_bow_bend_rig(data, stats, _bow_string_masks)
+    if has_skin and not creature:
+        stats['skin_bones_capped'] = cap_skin_bones(
+            data.roots, os.path.join(os.path.dirname(src_path), 'skeleton.nif'))
     destripify_skin_partitions(data, stats)
     if not creature:
         finalise_inv_markers(data, stats, _has_skin)

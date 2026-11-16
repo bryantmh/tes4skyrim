@@ -14,6 +14,7 @@ from asset_convert.havok.gun_anim_falloutnv import classify_stem
 from asset_convert.havok.gun_vocabulary_falloutnv import PART_PREFIX
 from asset_convert.havok.kf_decode import decode_kf
 from asset_convert.havok.kf_writer import KEY_LINEAR, KEY_QUADRATIC
+from asset_convert.nif.morphs import object_palette
 from asset_convert.nif.sequences import transform_manager
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
@@ -139,14 +140,7 @@ def _sequence(stem: str, clip, tracks: list, root, manager, controller):
 
 def _manager(root, nodes: dict):
     """(manager, controller) on the root moving the part nodes."""
-    palette = NifFormat.NiDefaultAVObjectPalette()
-    palette.scene = root
-    entries = [root] + list(nodes.values())
-    palette.num_objs = len(entries)
-    palette.objs.update_size()
-    for i, av in enumerate(entries):
-        palette.objs[i].name = av.name
-        palette.objs[i].av_object = av
+    palette = object_palette([root] + list(nodes.values()))
     return transform_manager(root, palette, list(nodes.values()))
 
 

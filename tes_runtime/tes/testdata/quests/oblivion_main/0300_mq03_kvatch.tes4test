@@ -1,0 +1,160 @@
+# MQ03 "Find the Heir" and MS48 "Breaking the Siege of Kvatch". MQ02 50 started MQ03 (10): Martin is a priest at
+# Kvatch. Savlian Matius (camp outside the ruined city) says Martin led survivors to the Chapel of Akatosh (MQ03 40)
+# and asks for help closing the Oblivion Gate (MS48 10). Inside the Gate, Ilend Vonius (20) points the way to the
+# captured Menien Goneld in a small tower (30); the Sigil Keeper's key opens the Sigil Keep (40); taking the Sigil
+# Stone closes the Gate (50). Savlian then leads the attack on the plaza (60 -> 80), the chapel is freed (90, 100),
+# and Martin agrees to come to Weynon Priory (MQ03 50 -> 60, which starts MQ04).
+# The ride to Kvatch is the player's travel: `approach` Savlian stands in for it (no follower is along).
+
+# Savlian's first greeting "Stand back, civilian!" (INFO 00024853, say once) sets MS48 5 and offers "What happened
+# here?" / "What will you do now?". "Martin" (INFO 0001E8AA, Savlian) sets MQ03 40; "Help" sets MS48 8 and offers
+# "I'll do whatever I can.", which sets MS48 10.
+# He force-greets (package MS48SavlianMatiusGreetPlayer, MS48 < 5). Until run 18a the greeting was spoken before
+# the Dialogue Menu opened and its two questions were never offered (runs 4h, 5j); since the say-once greetings
+# keep their choices until one is answered (TES4SaidOnce_<fid>), the menu lists exactly those two. "What happened
+# here?" (INFO 00098142) offers "What will you do now?" (INFO 00098143), which returns to his topics.
+case mq03_savlian
+expect GetStageDone MQ03 10
+approach SavlianMatiusRef
+hear 300 SavlianMatiusRef Stand back, civilian
+hear 300 SavlianMatiusRef Get back to the encampment
+until 300 GetStageDone MS48 5
+wait 30
+ask "What happened here?"
+ask "What will you do now?"
+until 300 MS48.donowchoice == 1
+ask "Martin"
+until 300 GetStageDone MQ03 40
+ask "Help"
+until 300 GetStageDone MS48 8
+ask "I'll do whatever I can."
+until 300 GetStageDone MS48 10
+bye
+end
+
+# The player goes through the Gate (MS48KvatchGate, a load door into the Oblivion plane) and finds Ilend Vonius. His
+# greeting offers "It's all right. What's going on?" (MS48 20); "Fine. Captain Matius needs your help." sends him back
+# alone (the other answer, MS48 25, takes him along as a follower).
+# Ilend is fighting when the player comes through; a player joins in. `defend IlendVoniusRef` has the player kill
+# whatever attacks them or Ilend (run 18b: the player stood by in god mode and Ilend was dead when the case
+# reached him; 19a: defending only the player was too late for him).
+case ms48_gate_ilend
+defend IlendVoniusRef
+activate MS48KvatchGate
+wait 60
+approach IlendVoniusRef
+talk IlendVoniusRef
+ask "It's all right. What's going on?"
+until 300 GetStageDone MS48 20
+ask "Fine. Captain Matius needs your help."
+bye
+end
+
+# Menien Goneld, caged at the top of the small tower (OblivionMqKvatchSmallTower01), greets the player: "Quickly,
+# quickly! There's no time!" (MS48 30): the Sigil Keeper's key opens the great tower.
+# The Sigil Keeper guards the cage and attacks on sight; while he fights, a `talk` to Menien only gets the greeting
+# spoken aloud with no conversation (4i), and without a `talk` he only calls for help (4j). A player kills the
+# Keeper first: kill stands in for that fight, then the player talks to Menien. His greeting is a monologue that
+# opens no menu and comes only once his cries for help have stopped (4l: 90 ticks after the activation), so the
+# case activates him and waits for the stage, not for a conversation.
+case ms48_menien
+approach MenienGoneldRef01
+run
+MS48DremoraSigilKeeperRef.kill
+wait 90
+activate MenienGoneldRef01
+until 900 GetStageDone MS48 30
+bye if open
+end
+
+# The Sigil Keeper (MS48DremoraSigilKeeperRef, in OblivionMqKvatchSmallTower01) carries the key; taking it from his
+# body sets 40 (MS48OblivionSigilKeySCRIPT OnAdd, MS48 >= 30). He is already dead (ms48_menien); RemoveAllItems
+# stands in for looting the body.
+case ms48_sigil_key
+run
+player.moveto MS48DremoraSigilKeeperRef
+wait 60
+run
+MS48DremoraSigilKeeperRef.RemoveAllItems player
+until 300 GetStageDone MS48 40
+end
+
+# The Sigil Stone (SigilStoneMS48, top of the Sigil Keep) closes the Gate: taking it puts the player back in Tamriel
+# beside the destroyed Gate, whose script sets 50 (MS48OblivionGateScript: GetDestroyed, MS48 < 50). The quest then
+# waits for the player to report to Savlian.
+case ms48_sigil_stone
+run
+player.moveto SigilStoneMS48
+wait 60
+activate SigilStoneMS48
+until 1800 GetStageDone MS48 50
+end
+
+# Savlian's greeting after the Gate offers "I'm ready. Let's go." (INFO 0001E8AC: "For Kvatch!", 60). He leads the
+# guards to the southern plaza (65, his travel's OnPackageDone); the plaza creatures' OnLoad sets 70 at 60, as does
+# his "Follow me! For Kvatch!" greeting. moveto his plaza mark stands in for following him.
+case ms48_plaza
+approach SavlianMatiusRef
+talk SavlianMatiusRef
+ask "I'm ready. Let's go."
+until 300 GetStageDone MS48 60
+bye if open
+run
+player.moveto MS48SPos1Mark
+until 900 GetStageDone MS48 70
+end
+
+# The six plaza creatures (MS48PlazaCreatureFinalScript each count a death; the sixth sets 80) are the leveled refs
+# under enable parent 0007214A. kill stands in for the battle, all six in the same instant on purpose: each
+# creature's own script adds 1 to MS48.monsterskilled, which used to lose a count when several added at once (run
+# 6a: 80 never came). The converter now routes such adds through the owning script (TES4Add_<var>).
+# Savlian's stage-80 greeting ("Ha ha! We wiped the bastards out!", INFO 00024851) sets 90. It is a goodbye: spoken, with no conversation left open for `talk` to
+# find (run 4q), so the case activates him and waits for the stage.
+case ms48_plaza_battle
+run
+0007200C.kill
+0007200D.kill
+0007200E.kill
+0007200F.kill
+00072010.kill
+00072012.kill
+until 900 GetStageDone MS48 80
+approach SavlianMatiusRef
+activate SavlianMatiusRef
+until 600 GetStageDone MS48 90
+bye if open
+end
+
+# Savlian leads the way into the Chapel of Akatosh (KvatchChapelofAkatosh); his greeting there (INFO 00028865, MS48 >=
+# 80, GetInCell the chapel) sets 100, which ends MS48 and starts MS49. Martin's greeting offers three openings; "The
+# Emperor told me to find you." leads, choice by choice, to "Come with me to Weynon Priory." (INFO 0001E8D7,
+# MQ03 < 50), which sets MQ03 50. The plaza door was not loaded from where the battle left the player
+# (run 4r), so moveto Savlian stands in for following him inside.
+case ms48_chapel_martin
+until 1800 SavlianMatiusRef.GetInCell KvatchChapelofAkatosh
+run
+player.moveto SavlianMatiusRef
+wait 120
+approach SavlianMatiusRef
+activate SavlianMatiusRef
+until 900 GetStageDone MS48 100
+bye if open
+# From MS48 95 Martin walks to the refugee camp (MS48RefugeesAtCamp, Wander r1200 at KvatchEncampmentMarker;
+# run 38a: he left the chapel before the talk). The player meets him there.
+until 7200 MartinRef.GetDistance KvatchEncampmentMarker < 1200
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+until 900 GetGlobalValue TES4DialogueOpen == 0
+talk MartinRef
+ask "The Emperor told me to find you."
+ask "You're Martin, right? The priest?"
+ask "There is a plan. We're part of it."
+ask "You are Uriel Septim's son."
+ask "The Emperor knew you were in danger."
+ask "Why would I lie to you?"
+ask "Come with me to Weynon Priory."
+until 300 GetStageDone MQ03 50
+bye if open
+end

@@ -21,7 +21,10 @@ Whenever you hit a navmesh issue in a cell (a stall, a hole, mesh under a slab, 
 pinch), send it to the user to look at in cellview. Every time, give:
 
 - the cell's EditorID **and** plugin (e.g. `NordtorX25Y0` in `Arktwend_English.esm`);
-- a clickable link to the picture below;
+- a clickable link to the picture below, showing the **WHOLE cell** with the spot
+  marked (`--game-stop x,y,z`). The user always wants the whole cell: a zoomed
+  crop tells them nothing about where the spot is. Add a zoom only as a second
+  link, never instead (user, 2026-11-13, said more than once);
 - one plain line on what looks wrong and where (coordinates).
 
 The user opens it in cellview (`python tools/cellview/server.py`; it prints its

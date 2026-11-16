@@ -1022,11 +1022,32 @@ to the master; the masters' meshes also seed.
 Seeding stays inside the authored playable area, decided once before the first
 wave from WRLD and REGN records with the masters' merged in:
 
-- **A Small world (TES4 WRLD `DATA.Flags` 0x01) is never seeded.** Oblivion
-  flags every city, Imperial City district, Oblivion realm, Camoran's Paradise,
-  Pale Pass and test world this way, and their pathgrids already cover what is
-  played. Unflagged: Tamriel, SEWorld, the Fringe, and Morrowind's WrldMorrowind.
-  That also keeps navmesh off realm lava, since every lava realm is a small world.
+- **A Small world (TES4 WRLD `DATA.Flags` 0x01) is not seeded, except a cell a
+  door lands travellers in.** Oblivion flags every city, Imperial City district,
+  Oblivion realm, Camoran's Paradise, Pale Pass and test world this way, and their
+  pathgrids cover nearly all that is played. Unflagged: Tamriel, SEWorld, the
+  Fringe, and Morrowind's WrldMorrowind. That also keeps navmesh off realm lava,
+  since every lava realm is a small world. The exception: Castle Bruma's
+  forecourt (BrumaWorld 4,36) has no pathgrid, yet the castle's front door lands
+  everyone there; unseeded it had no navmesh, the door got no Door Triangle and no
+  actor could leave the castle (run 41b, the Countess). A small-world cell whose
+  template carries a door landing ([door-reach](#door-reach)) is seeded: 10 cells in
+  Oblivion.esm -- BrumaWorld 1, ArkvedsTowerWorld 1, OblivionRD002 1, test worlds 7.
+  Landings are filed by worldspace AND square: by square alone, a Tamriel landing
+  was attached to every worldspace's cell at that grid (2,393 small-world
+  squares looked landed instead of 10). A seeded cell's own door landings are
+  offered as seeds too (`grow_into_empty`), once, beside its neighbours' seams; a
+  pathgrid cell being regrown is not offered them. That alone still built nothing
+  (imports 36, 37): `castlekeepbruma.nif` is one closed box (x 18906..20642, z
+  27148..28381) holding every 512-unit flood lattice point near the door, and the
+  porch (floor 27253) is recessed into its east face across the 4,36 / 5,36
+  border. The cell's two seeds -- the landing (20441 148640) and 5,36's seam seed
+  (20476 148633), 35 apart on the porch -- each joined no lattice point, and the
+  flood joins seeds only through those. So when the lattice floods nothing,
+  `seeded_graph` walks the job's landings to its other seeds with
+  `door_reach.join_missing_doors`: BrumaWorld 4,36 gets an 8-triangle porch mesh
+  holding door 000303F0, and off-mesh doors in Oblivion.esm went 83 -> 82 (import 38;
+  no FormID moved; the protected cells unchanged).
 - **Where a worldspace authors Border regions (REGN record flag 0x40), a cell
   is seeded only if a corner, edge midpoint or its centre lies in one of their
   areas.** The areas enclose the playable land: 4,395 of Tamriel's 4,832
@@ -1129,6 +1150,16 @@ that already had navmesh went from 5.3 s to 6.0 s, and the 307 new interior
 navmeshes added about 14 s. The new NAVMs moved one existing FormID: a BPTD
 was rehashed off the slot a new NAVM took first. The user accepted both the
 slowdown and that FormID move.
+
+**Seeded exterior cells get their landings too** (`pool.gather_navm_jobs`). A door
+with no Door Triangle is linked at its landing (`worker._at_landings`), but the
+landings were attached to the pathgrid jobs only, so a seeded exterior cell's
+template (a land cell with no pathgrid, grown from its neighbours) had none.
+Castle Bruma's front door (REFR 000303F0, BrumaWorld cell 4,36, a seeded cell)
+stands 150 above its landing, got no Door Triangle and no XNDP, and no actor
+could route through it: in run 41a/41b the Countess, on her way to the Chapel,
+stood still in the great hall and even on the landing outside. Census: 26,278
+seeded templates, 999 door landings in seeded squares (temp/seed_landings.py).
 
 #### <a id="exterior-water-height"></a>A watered exterior cell with no XCLW still has water
 

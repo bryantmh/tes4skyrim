@@ -654,6 +654,23 @@ SulinusVassinus. No CharacterGen script changes and `TES4NPCConv<plugin>.psc`
 is byte-identical, because those chains are HELLO-headed and belong to the
 scheduler path below, not this one.
 
+### <a id="walk-survives-a-dropped-line"></a>The walk asks again for a line that did not start
+
+**Code:** `TES4Polyfill.ConverseLine`, `_BegunLate`; the walk itself is the generated
+`TES4_ConvRoute_<plugin>.Run` (`tes5_import/dialogue/conversation_routes.py`).
+
+A polled conversation survives a dropped `Say`: its script asks again on the next pass. The
+generated walk has nothing behind it, and it ended for good at the first line that did not begin.
+MQ12's Jauffre / Martin exchange (six lines gated `MQ12.convStage == 0..5`) stopped after line 3 in
+4 of 5 headless runs (29p, 29r1-3; `convStage` stayed 3, stage 26 never set). `ConverseLine` now
+waits 1.5 s for `LineBegan` to name a line `SayLine` gave up on, and asks again up to twice; a
+topic under which nothing qualifies costs about 4 s more before the walk ends. After: 6 of 6
+(29s, 29t1-2, 29u1-3). Why line 4 was dropped is NOT measured: with Papyrus tracing on, the walk
+never dropped a line (29t), so the trace changes the timing it would have shown.
+
+The same runs found the lifted stage advance guarded `GetStage() < N` where the quest already
+stood past N ([script_convert.md](script_convert.md#stage-advances-survive)).
+
 ---
 
 ## The NPC-to-NPC conversation scheduler
@@ -1862,6 +1879,14 @@ HELO lines = 53%), 2730=1h, 10922=4h, 32767=12h, 65535=24h.
 
 SAY-ONCE lines (flag 0x04) are already permanently locked after one play, so a
 reset would only weaken them; they keep 0.
+
+A line that writes choices (TCLT) keeps 0 too. Vanilla Skyrim.esm has 6 Hello or
+Greeting INFOs with choices, and all 6 have reset 0; the 0.5 h value is only on
+lines without choices (2,809 of 5,281). Oblivion re-offers a greeting's choices
+every time the player talks. With a reset, a quest greeting spoken once was
+skipped for half an hour, and its choices with it. Jauffre's "They've taken it!"
+(stage 27, choice "I found Martin. He is safe.", MQ04) was replaced by a hello
+with no choices, and the quest could not go on until the timer ran out (run 39e).
 
 ## <a id="info-tclt-choice-filter"></a>INFO TCLT: which choice links survive
 

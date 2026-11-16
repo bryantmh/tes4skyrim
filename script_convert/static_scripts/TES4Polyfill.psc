@@ -892,6 +892,20 @@ Function EvaluatePackage(Actor akActor) Global
   akActor.EvaluatePackage()
 EndFunction
 
+; From a package's OnEnd fragment: re-checks `akActor`'s packages once `akEnded`
+; is no longer its current one (at most 2 s later). A re-check made inside the
+; end left the next package chosen but never started (Baurus at the sewer gate
+; wheel, runs 27c / 54c); a later one starts it.
+; See docs/commentary/tes5_import_package.md#once-per-day-completion-latch
+Function ReevaluateAfterEnd(Actor akActor, Package akEnded) Global
+  Int waited = 0
+  While akActor.GetCurrentPackage() == akEnded && waited < 20
+    Utility.Wait(0.1)
+    waited += 1
+  EndWhile
+  akActor.EvaluatePackage()
+EndFunction
+
 ; The mod event `akQuest`'s TES4_StagePackageAlias aliases listen on.
 String Function StageEventName(Quest akQuest) Global
   Return "TES4StageSet" + akQuest.GetFormID()
@@ -902,6 +916,12 @@ EndFunction
 ; See docs/commentary/script_convert.md#setstage-re-evaluates-alias-packages
 Function StageSet(Quest akQuest) Global
   akQuest.SendModEvent(StageEventName(akQuest))
+  akQuest.SendModEvent(AnyStageEventName())
+EndFunction
+
+; The event an alias gated on more quests than it can name listens on.
+String Function AnyStageEventName() Global
+  Return "TES4StageSetAny"
 EndFunction
 
 ; TES4 SetStage on a quest with no converted script (one that has uses its TES4SetStage).
@@ -1229,6 +1249,66 @@ Function DestroyAfterAnimation(ObjectReference akRef, FormList akDestroyed) Glob
   SetDestroyed(akRef, akDestroyed)
 EndFunction
 
+; TES4 `target.Activate actor 1`: run the target's OnActivate block with `actor`
+; as its action ref.  A converted door script skips its block for an NPC that
+; merely walks through the door; the target is listed in akUses so its
+; OnActivate can tell this call from that, and takes itself off the list.
+Function ActivateScripted(ObjectReference akTarget, ObjectReference akActor, FormList akUses) Global
+  If akTarget == None
+    Return
+  EndIf
+  If akTarget.GetBaseObject() as Door
+    akUses.AddForm(akTarget)
+  EndIf
+  akTarget.Activate(akActor)
+EndFunction
+
+; TES4 `ref.AddScriptPackage Pkg`: the package runs above the actor's whole
+; list from this call until it completes, is removed, or another is added.
+; A forced package no actor lists is gated on a faction of its own; akPackages
+; and akArmed pair each such package with its faction by index.  A package
+; that is not in the list is only re-checked.
+; See docs/commentary/tes5_import_package.md#package-hosts
+Function AddScriptPackage(ObjectReference akRef, Package akPackage, FormList akPackages, FormList akArmed) Global
+  Actor who = akRef as Actor
+  If who == None
+    Return
+  EndIf
+  DisarmScriptPackages(who, akArmed)
+  Int at = -1
+  If akPackages && akArmed
+    at = akPackages.Find(akPackage)
+  EndIf
+  If at >= 0
+    who.AddToFaction(akArmed.GetAt(at) as Faction)
+  EndIf
+  who.EvaluatePackage()
+EndFunction
+
+; TES4 `ref.RemoveScriptPackage`: the actor goes back to its own list.
+Function RemoveScriptPackage(ObjectReference akRef, FormList akArmed) Global
+  Actor who = akRef as Actor
+  If who == None
+    Return
+  EndIf
+  DisarmScriptPackages(who, akArmed)
+  who.EvaluatePackage()
+EndFunction
+
+Function DisarmScriptPackages(Actor akActor, FormList akArmed) Global
+  If akArmed == None
+    Return
+  EndIf
+  Faction[] held = akActor.GetFactions(-128, 127)
+  Int i = held.Length
+  While i > 0
+    i -= 1
+    If akArmed.HasForm(held[i])
+      akActor.RemoveFromFaction(held[i])
+    EndIf
+  EndWhile
+EndFunction
+
 ; ==========================================================================
 ; Spoken lines: TES4 `set T to [ref.]Say[To] [target,] Topic`
 ; ==========================================================================
@@ -1539,6 +1619,24 @@ Float Function CONVERSE_PENDING() Global
   Return -77.0
 EndFunction
 
+; The length of a line LineBegan names within 1.5s of a SayLine that gave up
+; on it (ConverseLine's speaker still carries CONVERSE_PENDING), else 0.0.
+Float Function _BegunLate(Actor akSpeaker) Global
+  Float t = 0.0
+  While t < 1.5
+    If akSpeaker.GetActorValue("Variable05") != CONVERSE_PENDING()
+      Float len = akSpeaker.GetActorValue("Variable09")
+      If len < 0.02
+        len = 4.0
+      EndIf
+      Return len
+    EndIf
+    Utility.Wait(0.1)
+    t += 0.1
+  EndWhile
+  Return 0.0
+EndFunction
+
 ; One line of a TES4 StartConversation walk (the generated ConvRoute scripts):
 ; say akTopic, wait the line out, and return the played INFO's low 24 FormID
 ; bits, or 0 when nothing under the topic played.  Variable05 is borrowed only
@@ -1550,11 +1648,20 @@ Int Function ConverseLine(Actor akSpeaker, Topic akTopic) Global
   Float saved = akSpeaker.GetActorValue("Variable05")
   Float len = 0.5
   Int tries = 0
+  Int drops = 0
   Bool busy = True
   While busy && tries < 40
     akSpeaker.SetActorValue("Variable05", CONVERSE_PENDING())
     len = SayLine(akSpeaker, akTopic, 4.0)
     busy = len == 0.5 && akSpeaker.GetActorValue("Variable05") == CONVERSE_PENDING()
+    If !busy && len <= 0.0 && drops < 2
+      ; SayLine gave up on the line.  It may still begin (a busy engine starts
+      ; it after SayLine's short wait), or it was refused for the moment: the
+      ; walk has no poll behind it to ask again, so ask again here.
+      len = _BegunLate(akSpeaker)
+      busy = len <= 0.0
+      drops += 1
+    EndIf
     If busy
       Utility.Wait(0.5)   ; another SayLine owns this speaker: retry, as SayLine's own callers do
     EndIf

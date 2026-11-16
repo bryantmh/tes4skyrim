@@ -440,7 +440,8 @@ void OpenSheet(std::uint8_t depth) {
 // The hotkey or the perks menu's button toggles the window, which opens only
 // over the perks -- in the world on a build that cannot see that menu; a
 // script's class or birthsign menu, then a pending level-up step, open before
-// anything else.
+// anything else. Ticks at UI time: it fills and paints movies.
+// See: docs/commentary/morrowind_runtime.md#movies-are-touched-at-ui-time
 void Tick() {
     const bool down = HotkeyDown();
     const bool pressed = down && !g_keyWasDown && SheetEnabled();
@@ -498,7 +499,7 @@ void InstallCharacterSheet() {
     input.tick = OnTick;
     Menu().SetInput(input);
     const bool ticking = stats && levelUp && CanPostToMainThread() &&
-                         StartTick(PostToMainThread, kTickMs, Tick);
+                         StartTick(PostToUiThread, kTickMs, Tick);
     // Only a working level-up step can raise the attribute that caps a skill.
     SetSkillCapEnabled(ticking && IniInt("SkillCap", kDefaultOn) != 0);
     Log("sheet: stats window %s, level-up %s, perks button %s, hotkey %d %s, skill cap %s",

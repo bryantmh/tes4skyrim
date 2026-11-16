@@ -5,13 +5,16 @@ The import and cellview both run it, so what cellview shows is what the plugin s
 See: docs/commentary/tes5_import_pipeline.md#phase-4-navmesh-post-passes
 """
 
+import itertools
 import os
 import pickle
 import time
 
 from core.navmesh_options import set_navmesh_plugin
 from output_layout import assets_for
+from ..base.master_export import MasterExport
 from ..base.navmesh_pins import use_plugin
+from ..base.text_reader import get_formid
 from . import pool
 from .edge_links import build_edge_links
 from .lattice.build import set_activators
@@ -45,14 +48,40 @@ def _split(cache, writer) -> None:
         print(f"  Navmesh split: {n_split} interior meshes split into per-component NAVMs")
 
 
-def build_navmeshes(by_type, writer, ctx, export_dir, plugin) -> tuple:
+def _kept(rec, here) -> bool:
+    """Whether `rec` can change a build whose placed FormIDs are `here`."""
+    return not rec.get('ParentCELL') or bool(rec.get('XTEL.Door')) or get_formid(rec, 'FormID') in here
+
+
+def _only_interiors(by_type, master_export, interiors) -> tuple:
+    """(records, master export) cut to what building only `interiors` (CELL FormIDs) reads: every record
+    placed in another cell goes, except a teleport door, whose traveller may land in one of them, and a
+    pathgrid (whether the plugin has any decides whether it is navmeshed at all).  A FormID with any
+    version placed in them keeps every version, so an override moving a master's ref out still wins.
+    The lists are fresh, so the build's additions never reach the caller's."""
+    masters = list(master_export.items()) if master_export else []
+    here = {get_formid(r, 'FormID') for r in itertools.chain(
+        (r for recs in by_type.values() for r in recs), (r for _k, r in masters))
+            if r.get('ParentCELL') and get_formid(r, 'ParentCELL') in interiors}
+    own = {sig: [r for r in recs if _kept(r, here)] for sig, recs in by_type.items()}
+    own['CELL'] = [c for c in by_type.get('CELL', []) if get_formid(c, 'FormID') in interiors]
+    own['PGRD'] = list(by_type.get('PGRD', ()))
+    if master_export:
+        master_export = MasterExport((k, r) for k, r in masters if _kept(r, here))
+    return own, master_export
+
+
+def build_navmeshes(by_type, writer, ctx, export_dir, plugin, interiors=None) -> tuple:
     """(navm_cache, base_model_by_fid, door_fids, relinked master navmeshes) for one plugin.
 
     `ctx` is the import's override context or None; `plugin` names the pin file the build reads ('' for
-    none).
+    none).  `interiors`, a set of interior CELL FormIDs, builds only those and leaves the geometry cache
+    unstamped.
     """
     master_index = getattr(ctx, 'master_index', None) if ctx else None
     master_export = getattr(ctx, 'master_export', None) if ctx else None
+    if interiors is not None:
+        by_type, master_export = _only_interiors(by_type, master_export, interiors)
     base_model = pool.build_base_model_index(by_type, master_export)
     door_fids = pool.build_door_fid_set(by_type, master_export)
     acti_fids = pool.build_activator_fid_set(by_type, master_export)
@@ -65,7 +94,7 @@ def build_navmeshes(by_type, writer, ctx, export_dir, plugin) -> tuple:
     cache = pool.precompute_navmeshes(
         by_type, writer, base_model, door_fids, collision_cache=pool.collision_cache_chain(export_dir),
         master_index=master_index, master_export=master_export, activator_fids=acti_fids,
-        master_navms=master_navms)
+        master_navms=master_navms, stamp=interiors is None)
     _dump(cache)
     relinked = _link(cache, master_index, master_navms if cache else {})
     _split(cache, writer)

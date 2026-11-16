@@ -236,6 +236,9 @@ comes from what actually solved 46 recent bugs
    - `references/skse64-master`: engine class layouts and addresses.
    - `references/openmw`: how Morrowind behaves.
    - `references/xOBSE-master`: what an Oblivion or OBSE function really does.
+   - `references/fnv_decomp`: byte-matching C++ decomp of FalloutNV.exe
+     1.4.0.525. Oblivion's engine lineage, so read it before disassembling
+     either source game (packages, conditions, script functions).
    - `references/xEdit`: `Core/` has every record type's binary layout, so it's
      the first stop for a layout lookup.
    - For meshes: `references/nif*.xml` and the NifSkope source.

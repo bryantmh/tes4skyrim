@@ -17,10 +17,13 @@ from core.worker_budget import worker_count
 from asset_convert.game_paths import (current_namespace,
                                       set_namespace)
 from script_convert.constants import (sanitize_name, papyrus_script_name,
+                                     REMOTE_HOLD, REMOTE_RELEASE,
                                      SERVICE_MENU_CALL, UDF_WIDE_TYPES,
                                      is_generated_script_type, script_prefix)
 from script_convert.conversation_sequence import (
+    choice_tested_vars,
     sequence_gate,
+    split_choice_writes,
     split_counter_step,
     split_stage_advances,
     split_turn_handoff,
@@ -56,7 +59,8 @@ from tes5_import.dialogue.conversations import (build_conversation_plan,
                                                 generate_driver_psc)
 from tes5_import.dialogue.say_topics import build_force_greet_slots
 from tes5_import.dialogue.say_topics import build_force_flee_slots
-from tes5_import.dialogue.unlocks import build_unlock_plan
+from tes5_import.dialogue.unlocks import (SAID_ONCE_PREFIX, build_unlock_plan,
+                                          said_once_global)
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +140,7 @@ def script_worker_init(xref, output_dir, info_reveals, service_topics,
                         music_cues=None, namespace=None,
                         quest_delays=None, quest_objectives=None,
                         conversation_starts=None, force_greet_slots=None,
-                        force_flee_slots=None):
+                        force_flee_slots=None, choice_tests=None):
     """Seed one worker with the parent state that spawning does not carry.
 
     `namespace` is installed FIRST: the generated-script prefix derives from
@@ -161,7 +165,8 @@ def script_worker_init(xref, output_dir, info_reveals, service_topics,
                        stage_reveals=stage_reveals,
                        quest_script_vars=quest_script_vars or {},
                        quest_edid_by_fid=quest_edid_by_fid or {},
-                       quest_delays=quest_delays or {})
+                       quest_delays=quest_delays or {},
+                       choice_tests=choice_tests or {})
     if quest_objectives:
         set_quest_objectives(quest_objectives)
     # Class-level, so every ScriptConverter a worker builds sees the measured
@@ -267,10 +272,11 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
     if message_menus:
         print(f'    Button menus: {sum(len(v) for v in message_menus.values())} '
               f'MessageBox sites in {len(message_menus)} scripts')
+    quest_edids = quest_edids_by_fid(by_type)
     initargs = (xref, output_dir, unlock_plan['info_reveals'],
                 service_menu_topics(by_type),
                 unlock_plan['stage_reveals'], say_durations,
-                quest_script_vars, quest_edids_by_fid(by_type),
+                quest_script_vars, quest_edids,
                 topic_reveals(by_type, unlock_plan), message_menus,
                 bounds_cache, chargen_menu_plan(export_dir), say_topics,
                 _load_music_cues(output_dir), current_namespace(),
@@ -278,7 +284,8 @@ def build_script_context(export_dir: str, output_dir: str) -> dict:
                 quest_objective_indices(by_type),
                 conversation_starts,
                 build_force_greet_slots(by_type),
-                build_force_flee_slots(by_type))
+                build_force_flee_slots(by_type),
+                choice_tested_vars(by_type.get('INFO', []), quest_script_vars, quest_edids))
     stats['written'] = _drain_written()
     return {'initargs': initargs, 'scpt_work': scpt_work,
             'info_work': info_work, 'qust_work': qust_work, 'stats': stats,
@@ -645,8 +652,10 @@ def build_quest_script_vars(by_type: dict) -> dict:
 
 
 def _info_begin_fragment(body_lines: list, seq_gate: str,
-                         length: float) -> list:
-    """Fragment_1 (OnBegin): report the line, then hand the turn over.
+                         length: float, said_once: list = (), holds=None) -> list:
+    """Fragment_1 (OnBegin): report the line, move `said_once`, then hand the turn over.
+
+    With `holds` (CrossRefGraph.holds) the gate test and the handoff sit in the owner's hold.
 
     The handoff belongs here rather than in OnEnd because TES4's synchronous
     Say let the result script hand over in the frame the line STARTED. Only a
@@ -660,11 +669,16 @@ def _info_begin_fragment(body_lines: list, seq_gate: str,
             gated_rest, _ = split_stage_advances(rest)
             handoff, _ = split_turn_handoff(counter_step, gated_rest)
     out = ['Function Fragment_1(ObjectReference akSpeakerRef)',
-           f'  TES4Polyfill.LineBegan(akSpeakerRef, {length:g}, Self.GetFormID())']
+           f'  TES4Polyfill.LineBegan(akSpeakerRef, {length:g}, Self.GetFormID())',
+           *said_once]
     if handoff:
+        owner = seq_gate.partition('.')[0]
+        held = holds is not None and holds(owner)
+        out += [f'  {owner}.{REMOTE_HOLD}()'] if held else []
         out.append(f"  If {seq_gate}  ; still this line's turn")
         out.extend('  ' + b for b in handoff)
         out.append('  EndIf')
+        out += [f'  {owner}.{REMOTE_RELEASE}()'] if held else []
     return out + ['EndFunction', '']
 
 
@@ -699,105 +713,133 @@ def _info_end_fragment(body_lines: list, seq_gate: str, reveals,
     return out + ['EndFunction', '']
 
 
+#: Seconds past a line's own length after which its OnEnd counts as lost; an unvoiced line has no length.
+_END_GRACE = 3.0
+_UNVOICED_WAIT = 12.0
+
+
+def _end_watch(begin: list, end: list, length: float) -> list:
+    """The two fragments, with OnBegin running a non-empty OnEnd itself when the engine never does.
+
+    Skyrim fires no OnEnd for a line spoken out of the player's earshot,
+    and Oblivion's result script did not depend on being heard. A count of
+    lines begun and not yet ended keeps one INFO's overlapping speakers apart;
+    OnEnd waits (2 s at most) until OnBegin's own steps are done, as a cut line's
+    OnEnd can run while they are under way.
+    See: docs/commentary/script_convert.md#lost-line-ends
+    """
+    if len(end) <= 4:
+        return begin + end
+    wait = length + _END_GRACE if length > 0 else _UNVOICED_WAIT
+    begun = [begin[0], '  TES4_pending += 1', *begin[1:-2], '  TES4_stepped += 1',
+             f'  Utility.Wait({wait:g})', '  If TES4_pending > 0',
+             '    Fragment_0(akSpeakerRef)  ; its OnEnd never came', '  EndIf', *begin[-2:]]
+    ended = [end[0], '  If TES4_pending <= 0', '    Return', '  EndIf', '  TES4_pending -= 1',
+             '  Int TES4_waits = 0', '  While TES4_stepped <= 0 && TES4_waits < 40', '    Utility.Wait(0.05)',
+             '    TES4_waits += 1', '  EndWhile', '  TES4_stepped -= 1', *end[1:]]
+    return ['Int TES4_pending', 'Int TES4_stepped', ''] + begun + ended
+
+
 def _info_batch(records: list, output_dir: str, xref: CrossRefGraph,
                 stats: dict, info_reveals: dict = None,
                 service_topics: dict = None):
     """Convert a batch of INFO records into `TES4_TIF__<fid>` fragment scripts.
 
-    Fragment_1 (OnBegin) calls LineBegan with the line's length and FormID;
+    Fragment_1 (OnBegin) calls LineBegan and moves said-once globals;
     Fragment_0 (OnEnd) sets `info_reveals` unlock globals, runs the TES4 result,
-    opens the `service_topics` menu, then calls LineEnded. Must match the VMADs
-    the importer writes from the same plans.
+    opens the `service_topics` menu, then calls LineEnded. An INFO whose
+    fragment would do nothing gets none (info_needs_fragment, shared with the
+    importer's VMAD writer). Must match the VMADs the importer writes.
 
     See: docs/commentary/script_convert.md#polled-conversations
     """
     info_reveals = info_reveals or {}
     service_topics = service_topics or {}
-    say_durations = ScriptConverter.say_durations or {}
-
     for rec in records:
-        result_script = info_result_script(rec)
-        has_script = bool(result_script.strip())
         formid = rec.get('FormID', '')
         if not formid:
             continue
-        try:
-            fid24 = int(formid, 16) & 0xFFFFFF
-        except (TypeError, ValueError):
-            fid24 = 0
-        reveals = info_reveals.get(fid24, [])
-        service_kind = service_topics.get(rec.get('ParentDIAL', ''), '')
-        # Skip INFOs whose fragment would do nothing.  The engine BINDS an
-        # INFO's fragment script when it selects that line -- loading and
-        # linking the .pex before a word is spoken -- so a fragment with no
-        # behaviour is a per-line cost paid on the dialogue path.  Must stay
-        # in lockstep with the importer's VMAD writer: both call this.
-        if not info_needs_fragment(rec, info_reveals, service_topics):
-            stats['info_total'] += 1
+        has_script = bool(info_result_script(rec).strip())
+        needed = info_needs_fragment(rec, info_reveals, service_topics)
+        stats['info_total'] += int(has_script or not needed)
+        if not needed:
             stats['info_ok'] += 1
             continue
-        # This line's own measured length (all of its responses, played back
-        # to back).  0 when the line has no voice file: SayLine then falls
-        # back to the topic's longest line.
         try:
-            length = float(say_durations.get(f'info:{formid.upper()}') or 0.0)
-        except (TypeError, ValueError):
-            length = 0.0
-        seq_gate = sequence_gate(rec, _WORKER_CTX.get('quest_script_vars') or {},
-                             _WORKER_CTX.get('quest_edid_by_fid') or {})
-
-        if has_script:
-            stats['info_total'] += 1
-
-        try:
-            body_lines = []
-            prop_refs = {}
-            if has_script:
-                conv = primed_converter(rec, xref, result_script)
-                body_lines = conv.convert_fragment(result_script, 'TopicInfo')
-                prop_refs = dict(conv.sc.property_refs)
-
-            script_name = f'{script_prefix("_TIF__")}{formid}'
-            out_lines = [
-                f'ScriptName {script_name} extends TopicInfo Hidden',
-                '',
-            ]
-            declared = set()
-            for gname in reveals:
-                declared.add(gname.lower())
-                out_lines.append(f'GlobalVariable Property {gname} Auto')
-            if prop_refs:
-                # Merge case-variant keys, most specific type wins — the same
-                # rule the QUST-stage and standalone emitters already apply.
-                # Without it this site declared whichever spelling sorted first:
-                # _preload_scro_refs types a QUST SCRO as the generic `Quest`,
-                # then _convert_ref adds the specific TES4_<script> type, and if
-                # the two EditorID spellings differ in case they land under
-                # different keys.  The generic one won and every cross-script
-                # variable read through it failed ("field or property StartTimer
-                # not found" on a plain Quest).
-                out_lines += property_declarations(prop_refs,
-                                                   declared)
-            if declared:
-                out_lines.append('')
-
-            out_lines += _info_begin_fragment(body_lines, seq_gate, length)
-            out_lines += _info_end_fragment(body_lines, seq_gate, reveals,
-                                            service_kind, length)
-
-            # GetInCell prefix-family helpers the fragment body calls by name.
-            # Only a scripted INFO has a converter (and therefore a body).
-            if has_script:
-                out_lines.extend(conv.get_cell_family_helpers())
-
-            papyrus = '\n'.join(out_lines)
+            script_name, papyrus = _info_fragment_psc(
+                rec, xref, info_reveals.get(int(formid, 16) & 0xFFFFFF, []),
+                service_topics.get(rec.get('ParentDIAL', ''), ''))
             write_psc(output_dir, script_name, papyrus)
-            if has_script:
-                stats['info_ok'] += 1
+            stats['info_ok'] += int(has_script)
             stats['todo_count'] += papyrus.count(';TODO')
         except Exception as e:
             stats['info_err'] += 1
             stats['errors'].append(f'INFO {formid}: {e}')
+
+
+def _info_line_length(formid: str) -> float:
+    """The INFO's measured voice length, all responses; 0 when unvoiced."""
+    try:
+        return float((ScriptConverter.say_durations or {}).get(
+            f'info:{formid.upper()}') or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _said_once_lines(fid24: int, reveals) -> list:
+    """Begin-fragment lines moving the said-once globals among `reveals`.
+
+    The INFO's own global goes 0 -> 1 (begun); the global of a line it
+    answers goes 1 -> 2, which retires that line.
+    """
+    own = said_once_global(fid24)
+    out = []
+    for gname in reveals:
+        if gname.startswith(SAID_ONCE_PREFIX):
+            before, after = (0, 1) if gname == own else (1, 2)
+            out += [f'  If {gname}.GetValue() == {before}',
+                    f'    {gname}.SetValue({after})', '  EndIf']
+    return out
+
+
+def _info_fragment_psc(rec: dict, xref: CrossRefGraph, reveals: list,
+                       service_kind: str) -> tuple:
+    """(script name, Papyrus source) of one INFO's TES4_TIF__<fid> fragment.
+
+    Property declarations merge case-variant keys, most specific type wins,
+    as the QUST-stage and standalone emitters do.
+    """
+    formid = rec['FormID']
+    result_script = info_result_script(rec)
+    body_lines, prop_refs, conv = [], {}, None
+    if result_script.strip():
+        conv = primed_converter(rec, xref, result_script)
+        body_lines = conv.convert_fragment(result_script, 'TopicInfo')
+        prop_refs = dict(conv.sc.property_refs)
+    length = _info_line_length(formid)
+    seq_gate = sequence_gate(rec, _WORKER_CTX.get('quest_script_vars') or {},
+                             _WORKER_CTX.get('quest_edid_by_fid') or {})
+    tested = (_WORKER_CTX.get('choice_tests') or {}).get(int(formid, 16) & 0xFFFFFF, ())
+    early, body_lines = split_choice_writes(body_lines, tested)
+    script_name = f'{script_prefix("_TIF__")}{formid}'
+    out = [f'ScriptName {script_name} extends TopicInfo Hidden', '']
+    declared = {gname.lower() for gname in reveals}
+    out += [f'GlobalVariable Property {gname} Auto' for gname in reveals]
+    if prop_refs:
+        out += property_declarations(prop_refs, declared)
+    if declared:
+        out.append('')
+    begin = _info_begin_fragment(
+        body_lines, seq_gate, length,
+        _said_once_lines(int(formid, 16) & 0xFFFFFF, reveals) + early, xref.holds)
+    end = _info_end_fragment(
+        body_lines, seq_gate,
+        [g for g in reveals if not g.startswith(SAID_ONCE_PREFIX)],
+        service_kind, length)
+    out += _end_watch(begin, end, length)
+    if conv is not None:
+        out.extend(conv.get_cell_family_helpers())
+    return script_name, '\n'.join(out)
 
 
 def _qust_batch(records: list, output_dir: str, xref: CrossRefGraph,
@@ -1106,14 +1148,14 @@ def build_vmad_info_fragment(info_formid: str, property_values: dict = None,
     return bytes(buf)
 
 
-def build_vmad_package_fragment(script_name: str,
-                                value_props: dict = None) -> bytes:
+def build_vmad_package_fragment(script_name: str, value_props: dict = None,
+                                object_props: dict = None) -> bytes:
     """VMAD attaching `script_name` to a PACK, whose `Fragment_0` runs OnEnd.
 
     xEdit wbVMADFragmentedPACK: the script block, then bind version 2, flags
     (bit1 = OnEnd), FileName, and one entry per set flag bit.
     """
-    buf = build_vmad_object_script(script_name, value_props=value_props)
+    buf = build_vmad_object_script(script_name, object_props, value_props)
     buf += struct.pack('<bB', 2, 0x02) + _pack_wstring(script_name)
     buf += struct.pack('<B', 1) + _pack_wstring(script_name)
     return buf + _pack_wstring('Fragment_0')

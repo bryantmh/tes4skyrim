@@ -1,0 +1,87 @@
+# MQ06 "Dagon Shrine". MQ05 100 set MQ06 10: the shrine is in Lake Arrius Caverns. Entering sets 20; the
+# Doorkeeper takes the password (30); Harrow takes the initiate's possessions (40) and leads to the shrine, where
+# Mankar Camoran speaks (45) and leaves through his portal to Paradise with the Amulet (49, 50). Ruma offers the
+# sacrifice; refusing sets 51 and the shrine attacks. Taking the Mysterium Xarxes from the altar sets 60, leaving
+# the caverns 70, Jauffre's welcome at Cloud Ruler 80, and Martin's "Can the Xarxes lead us to Camoran?" 100.
+# DRAFT from tools/live/quest_brief.py (2026-11-12): not run yet.
+
+# The ride to Lake Arrius is the player's travel: moveto the Doorkeeper stands in. MQ06Script sets 20 once the
+# player is in LakeArriusCaverns. The Doorkeeper's greeting offers "Greet the new day." (INFO 0001F10B / 0001F874,
+# 30).
+case mq06_doorkeeper
+until 300 GetStage MQ06 >= 10
+run
+player.moveto MQ06MythicDawnDoorkeeperRef
+until 600 GetStage MQ06 >= 20
+approach MQ06MythicDawnDoorkeeperRef
+talk MQ06MythicDawnDoorkeeperRef
+ask "Greet the new day."
+until 300 GetStage MQ06 >= 30
+bye if open
+end
+
+# Harrow, behind the door: his greeting offers "[Give him all your possessions]" (INFO 0001F168, MQ06 < 40), which
+# sets 40: everything goes to Harrow and the player wears the initiate's robe.
+case mq06_harrow
+run
+player.moveto HarrowRef
+wait 120
+approach HarrowRef
+talk HarrowRef
+ask "[Give him all your possessions]"
+until 300 GetStage MQ06 >= 40
+expect player.GetItemCount MythicDawnRobe >= 1
+bye if open
+end
+
+# Harrow leads to the shrine (LakeArriusShrineDagon); MQ06Script sets 45 once the player is within 2500 of Mankar
+# Camoran there. He speaks and leaves by the portal (MQ06ParadisePortalScript: 49, then 50). Following Harrow is
+# the player's walk: moveto Camoran stands in.
+case mq06_camoran_speech
+run
+player.moveto MankarCamoranRef
+until 600 GetStage MQ06 >= 45
+until 3600 GetStage MQ06 >= 49
+until 1800 GetStage MQ06 >= 50
+end
+
+# Ruma's greeting at 50 offers the sacrifice of Jeelius; "No, I will not kill for you." (INFO 00024EA2) sets 51
+# and the shrine attacks. The player fights (`defend`) and takes the Mysterium Xarxes from the altar (placed book
+# 0001E746 in LakeArriusShrineDagon; MysteriumXarxesScript OnAdd sets 60).
+case mq06_take_xarxes
+defend
+approach RumaRef
+talk RumaRef
+ask "No, I will not kill for you."
+until 300 GetStage MQ06 >= 51
+bye if open
+run
+player.moveto 0001E746
+wait 60
+take 0001E746
+until 300 GetStage MQ06 >= 60
+end
+
+# Out of the caverns (70, MQ06Script) and back to Cloud Ruler Temple; the ride is the player's travel. Jauffre's
+# greeting (INFO 00020073, MQ06 >= 60) sets 80 and offers "No. Mankar Camoran escaped with it."; Martin: "No. But I
+# have the Mysterium Xarxes." offers "Can the Xarxes lead us to Camoran?" (INFO 0008B619), which sets 100.
+case mq06_return_martin
+defend
+run
+player.moveto JauffreRef
+until 900 GetStage MQ06 >= 70
+approach JauffreRef
+talk JauffreRef
+until 300 GetStage MQ06 >= 80
+ask "No. Mankar Camoran escaped with it."
+bye if open
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+ask "No. But I have the Mysterium Xarxes."
+ask "Can the Xarxes lead us to Camoran?"
+until 300 GetStageDone MQ06 100
+bye if open
+end

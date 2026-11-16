@@ -18,7 +18,7 @@ from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from pyffi.formats.nif import NifFormat
 
-from asset_convert.nif.sequences import (CB_OFFSETS, append_sibling_entry,
+from asset_convert.nif.sequences import (CB_OFFSETS, append_sibling_entry, shallow_clone,
                                          palette_bytes, palette_lookup)
 
 
@@ -117,13 +117,59 @@ _BLEND_INTERP_TYPES = tuple(
         'NiBlendColorInterpolator')) if t is not None)
 
 
+#: A sequence interpolator's class -> (the NiBlend* class its managed controller holds, value field, unset value).
+_BLEND_OF = {
+    'NiPoint3Interpolator': ('NiBlendPoint3Interpolator', 'point_value', None),
+    'NiFloatInterpolator': ('NiBlendFloatInterpolator', 'float_value', -3.4028234663852886e+38),
+    'NiBoolInterpolator': ('NiBlendBoolInterpolator', 'bool_value', 2),
+    'NiBoolTimelineInterpolator': ('NiBlendBoolInterpolator', 'bool_value', 2),
+}
+
+
+def _own_blend(interp):
+    """The interpolator a managed controller holds in place of its sequence's `interp`, as vanilla writes it."""
+    kind = _BLEND_OF.get(type(interp).__name__)
+    if kind is None:
+        return shallow_clone(interp)
+    blend = _init_blend_interpolator(getattr(NifFormat, kind[0])())
+    if kind[2] is None:
+        for axis in 'xyz':
+            setattr(getattr(blend, kind[1]), axis, -3.4028234663852886e+38)
+    else:
+        setattr(blend, kind[1], kind[2])
+    return blend
+
+
+def _unshare_controller_interpolators(root):
+    """Give each controller that holds its sequence entry's own interpolator a separate one; returns the count.
+
+    Vanilla never shares them (census: 0 of 158 managed controllers); a color
+    controller sharing its AutoLoop entry's NiPoint3Interpolator crashed the
+    engine deactivating that sequence with blend slot 0xFF (clawstandcontainer).
+    See: docs/commentary/asset_convert_nif.md#controller-owns-its-interpolator
+    """
+    shared = {}
+    for blk in root.tree():
+        if isinstance(blk, NifFormat.NiControllerSequence):
+            for cb in blk.controlled_blocks:
+                ctrl = cb.controller
+                if cb.interpolator is not None and getattr(ctrl, 'interpolator', None) is cb.interpolator:
+                    shared[id(ctrl)] = ctrl
+    for ctrl in shared.values():
+        ctrl.interpolator = _own_blend(ctrl.interpolator)
+    return len(shared)
+
+
 def normalize_blend_interpolators(root, stats=None):
-    """Force every NiBlend*Interpolator to vanilla's manager-driven header.
+    """Give every sequence-driven controller its own interpolator and every NiBlend*Interpolator vanilla's header.
 
     Blocks COPIED from an Oblivion source hit the same trap as synthesized ones:
     the flags do not survive PyFFI's round trip.
     See: docs/commentary/asset_convert_nif.md#blend-interp-flags
     """
+    unshared = _unshare_controller_interpolators(root)
+    if unshared and stats is not None:
+        stats['ctrl_interp_unshared'] = stats.get('ctrl_interp_unshared', 0) + unshared
     fixed = 0
     if not _BLEND_INTERP_TYPES:
         return fixed
@@ -146,8 +192,41 @@ def _palette_add(pal, obj):
     pal.num_objs += 1
     pal.objs.update_size()
     entry = pal.objs[pal.num_objs - 1]
-    entry.name = bytes(obj.name)
+    entry.name = obj.name
     entry.av_object = obj
+
+
+def object_palette(objects):
+    """A NiDefaultAVObjectPalette listing each object under its own name."""
+    pal = NifFormat.NiDefaultAVObjectPalette()
+    for obj in objects:
+        _palette_add(pal, obj)
+    return pal
+
+
+def complete_object_palette(root, stats=None):
+    """List every sequence target the scene holds in the manager's object palette, as vanilla does.
+
+    A manager without a palette gets one.
+    See: docs/commentary/asset_convert_nif.md#palette-lists-every-target
+    """
+    mgr = root.controller
+    if not isinstance(mgr, NifFormat.NiControllerManager):
+        return 0
+    if mgr.object_palette is None:
+        mgr.object_palette = object_palette(())
+    listed = {bytes(o.name) for o in mgr.object_palette.objs}
+    wanted = {bytes(cb.node_name) for seq in mgr.controller_sequences for cb in seq.controlled_blocks}
+    wanted -= listed | {b''}
+    added = 0
+    for blk in root.tree():
+        if isinstance(blk, NifFormat.NiAVObject) and bytes(blk.name) in wanted:
+            wanted.discard(bytes(blk.name))
+            _palette_add(mgr.object_palette, blk)
+            added += 1
+    if added and stats is not None:
+        stats['palette_targets_added'] = stats.get('palette_targets_added', 0) + added
+    return added
 
 
 def _vis_controller(node):

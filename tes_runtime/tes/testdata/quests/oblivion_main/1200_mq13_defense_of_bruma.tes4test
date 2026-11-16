@@ -1,0 +1,71 @@
+# MQ13 "Defense of Bruma". "I'll inform the Countess at once." set MQ13 10. The Countess of Bruma hears the plan
+# and goes to the Chapel of Talos (20); there "Let the battle begin." sets 30. Martin walks out to the battlefield
+# (31, 32); with the player and Martin there (39, 40) he speaks to the troops (41 .. 44), the three Gates open
+# (45, 46, 47) and then the Great Gate (100), which starts MQ14 at 10.
+# DRAFT from tools/live/quest_brief.py (2026-11-13): not run yet.
+
+# Narina Carvain at 10: "Battle plans" (INFO 0002771C) offers "We must recover the Amulet." (INFO 00027746), which
+# offers "Martin waits at the Chapel." (INFO 0002777A, 20).
+case mq13_countess
+until 300 GetStage MQ13 >= 10
+run
+player.moveto NarinaCarvainRef
+wait 120
+approach NarinaCarvainRef
+talk NarinaCarvainRef
+ask "Battle plans"
+ask "We must recover the Amulet."
+ask "Martin waits at the Chapel."
+until 300 GetStage MQ13 >= 20
+bye if open
+end
+
+# The war council in the Chapel of Talos: the Countess walks there from the castle (stage 20's evp); her greeting
+# at 20 offers "Let the battle begin." (INFO 00027783), which sets 30 and ends MQ11.
+case mq13_war_council
+run
+player.moveto MarkerMQ11ChapelNarinaCarvain
+wait 120
+until 7200 NarinaCarvainRef.GetDistance MarkerMQ11ChapelNarinaCarvain < 400
+approach NarinaCarvainRef
+talk NarinaCarvainRef
+ask "Let the battle begin."
+until 300 GetStage MQ13 >= 30
+until 300 GetStageDone MQ11 100
+bye if open
+end
+
+# Martin leaves the Chapel (MartinScript OnPackageDone MQ13MartinChapelSteps: 31) and Bruma (MQ13MartinBrumaTo-
+# Exterior: 32). MQ13Script sets 40 once the player is within 2800 of MQ13GreatGateBossMarker and Martin within
+# 300 of MQ13MartinBattleMarker. The player goes ahead to the field and waits for him.
+case mq13_to_the_field
+until 7200 GetStageDone MQ13 31
+until 7200 GetStageDone MQ13 32
+run
+player.moveto MQ13MartinBattleMarker
+wait 120
+until 7200 GetStage MQ13 >= 40
+end
+
+# The battle: Martin's speech (41, its last line sets 44), Gate 1's script sets 45, MQ13Script opens the second
+# (46) and third (47) Gates and then the Great Gate (100 -> MQ14 10). The player fights beside Martin (`defend
+# MartinRef`) and stays within 5000 of him, or the script kills him.
+# No case ends in mid-battle: Martin is not essential until the Stone is taken (MQ14 45), and with
+# `defend` off across a checkpoint he was dead by the next case (runs 29z, 30a). The player goes straight
+# on into the Great Gate (MQ13Gate4; MQ13OblivionGate4Script sets MQ14.inGreatGate).
+case mq13_battle
+defend MartinRef
+until 3600 GetStage MQ13 >= 44
+until 7200 GetStage MQ13 >= 45
+until 7200 GetStage MQ13 >= 46
+until 7200 GetStage MQ13 >= 47
+until 7200 GetStageDone MQ13 100
+until 300 GetStage MQ14 >= 10
+run
+player.moveto MQ13Gate4
+wait 120
+expect MartinRef.GetDead == 0
+activate MQ13Gate4
+until 600 MQ14.inGreatGate == 1
+until 600 player.GetInWorldspace MQ14OblivionWorld == 1
+end

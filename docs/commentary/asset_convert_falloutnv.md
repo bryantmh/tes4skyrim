@@ -368,8 +368,28 @@ FURN keyword: `EnterBarStoolRoot` (`isBarStool`, `IdleStoolEnter` /
 `WoodenBarStool`, is exactly this: `isBarStool` and `FNPR 00020001`. So every
 FURN with an authored-travel seat gets the keyword: in FalloutNV.esm 17 of 234
 (the stools, the pod chair, the blackjack seats, and the couches and child-bar
-marker carrying a marker-20 entry); Oblivion's 186 and Nehrim's 205 FURN are
-byte-identical.
+marker carrying a marker-20 entry).
+
+A TES4 record that leaves a sit seat open only behind gets it too. Oblivion's
+`MCStool01B` enables marker 2 of `middlestool01.nif` (ref 13: walk in from
+behind and sit, facing on). Once the record's restriction became NAM0
+([furniture-entry-restrictions](asset_convert_nif.md#furniture-entry-restrictions)),
+the player activated it from every side and never sat (run 39f, Luther
+Broad's).
+
+A bench is different: when the behind-only seat is one of several open seats
+the FURN takes `IsTable` instead. Vanilla Skyrim.esm splits it exactly that
+way (temp/vanilla_behind_census.py): its one single-seat behind-only sit
+furniture is `WoodenBarStool` (`isBarStool`), and all 20 multi-seat
+behind-only benches carry `IsTable` (CommonTableTwoBenches, NobleLongTableWindhelm,
+...). Measured on Oblivion's `LCBench01BmidR` in ICImperialLegionWatchTowerN:
+with `isBarStool` no behind entry seated the player; with `IsTable` both seats
+the record allows did.
+
+Only seats with a marker the record enables are open (MNAM seat bits,
+`items._open_seats`): `LCBench01BmidR` enables markers 1 and 3 of
+`lowerclassbench01.nif`'s three seats, so seat 0 is off, as it is in Oblivion.
+A record that enables none of any seat's markers keeps every seat open.
 
 `stool01.nif`'s single entry stands at (20.5, -41.0) facing +Y, exactly
 where `StoolEnter.kf`'s root starts; the seat is (1.5, 6.2), where it ends.

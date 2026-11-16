@@ -49,13 +49,18 @@ As a library:
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
+import msvcrt
 import sys
 import time
 from pathlib import Path
 
 PIPE_NAME = r"\\.\pipe\tes_game_bridge"
 DEFAULT_TIMEOUT = 10.0
+
+#: Seconds a reply may take beyond the request's own `timeout_ms`; later than that the game is hung.
+REPLY_DEADLINE = 120.0
 
 
 class BridgeError(RuntimeError):
@@ -81,6 +86,7 @@ class Bridge:
         self.loading_retry_delay = loading_retry_delay
         self._f = None
         self._next_id = 1
+        self.unanswered = ''
 
     # ------------------------------------------------------------- connect --
 
@@ -152,7 +158,11 @@ class Bridge:
 
         try:
             self._f.write((json.dumps(req) + "\n").encode("utf-8"))
-            line = self._readline()
+            line = self._readline(time.time() + REPLY_DEADLINE + args.get("timeout_ms", 0) / 1000.0)
+        except TimeoutError as exc:
+            self.unanswered = cmd
+            self.close()
+            raise BridgeError(f"no reply to {cmd}: {exc}", "E_TRANSPORT") from exc
         except OSError as exc:
             self.close()
             raise BridgeError(f"transport failure: {exc}", "E_TRANSPORT") from exc
@@ -168,9 +178,23 @@ class Bridge:
             )
         return resp.get("result", {})
 
-    def _readline(self) -> str:
+    def _await_byte(self, deadline: float) -> None:
+        """Returns once the pipe holds a byte; TimeoutError past `deadline`, OSError on a closed pipe."""
+        handle = ctypes.c_void_p(msvcrt.get_osfhandle(self._f.fileno()))
+        waiting = ctypes.c_ulong(0)
+        while not waiting.value:
+            if not ctypes.windll.kernel32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(waiting), None):
+                raise OSError("pipe closed by the game")
+            if not waiting.value and time.time() > deadline:
+                raise TimeoutError("the game did not answer in time")
+            if not waiting.value:
+                time.sleep(0.005)
+
+    def _readline(self, deadline: float) -> str:
+        """One reply line; `unanswered` names the command when it misses `deadline`."""
         chunks = []
         while True:
+            self._await_byte(deadline)
             b = self._f.read(1)
             if not b:
                 raise OSError("pipe closed by the game")

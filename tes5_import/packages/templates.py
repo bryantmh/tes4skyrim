@@ -267,7 +267,7 @@ FORCE_GREET = Template(
                                                         T_BOOL),
     defaults={1: _PLDT_HERE_1000, 2: _PLDT_HERE_1000, 3: _PLDT_PLAYER_350,
               4: 0, 5: 1, 7: _PLDT_PLAYER_5000, 17: 50.0},
-    slots={'topic': 0, 'trigger_location': 1, 'greet_location': 2,
+    slots={'topic': 0, 'wait_location': 1, 'trigger_location': 2,
            'forcegreet_distance': 3, 'target': 6, 'leash_location': 7},
 )
 

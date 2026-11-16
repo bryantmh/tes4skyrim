@@ -1,0 +1,87 @@
+# MQ07 "Spies". MQ06 100 set MQ07 10: Martin sends the player to Jauffre about Mythic Dawn agents watching Cloud
+# Ruler Temple. Jauffre asks for them to be found (20); Steffan has seen them at the runestone at dusk (25). The two
+# agents are Saveri Faram (her death sets 31) and Jearl (30); either death sets 35. Jearl's orders in her basement
+# in Bruma name both agents (80). Shown the orders with both dead, Jauffre is satisfied (90), and Martin's greeting
+# at 90 ends the quest (100).
+# DRAFT from tools/live/quest_brief.py (2026-11-12): not run yet.
+
+# Jauffre: "Spies" offers "I will find these spies." (INFO 00020076, 20). Steffan: "Spies" (INFO 00020077, 25).
+case mq07_jauffre_steffan
+until 300 GetStage MQ07 >= 10
+run
+player.moveto JauffreRef
+wait 120
+approach JauffreRef
+# His say-once GREETING 0002006A ("I hope Martin knows ...", no choices) comes first unless an idle hello spent it;
+# the conversation then ends, and the next talk gives 0002006B, whose choices start with "Spies".
+talk JauffreRef
+wait 60
+bye if open
+approach JauffreRef
+talk JauffreRef
+ask "Spies"
+ask "I will find these spies."
+until 300 GetStage MQ07 >= 20
+bye if open
+run
+player.moveto SteffanRef
+wait 120
+approach SteffanRef
+talk SteffanRef
+ask "Spies"
+until 300 GetStage MQ07 >= 25
+bye if open
+end
+
+# The player hunts the two agents down: kill stands in for each fight. SaveriFaramScript OnDeath sets 31,
+# JearlScript OnDeath 30; each adds 1 to MQ07.deadAgentCount, and the first death sets 35.
+case mq07_kill_spies
+run
+player.moveto SaveriFaramRef
+wait 120
+run
+SaveriFaramRef.kill
+until 300 GetStageDone MQ07 31
+run
+player.moveto JearlRef
+wait 120
+run
+JearlRef.kill
+until 300 GetStageDone MQ07 30
+until 300 GetStageDone MQ07 35
+until 300 MQ07.deadAgentCount == 2
+end
+
+# Jearl's orders lie in her basement in Bruma (placed book 0006719D, MQ07BrumaEnemyPlans); reading them sets 80
+# (JearlsOrdersScript OnActivate).
+case mq07_jearls_orders
+console coc BrumaJearlsHouseBasement
+wait 120
+run
+player.moveto 0006719D
+wait 60
+activate 0006719D
+until 300 GetStage MQ07 >= 80
+close Book Menu
+take 0006719D
+end
+
+# Jauffre: "[Show Jauffre Jearl's orders]" with both agents dead (INFO 00020085) sets 90. Martin's greeting at 90
+# ("I've deciphered part of the ritual ...", INFO 0002006E) sets 100.
+case mq07_report
+run
+player.moveto JauffreRef
+wait 120
+approach JauffreRef
+talk JauffreRef
+ask "[Show Jauffre Jearl's orders]"
+until 300 GetStage MQ07 >= 90
+bye if open
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+until 600 GetStageDone MQ07 100
+bye if open
+end

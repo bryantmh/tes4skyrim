@@ -2211,6 +2211,41 @@ the dynamic stats, equip, position, move, rotate, scale, and `AddItem` /
 Everything that opens a menu, stages a quest, deletes, spawns or fills an
 alias stays posted on purpose.
 
+### <a id="movies-are-touched-at-ui-time"></a>🛑 A movie is touched only at UI time (AddUITask)
+
+**Code:** `plugin/main_thread.cpp:PostToUiThread`, `common/engine.cpp:PostToUiTask`
+
+SKSE drains its AddTask queue from two hook sites, and on 1.6.1170 one of them
+(SE's `0x6479E0+0x1C`) runs on a job thread **while thread 0 draws the menus**.
+"Posted to the main thread" therefore does not mean "safe for Scaleform". A
+Scaleform movie's heap has no lock, so a SetVariable from that job thread during
+the movie's Render corrupts it.
+
+Measured on run 45a's crash (`temp/crash/pid37480.dmp`, `~*k`). Thread 0 was in
+the UI loop's Render of `MorrowindLevelUpMenu`. It faulted in the heap's
+free-tree (AddrLib 87794), where two free nodes 0x40 apart ended at the same
+address. At that same moment thread 17 was in `TESTestPick -> PickLevelUp ->
+PushAll -> SetVariable` on that movie. That was the headless runner's `pick`,
+ticking through AddTask. Replays from the checkpoint passed 3 of 3: the race needs the timing.
+
+SKSE's AddUITask queue is drained inside the UI's own message processing, on
+the thread that draws, so it never overlaps a Render. Everything that reads or
+writes a movie from a timer or the runner goes there:
+
+- MorrowindRuntime's stats-sheet tick: level-up open, chargen menus, perks paint.
+- Its `menuPick` (`PickNamed`), which returns whether a pickable menu is open and
+  logs a name the menu lacks when the pick lands.
+- `SleepFor`.
+- TESRuntime's runner `CallMovie`: ask, choose, button, and bye, whose hide
+  message follows the callback in the same task.
+- TESRuntime's journal `InstallIntoOpenMenus`, which read every open menu's movie
+  in normal play.
+
+Morrowind's own dialogue menu is left as it is. `conversation.cpp` writes a field
+and reads its metrics straight back, so it cannot be deferred. Its writers run
+from clicks, which are already UI time, and from the object tick, which is held
+while the menu pauses the game.
+
 ### <a id="one-queued-tick"></a>At most one tick is queued
 
 The tick thread posts only while no posted tick is waiting. Alt-tabbing stops
@@ -3289,6 +3324,31 @@ Skyrim's combat gives up sooner, in two measured ways:
 A fight on the player is recorded but changes no relationship: Skyrim keeps
 relationships per BASE record, and `ordinator wander`, placed 81 times, has
 three `StartCombat Player` rows, so one ordinator would turn them all.
+
+## <a id="a-spectator-of-a-finished-fight"></a>A spectator of a finished fight stops watching
+
+**Code:** `plugin/game_calls_combat.cpp` (`EndIdleSpectating`), ids in `plugin/ids.h`.
+
+The symptom (Oblivion's tutorial, run 39a): after the fight on the way to marker F, Glenroy stood
+still for good, and his escort of the Emperor never went on. `evp` and `StopCombat` changed nothing.
+
+What the live game and the 1.6.1170 exe showed:
+
+- Glenroy was running an engine `SpectatorPackage` (procedure type 0x18), watching the Emperor. The
+  Emperor was running the escort's FollowTo. Nobody was in combat.
+- `StandardDetectionListener` (39761) starts spectating an ally that is in combat (0x70af90). Each
+  watched entry notes the watched actor and that actor's combat target at the time.
+- The spectator procedure (39342) keeps an entry while the spectator still detects the watched actor
+  and the actor's combat target equals the noted one. An entry with no noted opponent always
+  matches.
+- Watching that began just after the Emperor's last foe died (still in combat, no target) noted no
+  opponent. An escort's leader never loses sight of the actor it escorts, so the entry never lapsed.
+- Setting the package's "finished" byte (`+0xF0`, read by 42654 on all three exe builds) by hand
+  restarted the escort, and stage 52 followed within 6 s.
+
+So every 10 ticks the runtime finishes a `SpectatorPackage` whose entries all have no opponent and
+whose watched actors are all out of combat. That is where the engine's own rule would have ended it
+had an opponent been noted. On the next three runs it fired once, for Baurus.
 
 ## <a id="region-weather"></a>ChangeWeather and ModRegion
 

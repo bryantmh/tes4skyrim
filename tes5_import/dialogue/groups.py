@@ -240,6 +240,13 @@ def _fill_say_dispositions(by_type: dict) -> None:
           f"target-conditions, {kinds['target']} engine-fired drop identity only)")
 
 
+def _conversation_choices(info_rec: dict, bark_dial_fids) -> list:
+    """The topics `info_rec` offers as choices, leaving out bark topics."""
+    fids = [get_formid(info_rec, f'Choice[{i}]') for i in range(get_int(info_rec, 'ChoiceCount'))]
+    fids.append(get_formid(info_rec, 'TCLT.Choice'))
+    return [fid for fid in fids if fid and fid not in bark_dial_fids]
+
+
 def _scan_bark_choice_links(dials, infos, offset, script_vars):
     """Bark topics and the conversation topics their choices reveal.
 
@@ -255,17 +262,11 @@ def _scan_bark_choice_links(dials, infos, offset, script_vars):
 
     bark_choice_targets = set()
     bark_choice_gate = defaultdict(list)
+    revealers = defaultdict(list)
     conv_choice_targets = set()
     for info_rec in infos:
         is_bark_info = get_formid(info_rec, 'ParentDIAL') in bark_dial_fids
-        targets_here = []
-        for i in range(get_int(info_rec, 'ChoiceCount')):
-            cfid = get_formid(info_rec, f'Choice[{i}]')
-            if cfid and cfid not in bark_dial_fids:
-                targets_here.append(cfid)
-        cfid = get_formid(info_rec, 'TCLT.Choice')
-        if cfid and cfid not in bark_dial_fids:
-            targets_here.append(cfid)
+        targets_here = _conversation_choices(info_rec, bark_dial_fids)
         if not targets_here:
             continue
         if not is_bark_info:
@@ -274,6 +275,10 @@ def _scan_bark_choice_links(dials, infos, offset, script_vars):
         gate = quest_state_ctdas(info_rec, offset, script_vars)
         for cfid in targets_here:
             bark_choice_gate[cfid].append(gate)
+            revealers[cfid].append(info_rec)
+    for cfid, recs in revealers.items():
+        if len(recs) == 1:
+            bark_choice_gate[cfid] = [quest_state_ctdas(recs[0], offset, script_vars, place=True)]
 
     for cfid, gates in bark_choice_gate.items():
         if cfid in conv_choice_targets:
@@ -865,6 +870,19 @@ def _build_one_topic(dial_rec, info_by_dial, writer, offset,
     return content, dlbr_bytes, owner_qfid, dial_fid, dlbr_fid
 
 
+def _reveal_props(info_rec, ctx):
+    """{global name: GLOB FormID} the INFO's fragment sets (VMAD properties), or None."""
+    reveal_names = ctx['unlock_plan']['info_reveals'].get(
+        get_formid(info_rec, 'FormID') & 0xFFFFFF)
+    if not reveal_names:
+        return None
+    reveal_props = {n: ctx['unlock_globals'][n] for n in reveal_names
+                    if n in ctx['unlock_globals']}
+    if reveal_props:
+        ctx['stats']['revealers'] += 1
+    return reveal_props or None
+
+
 def _convert_topic_infos(child_infos, owner_qfid, ctx):
     """Convert a list of child INFOs for a topic owned by owner_qfid.
 
@@ -890,21 +908,12 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
                 sibling_factions=ctx.get('sibling_factions'),
                 sibling_npcs=ctx.get('sibling_npcs'),
                 shared_state_bytes=ctx.get('shared_state_bytes', b''))
-            # Revealer INFO: its OnEnd fragment sets the unlock globals; bind
-            # each global name -> GLOB FormID as a VMAD property.
-            reveal_names = ctx['unlock_plan']['info_reveals'].get(
-                get_formid(info_rec, 'FormID') & 0xFFFFFF)
-            reveal_props = None
-            if reveal_names:
-                reveal_props = {n: ctx['unlock_globals'][n] for n in reveal_names
-                                if n in ctx['unlock_globals']}
-                if reveal_props:
-                    ctx['stats']['revealers'] += 1
             info_bytes = convert_INFO(
                 info_rec, injected_ctdas=injected,
                 fid_to_edid=ctx['fid_to_edid'],
                 well_known_props=ctx['well_known_props'], xref=ctx['xref'],
-                reveal_props=reveal_props, service_menu=ctx['service_kind'],
+                reveal_props=_reveal_props(info_rec, ctx),
+                service_menu=ctx['service_kind'],
                 bark_dial_fids=(ctx.get('bark_dial_fids')
                                 if ctx['is_bark'] else None),
                 menu_topic_fids=ctx.get('menu_topic_fids', ()),

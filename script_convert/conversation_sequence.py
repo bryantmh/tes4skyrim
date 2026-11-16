@@ -10,10 +10,11 @@ that must survive a rejected turn.
 See: docs/commentary/script_convert.md#sequenced-fragment-surgery
 """
 
+import itertools
 import re
 import struct
 
-from script_convert.constants import safe_property_name
+from script_convert.constants import REMOTE_ADD_PREFIX, REMOTE_HOLD, REMOTE_RELEASE, safe_property_name
 from script_convert.tes5.blocks import (
     Kind,
     classify,
@@ -27,6 +28,9 @@ _GET_QUEST_VARIABLE = 79
 #: Statement opening a SetStage call (or its TES4SetStage wrapper), which runs that fragment INLINE.
 _SETSTAGE_RE = re.compile(r'^\s*\w[\w.]*\.(?:TES4)?SetStage\s*\(', re.IGNORECASE)
 
+#: CTDA type bit: this condition is OR-ed with the next one.
+_OR_FLAG = 0x01
+
 #: A bare literal assignment, or a counter step on the counter ITSELF.
 _STATE_WRITE_RE = re.compile(
     r'^\s*(?P<lhs>\w[\w.]*)\s*=\s*'
@@ -37,6 +41,10 @@ _STAGE_ADVANCE_RE = re.compile(
     r'^(\s*)(?P<call>(?:TES4Polyfill\.SetStage\((?P<quest>[A-Za-z_]\w*), '
     r'|\w+\.TES4SetStage\((?P<wrapped>[A-Za-z_]\w*) as \w+, )(?P<stage>\d+)\))'
     r'\s*(?P<comment>;.*)?$', re.IGNORECASE)
+
+#: A write to another script's variable with no call on its right-hand side, or that script's add call.
+_REMOTE_WRITE_RE = re.compile(
+    r'^(\s*)([A-Za-z_]\w*)\.(?:\w+\s*=(?!=)[^(;]*|' + REMOTE_ADD_PREFIX + r'\w+\([^()]*\))\s*(;.*)?$')
 
 #: A literal write to a field whose name selects the next talker.
 _HANDOFF_WRITE_RE = re.compile(
@@ -65,11 +73,24 @@ def _equality_gate(raw: str):
             struct.unpack_from('<I', d, 16)[0], int(comp))
 
 
+def _or_run(rec: dict, i: int, first) -> list:
+    """The counter values condition `i` allows: its own, plus each following one OR-ed onto the same variable."""
+    values = [first[2]]
+    while int(rec.get(f'Condition[{i}].Raw')[:2], 16) & _OR_FLAG:
+        i += 1
+        hit = _equality_gate(rec.get(f'Condition[{i}].Raw') or '')
+        if hit is None or hit[:2] != first[:2]:
+            break
+        values.append(hit[2])
+    return values
+
+
 def seq_counter_condition(rec: dict, script_vars: dict, names: dict):
-    """(quest_edid, var_name, int_value) for this INFO's counter gate, or None.
+    """(quest_edid, var_name, [int_value, ...]) for this INFO's counter gate, or None.
 
     `script_vars` maps quest fid -> {SLSD index: name} and `names` maps quest
-    fid -> EditorID; a TES4 condition stores only the index.
+    fid -> EditorID; a TES4 condition stores only the index. A line valid at
+    several counts (`== 0 OR == 3`) yields each.
     """
     i = -1
     while True:
@@ -80,11 +101,10 @@ def seq_counter_condition(rec: dict, script_vars: dict, names: dict):
         hit = _equality_gate(raw)
         if hit is None:
             continue
-        quest_fid, var_idx, value = hit
-        name = script_vars.get(quest_fid, {}).get(var_idx)
-        quest = names.get(quest_fid, '')
+        name = script_vars.get(hit[0], {}).get(hit[1])
+        quest = names.get(hit[0], '')
         if name and quest:
-            return quest, name, value
+            return quest, name, _or_run(rec, i, hit)
 
 
 def sequence_gate(rec: dict, script_vars: dict, names: dict) -> str:
@@ -96,9 +116,79 @@ def sequence_gate(rec: dict, script_vars: dict, names: dict) -> str:
     var = seq_counter_condition(rec, script_vars, names)
     if not var:
         return ''
-    quest, name, value = var
-    return (f'{safe_property_name(quest)}.'
-            f'{safe_property_name(name)} == {value}')
+    quest, name, values = var
+    counter = f'{safe_property_name(quest)}.{safe_property_name(name)}'
+    return ' || '.join(f'{counter} == {value}' for value in values)
+
+
+def _quest_var_tests(rec: dict, script_vars: dict, names: dict) -> set:
+    """`<quest>.<var>` (Papyrus names) of every GetQuestVariable condition of `rec`."""
+    tested = set()
+    i = 0
+    while (raw := rec.get(f'Condition[{i}].Raw')) is not None:
+        i += 1
+        try:
+            d = bytes.fromhex(raw)
+        except ValueError:
+            continue
+        if len(d) < 20 or struct.unpack_from('<H', d, 8)[0] != _GET_QUEST_VARIABLE:
+            continue
+        quest = struct.unpack_from('<I', d, 12)[0] & 0x00FFFFFF
+        name = script_vars.get(quest, {}).get(struct.unpack_from('<I', d, 16)[0])
+        if name and names.get(quest):
+            tested.add(f'{safe_property_name(names[quest])}.{safe_property_name(name)}')
+    return tested
+
+
+def choice_tested_vars(infos: list, script_vars: dict, names: dict) -> dict:
+    """INFO fid24 -> the quest variables its choices' lines test, for each INFO with choices.
+
+    A choice names a topic; what it tests is what any of that topic's INFOs test.
+    See: docs/commentary/script_convert.md#choice-gate-writes-run-at-begin
+    """
+    tests = {}
+    for rec in infos:
+        if rec.get('ParentDIAL'):
+            topic = int(rec['ParentDIAL'], 16) & 0xFFFFFF
+            tests.setdefault(topic, set()).update(_quest_var_tests(rec, script_vars, names))
+    out = {}
+    for rec in infos:
+        choices = [rec[k] for k in rec if k.startswith('Choice[') and rec[k]]
+        tested = set().union(*(tests.get(int(c, 16) & 0xFFFFFF, set()) for c in choices)) if choices else set()
+        if tested:
+            out[int(rec['FormID'], 16) & 0xFFFFFF] = tested
+    return out
+
+
+def _writes_tested(line: str, tested) -> bool:
+    """Whether `line` is a literal write to, or a counter step of, a variable in `tested`."""
+    found = _STATE_WRITE_RE.match(line)
+    if found and found.group('base') is None and found.group('lhs') in tested:
+        return True
+    return any(_step_delta(line, var) is not None for var in tested)
+
+
+def _movable(line: str, top: str, tested, before: str) -> bool:
+    """Whether a top-level `line` writes a `tested` variable that no line `before` it mentions."""
+    if re.match(r'\s*', line).group() != top or not _writes_tested(line, tested):
+        return False
+    var = next(v for v in tested if v.lower() in line.lower() or v.split('.')[1].lower() in line.lower())
+    return var.split('.')[1].lower() not in before
+
+
+def split_choice_writes(lines: list, tested) -> tuple:
+    """(writes, rest): `lines` split by whether a top-level line writes a `tested` variable.
+
+    A write moves only when nothing before it in the body reads the variable or returns.
+    See: docs/commentary/script_convert.md#choice-gate-writes-run-at-begin
+    """
+    top = re.match(r'\s*', lines[0]).group() if lines else ''
+    early, rest = [], []
+    for i, line in enumerate(lines):
+        before = '\n'.join(lines[:i]).lower()
+        moves = 'return' not in before and _movable(line, top, tested, before)
+        (early if moves else rest).append(line)
+    return early, rest
 
 
 def _is_state_write(line: str) -> bool:
@@ -121,13 +211,48 @@ def split_counter_step(lines: list, seq_gate: str) -> tuple:
     if not m:
         return [], list(lines)
     counter = m.group(1)
-    step = re.compile(
-        r'^\s*' + re.escape(counter) + r'\s*=\s*' + re.escape(counter)
-        + r'\s*[-+]\s*[\d.]+\s*(;.*)?$', re.IGNORECASE)
-    idx = next((i for i, ln in enumerate(lines) if step.match(ln)), None)
+    idx = next((i for i, ln in enumerate(lines)
+                if _step_delta(ln, counter) is not None), None)
     if idx is None:
         return [], list(lines)
     return [lines[idx]], lines[:idx] + lines[idx + 1:]
+
+
+def _step_delta(line: str, counter: str):
+    """How far `line` steps `counter` (`c = c + n`, or its owner's TES4Add_ call), else None."""
+    owner, _, var = counter.rpartition('.')
+    name = re.escape(counter)
+    plain = re.match(rf'^\s*{name}\s*=\s*{name}\s*([-+])\s*([\d.]+)\s*(;.*)?$',
+                     line, re.IGNORECASE)
+    call = plain or re.match(
+        rf'^\s*{re.escape(owner)}\.{REMOTE_ADD_PREFIX}{re.escape(var)}'
+        r'\(\s*(0\s*-)?\s*([\d.]+)\s*\)\s*(;.*)?$', line, re.IGNORECASE)
+    if not call:
+        return None
+    sign = -1.0 if (call.group(1) or '+').strip().endswith('-') else 1.0
+    return sign * float(call.group(2))
+
+
+def _held_owner(line: str, holds):
+    """(indent, owner) of a plain write to a holding script, else None."""
+    found = _REMOTE_WRITE_RE.match(line)
+    return found.group(1, 2) if found and holds(found.group(2)) else None
+
+
+def hold_runs(lines: list, holds) -> list:
+    """`lines` with each run of two or more plain writes to one holding script between its hold and release.
+
+    `holds(owner)` says whether the owner carries the pair. Two scripts'
+    runs then cannot interleave; a single write needs no hold.
+    See: docs/commentary/script_convert.md#remote-write-runs
+    """
+    out = []
+    for key, group in itertools.groupby(lines, lambda line: _held_owner(line, holds)):
+        run = list(group)
+        if key and len(run) > 1:
+            run = [f'{key[0]}{key[1]}.{REMOTE_HOLD}()', *run, f'{key[0]}{key[1]}.{REMOTE_RELEASE}()']
+        out += run
+    return out
 
 
 def split_turn_handoff(counter_step, gated_rest):
@@ -152,24 +277,19 @@ def stepped_gate(seq_gate, counter_step):
 
     See: docs/commentary/script_convert.md#stepped-gate
     """
-    m = re.match(r'(.*?==\s*)(-?[\d.]+)\s*$', seq_gate or '')
-    if not m or not counter_step:
+    parts = [re.match(r'\s*(\S+)(\s*==\s*)(-?[\d.]+)\s*$', part) for part in (seq_gate or '').split(' || ')]
+    if not all(parts) or not counter_step:
         return seq_gate
-    step = re.search(r'([-+])\s*([\d.]+)', counter_step[0].split('=', 1)[1])
-    if not step:
+    delta = _step_delta(counter_step[0], parts[0].group(1))
+    if delta is None:
         return seq_gate
-    delta = float(step.group(2))
-    if step.group(1) == '-':
-        delta = -delta
-    val = float(m.group(2)) + delta
-    txt = str(int(val)) if val == int(val) else ('%g' % val)
-    return m.group(1) + txt
+    return ' || '.join(m.group(1) + m.group(2) + '%g' % (float(m.group(3)) + delta) for m in parts)
 
 
 def split_stage_advances(body: list) -> tuple:
     """Split a sequenced fragment body into (gated writes, stage advances).
 
-    Advances are re-emitted behind a monotonic `GetStage() < N` guard so they
+    Advances are re-emitted behind a `!GetStageDone(N)` guard so they
     survive a rejected turn. Only TOP-LEVEL advances are lifted; `scan` is fed
     a synthetic header so `not stack` means the top level of the body.
     See: docs/commentary/script_convert.md#stage-advances-survive
@@ -184,7 +304,7 @@ def split_stage_advances(body: list) -> tuple:
             continue
         indent, comment = m.group(1), m.group('comment')
         quest = m.group('quest') or m.group('wrapped')
-        advances.append(f'{indent}If {quest}.GetStage() < {m.group("stage")}'
+        advances.append(f'{indent}If !{quest}.GetStageDone({m.group("stage")})'
                         '  ; advance survives a rejected turn')
         advances.append(f'{indent}  {m.group("call")}'
                         + (f'  {comment}' if comment else ''))

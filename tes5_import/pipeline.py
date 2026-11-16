@@ -67,6 +67,8 @@ from script_convert.context_setup import topic_reveals
 from .packages.force_flee import write_force_flee_quest
 from .packages.actor_wiring import set_stand_still_list
 from .packages.stand_still import create_stand_still
+from .packages.hosts import PackageHosts, forced_lists
+from .packages.aliases import initially_disabled
 from script_convert.cross_ref import hosted_script_type, index_record_details
 from .dialogue.converter import build_npc_to_vtyp_map
 from .dialogue.force_greets import dial_index, write_force_greet_quest
@@ -83,6 +85,8 @@ from .base.owned_records import (
     create_chargen_menu_records,
     create_day_clock,
     create_destroyed_formlist,
+    create_scripted_use_formlist,
+    create_dialogue_open_global,
     create_fall_damage_spell,
     create_force_combat_factions,
     create_message_menu_records,
@@ -452,6 +456,8 @@ def _prescan_menu_records(by_type: dict, writer, _SC, _step_done, export_dir: st
     chargen_plan = _chargen_menu_records(writer, _SC, export_dir)
     WELL_KNOWN_PROPERTIES.update(create_force_combat_factions(writer, master_index))
     WELL_KNOWN_PROPERTIES.update(create_destroyed_formlist(writer, master_index))
+    WELL_KNOWN_PROPERTIES.update(create_scripted_use_formlist(writer, master_index))
+    WELL_KNOWN_PROPERTIES.update(create_dialogue_open_global(writer, master_index))
     _step_done('chargen menu MESGs')
     return chargen_plan
 
@@ -861,6 +867,19 @@ def _prescan_furniture_and_actors(by_type: dict, ctx, writer, export_dir: str, _
     build_actor_indexes(by_type, writer, export_dir, ctx, _step_done)
 
 
+def _hosted_plan(plan, by_type: dict, ctx, writer):
+    """`plan` with its forced-package lists, and host quests when the plugin has no masters.
+
+    See: docs/commentary/tes5_import_package.md#package-hosts
+    """
+    plan.forced_lists = forced_lists(writer, getattr(ctx, 'master_index', None))
+    plan.starts_disabled = initially_disabled(by_type, ctx.master_export if ctx else None)
+    WELL_KNOWN_PROPERTIES.update(plan.forced_lists[0])
+    if not ctx:
+        plan.hosts = PackageHosts(writer, {get_formid(r, 'FormID'): r for r in by_type.get('QUST', [])})
+    return plan
+
+
 def _prescan_package_plan(by_type: dict, ctx, writer, fid_to_edid: dict, _step_done):
     """Build the package plan; returns (plan, context, script var map).
 
@@ -886,7 +905,7 @@ def _prescan_package_plan(by_type: dict, ctx, writer, fid_to_edid: dict, _step_d
     set_assigned_var_names(
         build_assigned_var_names(by_type, _master_export))
     _sv_owner = build_scriptvar_owner_map(by_type, fid_to_edid, _master_export)
-    pack_plan = PackagePlan()
+    pack_plan = _hosted_plan(PackagePlan(), by_type, ctx, writer)
     _script_assigned = build_script_assigned_packages(by_type, fid_to_edid,
                                                       _master_export)
     print(f"  Script-forced packages (AddScriptPackage) bound to an alias: "

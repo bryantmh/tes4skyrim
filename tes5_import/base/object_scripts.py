@@ -29,6 +29,7 @@ from script_convert.constants import (safe_property_name, papyrus_script_name,
                                       wants_placed_reference,
                                       PLAYER_ALIAS_EXTENDS)
 from script_convert.cross_ref import is_function_script
+from script_convert.unequip_guard import SELF_BASE
 from script_convert.pipeline import (append_vmad_object_script,
                                      build_vmad_object_script,
                                      build_vmad_quest_fragments)
@@ -402,8 +403,11 @@ def _plan_record(sig: str, rec: dict) -> int:
         return 0
     rec_fid = _remap(raw_fid, _PLAN_CTX['offset'])
     _note_base_flags(sig, fid_str, entry[1])
+    props = _memo_props(scri)
+    if SELF_BASE in props:
+        props = dict(props, **{SELF_BASE: rec_fid})
     _OBJECT_VMAD[rec_fid] = pack_subrecord('VMAD', build_vmad_object_script(
-        papyrus_script_name(entry[0] or f'Script_{scri}'), _memo_props(scri)))
+        papyrus_script_name(entry[0] or f'Script_{scri}'), props))
     return 1
 
 
@@ -678,6 +682,8 @@ def _resolve_props(entry: tuple, xref, offset: int, extends: str = '') -> dict:
                                 scros if low in conv.sc.local_vars else None)
         if fid is not None:
             obj_props[safe_property_name(pname)] = fid
+    if SELF_BASE.lower() in candidates:
+        obj_props[SELF_BASE] = 0
     return obj_props
 
 

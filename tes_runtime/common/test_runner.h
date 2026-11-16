@@ -98,6 +98,13 @@ struct TestBackend {
     // `follow` fills in the followed NPC's trail between two looks. Off (the default) leaves
     // `follow` exactly as it is for the game that does not set it.
     bool fillTrail = false;
+    // `follow` distances for a game whose escorts wait sooner than the defaults allow: how far the
+    // NPC may get ahead, and how far behind it the player is put. 0 (the default) keeps the runner's own.
+    float followSlack = 0.0f;
+    float followBehind = 0.0f;
+    // Clicks the only button of an open message box that holds a step needing the world, as a player
+    // clicks a notice's OK; true when it did. Null (the default): a held box fails the case.
+    bool (*dismissNotice)() = nullptr;
     bool (*inInterior)() = nullptr;
     std::string (*cell)() = nullptr;
     // `pace <speed>`: a --fast game's speed from here on; 0 is the default.

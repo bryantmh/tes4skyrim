@@ -699,7 +699,25 @@ def handle_lines(bridge: Bridge, results: str, lines: list, handled: int, checkp
 
 
 #: Seconds the runtime log may stay unchanged before the game counts as hung (passing lanes' longest gap: 74 s).
-HUNG_SECONDS = 180
+HUNG_SECONDS = 60
+
+#: Seconds the runner may write no request and no result before the run is stalled (longest step: 120 s).
+STALLED_SECONDS = 180
+
+
+class Quiet:
+    """How long a file has gone unchanged."""
+
+    def __init__(self, path: str):
+        """Starts the clock at the file's current state."""
+        self.path, self.state, self.since = path, file_state(path), time.time()
+
+    def seconds(self) -> float:
+        """Seconds since the file last changed."""
+        now = file_state(self.path)
+        if now != self.state:
+            self.state, self.since = now, time.time()
+        return time.time() - self.since
 
 
 def game_answers(bridge: Bridge) -> bool:
@@ -718,10 +736,19 @@ def wait_results(path: str, seconds: float, bridge: Bridge, checkpoints: bool, g
     respond = game.respond(bridge) if game.respond else None
     log_path = os.path.join(MY_GAMES, 'SKSE', game.log)
     log_state, log_moved = file_state(log_path), time.time()
+    runner = Quiet(path)
     while time.time() < deadline:
         lines = [json.loads(l) for l in tail(path, 10000, game.encoding) if l.strip()]
         handled = handle_lines(bridge, path, lines, handled, checkpoints, respond)
+        if bridge.unanswered:
+            print('GAME HUNG after %d result line(s): no reply to %s' % (len(lines), bridge.unanswered))
+            crash_capture.snapshot(running_pid(), tag='hang_%s' % time.strftime('%m%d_%H%M%S'))
+            break
         if lines and lines[-1].get('done'):
+            break
+        if runner.seconds() > STALLED_SECONDS:
+            print('RUN STALLED after %d result line(s): nothing from the runner for %d s' % (len(lines), STALLED_SECONDS))
+            crash_capture.snapshot(running_pid(), tag='stall_%s' % time.strftime('%m%d_%H%M%S'))
             break
         if not running_pid():
             print('GAME EXITED after %d result line(s)' % len(lines))
@@ -770,12 +797,37 @@ def cases_from(path: str, first: str, last: str = None) -> str:
     return out
 
 
+#: How long a `load` may take to raise "Creations are currently loaded ... continue loading this save?" (Yes = 0).
+LOAD_PROMPT_SECONDS = 5
+
+
 def wait_message_box(bridge: Bridge, seconds: float) -> bool:
     """Whether a MessageBoxMenu opens within `seconds`."""
+    return wait_menu(bridge, 'MessageBoxMenu', seconds)
+
+
+def wait_menu_closed(bridge: Bridge, menu: str, seconds: float) -> bool:
+    """Whether menu `menu` is gone within `seconds`; a menu stack read that fails mid-load counts as still open."""
     deadline = time.time() + seconds
     while time.time() < deadline:
-        if any(name == 'MessageBoxMenu' for name, _flags in open_menus(bridge)):
-            return True
+        try:
+            if all(name != menu for name, _flags in open_menus(bridge)):
+                return True
+        except BridgeError as error:
+            print('menu stack not readable yet (%s); retrying' % error)
+        time.sleep(0.5)
+    return False
+
+
+def wait_menu(bridge: Bridge, menu: str, seconds: float) -> bool:
+    """Whether menu `menu` opens within `seconds`; a menu stack read that fails mid-load is retried."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            if any(name == menu for name, _flags in open_menus(bridge)):
+                return True
+        except BridgeError as error:
+            print('menu stack not readable yet (%s); retrying' % error)
         time.sleep(0.5)
     return False
 
@@ -843,6 +895,11 @@ def enter_game(bridge: Bridge, args, cases: str) -> None:
         time.sleep(args.settle)
         dismiss_popups(bridge)
         bridge.console('load %s' % save)
+        if wait_message_box(bridge, LOAD_PROMPT_SECONDS):
+            press_message_button(bridge, 0)
+            wait_menu(bridge, 'Loading Menu', LOAD_PROMPT_SECONDS)
+            ready_after_load(bridge, 300)
+            wait_menu_closed(bridge, 'Loading Menu', 300)
         bridge.wait_ready(120000)
     elif args.new_game is not None:
         start_new_game(bridge, args.settle, args.new_game)
@@ -1039,10 +1096,13 @@ def report(lines: list, results: str, game: CaseGame) -> int:
 
 
 def keep_failed_log(name: str) -> None:
-    """Copies the runtime log `name` into the profile, safe from the next launch."""
+    """Copies the runtime log `name`, and every other runtime's log as failed_<log>, into the profile."""
     kept = os.path.join(PROFILE, 'mwtest_failed.log')
     shutil.copyfile(os.path.join(MY_GAMES, 'SKSE', name), kept)
     print('runtime log kept at %s' % kept)
+    for other in glob.glob(os.path.join(MY_GAMES, 'SKSE', '*Runtime.log')):
+        if os.path.basename(other) != name:
+            shutil.copyfile(other, os.path.join(PROFILE, 'failed_' + os.path.basename(other)))
 
 
 def stop() -> None:

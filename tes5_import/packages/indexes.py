@@ -23,7 +23,7 @@ from ..base.text_reader import get_formid
 PLACEABLE_BASE_SIGS = (
     'NPC_', 'CREA', 'ACTI', 'FURN', 'DOOR', 'CONT', 'STAT', 'MISC', 'LIGH',
     'WEAP', 'ARMO', 'CLOT', 'BOOK', 'INGR', 'ALCH', 'KEYM', 'SGST', 'SLGM',
-    'AMMO', 'APPA', 'FLOR', 'TREE', 'GRAS', 'SBSP', 'LVLC', 'LVLI', 'SOUN',
+    'AMMO', 'APPA', 'FLOR', 'TREE', 'GRAS', 'SBSP', 'LVLC', 'LVLI', 'SOUN', 'SPEL',
 )
 
 

@@ -14,7 +14,7 @@ import struct
 from script_convert.constants import FORCE_GREET_QUEST
 from script_convert.pipeline import build_vmad_package_fragment
 from ..base.master_export import values_of
-from ..packages.converter import (ANY_TIME_PSDT, build_pkdt,
+from ..packages.converter import (ANY_TIME_PSDT, build_pkdt, dialogue_gate,
                                   FORCEGREET_INTERRUPT, force_greet_inputs,
                                   Inputs, package_markers, SPEED_RUN)
 from ..record_types.common import (get_formid, get_int, get_str,
@@ -68,12 +68,13 @@ def _topic_input(key: str, dials: dict) -> tuple:
 
 def pool_package(edid: str, fid: int, alias_id: int, quest_fid: int,
                  inputs: Inputs, pkdt: bytes) -> bytes:
-    """One pool slot's PACK: EDID VMAD PKDT PSDT QNAM PKCU <inputs> markers."""
+    """One pool slot's PACK: EDID VMAD PKDT PSDT [dialogue gate] QNAM PKCU <inputs> markers."""
     subs = pack_string_subrecord('EDID', edid)
     subs += pack_subrecord('VMAD', build_vmad_package_fragment(
         DONE_SCRIPT, {'Slot': ('int', alias_id)}))
     subs += pack_subrecord('PKDT', pkdt)
     subs += pack_subrecord('PSDT', ANY_TIME_PSDT)
+    subs += dialogue_gate(inputs.t)
     subs += pack_formid_subrecord('QNAM', quest_fid)
     subs += pack_subrecord('PKCU', struct.pack(
         '<III', len(inputs.t.inputs), inputs.t.formid, inputs.t.version))

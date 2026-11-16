@@ -48,6 +48,8 @@ class ScriptContext:
     uses_hour_window: bool = False
     uses_timer: bool = False
     uses_say: bool = False
+    #: The script calls MessageBox, which a GameMode pass must not raise over an open dialogue.
+    shows_box: bool = False
     #: A standalone script, which declares the halted flag; a fragment only returns.
     can_halt: bool = False
     #: A statement emitted the halt, so every event checks the halted flag.

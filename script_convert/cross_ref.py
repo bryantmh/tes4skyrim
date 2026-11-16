@@ -64,7 +64,8 @@ def _new_scan_out() -> dict:
         'script_formid_to_edid': {}, 'script_formid_to_type': {},
         'record_scri': {}, 'record_base': {}, 'record_type': {},
         'record_parent': {},
-        'quest_edids': set(), 'npc_formids': set(),
+        'quest_edids': set(), 'repeat_stage_quests': set(), 'npc_formids': set(),
+        'gate_scripts': set(),
         'mgef_shaders': {}, 'spell_effects': {},
         'global_types': {}, 'global_values': {},
         'pack_type': {}, 'actor_packages': {},
@@ -230,15 +231,23 @@ def _scan_pack(rec: dict, formid: str, _edid: str, out: dict) -> None:
         out['pack_type'][formid] = pkdt_type
 
 
-def _scan_qust(_rec: dict, _formid: str, edid: str, out: dict) -> None:
-    """A quest's EditorID."""
+def _scan_qust(rec: dict, _formid: str, edid: str, out: dict) -> None:
+    """A quest's EditorID, and whether it allows repeated stages (DATA flag 0x08)."""
     if edid:
         out['quest_edids'].add(edid.lower())
+        if (_int_field(rec, 'DATA.Flags', 0) or 0) & 0x08:
+            out['repeat_stage_quests'].add(edid.lower())
+
+
+def _scan_door(rec: dict, _formid: str, _edid: str, out: dict) -> None:
+    """The script of a door flagged Oblivion Gate (FNAM bit 0)."""
+    if (_int_field(rec, 'FNAM.Flags', 0) or 0) & 0x01 and rec.get('SCRI'):
+        out['gate_scripts'].add(rec['SCRI'].upper())
 
 
 #: Signature -> the indexer for the fields only that record type carries.
 _SIG_SCANNERS = {'SCPT': _scan_scpt, 'CELL': _scan_cell, 'NPC_': _scan_actor,
-                 'CREA': _scan_actor, 'PACK': _scan_pack, 'QUST': _scan_qust}
+                 'CREA': _scan_actor, 'PACK': _scan_pack, 'QUST': _scan_qust, 'DOOR': _scan_door}
 
 
 #: The fields of a record that hold a FormID, beside its own and every `AIPackage[n]`.
@@ -396,9 +405,15 @@ class CrossRefGraph:
         self.record_parent: dict[str, str] = {}
         #: (script EditorID, variable), lowercase, that ANOTHER script assigns (`set Owner.var to X`).
         self.remote_writes: set[tuple[str, str]] = set()
+        #: (script, variable) pairs another script adds to: the owner carries an add helper for each.
+        self.remote_adds: set[tuple[str, str]] = set()
         #: Variable names assigned through an owner no script could be found for; these veto by name.
         self.remote_write_names: set[str] = set()
         self.quest_edids: set[str] = set()
+        #: Lowercased EditorIDs of quests whose stages may be set again (TES4 Allow Repeated Stages).
+        self.repeat_stage_quests: set[str] = set()
+        #: FormIDs of scripts attached to a DOOR flagged Oblivion Gate.
+        self.gate_scripts: set[str] = set()
         self.npc_formids: set[str] = set()
         # Cross-script ref-as-int analysis: set of (script_name_lower, var_name_lower)
         # where the TES4 `ref` variable is only ever assigned/compared with integers
@@ -522,6 +537,8 @@ class CrossRefGraph:
         self.cell_geom.update(out['cell_geom'])
         self.enchanted_books.update(out['enchanted_books'])
         self.quest_edids.update(out['quest_edids'])
+        self.repeat_stage_quests.update(out['repeat_stage_quests'])
+        self.gate_scripts.update(out['gate_scripts'])
         self.npc_formids.update(out['npc_formids'])
         self.mgef_shaders.update(out['mgef_shaders'])
         self.spell_effects.update(out['spell_effects'])
@@ -640,6 +657,11 @@ class CrossRefGraph:
             self._base_to_unique_ref = {k: v for k, v in first.items()
                                         if k not in dup}
         return self._base_to_unique_ref.get((base_fid or '').upper(), '')
+
+    def is_gate_script(self, script_edid: str) -> bool:
+        """Whether the script named `script_edid` sits on a door flagged Oblivion Gate."""
+        low = (script_edid or '').lower()
+        return any(self.script_formid_to_edid.get(fid, '').lower() == low for fid in self.gate_scripts)
 
     def get_quest_script_type(self, quest_name: str) -> str:
         """Get the Papyrus script class name for a quest, e.g. 'TES4_MyQuestScript'.
@@ -1158,7 +1180,9 @@ class CrossRefGraph:
     def build_script_indexes(self, scpt_path: str) -> None:
         """Every index read off script SOURCE; the one entry both graph builders call."""
         self.build_ref_as_int_map(scpt_path)
-        self.index_remote_writes(_script_texts(os.path.dirname(scpt_path)))
+        texts = _script_texts(os.path.dirname(scpt_path))
+        self.index_remote_writes(texts)
+        self.index_remote_adds(texts, _own_script_edids(scpt_path))
 
     def index_remote_writes(self, texts) -> None:
         """Record every `set Owner.var to X` in `texts` against the script that OWNS var.
@@ -1176,6 +1200,33 @@ class CrossRefGraph:
                 self.remote_writes.update((s, var.lower()) for s in scripts)
                 if not scripts:
                     self.remote_write_names.add(var.lower())
+
+    def index_remote_adds(self, texts, own: set) -> None:
+        """Record every `set Owner.var to Owner.var +/- X` whose owner is one of this plugin's `own` scripts.
+
+        Oblivion ran scripts one at a time; Papyrus does not, so that read and
+        write must happen inside the owning script. A master's script is left
+        out: its compiled copy may predate the helper.
+        """
+        known = {e.lower() for e in self.script_formid_to_edid.values()}
+        for text in texts:
+            for owner, var in _REMOTE_ADD_RE.findall(text):
+                scripts = self._scripts_of(owner, known)
+                if scripts and scripts <= own:
+                    self.remote_adds.update((s, var.lower()) for s in scripts)
+
+    def adds_remotely(self, owner: str, var_name: str) -> bool:
+        """Does every script `owner` reaches carry the add helper for this variable?"""
+        known = {e.lower() for e in self.script_formid_to_edid.values()}
+        scripts = self._scripts_of(owner, known)
+        return bool(scripts) and all((s, var_name.lower()) in self.remote_adds for s in scripts)
+
+    def holds(self, owner: str) -> bool:
+        """Does every script `owner` reaches carry the TES4Hold / TES4Release pair (it has an add helper)?"""
+        known = {e.lower() for e in self.script_formid_to_edid.values()}
+        scripts = self._scripts_of(owner, known)
+        helped = {script for script, _var in self.remote_adds}
+        return bool(scripts) and scripts <= helped
 
     def _scripts_of(self, name: str, known: set) -> set:
         """Lowercase EditorIDs of the scripts `name` reaches: itself, its SCRI, its base's SCRI."""
@@ -1248,6 +1299,21 @@ def _strip_comments(text: str) -> str:
 _REMOTE_WRITE_RE = re.compile(
     r'^[ \t]*(?:set|let)[ \t]+(\w+)[ \t]*\.[ \t]*(\w+)[ \t]*(?:to\b|[-+*/^]?:=)',
     re.I | re.M)
+
+#: `set Owner.var to Owner.var + X` (or `-`), and `let Owner.var += X`: a cross-script read-then-write.
+_REMOTE_ADD_RE = re.compile(
+    r'^[ \t]*(?:set|let)[ \t]+(\w+)[ \t]*\.[ \t]*(\w+)[ \t]*'
+    r'(?:(?:to\b|:=)[ \t(]*\1[ \t]*\.[ \t]*\2[ \t]*[-+]|[-+]:=)',
+    re.I | re.M)
+
+
+def _own_script_edids(scpt_path: str) -> set:
+    """Lowercase EditorIDs of the scripts in one export's SCPT file."""
+    if not os.path.isfile(scpt_path):
+        return set()
+    with open(scpt_path, encoding='utf-8', errors='replace') as handle:
+        return {line[9:].strip().lower() for line in handle if line.startswith('EditorID=')}
+
 
 #: Export fields holding script source: a SCPT's text, INFO's two result halves, a QUST stage log entry's.
 _SCRIPT_TEXT_RE = re.compile(

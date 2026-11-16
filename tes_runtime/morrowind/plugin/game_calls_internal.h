@@ -44,6 +44,7 @@ void* ItemForm(const std::string& item);
 void* OwnerRef(const std::string& owner);
 void* PlayerRef();
 void* RefByRuntimeId(std::uint32_t runtimeFormId);
+void* TestRef(std::uint32_t id);
 // The reference a player action names: its id, or its live FormID in hex.
 void* PlayerTarget(const std::string& id);
 // `Actor.IsDead`; false for a null or non-actor reference.
@@ -120,6 +121,9 @@ std::string ActorKey(void* ref);
 // package left behind in another TES3 cell (`leftCell`) idles at the new spot
 // too. Game thread only.
 void AiAfterScriptMove(void* actor, void* place, float x, float y, float z, bool leftCell);
+
+// Has `actor` re-check its packages on the main thread.
+void ReevaluatePackage(void* actor);
 // Each file resolves its own natives and supplies its own hooks.
 void InstallMoveCalls(GameHooks& hooks);
 void InstallAiCalls(GameHooks& hooks);
@@ -151,6 +155,12 @@ bool ActorInCombat(void* actor);
 void ForEachHighActor(const std::function<void(void*)>& fn);
 // `Actor.GetCombatTarget`, or null. game_calls_query.cpp.
 void* CombatTargetOf(void* actor);
+// The package `actor`'s AI process runs now, or null. game_calls_combat.cpp.
+void* RunningPackageOf(void* actor);
+// A converted escort of the player that stands still with the player beside it re-checks its
+// package, the one move that restarts it. Game thread. game_calls_escort.cpp.
+// See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-returns
+void RestartStalledEscorts();
 // TEMP (Vaerin hostility diag): the actor's crime faction and the player's crime gold there.
 std::string TempCrimeNote(void* actor);
 int TempRelationRank(void* actor, void* other);

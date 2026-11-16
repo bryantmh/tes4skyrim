@@ -79,6 +79,28 @@ def test_floor_at_the_foot_of_a_flight_stays_plain():
     assert out[len(floor):] == [STAIRS_STONE] * len(flight)
 
 
+def test_two_steps_off_the_floor_into_a_tunnel_are_a_flight():
+    """sewerRoomWallMid02's shape: a 15u step off the floor the mesh stands on, then the tunnel floor 15u higher.
+
+    The step and its risers take the stairs material; the wide tunnel floor past its edge stays plain.
+    """
+    tread = _quad(0, 0, 100, 12, 15)
+    risers = _riser(0, 0, 15) + _riser(12, 15, 30)
+    far = _quad(0, 60, 100, 300, 30)
+    out = _run(tread + risers + _quad(0, 12, 100, 60, 30) + far)
+    assert out[:len(tread) + len(risers)] == [STAIRS_STONE] * (len(tread) + len(risers))
+    assert out[-len(far):] == [STONE] * len(far)
+
+
+def test_a_mattress_off_the_floor_with_a_low_pillow_is_no_flight():
+    """middlesinglebed01's shape: mattress 37u up on a box from z 0, a 7u pillow strip beside it, a headboard."""
+    mattress = _quad(-38, -52, 37, 80, 37) + _riser(-52, 0, 37)
+    pillow = _quad(-38, -79, 37, -52, 44.7)
+    headboard = _quad(-41, -90, 42, -79, 72.9)
+    tris = mattress + pillow + headboard
+    assert _run(tris) == [STONE] * len(tris)
+
+
 def test_stacked_shelves_are_not_a_flight():
     """Boards stacked straight above each other share their footprint: no steps."""
     tris = [t for i in range(6) for t in _quad(0, 0, 100, 30, 30 * i)]

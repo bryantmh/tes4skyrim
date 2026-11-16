@@ -59,9 +59,9 @@ def dense(points):
 
 
 def cell_at(args, gx, gy):
-    """EditorID of the exterior cell at grid (gx, gy), or ''."""
+    """EditorID (else FormID) of the exterior cell at grid (gx, gy), or ''."""
     rec, _err = find_by_coords(args.plugin, args.world, gx, gy)
-    return (rec or {}).get('EditorID') or ''
+    return (rec or {}).get('EditorID') or (rec or {}).get('FormID') or ''
 
 
 def cells_in(args, box):

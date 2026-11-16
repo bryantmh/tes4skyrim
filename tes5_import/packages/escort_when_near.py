@@ -10,24 +10,29 @@ copied from those two vanilla roots.
 See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-returns
 """
 
-import struct
 from dataclasses import replace
 
-from ..base.writer import (pack_record, pack_string_subrecord, pack_subrecord)
+from .custom_roots import PLAYER_REF, in_faction_gate, procedure, root_record, stacked, within_distance_gate
 from .templates import (ESCORT, T_BOOL, T_FLOAT, T_INT, T_LOCATION,
                         T_SINGLEREF, Template)
 
 #: EditorID of the root; a dependent plugin adopts its master's copy by this name.
 ESCORT_WHEN_NEAR_EDID = 'TES4EscortWhenNear'
 
-#: Radius outside which the escorter waits; MQ102 Hadvar/Ralof's open-terrain player escorts write 1500.
-NEAR_RADIUS = 1500.0
+#: EditorID of the faction that holds an escorter in the Wait branch while the runtime restarts its Escort.
+ESCORT_HOLD_EDID = 'TES4EscortHold'
 
-#: CTDA function index of GetWithinDistance (EscortPlayerWhenNear's Escort branch gate).
-_GET_WITHIN_DISTANCE = 0x027F
+#: Radius outside which the escorter waits: both games' fAIEscortWaitDistanceInterior.
+NEAR_RADIUS = 512.0
 
-#: CTDA flag: both parameters name package data inputs.
-_CTDA_USE_PACKDATA = 0x08
+#: The Escort procedure's own Distance to Wait, out of reach: its waiting state does not reliably end for a player.
+NEVER_WAIT = 100000.0
+
+#: Distance to Wait for an escorted NPC, which follows only while the escorter waits for it: vanilla Escort's.
+NPC_WAIT = ESCORT.defaults[3]
+
+#: The radius for an escorted NPC: it follows only while escorted, so it can never come back into range by itself.
+NPC_NEAR_RADIUS = 1000000.0
 
 #: Package data input indices (UNAM) of the escort target, the radius, and Wait's two inputs.
 _IN_TARGET, _IN_RADIUS, _IN_WAIT_SECONDS, _IN_STOP_MOVING = 11, 15, 20, 21
@@ -35,12 +40,8 @@ _IN_TARGET, _IN_RADIUS, _IN_WAIT_SECONDS, _IN_STOP_MOVING = 11, 15, 20, 21
 #: EscortPlayerWhenNear's Escort procedure inputs (PKC2), verbatim.
 _ESCORT_INPUTS = (11, 2, 3, 4, 5, 6, 13, 17, 19)
 
-#: PlayerRef, EscortPlayerWhenNear's default escort target.
-_PLAYER_REF = 0x14
-
-#: Root PKDT (type 19) and PSDT, verbatim from EscortPlayerWhenNear.
+#: Root PKDT (type 19), verbatim from EscortPlayerWhenNear.
 _ROOT_PKDT = bytes.fromhex('0000000013000204fffe0000')
-_ROOT_PSDT = bytes.fromhex('ffff00ffff00000000000000')
 
 #: Editor names (UNAM index, BNAM label, public flag): EscortPlayerWhenNear's, then DoNothing's Wait pair.
 _INPUT_NAMES = (
@@ -62,18 +63,33 @@ _BASE = Template(
     index_list=(11, 2, 3, 4, 15, 5, 6, 13, 17, 19, 20, 21),
     inputs=(T_SINGLEREF, T_INT, T_LOCATION, T_FLOAT, T_FLOAT, T_FLOAT,
             T_FLOAT, T_BOOL, T_BOOL, T_FLOAT, T_FLOAT, T_BOOL),
-    defaults={1: 1, 3: ESCORT.defaults[3], 4: NEAR_RADIUS,
+    defaults={1: 1, 3: NEVER_WAIT, 4: NEAR_RADIUS,
               5: ESCORT.defaults[4], 6: ESCORT.defaults[5], 7: 0,
               8: ESCORT.defaults[7], 9: ESCORT.defaults[8], 10: 0.0, 11: 1},
-    slots={'target': 0, 'location': 2, 'ride_horse': 7},
+    slots={'target': 0, 'location': 2, 'wait': 3, 'radius': 4, 'ride_horse': 7},
 )
 
-_installed = {'fid': 0}
+_installed = {'fid': 0, 'player_escorts': set()}
 
 
 def set_escort_template_fid(fid: int) -> None:
-    """Record the FormID converted escorts point at; 0 falls back to vanilla Escort."""
+    """Record the root converted escorts use (0 = vanilla Escort); a new run."""
     _installed['fid'] = fid
+    _installed['player_escorts'] = set()
+
+
+def note_player_escort(pack_fid: int) -> None:
+    """Record a package escorting the player on this root (runtime restart).
+
+    See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-returns
+    """
+    if _installed['fid']:
+        _installed['player_escorts'].add(pack_fid)
+
+
+def player_escorts() -> list:
+    """FormIDs of this run's converted player escorts, sorted."""
+    return sorted(_installed['player_escorts'])
 
 
 def escort_template() -> Template:
@@ -82,43 +98,21 @@ def escort_template() -> Template:
     return replace(_BASE, formid=fid) if fid else ESCORT
 
 
-def _procedure(name: str, flags: int, inputs, ctda: bytes = b'') -> bytes:
-    """One Procedure branch: ANAM CITC [CTDA] PNAM FNAM PKC2*."""
-    out = pack_string_subrecord('ANAM', 'Procedure')
-    out += pack_subrecord('CITC', struct.pack('<I', 1 if ctda else 0)) + ctda
-    out += pack_string_subrecord('PNAM', name)
-    out += pack_subrecord('FNAM', struct.pack('<I', flags))
-    return out + b''.join(pack_subrecord('PKC2', bytes([i])) for i in inputs)
+def _procedure_tree(hold: int) -> bytes:
+    """Stacked { Escort if within the radius and not in `hold` ; Wait }."""
+    gate = (within_distance_gate(_IN_TARGET, _IN_RADIUS), in_faction_gate(hold, 0.0))
+    return stacked(procedure('Escort', 1, _ESCORT_INPUTS, gate),
+                   procedure('Wait', 0, (_IN_WAIT_SECONDS, _IN_STOP_MOVING)))
 
 
-def _procedure_tree() -> bytes:
-    """Stacked { Escort if GetWithinDistance(target, radius) == 1 ; Wait }."""
-    gate = pack_subrecord('CTDA', struct.pack(
-        '<B3xfHHIIIIi', _CTDA_USE_PACKDATA, 1.0, _GET_WITHIN_DISTANCE, 0,
-        _IN_TARGET, _IN_RADIUS, 0, 0, -1))
-    out = pack_string_subrecord('ANAM', 'Stacked')
-    out += pack_subrecord('CITC', struct.pack('<I', 0))
-    out += pack_subrecord('PRCB', struct.pack('<II', 2, 0))
-    out += _procedure('Escort', 1, _ESCORT_INPUTS, gate)
-    return out + _procedure('Wait', 0, (_IN_WAIT_SECONDS, _IN_STOP_MOVING))
-
-
-def escort_root_record(fid: int) -> bytes:
-    """The PKDT type-19 root record at `fid`, defaulting its target to the player.
+def escort_root_record(fid: int, hold: int) -> bytes:
+    """The PKDT type-19 root record at `fid`, defaulting its target to the player; `hold` is ESCORT_HOLD_EDID's FACT.
 
     Imports `converter` here: converter imports this module for escort_template.
+    See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-returns
     """
     from .converter import Inputs, package_markers
     root_inputs = Inputs(_BASE)
-    root_inputs.set_slot(0, (0, _PLAYER_REF, 0))
-    subs = pack_string_subrecord('EDID', ESCORT_WHEN_NEAR_EDID)
-    subs += pack_subrecord('PKDT', _ROOT_PKDT)
-    subs += pack_subrecord('PSDT', _ROOT_PSDT)
-    subs += pack_subrecord('PKCU', struct.pack('<III', len(_BASE.inputs), 0,
-                                               _BASE.version))
-    subs += root_inputs.emit() + _procedure_tree()
-    for index, label, public in _INPUT_NAMES:
-        subs += pack_subrecord('UNAM', bytes([index]))
-        subs += pack_string_subrecord('BNAM', label)
-        subs += pack_subrecord('PNAM', struct.pack('<I', public))
-    return pack_record('PACK', fid, 0, subs + package_markers())
+    root_inputs.set_slot(0, (0, PLAYER_REF, 0))
+    return root_record(fid, ESCORT_WHEN_NEAR_EDID, _ROOT_PKDT, _BASE, root_inputs.emit(), _procedure_tree(hold),
+                       _INPUT_NAMES, package_markers())

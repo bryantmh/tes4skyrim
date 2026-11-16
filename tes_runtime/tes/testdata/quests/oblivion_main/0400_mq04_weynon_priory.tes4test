@@ -1,0 +1,117 @@
+# MQ04 "Weynon Priory". MQ03 50 set 60, which starts MQ04 at 5: the Mythic Dawn attack the Priory and Prior Maborel
+# lies dead. Near the Priory Eronor runs to the player (7) and says Jauffre is in the Chapel (10, which ends MQ03 at
+# 100). Jauffre fights in the Chapel; he goes with the player to check on the Amulet (20), the chest in Weynon House
+# is empty (25), and he names Cloud Ruler Temple (30). At its gates (35) the Blades hail Martin (36 .. 44), the
+# quest waits (45), and "And you will be the Emperor." to Martin sets 50 -> 100, which starts MQ05 at 10.
+# DRAFT from tools/live/quest_brief.py (2026-11-12): not run yet.
+
+# The ride from Kvatch is the player's travel: `cow` stands in for it and Martin, who follows the player, is brought
+# along. EronorScript sets 7 once the player is within 5000 of him; his find-the-player package ends at the player
+# and his greeting ("Help! You must help! ...") offers "Hold on. Tell me what happened." (INFO 0001EE29) -> "Who's
+# attacking Weynon Priory?" (INFO 0001EE28) -> "Where's Jauffre? Is he safe?" (INFO 0001EE2A, 10; run 23a: only
+# the first is listed at the greeting). The agents attack on sight: the
+# player fights (`defend`), and keeps Martin alive. Stage 7 also sends agents 03 and 05 at the player, and
+# Skyrim's dialogue does not pause the game as Oblivion's does: an attack while Eronor greets closes his
+# conversation, his package changes and EronorScript sets 10 without the topics (run 39c). The player deals with
+# those two as they arrive (the kill stands in for the fight). Stage 7 also sends agent 04 at Brother Piner; his
+# death during the greeting alarmed Eronor the same way (run 57b), so the player stops agent 04 too. (Agent 01 is
+# the leader fighting Jauffre in the Chapel, the next case's fight.)
+case mq04_arrive_priory
+until 600 GetStage MQ04 >= 5
+defend MartinRef
+run
+MQ04MythicDawnAgent03Ref.kill
+MQ04MythicDawnAgent04Ref.kill
+MQ04MythicDawnAgent05Ref.kill
+cow TES4Tamriel -14 21
+wait 120
+run
+MartinRef.moveto player
+until 900 GetStage MQ04 >= 7
+approach EronorRef
+talk EronorRef
+ask "Hold on. Tell me what happened."
+ask "Who's attacking Weynon Priory?"
+ask "Where's Jauffre? Is he safe?"
+until 300 GetStage MQ04 >= 10
+until 300 GetStageDone MQ03 100
+bye if open
+end
+
+# Jauffre is in the Chapel (WeynonPrioryChapel), fighting; the player helps him. "I'll go check on the Amulet."
+# (INFO 0001EE2B, MQ04.playerFoundSecretRoom == 0) sets 20.
+case mq04_find_jauffre
+defend JauffreRef
+run
+player.moveto JauffreRef
+wait 120
+approach JauffreRef
+talk JauffreRef
+ask "I'll go check on the Amulet."
+until 300 GetStage MQ04 >= 20
+bye if open
+end
+
+# The Amulet's chest in Weynon House (MQ04AmuletChestRef, behind the secret door stage 5 opened) is empty: opening
+# it at 20 sets 25 (MQ04AmuletChestScript). Jauffre comes along (27 = his walk to MQ04JauffreAmuletMarker ends).
+# At 27 he has seen it himself: his greeting "They've taken it! The Amulet of Kings is gone!" (INFO 00090B4F)
+# offers "I found Martin. He is safe." (INFO 0001EE2D), which offers "Where will Martin be safe?" (INFO 0001EE2E,
+# 30). ("The Amulet is gone." belongs to his greetings before 27; run 23b.) The player opens the chest as soon as
+# they land: Jauffre reaching it sets 27 by himself (OnPackageDone MQ04JauffreToAmulet), and a chest opened in the
+# middle of his greeting cut off its choice (run 39d, after a fixed `wait 120`; again at once in 39e, when he was
+# 70 ticks away). So the player leaves whatever conversation is open and talks to him afresh: the 27 greeting is
+# not say-once and offers its choice again.
+case mq04_amulet_gone
+defend JauffreRef
+run
+player.moveto MQ04AmuletChestRef
+until 300 player.GetDistance MQ04AmuletChestRef < 300
+activate MQ04AmuletChestRef
+until 300 GetStage MQ04 >= 25
+close ContainerMenu
+until 1800 GetStage MQ04 >= 27
+bye if open
+wait 60
+approach JauffreRef
+talk JauffreRef
+ask "I found Martin. He is safe."
+ask "Where will Martin be safe?"
+until 300 GetStage MQ04 >= 30
+bye if open
+end
+
+# The ride to Cloud Ruler Temple is the player's travel with Martin and Jauffre: all three are placed at the gates.
+# MQ04Script sets 35 once Martin is within 1000 and Jauffre within 1250 of CloudRulerMainGates; Jauffre's "Come.
+# Your Blades are waiting to greet you." sets 36, the script 40, Jauffre reaching the steps 41, and the Blades'
+# hail runs 42 .. 44; the script then sets 45.
+case mq04_cloud_ruler
+run
+player.moveto MQ04MartinOutsideCloudRulerMarker
+wait 120
+run
+MartinRef.moveto MQ04MartinOutsideCloudRulerMarker
+JauffreRef.moveto MQ04JauffreOutsideCloudRulerMarker
+until 1800 GetStage MQ04 >= 35
+until 1800 GetStage MQ04 >= 36
+until 1800 GetStage MQ04 >= 40
+until 3600 GetStage MQ04 >= 41
+until 3600 GetStage MQ04 >= 44
+until 1800 GetStage MQ04 >= 45
+end
+
+# Martin, inside the Temple: his greeting at 44 .. 45 (INFO 0001EFE0) offers "We need to get the Amulet back."
+# (INFO 0001EFE1), which offers "And you will be the Emperor." (INFO 0001EFE2): that sets 50, whose result sets
+# 100; that ends MQ04 and sets MQ05 10. (Run 24a: only the first is listed at the greeting.)
+case mq04_martin_emperor
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+ask "We need to get the Amulet back."
+ask "And you will be the Emperor."
+until 300 GetStage MQ04 >= 50
+until 300 GetStageDone MQ04 100
+until 300 GetStage MQ05 >= 10
+bye if open
+end

@@ -17,7 +17,8 @@ from script_convert.blocks import (BLOCK_MAP, BLOCK_TYPE_GUARDS,
                                    block_filter_guard)
 from script_convert.constants import (
     CONV_WALK_VAR, HALTED_VAR, LAST_ACTIVATOR_VAR, MENU_ID_NAMES, UDF_CALLER_PARAM, UDF_RESULT_VAR,
-    POLL_BLOCKS, REF_SPECIFICITY, TYPE_MAP, is_generated_script_type,
+    POLL_BLOCKS, REF_SPECIFICITY, REMOTE_ADD_PREFIX, REMOTE_HOLD, REMOTE_RELEASE, TYPE_MAP,
+    is_generated_script_type,
     safe_property_name, papyrus_script_name
 )
 from script_convert.command_rows import (
@@ -27,6 +28,8 @@ from script_convert import symbols as _symbols
 from script_convert.poll_motion import relative_sets
 from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as N
+from script_convert.unequip_guard import unequip_guard
+from tes5_import.base.owned_records import DIALOGUE_OPEN_GLOBAL
 
 
 # ---------------------------------------------------------------------------
@@ -51,12 +54,13 @@ def build(conv, name: str, source: str, extends: str, editor_id: str) -> str:
     body += door_relock(conv, tree, extends)
     body += lifecycle(conv, tree, extends)
     body = block_activation(conv, tree, extends, body)
-    body = fall_damage(conv, extends, body)
+    body = unequip_guard(conv, fall_damage(conv, extends, body))
     body += helpers(conv)
     body += chargen_latch(conv)
     body += stage_latches(conv)
     body += quest_restart(conv, tree, extends, name)
     body = halt_guards(conv, body)
+    body += remote_adders(conv, tree, editor_id)
 
     out = list(header(conv, name, extends, editor_id))
     out += properties(conv, tree)
@@ -249,6 +253,7 @@ def _load_facts(conv, tree) -> None:
     _load_time_facts(sc, tree, called, btypes)
     sc.uses_timer = 'timer' in names
     sc.uses_say = bool(called & {'say', 'sayto'})
+    sc.shows_box = 'messagebox' in called
     sc.uses_say_timer = any(
         isinstance(st, N.Assign)
         and any(e.called in ('say', 'sayto')
@@ -356,6 +361,26 @@ def variable_properties(conv, tree) -> list:
     return out
 
 
+def remote_adders(conv, tree, editor_id: str) -> list:
+    """An add function per variable another script adds to: the read and the write as one step."""
+    adds = conv.xref.remote_adds if conv.xref else ()
+    out = []
+    for var in (tree.variables if tree else ()):
+        safe = safe_property_name(var.name)
+        ptype = conv.sc.var_types.get(safe.lower(), 'Int')
+        if ptype in ('Int', 'Float') and ((editor_id or '').lower(), var.name.lower()) in adds:
+            total = f'{safe} + amount' if ptype == 'Float' else f'({safe} + amount) as Int'
+            out += ['', f'Function {REMOTE_ADD_PREFIX}{safe}(Float amount)', f'  {safe} = {total}', 'EndFunction']
+    return out + _HOLD_PAIR if out else out
+
+
+#: One writer at a time for a run of writes from another script; a lost release frees itself after 100 waits.
+_HOLD_PAIR = ['', 'Bool TES4_held', '', f'Function {REMOTE_HOLD}()', '  Int TES4_tries = 0',
+              '  While TES4_held && TES4_tries < 100', '    Utility.WaitMenuMode(0.01)', '    TES4_tries += 1',
+              '  EndWhile', '  TES4_held = True', 'EndFunction', '',
+              f'Function {REMOTE_RELEASE}()', '  TES4_held = False', 'EndFunction']
+
+
 def properties(conv, tree) -> list:
     """The script's variables, then every external record the body named, as auto-properties.
 
@@ -377,13 +402,18 @@ def properties(conv, tree) -> list:
     return out
 
 
+def _repeats_stages(conv, script: str) -> bool:
+    """Whether a quest on Papyrus script `script` allows repeated stages."""
+    return any(conv.xref.get_quest_script_type(quest) == script for quest in conv.xref.repeat_stage_quests)
+
+
 def quest_restart(conv, tree, extends: str, name: str) -> list:
     """`TES4Start(quest)` and `TES4SetStage(quest, stage)`, keeping TES4 variables.
 
-    Skyrim's `Start()` on a stopped quest re-initialises its scripts, as does
-    a `SetStage` that starts it; TES4 kept every quest variable across both.
-    Global, so the saved values live in the caller's frame.  The stage then
-    re-checks the alias packages.
+    Skyrim's `Start()` on a stopped quest re-initialises its scripts, as does a
+    `SetStage` that starts it; TES4 kept its variables. The stage re-checks the
+    alias packages. A stopped quest is not started for a done stage unless it
+    allows repeated stages.
     See: docs/commentary/script_convert.md#stopquest-converts-stop-run-bit
     See: docs/commentary/script_convert.md#setstage-start-keeps-variables
     See: docs/commentary/script_convert.md#setstage-re-evaluates-alias-packages
@@ -398,8 +428,11 @@ def quest_restart(conv, tree, extends: str, name: str) -> list:
     out += [f'  akQuest.{prop} = v{i}' for i, (prop, _t) in enumerate(kept)]
     out += ['EndFunction', '',
             f'Bool Function TES4SetStage({script} akQuest, Int aiStage) Global',
-            '  If !akQuest.IsRunning()',
-            '    TES4Start(akQuest)',
+            '  If !akQuest.IsRunning()']
+    out += [] if _repeats_stages(conv, script) else ['    If akQuest.GetStageDone(aiStage)',
+                                                     '      Return False',
+                                                     '    EndIf']
+    out += ['    TES4Start(akQuest)',
             '  EndIf',
             '  Bool done = akQuest.SetStage(aiStage)',
             '  TES4Polyfill.StageSet(akQuest)',
@@ -550,9 +583,9 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
             continue
         body = _guarded(conv, block, body)
         if consumes:
-            body = door_preamble(conv, extends) + body
+            body = door_preamble(conv, extends, _names_npc_user(body)) + body + user_rethinks(extends)
         if block.btype.lower() == 'onactivate':
-            body = gate_capture(tree, extends) + body
+            body = gate_capture(conv, tree, extends) + body
         if header not in merged:
             merged[header] = []
             order.append(header)
@@ -829,31 +862,29 @@ _PASS_STALE_SECS = '60.0'
 
 
 def _pass_guard(sc, head: list, body: list, passes: bool) -> tuple:
-    """(head, body, end) of a box-showing poll whose insurance pass waits out a running one.
+    """(head, body, end) of a poll whose insurance pass waits out a pass still running.
 
-    A pass parked in a latent call (SayLine) let the insurance arm start more
-    passes, and each woke to repeat the same stage step: a `stage + 1` ran
-    several times and skipped the stage that shows the box.
-    See: docs/commentary/script_convert.md#one-box-at-a-time
+    A pass parked in a latent call or behind a busy script let the insurance
+    arm start more passes on top of it; each one queued behind the same call.
+    See: docs/commentary/script_convert.md#poll-pile-up
     """
-    if not sc.uses_msg_buttons:
-        return head, body, []
     clear = f'{_PASS_VAR} = 0.0'
     head = [f'Float {_PASS_VAR} = 0.0'] + head + [
         '  Float TES4_passNow = Utility.GetCurrentRealTime()',
         f'  If {_PASS_VAR} > 0.0 && TES4_passNow >= {_PASS_VAR} && TES4_passNow - {_PASS_VAR} < {_PASS_STALE_SECS}',
         '    Return', '  EndIf', f'  {_PASS_VAR} = TES4_passNow']
     if not passes:
-        body = [_clear_before_returns(line, clear) for line in body]
+        body = [_before_returns(line, [clear]) for line in body]
     return head, body, [f'  {clear}']
 
 
-def _clear_before_returns(text: str, clear: str) -> str:
-    """`text` with `clear` before each bare `Return` line, at that line's indent."""
+def _before_returns(text: str, stmts: list) -> str:
+    """`text` with `stmts` before each bare `Return` line, at that line's indent."""
     lines = []
     for line in text.split('\n'):
-        if line.strip() == 'Return':
-            lines.append(line[:len(line) - len(line.lstrip())] + clear)
+        if line.partition(';')[0].strip() == 'Return':
+            indent = line[:len(line) - len(line.lstrip())]
+            lines += [indent + s for s in stmts]
         lines.append(line)
     return '\n'.join(lines)
 
@@ -891,20 +922,27 @@ def _poll_body(conv, tree, extends: str, interval: str, load_gated: bool) -> lis
     out += _elapsed_prologue(conv, interval)
     out += _glide_prologue(sc)
 
+    blocks = []
     for block in (tree.blocks if tree else ()):
         btype = block.btype.lower()
         if btype in POLL_BLOCKS or (btype == 'menumode'
                                      and _menumode_kind(block) == 'poll'):
-            out += _script.emit_body(conv, block.body, extends, 1)
+            blocks += _script.emit_body(conv, block.body, extends, 1)
+    return out + _latched(sc, blocks)
 
-    # Stage-arrival latches: record the stage each guarded quest is on NOW, so
-    # the next pass can tell "we have already seen this stage" from "it just
-    # arrived".  Emitted at the very END so every guard above compared against
-    # the PREVIOUS pass's value.
-    for _, var in sorted(sc.stage_latches.items()):
-        quest = var[len('TES4_LastStage_'):]
-        out.append(f'  {var} = {quest}.GetStage()')
-    return out
+
+def _latched(sc, blocks: list) -> list:
+    """`blocks`, then each stage-arrival latch, which also runs before every TES4 `return` in them.
+
+    The latch records the stage a pass ENDED on, so the guards above compare
+    against the previous pass; a pass that left by an early `return` still
+    saw the stage, or its `GetStage()==N && timer <= 0` guard never fires.
+    """
+    latches = [f'{var} = {var[len("TES4_LastStage_"):]}.GetStage()'
+               for _, var in sorted(sc.stage_latches.items())]
+    if not latches:
+        return blocks
+    return [_before_returns(line, latches) for line in blocks] + ['  ' + s for s in latches]
 
 
 #: The poll body as a function, for a script whose MenuMode must run in-event; see `_menu_passes`.
@@ -965,15 +1003,23 @@ def _arm(conv, secs: str, load_gated: bool, indent: str = '  ') -> list:
 def _dialogue_gate(conv, extends: str, load_gated: bool) -> list:
     """Skip this pass while the player is in a dialogue menu.
 
-    TES4 GameMode never ran while a menu was open.  Only scripts that SPEAK
-    carry the gate; a poll that never speaks cannot cut a line.
+    TES4 GameMode never ran while a menu was open.  Scripts that SPEAK carry
+    the gate, and so do those that raise a MessageBox (unless MenuMode work
+    shares the poll); a poll that does neither cannot cut a conversation.  The
+    runtime's DIALOGUE_OPEN_GLOBAL covers a dialogue whose lines carry no fragment.
 
     See: docs/commentary/script_convert.md#the-dialogue-poll-gate
     """
-    if not conv.sc.uses_say or extends not in ('Actor', 'Quest'):
+    sc = conv.sc
+    speaks = sc.uses_say and extends in ('Actor', 'Quest')
+    boxes = sc.shows_box and not sc.has_menumode and extends in ('Actor', 'Quest', 'ObjectReference')
+    if not (speaks or boxes):
         return []
-    test = ('IsInDialogueWithPlayer() || TES4Polyfill.PlayerIsInDialogue()'
-            if extends == 'Actor' else 'TES4Polyfill.PlayerIsInDialogue()')
+    conv.sc.property_refs[DIALOGUE_OPEN_GLOBAL] = 'GlobalVariable'
+    test = (f'TES4Polyfill.PlayerIsInDialogue() || ({DIALOGUE_OPEN_GLOBAL}'
+            f' && {DIALOGUE_OPEN_GLOBAL}.GetValue() > 0)')
+    if extends == 'Actor':
+        test = 'IsInDialogueWithPlayer() || ' + test
     return ([f'  If {test}  '
              '; TES4 GameMode did not run while a menu was open']
             + _arm(conv, '0.5', load_gated, indent='    ')
@@ -1145,19 +1191,28 @@ def _consumes_activation(conv, tree) -> bool:
     return conv._onactivate_consumes(blocks)
 
 
-def gate_capture(tree, extends: str) -> list:
+def gate_capture(conv, tree, extends: str) -> list:
     """Remember the Oblivion gate the player just entered, before it is lost.
 
-    The authored line `set MQ00.nearOblivionGate to 0` marks the entry AND
-    discards the gate's identity, so the capture goes AHEAD of the body.  All
-    5 vanilla gate scripts use the idiom; nothing else writes that variable 0.
+    A gate is a script that clears `MQ00.nearOblivionGate`, or one on a door
+    flagged Oblivion Gate whose OnActivate passes the activation on. The
+    capture goes AHEAD of the body, which discards the gate's identity.
+    See: docs/commentary/script_convert.md#oblivion-gate-capture
     """
     if extends not in ('ObjectReference', 'Actor') \
-            or not _is_gate_entry(tree):
+            or not (_is_gate_entry(tree) or _gate_door_lets_in(conv, tree)):
         return []
     return ['  If akActionRef == Game.GetPlayer()',
             '    TES4Polyfill.EnterOblivionGate(Self)',
             '  EndIf']
+
+
+def _gate_door_lets_in(conv, tree) -> bool:
+    """Does this script sit on a door flagged Oblivion Gate and call `Activate` in its OnActivate?"""
+    if not conv.xref.is_gate_script(conv.sc.edid):
+        return False
+    return any('activate' in {e.called for e in N.walk_exprs_in(block.body)}
+               for block in (tree.blocks if tree else ()) if block.btype.lower() == 'onactivate')
 
 
 def _is_gate_entry(tree) -> bool:
@@ -1177,15 +1232,30 @@ def _is_gate_entry(tree) -> bool:
     return False
 
 
-def door_preamble(conv, extends: str) -> list:
-    """TES4 parity: AI door-use ignores this script AND the lock.
+#: Uses of the activator that tell nothing about an NPC user: the player test and the default activation.
+_PLAYER_ONLY_USE = re.compile(r'akActionRef [!=]= Game\.GetPlayer\(\)|Activate\(akActionRef, true\)')
 
-    An NPC opening a door does not run the door's script in Oblivion, and the
-    authored lock is restored when the door next closes (see `door_relock`).
+
+def _names_npc_user(body: list) -> bool:
+    """Whether an OnActivate body reads its activator for more than the player test."""
+    return any('akActionRef' in _PLAYER_ONLY_USE.sub('', line.partition(';')[0]) for line in body)
+
+
+def door_preamble(conv, extends: str, npc_runs: bool = False) -> list:
+    """An NPC walking through a scripted door gets the default open, lock lifted; `npc_runs` runs the block.
+
+    See: docs/commentary/script_convert.md#door-scripts-that-name-an-npc-user
     """
     if extends != 'ObjectReference':
         return []
-    return ['  If (GetBaseObject() as Door) && (akActionRef as Actor) && '
+    uses = _symbols.scripted_uses_formlist(conv)
+    listed = [f'  If {uses}.HasForm(Self)',
+              '    ; A script activated this door to run this block (TES4 `Activate ref 1`).',
+              f'    {uses}.RemoveAddedForm(Self)']
+    if npc_runs:
+        return listed + ['  EndIf']
+    return listed + [
+            '  ElseIf (GetBaseObject() as Door) && (akActionRef as Actor) && '
             'akActionRef != Game.GetPlayer()',
             '    ; TES4 parity: AI door-use ignores this script and the lock; '
             'the authored lock is restored when the door next closes.',
@@ -1197,6 +1267,21 @@ def door_preamble(conv, extends: str) -> list:
             '      Activate(akActionRef, true)',
             '    EndIf',
             '    Return',
+            '  EndIf']
+
+
+def user_rethinks(extends: str) -> list:
+    """An NPC that has used a scripted object picks its package again.
+
+    Oblivion's UseItemAt ends on the activation; Skyrim's Activate procedure
+    does not end on an object whose script takes the activation, so the user
+    stood on the finished package.
+    See: docs/commentary/script_convert.md#an-npc-that-used-a-scripted-object-re-evaluates
+    """
+    if extends != 'ObjectReference':
+        return []
+    return ['  If (akActionRef as Actor) && akActionRef != Game.GetPlayer()',
+            '    (akActionRef as Actor).EvaluatePackage()',
             '  EndIf']
 
 

@@ -1,0 +1,39 @@
+# MQ14 "Great Gate". MQ13 100 set MQ14 10: the Great Gate is open and a siege engine crawls toward it. The player
+# enters (MQ14.inGreatGate), reaches the Great Sigil Stone before the 15 minutes run out and takes it (45); back
+# outside Bruma the script sets 48 and 50. Martin's greeting takes the Stone (60 -> 100), which starts MQ15 at 10.
+# DRAFT from tools/live/quest_brief.py (2026-11-13): not run yet.
+
+# The Great Gate (MQ13Gate4, MQ13OblivionGate4Script OnActivate): entering sets MQ14.inGreatGate, so Martin is
+# not killed for the player's absence.
+# (entering the Great Gate is the end of mq13_battle, in 1200)
+
+# The run to the Great Sigil Stone is the player's race against the siege engine: moveto stands in. Activating the
+# Stone (MQ14SigilStone, MQ14SigilStoneScript) sets 45, gives MQ14GreatSigilStoneItem and closes the Gate; with
+# the player back at Bruma MQ14Script sets 48 and, 5 s later, 50.
+case mq14_great_sigil_stone
+run
+player.moveto MQ14SigilStone
+wait 120
+activate MQ14SigilStone
+until 600 GetStage MQ14 >= 45
+until 1800 player.GetItemCount MQ14GreatSigilStoneItem >= 1
+until 3600 GetStage MQ14 >= 48
+expect MartinRef.GetDead == 0
+until 600 GetStage MQ14 >= 50
+expect GetStageDone MQ14 40 == 0
+end
+
+# Martin on the battlefield: his greeting at 50 ("We won a great victory here today! ...", INFO 0003D7ED) sets 60,
+# whose result takes the Stone and sets 100; that sets MQ15 10.
+case mq14_martin
+run
+player.moveto MartinRef
+wait 120
+approach MartinRef
+talk MartinRef
+until 600 GetStage MQ14 >= 60
+until 300 GetStageDone MQ14 100
+until 300 GetStage MQ15 >= 10
+expect player.GetItemCount MQ14GreatSigilStoneItem == 0
+bye if open
+end

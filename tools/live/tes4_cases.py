@@ -244,7 +244,16 @@ def left_value(bridge: Bridge, left: str, names: Names):
         return BOOLS.get(value, float(number.group(0)) if number else None)
     ok, output = console(bridge, left, names)
     numbers = NUMBER.findall(output) if ok else []
-    return float(numbers[-1]) if numbers else None
+    if numbers or not quest_var:
+        return float(numbers[-1]) if numbers else None
+    return script_variable(bridge, quest_var.group(1), quest_var.group(2), names)
+
+
+def script_variable(bridge: Bridge, ref: str, name: str, names: Names):
+    """A reference's script variable `name` as a number (its `sv` listing), or None."""
+    ok, output = console(bridge, '%s.sv' % ref, names)
+    found = re.search(r'::%s_var = (-?\d+(?:\.\d+)?)' % re.escape(name), output, re.I) if ok else None
+    return float(found.group(1)) if found else None
 
 
 def judge(bridge: Bridge, condition: str, names: Names) -> str:

@@ -29,6 +29,7 @@ from script_convert.command_rows import (
     ACTOR_VALUE_READ_FUNCTIONS, Cmd, param_types
 )
 from script_convert.context_setup import add_topic_call
+from script_convert.symbols import scripted_uses_formlist
 from script_convert.emit.commands import emit_row
 from script_convert.commands_falloutnv import FALLOUT_HANDLERS
 from script_convert.message_menus import PAGE_OPTIONS, parse_button_box, resolve_pipe_box
@@ -881,6 +882,40 @@ def get_is_current_package(ctx, call) -> str:
     return f'({ref}.GetCurrentPackage() == {safe})'
 
 
+#: EditorIDs of the import's FormLists pairing each forced package with its armed faction.
+_FORCED_LISTS = ('TES4ScriptPackageList', 'TES4ScriptPackageArmed')
+
+
+def _forced_list_props(ctx) -> tuple:
+    """Register the two forced-package FormLists as properties; their names."""
+    for name in _FORCED_LISTS:
+        ctx.sc.property_refs[name] = 'FormList'
+    return _FORCED_LISTS
+
+
+@command('addscriptpackage')
+def add_script_package(ctx, call) -> str:
+    """AddScriptPackage Pkg -- arms Pkg on the actor; declines when Pkg is no converted PACK.
+
+    See: docs/commentary/tes5_import_package.md#package-hosts
+    """
+    arg = call.source(0, '').strip('"')
+    fid = ctx.xref.edid_to_formid.get(arg.lower(), '') if (ctx.xref and arg) else ''
+    if not fid or ctx.xref.record_type.get(fid, '') != 'PACK':
+        return None
+    safe = safe_property_name(arg)
+    ctx.sc.property_refs[safe] = 'Package'
+    ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)
+    return 'TES4Polyfill.AddScriptPackage(%s, %s, %s, %s)' % ((ref, safe) + _forced_list_props(ctx))
+
+
+@command('removescriptpackage')
+def remove_script_package(ctx, call) -> str:
+    """RemoveScriptPackage -- disarms the actor's forced package."""
+    ref = ctx._resolve_self_ref(call.ref, call.extends, actor_func=True)
+    return 'TES4Polyfill.RemoveScriptPackage(%s, %s)' % (ref, _forced_list_props(ctx)[1])
+
+
 # ---------------------------------------------------------------------------
 # OBSE strings and music
 # ---------------------------------------------------------------------------
@@ -1278,6 +1313,8 @@ def activate(ctx, call) -> str:
         # is an undefined identifier that fails the whole script.
         activator = ctx._get_action_ref_param()
     target = f'{ref}.' if ref else ''
+    if run_flag == '1' and ref and parts:
+        return f'TES4Polyfill.ActivateScripted({ref}, {activator}, {scripted_uses_formlist(ctx)})'
     if run_flag == '1':
         return f'{target}Activate({activator})'
     return f'{target}Activate({activator}, true)'

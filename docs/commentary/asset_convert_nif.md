@@ -552,7 +552,7 @@ block after the swap must retarget *all* of them — it already handled
 - Marker-bearing NIFs live outside meshes/furniture too: clutter/castleinterior (castle beds/thrones), architecture (cathedral pews, tents/sleepingmat, ships/sibed, anvil tree bench), dungeons (benches, thrones, sacrifice altar), oblivion/architecture/citadel. Find them with a binary grep for the ASCII string `BSFurnitureMarker` (block type names are plaintext in NIF headers).
 - BSFurnitureMarker lives in root NiNode's extra_data_list. During NiNode→BSFadeNode conversion, it must be explicitly converted and transferred (bulk extra_data_list copy breaks animated objects). Marker offsets are model-space and stay valid under the root-rotation wrap pass.
 - **FURN record linkage (CRITICAL)**: TES5 FURN `MNAM` bits 0-23 enable NIF marker POSITION index 0-23. TES4 MNAM bits indexed the Oblivion NIF's ENTRY list — passing the bitmask through after seat clustering leaves dangling bits and the engine seats NPCs at garbage positions FAR from the mesh. The shared algorithm lives in `asset_convert/nif/furniture_markers.py`; `tes5_import` (items.py `load_furniture_seats`, called in import Phase 0e) recomputes the same seat list from the source NIF and writes MNAM=(1<<n_seats)−1 + preserved high bits (0x40000000 sit-type / 0x80000000 bed-type, same in both games; beds add 0x08000000 MustExitToTalk like all vanilla beds) + WBDT(0,-1) + one FNPR per seat.
-- **Oblivion entry-restriction variants**: many TES4 FURN records share one NIF and enable different entry-marker subsets (SEChair01F/R/L, 19 LCBench01* variants like `Fall`=front row only, `RL`=ends only). Conversion carries this into per-seat FNPR entry flags: only the entry directions whose TES4 entry bit was enabled are allowed (seats with no enabled entries fall back to all their entries). Verified vs vanilla: converted bench = 0x40000007 + 3×FNPR like CommonBench01; converted bed = 0x88000001 + FNPR 0x000C0002 byte-identical to CommonBed01; LCBed02L keeps right-entry-only (FNPR 0x00040002).
+- <a id="furniture-entry-restrictions"></a>**Oblivion entry-restriction variants**: many TES4 FURN records share one NIF and enable different entry-marker subsets (SEChair01F/R/L, MCStool01F/B/R/L, 19 LCBench01* variants like `Fall`=front row only, `RL`=ends only). Vanilla Skyrim does this with the record's **ENAM + NAM0 "Disabled Entry Points"**, never FNPR: FNPR mirrors the mesh's entry sides (CommonWritingChair01R on CommonChair01.nif: FNPR front|right|left, NAM0 disables front|left; 185 of 400 vanilla FURN records carry NAM0). So each seat's FNPR is the mesh's full entry set, and a seat whose TES4 record allows fewer sides gets ENAM(seat index) + NAM0(0, the disallowed sides) (seats with no enabled entries keep all their entries). The earlier conversion put the allowed sides into FNPR and wrote no NAM0; the engine then used the mesh's four sides: run 38c, Baurus (MCStool01B = behind only) got up off the FRONT of a stool facing Luther Broad's bar counter, 62 units along the stool's facing, inside the counter, and fell out of the world (also 24g, 28d). Not yet confirmed in game by the user.
 - FURN models whose NIF is missing from the export (SI furniture, palace thrones) get a conservative fallback: MNAM bit 0 + high flags, FNPR all entries. NIFs with NO markers get MNAM high flags only (no active positions — never enable bits beyond the NIF's position count).
 
 ## NiControllerSequence conversion
@@ -946,17 +946,20 @@ Vanilla never leaves one dangling: across **80** meshes carrying shader float
 controllers, **481/481** are reachable from `shader.controller`. The pass mirrors
 that — the controller goes on the shader's chain, targeted at the shader.
 
-The controller is also put under the sequence's control the way vanilla's are.
-In vanilla `meshes/magic`, **11,215/11,215** controllers that a sequence entry
-names have the manager bit (`0x20`, so flags are `0x6c`/`0x68`) and their own
-`NiBlend*Interpolator`. The sequence's keyed interpolator stays on the
-controlled block. Our retargeted alpha/emissive/UV controllers used to ship
-`0x48|cycle` with the block's own `NiFloatInterpolator` as the controller's
-interpolator. That was 173 controllers in 22 Oblivion magic-effect NIFs (fireball,
-drain, shockshield, bindmythicdawn). A player's three crashes in fort fights all
-died in `NiControllerSequence` deactivate (1.5.97 `+0CCC1A5`,
-`NiBlendInterpolator::RemoveInterpInfo` called with blend slot 255, which means
-"never attached"), one of them on `tes4\magiceffects\fireball_area.nif`.
+**Known deviation, not a proven crash cause.** In vanilla `meshes/magic`,
+**11,215/11,215** controllers that a sequence entry names have the manager bit
+(`0x20`, flags `0x6c`/`0x68`) and their own `NiBlend*Interpolator`. Ours ship
+`0x48|cycle` with the block's `NiFloatInterpolator`: 173 controllers in 22
+Oblivion magic-effect NIFs. Making them vanilla-shaped was tried and reverted,
+because it was never tied to a crash:
+- **The crash:** a player's 1.5.97 crashes die in `NiBlendInterpolator::RemoveInterpInfo`
+  (`+0CCC1A5`) on a garbage entry pointer (`0x7F7FFFFF`, `-1`, `1`). One of them is
+  on `fireball_area.nif`.
+- **Headless test on 1.6.1170:** the debugger was attached
+  (`questtest --crash-capture --break 0xd976b0|...`) while the explosion was spawned
+  with `placeatme`, using the player-era mesh. Every `RemoveInterpInfo` index was
+  in range (325 calls).
+- **Open:** the cause, and whether these meshes are involved.
 
 ## Ambient animation: Oblivion's Idle becomes vanilla's AutoPlay pair
 <a id="autoplay-ambient-sequences"></a>
@@ -2073,6 +2076,70 @@ a 7-byte block: it runs into the next block and `AddRef`s whatever it finds.
 That is the `lock inc [rax+0x08]` CTD on entering **Vilverin**, where `rax`'s
 high half was `0xBF800000` — the `-1.0f` default of the Single Time field the
 block never had.
+
+### <a id="controller-owns-its-interpolator"></a>A managed controller owns its interpolator
+
+**Code:** `_unshare_controller_interpolators` in `asset_convert/nif/morphs.py`
+(run by `normalize_blend_interpolators`).
+
+A controller driven by a NiControllerManager never holds the interpolator one of
+its sequence's controlled blocks plays: in a vanilla sample (11 NIFs under
+`meshes/dungeons` with a manager, 158 managed controllers) 0 share, and the
+colour, float and bool ones hold a `NiBlend*Interpolator` with header 0x201 and
+the "unset" value (-FLT_MAX per axis, bool 2). Our conversion handed every
+emissive `BSLightingShaderPropertyColorController` (`_convert_color_ctrl`), every
+sibling entry and every UV companion the SAME block as its entry. The pass gives
+each such controller its own blend (a clone for a transform, as vanilla's
+transform controllers hold a separate `NiTransformInterpolator`). It was written
+for the `ClawStandContainer` crash below, and that crash came back on it (run
+38k): the shared block was not the cause. It stays because it is vanilla's
+shape; a before/after in game showed the same picture and pulse.
+
+### <a id="palette-lists-every-target"></a>The object palette lists every sequence target
+
+**Code:** `complete_object_palette` in `asset_convert/nif/morphs.py` (last of
+`_run_animation_passes`).
+
+The crash: in about 1 of 3 runs the game died on the first cell change after the
+Bruma Oblivion gate closed (runs 36a, 38i, 38k).
+`BGSGamebryoSequenceGenerator` (vanilla `GenericBehaviors\Autoplay.hkx`) was
+deactivating the `AutoLoop` sequence of a detached `ClawStandContainer`
+(`tes4\oblivion\clutter\containers\clawstandcontainer.nif`). The deactivate
+(AddrLib 72464) removes each block's entry from its blend by the slot it was
+given, with no check. NiBlendInterpolator's remove-entry (72544) ran with slot
+0xFF on an empty `NiBlendPoint3Interpolator`, reading past its array.
+
+Read from the dump (pid28212):
+- The bad block is the colour controller on `Box02:2`, a SKINNED shape. Its blend
+  array was never written. The same kind of block on `Box01:2` had its slot
+  filled at activation.
+- Activation (0xd92eb0) adds only blocks that already have a blend.
+- The bind (0xd92910) finds targets through the manager's
+  `NiDefaultAVObjectPalette`.
+- Oblivion's own palette for this mesh lists `Box01:2` but not `Box02:2`. So the
+  block got its blend from a later bind, after activation, and kept the "never
+  added" slot 0xFF.
+
+Census:
+- Vanilla: 2 of 700 managed NIFs have a sequence target missing from the palette,
+  both actors.
+- Ours: 17 of 535 managed Oblivion meshes (obelisk energy, Oblivion traps, the
+  palace font, the citadel ring, morph flipbooks). Two of them miss a skinned
+  shape: the claw stand, and `oblivionclawtrap01`.
+
+Nehrim had 12 such meshes, including the claw stand. One of them,
+`nehrim/natur/sportest2.nif`, has a manager with no palette at all; all 134
+vanilla managed clutter meshes have one.
+
+The pass adds every named scene object a sequence targets to the palette, and
+gives a manager without a palette a new one. `object_palette` is the one palette
+builder; the Morrowind door, Morrowind object-animation and FNV gun-part
+managers use it as well.
+
+Confirmed on the headless test instance: `mq10_report` from its checkpoint ran 4
+of 4 with no crash (1 of 3 crashed before). In `OblivionMqKvatchSmallTower02`
+the claw stand looks and pulses the same before and after. Not yet confirmed in
+game by the user.
 
 ## NiFlipController → frame-strip atlas
 <a id="niflipcontroller-atlas"></a>

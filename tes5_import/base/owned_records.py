@@ -12,7 +12,9 @@ import struct
 
 from .master_export import values_of
 from ..overrides.adoption import adopted_formid, generated_formid
-from ..packages.escort_when_near import (ESCORT_WHEN_NEAR_EDID,
+from ..packages.ambush_near import AMBUSH_NEAR_EDID, ambush_root_record, set_ambush_template_fid
+from ..packages.sit_at import SIT_AT_EDID, set_sit_at_template_fid, sit_at_root_record
+from ..packages.escort_when_near import (ESCORT_HOLD_EDID, ESCORT_WHEN_NEAR_EDID,
                                          escort_root_record,
                                          set_escort_template_fid)
 from .constants import AMBIENT_GMST_OVERRIDES, ENGINE_GLOBAL_FORMIDS
@@ -25,6 +27,7 @@ from .writer import (
     pack_record,
     pack_string_subrecord,
     pack_subrecord,
+    pack_uint32_subrecord,
 )
 
 #: EditorID -> FormID for VMAD name binding; a SINGLE shared instance.
@@ -71,6 +74,14 @@ def hidden_faction(fid: int, edid: str, relations: bytes = b'') -> bytes:
     return pack_record('FACT', fid, 0, subs)
 
 
+def one_rank_faction(fid: int, edid: str, rank_name: str) -> bytes:
+    """A hidden FACT with one rank (0), so a script or the runtime can add an actor to it."""
+    subs = pack_string_subrecord('EDID', edid) + pack_subrecord('DATA', struct.pack('<I', FACTION_HIDDEN))
+    subs += pack_uint32_subrecord('RNAM', 0) + pack_string_subrecord('MNAM', rank_name)
+    subs += pack_string_subrecord('FNAM', rank_name)
+    return pack_record('FACT', fid, 0, subs)
+
+
 def adopted_or_derived(writer, master_index, sig: str, edid: str) -> tuple:
     """(FormID, own): a master's record of `edid`, else this plugin's derived id."""
     fid = master_index.find_by_edid(sig.encode(), edid) if master_index else 0
@@ -103,22 +114,30 @@ def _emit_global(writer: PluginWriter, edid: str, type_char: str, value: float =
     return fid
 
 
-def _emit_escort_template(writer: PluginWriter) -> int:
-    """Write the converter's escort template root and point converted escorts at it."""
-    fid = writer.derive_formid('PACK_TEMPLATE', ESCORT_WHEN_NEAR_EDID)
-    writer.add_record('PACK', escort_root_record(fid))
-    set_escort_template_fid(fid)
+def _emit_template_root(writer: PluginWriter, edid: str, build, install) -> int:
+    """Write one of the converter's package template roots and point its converted packages at it."""
+    fid = writer.derive_formid('PACK_TEMPLATE', edid)
+    writer.add_record('PACK', build(fid))
+    install(fid)
     return fid
 
 
 def create_tes4_special_records(writer: PluginWriter):
-    """Create the globals converted Papyrus scripts need, bound by name, and the escort root.
+    """Create the globals converted Papyrus scripts need, bound by name, and the package template roots.
 
     See: docs/commentary/tes5_import_dialogue.md#the-conversion-owned-globals
     """
     made = {edid: _emit_global(writer, edid, ch, value)
             for (edid, ch, value) in _OWNED_GLOBALS}
-    made[ESCORT_WHEN_NEAR_EDID] = _emit_escort_template(writer)
+    hold = made[ESCORT_HOLD_EDID] = WELL_KNOWN_PROPERTIES[ESCORT_HOLD_EDID] = writer.derive_formid(
+        'FACT', ESCORT_HOLD_EDID)
+    writer.add_record('FACT', one_rank_faction(hold, ESCORT_HOLD_EDID, 'Held'))
+    made[ESCORT_WHEN_NEAR_EDID] = _emit_template_root(writer, ESCORT_WHEN_NEAR_EDID,
+                                                      lambda fid: escort_root_record(fid, hold),
+                                                      set_escort_template_fid)
+    made[AMBUSH_NEAR_EDID] = _emit_template_root(writer, AMBUSH_NEAR_EDID, ambush_root_record,
+                                                 set_ambush_template_fid)
+    made[SIT_AT_EDID] = _emit_template_root(writer, SIT_AT_EDID, sit_at_root_record, set_sit_at_template_fid)
     print('  Created TES4 special records: '
           + ', '.join(f'{k}={v:08X}' for k, v in made.items()))
 
@@ -220,6 +239,17 @@ def create_chargen_menu_records(writer: PluginWriter, plan: dict) -> dict:
     return name_to_fid
 
 
+#: The global MorrowindRuntime holds at 1 while Skyrim's dialogue menu is up; force-greet packages wait on it.
+DIALOGUE_OPEN_GLOBAL = 'TES4DialogueOpen'
+
+
+def create_dialogue_open_global(writer: PluginWriter, master_index=None) -> dict:
+    """The dialogue-menu global by name; a master's is adopted."""
+    fid, _ = adopt_or_write(writer, master_index, 'GLOB', DIALOGUE_OPEN_GLOBAL,
+                            lambda fid: _short_global(fid, DIALOGUE_OPEN_GLOBAL))
+    return {DIALOGUE_OPEN_GLOBAL: fid}
+
+
 #: The ForceCombat faction pair's EditorIDs: (attackers, victims).
 _FORCE_COMBAT_EDIDS = ('TES4ForceCombatAttackers', 'TES4ForceCombatVictims')
 
@@ -267,6 +297,23 @@ def create_destroyed_formlist(writer: PluginWriter, master_index=None) -> dict:
     subs = pack_string_subrecord('EDID', 'TES4DestroyedRefs')
     writer.add_record('FLST', pack_record('FLST', fid, 0, subs))
     return {'TES4DestroyedRefs': fid}
+
+
+#: derive_formid site and EditorID of the list of references a script has just activated by its own call.
+_SCRIPTED_USE_SITE, SCRIPTED_USES = 'SCRIPTED_USE_FLST', 'TES4ScriptedUses'
+
+
+def create_scripted_use_formlist(writer: PluginWriter, master_index=None) -> dict:
+    """The FormList a scripted `Activate ref 1` marks its target in; a master's is adopted.
+
+    See: docs/commentary/script_convert.md#a-scripted-activation-runs-the-door-script
+    """
+    adopted = _adopted(master_index, b'FLST', (SCRIPTED_USES,))
+    if adopted:
+        return adopted
+    fid = writer.derive_formid(_SCRIPTED_USE_SITE, SCRIPTED_USES)
+    writer.add_record('FLST', pack_record('FLST', fid, 0, pack_string_subrecord('EDID', SCRIPTED_USES)))
+    return {SCRIPTED_USES: fid}
 
 
 #: Seconds one ResetFallDamageTimer protects for; a caller polling every tick keeps renewing it.
