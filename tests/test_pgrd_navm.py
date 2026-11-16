@@ -464,19 +464,35 @@ class TestPlacementSanity:
     """Garbage REFR placements must be dropped before they reach the native code."""
 
     def test_absurd_and_non_finite_placements_rejected(self):
+        """Nehrim's PosY 8.9e17, NaN, inf, a NaN scale and 2x MAX_PLACEMENT all fail."""
         np = pytest.importorskip("numpy")
-        from tes5_import.navmesh.world import (_finite_placement,
-                                              MAX_PLACEMENT)
+        from tes5_import.navmesh.world import finite_placement, MAX_PLACEMENT
 
         ok = np.array([100.0, -200.0, 30.0])
-        assert _finite_placement(ok, 1.0)
-        # Nehrim's real garbage value.
-        assert not _finite_placement(
-            np.array([1.68e-36, 8.936455989415117e+17, 0.0]), 1.0)
-        assert not _finite_placement(
-            np.array([0.0, float('nan'), 0.0]), 1.0)
-        assert not _finite_placement(
-            np.array([0.0, float('inf'), 0.0]), 1.0)
-        assert not _finite_placement(ok, float('nan'))
-        assert not _finite_placement(
-            np.array([MAX_PLACEMENT * 2, 0.0, 0.0]), 1.0)
+        assert finite_placement(ok, 1.0)
+        for bad in ([1.68e-36, 8.936455989415117e+17, 0.0], [0.0, float('nan'), 0.0],
+                    [0.0, float('inf'), 0.0], [MAX_PLACEMENT * 2, 0.0, 0.0]):
+            assert not finite_placement(np.array(bad), 1.0)
+        assert not finite_placement(ok, float('nan'))
+
+    def test_wild_pathgrid_points_dropped_and_renumbered(self):
+        """Issue #112: points 1 and 3 at 1.5e9 go with their edges; the rest and the InterCell renumber."""
+        from tes5_import.navmesh.from_pgrd import cell_graph, record_graph
+
+        wild = (1523151872.0, -1074418304.0, 1388934016.0)
+        pts = [(10.0, 10.0, 0.0), wild, (500.0, 10.0, 0.0), wild, (900.0, 10.0, 0.0)]
+        nbrs = {0: [1, 2], 1: [0, 3], 2: [0, 4], 3: [1, 4], 4: [2, 3]}
+        rec = {'DATA.PointCount': '5', 'ParentWRLD': '0000003C',
+               'InterCellCount': '2', 'InterCell[0].LocalPoint': '4',
+               'InterCell[0].X': '4200.0', 'InterCell[0].Y': '10.0', 'InterCell[0].Z': '0.0',
+               'InterCell[1].LocalPoint': '3',
+               'InterCell[1].X': '4200.0', 'InterCell[1].Y': '20.0', 'InterCell[1].Z': '0.0'}
+        for i, (x, y, z) in enumerate(pts):
+            rec.update({'Point[%d].X' % i: repr(x), 'Point[%d].Y' % i: repr(y),
+                        'Point[%d].Z' % i: repr(z), 'Point[%d].Connections' % i: str(len(nbrs[i]))})
+            rec.update(('Point[%d].Edge[%d]' % (i, n), str(t)) for n, t in enumerate(nbrs[i]))
+
+        assert record_graph(rec) == ([pts[0], pts[2], pts[4]], [(0, 1), (1, 2)])
+        points, edges, *_ = cell_graph(rec, {'XCLC.X': '0', 'XCLC.Y': '0'})
+        assert points[3] == (4200.0, 10.0, 0.0)
+        assert edges == [(0, 1), (1, 2), (2, 3)]

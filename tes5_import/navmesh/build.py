@@ -40,11 +40,7 @@ def teleport_door_positions(refr_recs):
                 rz = float(refr.get('RotZ') or 0.0)
             except (TypeError, ValueError):
                 continue
-            # float() happily parses NaN and 8.9e17, so range-check as well --
-            # see navmesh/world.py _MAX_PLACEMENT for why these exist.
-            if not all(math.isfinite(v) for v in (x, y, z, rz)):
-                continue
-            if max(abs(x), abs(y), abs(z)) > world.MAX_PLACEMENT:
+            if not (world.finite_placement((x, y, z)) and math.isfinite(rz)):
                 continue
             # Width 0: no measured doorway span for a bare-XTEL fallback door;
             # corridor_doors falls back to its constant half-width.

@@ -21,9 +21,10 @@ from tes5_import.navmesh import world
 from tes5_import.base.obstacles import index_obstacles
 from tes5_import.navmesh.pool import build_base_model_index, model_key
 from tes5_import.base.text_reader import (
-    parse_export_directory, group_records_by_type, get_float, get_formid,
+    parse_export_directory, group_records_by_type, get_formid,
     get_int, get_str,
 )
+from tes5_import.navmesh.from_pgrd import record_graph
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
@@ -174,31 +175,8 @@ def load_cell(export_dir, cell_arg, load_collision=True):
 
     base_model = build_base_model_index(by_type)
 
-    nodes, edges = [], []
-    if pgrd is not None:
-        n = get_int(pgrd, 'DATA.PointCount', 0)
-        for i in range(n):
-            if pgrd.get('Point[%d].X' % i) is None:
-                break
-            nodes.append((get_float(pgrd, 'Point[%d].X' % i),
-                          get_float(pgrd, 'Point[%d].Y' % i),
-                          get_float(pgrd, 'Point[%d].Z' % i)))
-        seen = set()
-        for i in range(len(nodes)):
-            deg = get_int(pgrd, 'Point[%d].Connections' % i, 0)
-            for j in range(deg):
-                tgt = pgrd.get('Point[%d].Edge[%d]' % (i, j))
-                if tgt is None:
-                    break
-                try:
-                    t = int(tgt)
-                except ValueError:
-                    continue
-                if 0 <= t < len(nodes) and t != i:
-                    key = (min(i, t), max(i, t))
-                    if key not in seen:
-                        seen.add(key)
-                        edges.append(key)
+    nodes, edges = record_graph(pgrd) if pgrd is not None else (None, None)
+    nodes, edges = nodes or [], edges or []
 
     door_fids = {}
     for d in by_type.get('DOOR', []):

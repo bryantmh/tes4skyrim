@@ -100,7 +100,8 @@ from ..base.text_reader import get_int, get_float, get_str, get_formid
 from . import native_loader
 from .lookup_grid import build_navmesh_grid
 from .spawn_nodes import add_spawn_nodes
-from .world import base_fid, cell_water_z, open_water_z
+from .world import (MAX_PLACEMENT, base_fid, cell_water_z, finite_placement,
+                    open_water_z)
 from ..base.writer import pack_subrecord, pack_string_subrecord
 
 _log = logging.getLogger(__name__)
@@ -156,36 +157,27 @@ _INTERCELL_MAX_REACH = 2.0 * _CELL_SIZE
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
-def _collect_intercell(rec, points, origin_x, origin_y):
+def _collect_intercell(rec, index, origin_x, origin_y):
     """Cross-cell pathgrid links from PGRI, as [(local_point, (x, y, z)), ...].
 
-    Each PGRI entry names a LOCAL point in this cell and the world-space EXIT
-    point it connects to in a NEIGHBOURING cell.  Oblivion's PGRI is padded with
-    uninitialised CS memory: entries whose LocalPoint is out of range, or whose
-    exit coordinates are denormalized / absurdly far from this cell, are garbage
-    and dropped (InterCell[1] in AnvilExterior: LocalPoint=17292, X=0,
-    Y~2.5e-41).  Only a plausible exit — finite, non-denormal, and within
-    _INTERCELL_MAX_REACH of the cell origin — survives.
-
-    origin_x/origin_y are this exterior cell's world origin (SW corner).  The
-    resulting edges make the corridor ribbon reach across the seam so the
-    downstream edge-link pass has real border edges to stitch.
+    Each entry names a LOCAL point (a record index, mapped through `index` to
+    its place in the graph) and the world-space EXIT point in a neighbouring
+    cell.  An entry whose point was dropped or is out of range, or whose exit is
+    non-finite, (0,0) padding or beyond _INTERCELL_MAX_REACH of the cell at
+    origin_x/origin_y (its SW corner), is CS garbage and skipped.
+    See: docs/commentary/tes5_import_navmesh.md#wild-pathgrid-points-are-dropped
     """
     count = get_int(rec, 'InterCellCount', 0)
     if count <= 0:
         return []
     out = []
-    n = len(points)
     for i in range(count):
-        lp = rec.get(f'InterCell[{i}].LocalPoint')
-        if lp is None:
-            continue
         try:
-            lp = int(lp)
+            lp = index.get(int(rec.get(f'InterCell[{i}].LocalPoint')))
         except (TypeError, ValueError):
             continue
-        if not (0 <= lp < n):
-            continue                      # LocalPoint out of range -> garbage
+        if lp is None:
+            continue
         x = get_float(rec, f'InterCell[{i}].X')
         y = get_float(rec, f'InterCell[{i}].Y')
         z = get_float(rec, f'InterCell[{i}].Z')
@@ -391,10 +383,8 @@ def _door_threshold(refr, model_key):
 
 def _finite_door_point(pt, rot_z):
     """True if a door's threshold point is a usable finite coordinate."""
-    from ..navmesh.world import MAX_PLACEMENT
-    for v in pt:
-        if v is None or not math.isfinite(v) or abs(v) > MAX_PLACEMENT:
-            return False
+    if None in pt or not finite_placement(pt):
+        return False
     return rot_z is None or math.isfinite(rot_z)
 
 
@@ -846,22 +836,26 @@ def geom_equal(a, b):
 
 
 def _pathgrid_nodes(rec):
-    """(points, degrees) for a PGRD, or (None, None) when it has no usable graph."""
-    point_count = get_int(rec, 'DATA.PointCount', 0)
-    intercell = get_int(rec, 'InterCellCount', 0)
-    if point_count < 1 or (point_count < 2 and intercell <= 0):
-        return None, None
+    """(points, degrees, keep) for a PGRD, or (None, None, None) when it has no usable graph.
+
+    `keep` lists the record indices of the points within MAX_PLACEMENT; the rest are dropped.
+    See: docs/commentary/tes5_import_navmesh.md#wild-pathgrid-points-are-dropped
+    """
     points, degrees = [], []
-    for i in range(point_count):
+    for i in range(get_int(rec, 'DATA.PointCount', 0)):
         if rec.get('Point[%d].X' % i) is None:
             break
         points.append((get_float(rec, 'Point[%d].X' % i),
                        get_float(rec, 'Point[%d].Y' % i),
                        get_float(rec, 'Point[%d].Z' % i)))
         degrees.append(get_int(rec, 'Point[%d].Connections' % i, 0))
-    if not points or (len(points) < 2 and intercell <= 0):
-        return None, None
-    return points, degrees
+    keep = [i for i, p in enumerate(points) if finite_placement(p)]
+    if len(keep) < len(points):
+        _log.warning('PGRD %s: dropped %d of %d pathgrid points placed beyond %g units',
+                     rec.get('FormID'), len(points) - len(keep), len(points), MAX_PLACEMENT)
+    if not keep or (len(keep) < 2 and get_int(rec, 'InterCellCount', 0) <= 0):
+        return None, None, None
+    return points, degrees, keep
 
 
 def _explicit_edges(rec, n, degrees, edges, seen):
@@ -882,14 +876,14 @@ def _explicit_edges(rec, n, degrees, edges, seen):
                     edges.append(key)
 
 
-def _nearest_edges(points, n, degrees, edges, seen):
-    """Fallback topology: join each node to its `Connections` nearest others."""
-    for i in range(n):
+def _nearest_edges(points, keep, degrees, edges, seen):
+    """Fallback topology: join each kept node to its `Connections` nearest kept others."""
+    for i in keep:
         if degrees[i] == 0:
             continue
         others = sorted(((points[i][0] - points[j][0]) ** 2 +
                          (points[i][1] - points[j][1]) ** 2, j)
-                        for j in range(n) if j != i)
+                        for j in keep if j != i)
         for _d, j in others[:degrees[i]]:
             key = (min(i, j), max(i, j))
             if key not in seen:
@@ -897,20 +891,29 @@ def _nearest_edges(points, n, degrees, edges, seen):
                 edges.append(key)
 
 
-def record_graph(rec):
-    """(points, edges) the PGRD record stores, or (None, None) when it has no usable graph."""
-    points, degrees = _pathgrid_nodes(rec)
+def _indexed_graph(rec):
+    """(points, edges, index) the PGRD record stores, `index` mapping a record point index to its place
+    in `points`; (None, None, None) when it has no usable graph.  Dropped points lose their edges.
+    """
+    points, degrees, keep = _pathgrid_nodes(rec)
     if points is None:
-        return None, None
+        return None, None, None
     edges, seen = [], set()
     if rec.get('Point[0].Edge[0]') is not None:
         _explicit_edges(rec, len(points), degrees, edges, seen)
     else:
-        _nearest_edges(points, len(points), degrees, edges, seen)
-    return points, edges
+        _nearest_edges(points, keep, degrees, edges, seen)
+    index = {old: new for new, old in enumerate(keep)}
+    edges = [(index[a], index[b]) for a, b in edges if a in index and b in index]
+    return [points[i] for i in keep], edges, index
 
 
-def _cell_graph(rec, cell_rec, graph=None):
+def record_graph(rec):
+    """(points, edges) of the PGRD, or (None, None) when it has no usable graph."""
+    return _indexed_graph(rec)[:2]
+
+
+def cell_graph(rec, cell_rec, graph=None):
     """(points, edges, origin_x, origin_y, is_exterior) for one PGRD.
 
     The pathgrid graph exactly as convert_PGRD derives it, including the
@@ -918,7 +921,11 @@ def _cell_graph(rec, cell_rec, graph=None):
     edges), in place of the record's own.  Both callers MUST share this: the
     value feeds the cache hash, so any divergence silently invalidates every entry.
     """
-    points, edges = (list(graph[0]), list(graph[1])) if graph else record_graph(rec)
+    if graph:
+        points, edges = list(graph[0]), list(graph[1])
+        index = {i: i for i in range(len(points))}
+    else:
+        points, edges, index = _indexed_graph(rec)
     if points is None:
         return None, None, 0.0, 0.0, False
     seen = set(edges)
@@ -928,7 +935,7 @@ def _cell_graph(rec, cell_rec, graph=None):
         gx = get_int(cell_rec, 'XCLC.X', 0) if cell_rec is not None else 0
         gy = get_int(cell_rec, 'XCLC.Y', 0) if cell_rec is not None else 0
         origin_x, origin_y = gx * _CELL_SIZE, gy * _CELL_SIZE
-        for (lp, exit_xy) in _collect_intercell(rec, points, origin_x, origin_y):
+        for (lp, exit_xy) in _collect_intercell(rec, index, origin_x, origin_y):
             new_idx = len(points)
             points.append(exit_xy)
             key = (min(lp, new_idx), max(lp, new_idx))
@@ -980,7 +987,7 @@ def cell_geom_key(rec, land_rec, cell_rec, refr_recs, base_model_by_fid,
     """
     if geom_cache is None:
         return None
-    points, edges, origin_x, origin_y, is_exterior = _cell_graph(rec, cell_rec)
+    points, edges, origin_x, origin_y, is_exterior = cell_graph(rec, cell_rec)
     if points is None:
         return None
     add_spawn_nodes(points, edges, spawns)
@@ -1167,7 +1174,7 @@ def convert_PGRD(rec: dict, writer=None,
     if writer is None and navm_fid is None:
         return None, None
 
-    points, edges, origin_x, origin_y, is_exterior = _cell_graph(rec, cell_rec, graph)
+    points, edges, origin_x, origin_y, is_exterior = cell_graph(rec, cell_rec, graph)
     if points is None:
         return None, None
     lone = add_spawn_nodes(points, edges, spawns)

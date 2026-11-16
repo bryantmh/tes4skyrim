@@ -26,7 +26,7 @@ from asset_convert.game_paths import namespace_for, set_namespace
 from tes5_import.navmesh import corridor
 from tes5_import.navmesh.lattice.build import build_lattice
 from tes5_import.navmesh.from_pgrd import (
-    _cell_graph, collect_doors, load_door_centroids,
+    cell_graph, collect_doors, load_door_centroids,
 )
 from tes5_import.base.text_reader import get_formid, get_int, parse_export_file
 from tes5_import.navmesh.pool import navmesh_land_at, with_water
@@ -92,7 +92,7 @@ class CellCtx(object):
         self.name = rec.get('EditorID') or ''
         self.fid = (rec.get('FormID') or '').upper()
         self.refrs, pg, land = index.of_cell(self.fid)
-        graph = (_cell_graph(pg, rec) if pg is not None
+        graph = (cell_graph(pg, rec) if pg is not None
                  else (None, None, 0.0, 0.0, False))
         nodes, edges, self.origin_x, self.origin_y, self.exterior = graph
         if not self.exterior and rec.get('XCLC.X') not in (None, ''):

@@ -31,8 +31,8 @@ _VHGT_UNIT = 8.0
 MAX_PLACEMENT = 1e7
 
 
-def _finite_placement(pos, scale):
-    """True if a REFR's placement can contribute usable collision geometry."""
+def finite_placement(pos, scale=1.0):
+    """True if a REFR or pathgrid point is finite and within MAX_PLACEMENT."""
     return math.isfinite(scale) and all(math.isfinite(v) and abs(v) <= MAX_PLACEMENT for v in pos)
 
 
@@ -211,7 +211,7 @@ def _placement(refr, base_model_by_fid, get_collision):
         return None
     scale = get_float(refr, 'XSCL.Scale', 1.0) or 1.0
     pos = np.array(shifted_position(refr, scale), dtype=np.float64)
-    if not _finite_placement(pos, scale):
+    if not finite_placement(pos, scale):
         return None
     rot = rot_matrix(get_float(refr, 'RotX'),
                       get_float(refr, 'RotY'),

@@ -33,11 +33,11 @@ from tes5_import.navmesh import build, params
 from tes5_import.base.obstacles import index_obstacles
 from tes5_import.navmesh.pool import build_base_model_index, model_key
 from tes5_import.navmesh.from_pgrd import (collect_doors,
-                                      load_door_centroids)
+                                      load_door_centroids, record_graph)
 from tools.navmesh import cell_index as cell_index_mod
 from core.plugin_masters import master_dir, masters_from_export_header
 from tes5_import.base.text_reader import (
-    parse_export_directory, group_records_by_type, get_float, get_formid,
+    parse_export_directory, group_records_by_type, get_formid,
     get_int, get_str,
 )
 
@@ -52,31 +52,6 @@ _BASE_PARSE = _BASE_TYPES | {'SCPT'}
 _TYPES = {'CELL', 'REFR', 'PGRD', 'LAND', 'DOOR', 'WRLD'} | _BASE_PARSE
 
 
-def _pgrd_nodes(pgrd):
-    nodes, edges = [], []
-    n = get_int(pgrd, 'DATA.PointCount', 0)
-    for i in range(n):
-        if pgrd.get('Point[%d].X' % i) is None:
-            break
-        nodes.append((get_float(pgrd, 'Point[%d].X' % i),
-                      get_float(pgrd, 'Point[%d].Y' % i),
-                      get_float(pgrd, 'Point[%d].Z' % i)))
-    seen = set()
-    for i in range(len(nodes)):
-        for j in range(get_int(pgrd, 'Point[%d].Connections' % i, 0)):
-            t = pgrd.get('Point[%d].Edge[%d]' % (i, j))
-            if t is None:
-                break
-            try:
-                t = int(t)
-            except ValueError:
-                continue
-            if 0 <= t < len(nodes) and t != i:
-                k = (min(i, t), max(i, t))
-                if k not in seen:
-                    seen.add(k)
-                    edges.append(k)
-    return nodes, edges
 
 
 def _tri_z(px, py, va, vb, vc):
@@ -450,7 +425,7 @@ def main():
         pgrd = pgrd_by_cell.get(fid)
         if pgrd is None:
             continue
-        nodes, edges = _pgrd_nodes(pgrd)
+        nodes, edges = record_graph(pgrd)
         if not nodes:
             continue
         land = land_by_cell.get(fid) if _is_exterior(c) else None
