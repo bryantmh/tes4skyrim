@@ -9,8 +9,9 @@ See: docs/commentary/asset_convert_collision.md#inverted-collision-winding-i-fal
 See: docs/commentary/asset_convert_collision.md#morroblivion-collision-is-copied-render
 """
 
+import functools
 import math
-from itertools import permutations
+from itertools import permutations, product
 
 from core.collision_options import winding_fix_enabled
 from asset_convert.collision.collision_falloutnv import is_fallout_source
@@ -39,6 +40,9 @@ _CONSENSUS_MARGIN = 0.05
 #: A render face further than this many triangle-widths away is another surface.
 _MAX_MATCH_WIDTHS = 2.0
 
+#: Relative slack on the grid's reach, so float rounding never hides a face the exact tests would take.
+_REACH_SLACK = 1e-6
+
 #: Vertex-set quantum for matching the Morrowind original (0.5 game units, in havok).
 _ORIGINAL_QUANTUM = 0.5 / 69.9904
 
@@ -55,6 +59,65 @@ def face_normal(tri):
     if mag > 0:
         nx /= mag; ny /= mag; nz /= mag
     return nx, ny, nz
+
+
+def _centroid(tri):
+    """A triangle's center."""
+    return tuple((tri[0][i] + tri[1][i] + tri[2][i]) / 3.0 for i in range(3))
+
+
+class RenderOracle:
+    """The render mesh the repair reads, built on first use: its faces, their
+    twin index, and a grid of the faces' centers that hands the nearest rule
+    only the faces that could decide it, in face order, so every verdict is
+    the full scan's.
+
+    See: docs/commentary/asset_convert_collision.md#the-render-oracles-grid
+    """
+
+    def __init__(self, visual_tris):
+        """The oracle of render triangles `visual_tris` (None for none)."""
+        self.visual = visual_tris
+
+    @functools.cached_property
+    def faces(self) -> list:
+        """_render_faces() of the render triangles."""
+        return _render_faces(self.visual)
+
+    @functools.cached_property
+    def twins(self) -> dict:
+        """_twin_index() of the faces."""
+        return _twin_index(self.faces)
+
+    @functools.cached_property
+    def size(self) -> float:
+        """The grid's cell edge: the faces' median width (1.0 when none has one)."""
+        widths = sorted(_triangle_width(t) for t, _n in self.faces)
+        return (widths[len(widths) // 2] if widths else 0.0) or 1.0
+
+    def cell(self, point) -> tuple:
+        """The grid cell holding `point`."""
+        return tuple(math.floor(x / self.size) for x in point)
+
+    @functools.cached_property
+    def centers(self) -> tuple:
+        """([each face's center], {cell: [face index]} by center)."""
+        centers = [_centroid(t) for t, _n in self.faces]
+        cells = {}
+        for k, c in enumerate(centers):
+            cells.setdefault(self.cell(c), []).append(k)
+        return centers, cells
+
+    def near(self, center, reach: float) -> list:
+        """The faces whose center lies within `reach` of `center`, in face order."""
+        centers, cells = self.centers
+        lo, hi = self.cell([x - reach for x in center]), self.cell([x + reach for x in center])
+        if math.prod(h - lo_ + 1 for lo_, h in zip(lo, hi)) > len(cells):
+            keys = list(cells)
+        else:
+            keys = product(*(range(lo_, h + 1) for lo_, h in zip(lo, hi)))
+        found = sorted(k for key in keys for k in cells.get(key, ()))
+        return [self.faces[k] for k in found if math.dist(centers[k], center) <= reach]
 
 
 def _vertex_key(tri, quantum=_TWIN_QUANTUM):
@@ -174,7 +237,7 @@ def _wrong_side_of_slab(tri, n, rtri):
     return n[2] < 0 and dz > _SLAB_EPS
 
 
-def _nearest_says_inverted(tri, n, faces):
+def _nearest_says_inverted(tri, n, oracle):
     """Whether the closest coincident render surface is opposed.
 
     Nearest by VERTEX SET, for collision that is a simplification of the
@@ -183,8 +246,9 @@ def _nearest_says_inverted(tri, n, faces):
     guessing there turns a solid floor into a fall-through.
     See: docs/commentary/asset_convert_collision.md#round-4b-the-rule-must-abstain
     """
-    cands = []
-    for rtri, rn in faces:
+    width, cands = _triangle_width(tri), []
+    reach = (_MAX_MATCH_WIDTHS * width * (1.0 + _CONSENSUS_MARGIN) + 1e-9) / 3.0 * (1.0 + _REACH_SLACK)
+    for rtri, rn in oracle.near(_centroid(tri), reach):
         align = n[0]*rn[0] + n[1]*rn[1] + n[2]*rn[2]
         if abs(align) < _PARALLEL:
             continue
@@ -196,7 +260,7 @@ def _nearest_says_inverted(tri, n, faces):
     if not cands:
         return None
     cands.sort()
-    if cands[0][0] > _MAX_MATCH_WIDTHS * _triangle_width(tri):
+    if cands[0][0] > _MAX_MATCH_WIDTHS * width:
         return None
     limit = cands[0][0] * (1.0 + _CONSENSUS_MARGIN) + 1e-9
     if len({c[1] < 0 for c in cands if c[0] <= limit}) > 1:
@@ -226,9 +290,9 @@ def _authored_flips(tris, authored_normals):
     return out
 
 
-def _render_flips(tris, faces):
+def _render_flips(tris, oracle):
     """Indices the render mesh says are wound backwards."""
-    twins = _twin_index(faces)
+    twins = oracle.twins
     flip = set()
     for i, t in enumerate(tris):
         n = face_normal(t)
@@ -236,7 +300,7 @@ def _render_flips(tris, faces):
             continue
         verdict = _twin_says_inverted(t, n, twins)
         if verdict is None:
-            verdict = _nearest_says_inverted(t, n, faces)
+            verdict = _nearest_says_inverted(t, n, oracle)
         if verdict:
             flip.add(i)
     return flip
@@ -296,7 +360,7 @@ def repair_inverted_floors(tris, visual_tris=None, groups=None,
     if not (winding_fix_enabled() or is_fallout_source()):
         return _rewound(tris, flip)
 
-    faces = _render_faces(visual_tris)
-    if faces and _render_states_a_floor(faces):
-        flip = _render_flips(tris, faces)
+    oracle = RenderOracle(visual_tris)
+    if oracle.faces and _render_states_a_floor(oracle.faces):
+        flip = _render_flips(tris, oracle)
     return _rewound(tris, _original_flips(tris, flip, original_tris))

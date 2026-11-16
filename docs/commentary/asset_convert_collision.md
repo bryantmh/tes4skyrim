@@ -710,6 +710,45 @@ before/after were not comparable between runs — the "before" itself drifted
 815 -> 728 -> 630. The standable-cell raycast in `walk2.py` shares no code
 with the repair and is the metric that matched the user's in-game report.
 
+### <a id="the-render-oracles-grid"></a>The nearest rule's grid: the same verdicts, a fraction of the work
+
+From issue #94 (fork commit `b2498fdf`). `_nearest_says_inverted` used to
+scan every render face for every collision face without a render twin.
+`RenderOracle` builds the render side once per call, on first use (a mesh
+that never reaches the render repair builds nothing): the faces, the twin
+index, and a grid of the faces' centers with the median face width as cell
+edge. The nearest rule is handed only the faces whose center lies within
+`(_MAX_MATCH_WIDTHS * width * (1 + _CONSENSUS_MARGIN) + 1e-9) / 3` of its
+own, in the original face order.
+
+**Why the verdicts cannot change.** A face's vertex-set distance is at least
+three times the distance between the two centers: the corner distances sum
+to at least the length of the summed corner offsets, which is three times
+the center offset. A face beyond the reach therefore has a vertex-set
+distance beyond `_MAX_MATCH_WIDTHS * width` and beyond the consensus limit
+of any nearest candidate within that cap, so it can neither be the nearest
+nor join the agreement check. If the true nearest is beyond the cap, the
+result is None either way. `_REACH_SLACK` widens the reach by a millionth
+so float rounding never drops a face. A query spanning more cells than are
+occupied reads every cell. Cell size and slack only decide how much work is
+skipped, never a verdict.
+
+**Measured** by replaying every mesh-collision body of randomly sampled
+architecture/dungeon NIFs through the full-scan and grid versions, render
+repair forced on, comparing `repair_inverted_floors` results with `==`:
+
+| Sample | Bodies | Results differing | CPU full scan -> grid |
+|---|---|---|---|
+| Oblivion.esm, 150 NIFs | 119 | 0 | 150.6 s -> 18.5 s (8.1x) |
+| Morrowind_ob.esm, 150 NIFs (`morro`, `morroblivion`) | 99 | 0 | 26.0 s -> 4.8 s (5.4x) |
+| Nehrim.esm, 120 NIFs | 80 | 0 | 161.9 s -> 14.6 s (11.1x) |
+| FalloutNV.esm, 120 NIFs | 103 | 0 | 29.5 s -> 6.2 s (4.7x) |
+
+The slowest single body, `leyawiinhouseinteriorupper11.nif`, went from
+23.6 s to 1.95 s. `tests/test_collision_winding_oracle.py` checks the grid
+against a full scan on random collision/render pairs, including a face
+whose reach spans every occupied cell.
+
 ### <a id="welding-is-per-group"></a>Welding is scoped PER GROUP
 
 The packed triangle list stores each triangle's corners independently, so
