@@ -955,6 +955,23 @@ shield path takes it ([#shield-attachment](#shield-attachment)).
 The result is written as a Morrowind-version NIF beside the source meshes, so
 every downstream stage sees the same shape of input it always has.
 
+### <a id="unresolved-skin-root"></a>A skin root that does not resolve: vertices as stored
+
+**Code:** `morrowind_armor._bind_world`.
+
+Arktwend's city guard chain set (`Arktwend\Chain_cuir_b`, `Chain_greav_b`,
+`Chain_helm_b`, plus `a\Ak_Cuirass_F2`) names `Scene Root` as its skin's
+skeleton root. That node is the file's real top node (identity, one child
+`Bip01`), but the file's root list starts at `Bip01`, so read from there the
+link is empty. The assembler then measured the vertices from `Bip01`, whose
+own transform turns 90 degrees about Z: the shirt came out a quarter turn off
+its arm bones, and the retarget dragged its sleeves up over the shoulders and
+neck (in game, a twisted flap at the collar). OpenMW
+`RigGeometry::updateSkinToSkelMatrix` does not find the named root on the
+shape's path and takes the vertices as stored; the assembler now does the same.
+Census: 4 of 608 skinned Arktwend parts; 0 of 210 skinned Morrowind.esm parts
+(their skin root is `Bip01` itself).
+
 ## NIF worn armor conversion
 <a id="nif-worn-armor-conversion"></a>
 - Worn armor (has_skin AND not _gnd AND in armor/clothes dir) must use **NiNode** root, NOT BSFadeNode

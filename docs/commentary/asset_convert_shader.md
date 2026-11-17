@@ -346,7 +346,7 @@ mod ships ONLY under `lowres`. Dropping the segment pointed them at nothing.
 
 So the shape's diffuse and authored normal keep the authored `lowres` path when
 `resolve_source_texture` finds its source, and otherwise take the full-res twin
-(`resolve_lowres` in `shaders.py`); when neither exists the twin is kept. A
+(`resolve_texture` in `shaders.py`); when neither exists the twin is kept. A
 derived `_n`/`_g` map for a `lowres` diffuse also tries the twin's.
 
 **A leading `data\` is stripped.** It is an authoring slip Oblivion tolerates (it
@@ -355,6 +355,27 @@ across Nehrim's **12,437** source meshes: **4** distinct textures in **10** mesh
 among them `dwarven\rock02.dds` in **7**. Left in, the reference came out as
 `Textures\tes4\data\textures\…` — nothing there, AND the prune then deleted the
 real texture, because the manifest key never matched the shipped path.
+
+### <a id="top-level-texture-fallback"></a>A missing texture falls back to `textures\<file name>`
+
+**Code:** `tex_paths.texture_rel_path`, `tex_paths.top_level_twin`,
+`shaders.resolve_texture`.
+
+Morrowind finds a texture its mesh names in a folder the mod never shipped:
+OpenMW `Misc::ResourceHelpers::correctResourcePath` (1) cuts the path at its
+first whole `textures\` folder wherever it sits, then (2) when no file is
+there, tries the same file name directly under `textures\`. Arktwend's city
+guard chain armor names `Textures\RN\CM\Chainmail3.dds` (also `Chain_boot`,
+`Chain_sm`) but ships them in plain `Textures\`; we kept the dead path and the
+guards rendered flat lavender in game. Both steps are now applied to every
+rewritten diffuse, authored normal and glow, after the `lowres` twin.
+
+Measured on the shipped meshes: Arktwend 34 of 10,895 meshes rescued (11
+paths: the guard chain set, squirrels, a hair, `\..\Textures\` lollipops).
+Oblivion 0 of 10,511 and Nehrim 0 of 13,548 change through step (2). Step (1)
+also changes Nehrim's 10 meshes with absolute authoring paths
+(`c:\programme\bethesda softworks\oblivion\data\textures\dwarven\rock01.dds`),
+which pointed nowhere before; Oblivion has none.
 
 ## Resolving a source texture through the master's tree
 <a id="texture-fallback-roots"></a>

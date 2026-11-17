@@ -24,7 +24,7 @@ from asset_convert.nif.shaders import (ALPHA_BLEND_ENABLED, ALPHA_DST_ONE,
                                        attach_tex_transform_ctrls,
                                        collect_shader_inputs, collect_uv_ctrls,
                                        has_spec_mask, plan_flipbook_atlas,
-                                       resolve_lowres, resolve_normal_for)
+                                       resolve_texture, resolve_normal_for)
 from asset_convert.nif.morroblivion_textures import substitute
 from asset_convert.nif.nif_flags import NIF_FLAGS
 from asset_convert.nif.tex_paths import (path_bytes, path_text,
@@ -218,7 +218,7 @@ def _normal_slot(diffuse, authored_normal, fix_textures, stats):
     """
     base = diffuse.rsplit('.', 1)[0] if '.' in diffuse else diffuse
     if authored_normal:
-        return (resolve_lowres(rewrite_tex_path(authored_normal), stats)
+        return (resolve_texture(rewrite_tex_path(authored_normal), stats)
                 if fix_textures
                 else path_text(authored_normal))
     if stats is None:
@@ -262,7 +262,7 @@ def _fill_texture_slots(tex_set, diffuse_path, authored_normal,
                 stats.get('untextured_diffuse_defaulted', 0) + 1)
         return
     diffuse_path = _upgraded_diffuse(diffuse_path, stats)
-    diffuse = (resolve_lowres(rewrite_tex_path(diffuse_path), stats)
+    diffuse = (resolve_texture(rewrite_tex_path(diffuse_path), stats)
                if fix_textures
                else path_text(diffuse_path))
     tex_set.textures[0] = path_bytes(diffuse)

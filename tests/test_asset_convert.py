@@ -19,7 +19,7 @@ from asset_convert.nif.nif_converter import (
     convert_nif,
 )
 from asset_convert.nif.particles import skyrimize_billboard
-from asset_convert.nif.shaders import resolve_lowres
+from asset_convert.nif.shaders import resolve_texture
 from asset_convert.character import wearable_plan, wearable_plan_falloutnv
 from asset_convert.character.head_gear import remap_bone_names
 from asset_convert.collision import collision_falloutnv
@@ -86,11 +86,27 @@ class TestTexturePathRewriting:
         full.write_bytes(b'')
         stats = {'_src_path': str(tmp_path / 'meshes' / 'rock_far.nif')}
         tex = rewrite_tex_path(b'textures\\lowres\\rocks\\rock01.dds')
-        assert resolve_lowres(tex, stats) == 'Textures\\tes4\\rocks\\rock01.dds'
+        assert resolve_texture(tex, stats) == 'Textures\\tes4\\rocks\\rock01.dds'
         lowres = tmp_path / 'textures' / 'lowres' / 'rocks' / 'rock01.dds'
         lowres.parent.mkdir(parents=True)
         lowres.write_bytes(b'')
-        assert resolve_lowres(tex, stats) == tex
+        assert resolve_texture(tex, stats) == tex
+
+    def test_textures_folder_mid_path_is_the_cut(self):
+        """Relative and absolute authoring paths cut at their textures folder."""
+        assert rewrite_tex_path(b'\\..\\Textures\\Tx_wood.tga') == 'Textures\\tes4\\Tx_wood.dds'
+        assert (rewrite_tex_path(b'c:\\programme\\oblivion\\data\\textures\\dwarven\\rock01.dds')
+                == 'Textures\\tes4\\dwarven\\rock01.dds')
+
+    def test_missing_texture_falls_back_to_top_level_file(self, tmp_path):
+        """A texture absent from its folder resolves to the same file name under textures\\."""
+        (tmp_path / 'meshes').mkdir()
+        stats = {'_src_path': str(tmp_path / 'meshes' / 'chain.nif')}
+        tex = rewrite_tex_path(b'Textures\\RN\\CM\\Chainmail3.dds')
+        assert resolve_texture(tex, stats) == tex
+        (tmp_path / 'textures').mkdir()
+        (tmp_path / 'textures' / 'Chainmail3.dds').write_bytes(b'')
+        assert resolve_texture(tex, stats) == 'Textures\\tes4\\Chainmail3.dds'
 
 
 class TestBoneMapping:

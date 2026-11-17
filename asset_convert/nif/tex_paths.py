@@ -3,6 +3,8 @@
 Both are pure string/slot readers with no NIF state, so they sit below every
 module that needs them.
 """
+import re
+
 from asset_convert.game_paths import ascii_path, current_namespace
 
 
@@ -34,6 +36,9 @@ IMAGE_EXTS = ('tga', 'bmp')
 #: Byte encoding of AUTHORED NIF path strings (Windows-1252, as plugins store text).
 PATH_ENCODING = 'cp1252'
 
+#: A whole `textures` folder anywhere in a backslash path.
+_TEXTURES_FOLDER = re.compile(r'(?:^|\\)textures\\', re.I)
+
 
 def path_text(raw) -> str:
     """A NIF path string as text; bytes are read as Windows-1252."""
@@ -49,15 +54,19 @@ def path_bytes(text) -> bytes:
 def texture_rel_path(raw) -> str:
     """An authored texture path below `textures\\`, separators normalized FIRST.
 
-    A leading 'data\\' and then 'textures\\' are dropped; every other segment
-    is kept, 'lowres\\' included (`full_res_twin` decides its fallback).
+    Everything up to the first whole `textures\\` folder is dropped wherever it
+    sits (`\\..\\Textures\\`, an absolute authoring path), as OpenMW's
+    `correctResourcePath` does; else a leading 'data\\'. Every other segment is
+    kept, 'lowres\\' included (`full_res_twin` decides its fallback).
     See: docs/commentary/asset_convert_texture.md#per-game-asset-namespace
+    See: docs/commentary/asset_convert_shader.md#top-level-texture-fallback
     """
     path = path_text(raw).replace('/', '\\')
+    folder = _TEXTURES_FOLDER.search(path)
+    if folder:
+        return path[folder.end():]
     if path.lower().startswith('data\\'):
         path = path[len('data\\'):]
-    if path.lower().startswith('textures\\'):
-        path = path[len('textures\\'):]
     return path
 
 
@@ -80,6 +89,14 @@ def full_res_twin(tex):
     if tex.lower().startswith(lowres.lower()):
         return prefix + tex[len(lowres):]
     return None
+
+
+def top_level_twin(tex):
+    """The rewritten path naming `tex`'s file directly under the namespace folder.
+
+    See: docs/commentary/asset_convert_shader.md#top-level-texture-fallback
+    """
+    return 'Textures\\' + current_namespace() + '\\' + tex.replace('/', '\\').rsplit('\\', 1)[-1]
 
 
 def as_dds(path: str) -> str:

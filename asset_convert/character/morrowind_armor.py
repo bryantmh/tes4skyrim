@@ -183,12 +183,15 @@ def _bind_world(shape, weights, part_root) -> tuple:
 
     The skinning contract (NifSkope `glmesh.cpp`): a vertex taken into the
     skeleton root's frame is blended over `skin transform @ bone bind @ bone
-    world`, each relative to that root.
+    world`, each relative to that root. A skin whose root does not resolve takes
+    its vertices as stored (OpenMW `RigGeometry::updateSkinToSkelMatrix`).
+    See: docs/commentary/asset_convert_armor.md#unresolved-skin-root
     """
     skin = shape.skin_instance
-    skel = skin.skeleton_root if skin.skeleton_root is not None else part_root
-    skel_world = _full_transform(skel, part_root)
-    to_skel = _full_transform(shape, part_root) @ np.linalg.inv(skel_world)
+    to_skel = np.eye(4)
+    if skin.skeleton_root is not None:
+        to_skel = (_full_transform(shape, part_root)
+                   @ np.linalg.inv(_full_transform(skin.skeleton_root, part_root)))
     verts = shape_vertices(shape) @ to_skel[:3, :3] + to_skel[3, :3]
     normals = shape_normals(shape)
     if normals is not None:

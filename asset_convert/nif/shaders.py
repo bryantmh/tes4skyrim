@@ -24,7 +24,7 @@ from asset_convert.nif.sequences import (MATERIAL_COLOR_EMISSIVE,
                                          TEX_TRANSFORM_VARS)
 from asset_convert.nif.tex_paths import (bs_pp_texture_slots, full_res_twin,
                                          path_bytes, path_text,
-                                         rewrite_tex_path)
+                                         rewrite_tex_path, top_level_twin)
 from asset_convert.nif.uv_transform import base_map, expand_harvested
 from asset_convert.sources import base_plugins as _base_plugins
 from asset_convert.texture import landscape_normals, parallax, spec_mask
@@ -433,15 +433,20 @@ def _normal_exists(normal_rel, stats):
                                   stats.get('_tex_fallback', ())) is not None
 
 
-def resolve_lowres(tex, stats):
-    """The authored 'lowres' texture when its source exists, else its full-res twin.
+def resolve_texture(tex, stats):
+    """The path the game finds for rewritten `tex`: itself when its source exists, else a 'lowres' texture's
+    full-res twin, else the same file name at the top of the namespace when that exists (the engine's fallback).
 
     See: docs/commentary/asset_convert_shader.md#lowres-textures
+    See: docs/commentary/asset_convert_shader.md#top-level-texture-fallback
     """
-    twin = full_res_twin(tex)
-    if twin is None or stats is None or _normal_exists(tex, stats):
+    if stats is None or _normal_exists(tex, stats):
         return tex
-    return twin
+    twin = full_res_twin(tex)
+    if twin is not None:
+        return twin
+    top = top_level_twin(tex)
+    return top if _normal_exists(top, stats) else tex
 
 
 def _resolve_map_for(diffuse, suffix, stats):
@@ -510,7 +515,7 @@ def _glow_map_for(glow_path, tex_set, stats):
     Counts a derivation, and counts an authored path that resolves nowhere.
     """
     if glow_path:
-        named = rewrite_tex_path(glow_path)
+        named = resolve_texture(rewrite_tex_path(glow_path), stats)
         if _normal_exists(named, stats):
             return named
     diffuse = path_text(tex_set.textures[0])
