@@ -52,6 +52,9 @@ PART_ATTACH_NODES = {
     23: 'Right Clavicle', 24: 'Left Clavicle', 25: 'Weapon Bone', 26: 'Tail',
 }
 
+#: Slots whose rig shapes are picked by another name than their attach node (OpenMW npcanimation: Hair hangs on Head).
+PART_SHAPE_FILTERS = {1: 'Hair'}
+
 #: Gender -> the rest-pose skeleton its parts are placed against; the female file is optional.
 SKELETON_NIFS = {False: 'base_anim.nif', True: 'base_anim_female.nif'}
 
@@ -181,26 +184,18 @@ def _blend(verts, normals, weights, chains) -> tuple:
 def _bind_world(shape, weights, part_root) -> tuple:
     """The skinned shape's bind-pose vertices and normals in the part file's frame.
 
-    The skinning contract (NifSkope `glmesh.cpp`): a vertex taken into the
-    skeleton root's frame is blended over `skin transform @ bone bind @ bone
-    world`, each relative to that root. A skin whose root does not resolve takes
-    its vertices as stored (OpenMW `RigGeometry::updateSkinToSkelMatrix`).
+    Each stored vertex is blended over `bone's skin transform @ bone world`
+    alone: the shape's own transform and the skin's overall transform are not
+    applied (vanilla parts leave both cancelling; Arktwend's DMDB set stores
+    upside-down vertices that the bone transforms alone stand upright).
     See: docs/commentary/asset_convert_armor.md#unresolved-skin-root
     """
     skin = shape.skin_instance
-    to_skel = np.eye(4)
-    if skin.skeleton_root is not None:
-        to_skel = (_full_transform(shape, part_root)
-                   @ np.linalg.inv(_full_transform(skin.skeleton_root, part_root)))
-    verts = shape_vertices(shape) @ to_skel[:3, :3] + to_skel[3, :3]
-    normals = shape_normals(shape)
-    if normals is not None:
-        normals = normals @ to_skel[:3, :3]
-    overall = skin_transform_to_np(skin.data.skin_transform)
-    chains = [overall @ skin_transform_to_np(skin.data.bone_list[i].skin_transform)
+    chains = [skin_transform_to_np(skin.data.bone_list[i].skin_transform)
               @ _full_transform(skin.bones[i], part_root)
               for i in range(skin.num_bones)]
-    return _blend(np.hstack([verts, np.ones((len(verts), 1))]), normals,
+    verts = shape_vertices(shape)
+    return _blend(np.hstack([verts, np.ones((len(verts), 1))]), shape_normals(shape),
                   weights, chains)
 
 
@@ -603,7 +598,7 @@ def _adopt_shape(shape, part, place) -> list:
         _adopt_shield(shape, part_root, frame, skel, root)
         return []
     if rig:
-        if shape.skin_instance is None or not _wears(shape, node_name):
+        if shape.skin_instance is None or not _wears(shape, PART_SHAPE_FILTERS.get(slot, node_name)):
             return []
         return _adopt_skinned(shape, part_root, skel, root, bones)
     if rigid_world:

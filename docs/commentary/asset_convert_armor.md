@@ -955,22 +955,37 @@ shield path takes it ([#shield-attachment](#shield-attachment)).
 The result is written as a Morrowind-version NIF beside the source meshes, so
 every downstream stage sees the same shape of input it always has.
 
-### <a id="unresolved-skin-root"></a>A skin root that does not resolve: vertices as stored
+### <a id="unresolved-skin-root"></a>Bind pose: bone skin transforms alone
 
 **Code:** `morrowind_armor._bind_world`.
 
-Arktwend's city guard chain set (`Arktwend\Chain_cuir_b`, `Chain_greav_b`,
-`Chain_helm_b`, plus `a\Ak_Cuirass_F2`) names `Scene Root` as its skin's
-skeleton root. That node is the file's real top node (identity, one child
-`Bip01`), but the file's root list starts at `Bip01`, so read from there the
-link is empty. The assembler then measured the vertices from `Bip01`, whose
-own transform turns 90 degrees about Z: the shirt came out a quarter turn off
-its arm bones, and the retarget dragged its sleeves up over the shoulders and
-neck (in game, a twisted flap at the collar). OpenMW
-`RigGeometry::updateSkinToSkelMatrix` does not find the named root on the
-shape's path and takes the vertices as stored; the assembler now does the same.
-Census: 4 of 608 skinned Arktwend parts; 0 of 210 skinned Morrowind.esm parts
-(their skin root is `Bip01` itself).
+A skinned part's bind-pose vertex is the stored vertex blended over each bone's
+`skin transform @ bone world` -- nothing else. The shape's own transform, the
+skin's overall transform and its named skeleton root are not applied. In every
+vanilla part those cancel (0 of 86 skinned armor/body parts and 0 of the
+skinned clothing in Morrowind.esm change), so only custom exports showed it:
+
+* Arktwend's city guard chain set (`Arktwend\Chain_cuir_b`, `Chain_greav_b`,
+  `Chain_helm_b`, `a\Ak_Cuirass_F2`) names `Scene Root`, the file's real top
+  node, as skin root; read from the root list's `Bip01` the link is empty, and
+  measuring from `Bip01` (turned 90 degrees about Z) put the shirt a quarter
+  turn off its arm bones -- the sleeves were dragged over the neck in game.
+* Arktwend's Dark Brotherhood set (`DMDB\*`: every shirt variant, hood, mask,
+  scarf, sleeves, pants; 25 parts) stores its vertices upside down under a
+  shape transform flipped 180 degrees, with an overall skin transform that is
+  that flip's inverse. Applying both cancelled them and left the part upside
+  down; the retarget then spread the tabard and shoulders into a flat X (Melee
+  harbor, 11-16 recording 3:36).
+
+The bone transforms alone stand both sets upright, as `tools/nif/nif_render.py`
+draws them. Census of the change: Arktwend 27 of 176 parts (the 25 above, chain
+greaves and helm), vanilla 0.
+
+**The hair slot picks `Hair` shapes** (`PART_SHAPE_FILTERS`). OpenMW
+`npcanimation.cpp` hangs PRT_Hair on the `Head` bone but filters the rig's
+shapes by `hair`; filtering by the attach node dropped every `Tri Hair` shape,
+and the guard chain coif and the Dark Brotherhood hood shipped empty. Census:
+Arktwend 2 worn models, vanilla 0.
 
 ## NIF worn armor conversion
 <a id="nif-worn-armor-conversion"></a>
