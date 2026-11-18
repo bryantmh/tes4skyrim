@@ -164,19 +164,23 @@ def seat_arms(skinned_geoms, skel_root, bind: dict, skeletons, deltas: dict) -> 
 
     `bind` is `bind_vertices` taken before the pose deform; `skeletons` is
     (Morrowind rest skeleton, Skyrim skeleton); `deltas` the pose cache.
+    Shapes without arm bones join the easing too, so a seam welded across
+    two shapes moves as one; a shape the easing leaves still is not rewritten.
+    See: docs/commentary/asset_convert_armor.md#morrowind-arm-segments
     """
     maps = _segment_maps(skeletons[0], deltas, skeletons[1])
-    shapes = [b for b, is_prn, _bone in skinned_geoms if not is_prn and id(b) in bind and _arm_weights(b, maps)]
-    if not shapes:
+    shapes = [b for b, is_prn, _bone in skinned_geoms if not is_prn and id(b) in bind]
+    if not any(_arm_weights(b, maps) for b in shapes):
         return
     placed = [_world_vertices(b, skel_root) for b in shapes]
     shifts = [_shape_shift(b, bind[id(b)], maps, p) for b, (p, _g) in zip(shapes, placed)]
-    moved = np.vstack([p for p, _g in placed]) + _eased(np.vstack([bind[id(b)] for b in shapes]),
-                                                        np.vstack([m for m, _s in shifts]),
-                                                        np.concatenate([s for _m, s in shifts]))
+    eased = _eased(np.vstack([bind[id(b)] for b in shapes]), np.vstack([m for m, _s in shifts]),
+                   np.concatenate([s for _m, s in shifts]))
     start = 0
-    for block, (_p, g) in zip(shapes, placed):
-        rows = moved[start:start + block.data.num_vertices]
+    for block, (p, g) in zip(shapes, placed):
+        move = eased[start:start + block.data.num_vertices]
         start += block.data.num_vertices
-        for v, row in zip(block.data.vertices, ((rows - g[3, :3]) @ np.linalg.inv(g[:3, :3])).tolist()):
+        if not move.any():
+            continue
+        for v, row in zip(block.data.vertices, ((p + move - g[3, :3]) @ np.linalg.inv(g[:3, :3])).tolist()):
             v.x, v.y, v.z = row

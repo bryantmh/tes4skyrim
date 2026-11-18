@@ -20,6 +20,8 @@ from asset_convert.nif.sse_nif import read_nif
 EXPORT = Path('export/Arktwend')
 ROBE = Path('armor/morrowind/m/0commonurobeu02.nif')
 SLEEVE = 'Tri chest 2'
+MW_EXPORT = Path('export/Morrowind.esm')
+SEAM_ROBE = Path('armor/morrowind/m/0commonurobeu05.nif')
 
 
 def _sleeve(data):
@@ -88,3 +90,27 @@ def test_robe_sleeve_keeps_its_radius_around_the_skyrim_upper_arm(tmp_path):
     before = _line_distance(bind[keep] @ delta[:3, :3] + delta[3, :3], *posed)
     after = _line_distance(out[keep], sk['NPC R UpperArm [RUar]'][3, :3], sk['NPC R Forearm [RLar]'][3, :3])
     assert np.abs(after - before).max() < 0.25
+
+
+def _shape_points(data) -> list:
+    """Skeleton-space vertices of every skinned shape, in file order."""
+    return [geom_world(block, root)[0] for block, root in iter_skinned_geoms(data)]
+
+
+@pytest.mark.skipif(not (MW_EXPORT / 'meshes' / SEAM_ROBE).exists(), reason='needs the Morrowind.esm export')
+def test_seam_welded_across_shapes_stays_closed(tmp_path):
+    """The robe's sleeve shape and its torso shape share their shoulder vertices; the fit keeps them together."""
+    src = MW_EXPORT / 'meshes' / SEAM_ROBE
+    source = _shape_points(read_nif(str(src)))
+    plan = wearable_plan.build_plan(MW_EXPORT)
+    convert_nif(str(src), str(tmp_path / SEAM_ROBE.name), src_meshes_dir=str(MW_EXPORT / 'meshes'),
+                wearable_plan=plan)
+    out = _shape_points(read_nif(str(tmp_path / '0commonurobeu05_0.nif')))
+    gaps = []
+    for i, a in enumerate(source):
+        for j in range(i + 1, len(source)):
+            d, k = cKDTree(source[j]).query(a, distance_upper_bound=0.01)
+            hit = np.flatnonzero(np.isfinite(d))
+            gaps += np.linalg.norm(out[i][hit] - out[j][k[hit]], axis=1).tolist()
+    assert len(gaps) >= 100
+    assert max(gaps) < 0.01

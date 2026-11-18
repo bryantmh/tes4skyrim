@@ -829,6 +829,21 @@ worst seam edge 86% -> 76% (sigma 1/2/4 gave 170/96/67% worst, 22/24/28%
 over). Magic robe 40.1% -> 25.6%; cuirass and glove unchanged within 0.6
 points. Confirmed in game.
 
+Every skinned shape joins that easing, not only the shapes with arm bones.
+A Morrowind garment is several shapes, and a seam is often welded ACROSS two
+of them: `common_robe_05`'s sleeve shape (`Tri chest 3`) and upper torso
+(`Tri chest 2`) share 18 shoulder vertices, all 100% `Spine2` on both sides.
+Easing only the arm-bearing shapes moved the sleeve shape's copies 1.6-2.6
+units toward the arm and left the torso's in place, so every Morrowind robe
+showed a step at the shoulder in game. A shape without arm bones adds no move
+of its own but takes the eased move of its neighbours, so coincident vertices
+move alike. Isolated A/B over the 334 Morrowind.esm worn meshes: 144 change,
+meshes with a welded pair split by more than 0.1 fall 72 -> 3 (gauntlet
+cuffs 3.0 -> 0, robes 2.6 -> 0); the 3 left are single collar vertices whose
+two sides carry different authored weights. Spacing between nearby vertices
+on different shapes, against the source: 8 meshes closer, none worse by
+more than 0.05 (mean 1.904 -> 1.896).
+
 Robes and skirts also cover their equip slot's fixed parts (OpenMW
 `npcanimation.cpp`: a robe reserves groin, skirt, legs, knees, upper arms,
 forearms and cuirass; a skirt groin and legs), so no skin fill is baked under
