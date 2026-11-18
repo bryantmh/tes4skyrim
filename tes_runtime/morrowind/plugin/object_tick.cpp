@@ -13,7 +13,6 @@
 #include "log.h"
 #include "main_thread.h"
 #include "main_tick.h"
-#include "menu.h"
 #include "npc_anim.h"
 #include "object_script.h"
 #include "scope.h"
@@ -140,7 +139,7 @@ bool PlayerCellChanged() {
     const bool moved = g_cellSampled;
     // A door the engine runs lands like a script move: hold until it settles, or an AI marker spawned at
     // once stays in the old cell and walks the player back through the door (dwarves_mao, 11-16).
-    if (moved) HoldMenusForPlayerMove();
+    if (moved && Hooks().holdMenusForPlayerMove) Hooks().holdMenusForPlayerMove();
     Log("cell: the player is in '%s'", now.c_str());
     g_lastCell = now;
     g_cellSampled = true;

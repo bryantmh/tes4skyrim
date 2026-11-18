@@ -139,6 +139,8 @@ struct GameHooks {
     // exterior gives "" while a game is perfectly well loaded, so this answers
     // CellChanged and never "is a game running" -- that is `playerInWorld`.
     std::string (*playerCell)() = nullptr;
+    // Holds the runtime's menus until a player move has landed (menu.cpp HoldMenusForPlayerMove).
+    void (*holdMenusForPlayerMove)() = nullptr;
     // Whether a game is loaded at all: the player is in some cell, named or
     // not. What the object tick gates on.
     bool (*playerInWorld)() = nullptr;

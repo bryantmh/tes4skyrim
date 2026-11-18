@@ -1416,6 +1416,7 @@ void InstallGameCalls() {
     hooks.modDynamicStat = ModDynamicStat;
     hooks.equipItem = EquipItem;
     hooks.playerCell = PlayerCellName;
+    hooks.holdMenusForPlayerMove = HoldMenusForPlayerMove;
     hooks.playerInWorld = PlayerInWorld;
     hooks.playerInInterior = PlayerInInterior;
     hooks.gamePaused = GamePaused;
