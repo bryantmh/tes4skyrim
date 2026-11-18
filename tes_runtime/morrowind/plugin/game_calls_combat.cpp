@@ -41,12 +41,10 @@ using GetRankFn = std::int32_t (*)(void* vm, std::uint32_t stack, void* actor,
                                    void* other);
 using SetRankFn = void (*)(void* vm, std::uint32_t stack, void* actor,
                            void* other, std::int32_t rank);
-using RunningPackageFn = void* (*)(void* process);
 StartCombatFn g_startCombat = nullptr;
 StopCombatFn g_stopCombat = nullptr;
 GetRankFn g_getRank = nullptr;
 SetRankFn g_setRank = nullptr;
-RunningPackageFn g_runningPackage = nullptr;
 
 // Skyrim's archnemesis rank, which keeps two actors fighting on sight.
 constexpr std::int32_t kArchnemesis = -4;
@@ -195,60 +193,6 @@ void RenewFeuds() {
     });
 }
 
-}  // namespace
-
-void* RunningPackageOf(void* actor) {
-    void* process = actor && g_runningPackage ? At<void*>(actor, ids::kOffActorProcess) : nullptr;
-    return process ? g_runningPackage(process) : nullptr;
-}
-
-namespace {
-
-// The SpectatorPackage `actor` runs, or null.
-char* SpectatorPackageOf(void* actor) {
-    char* package = static_cast<char*>(RunningPackageOf(actor));
-    return package && At<std::uint8_t>(package, ids::kOffPackageType) == ids::kSpectatorPackageType ? package
-                                                                                                   : nullptr;
-}
-
-// Whether a watched actor named by a spectator's entry is still in combat.
-bool WatchedInCombat(const char* entry) {
-    void* watched = RefFromHandle(*reinterpret_cast<const std::uint32_t*>(entry));
-    const bool fighting = watched && ActorInCombat(watched);
-    if (watched) ReleaseRef(watched);
-    return fighting;
-}
-
-// Whether a spectator's every entry has no opponent and a watched actor out of combat.
-bool WatchesNoFight(char* package) {
-    const std::int32_t count = At<std::int32_t>(package, ids::kOffSpectatorWatchedCount);
-    const char* entries = At<char*>(package, ids::kOffSpectatorWatched);
-    if (count <= 0 || !entries) return false;
-    for (std::int32_t i = 0; i < count; ++i) {
-        const char* entry = entries + i * ids::kSpectatorWatchedSize;
-        if (*reinterpret_cast<const std::uint32_t*>(entry + ids::kOffSpectatorOpponent) || WatchedInCombat(entry)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// 🛑 Skyrim keeps a spectator watching while it still detects the actor it watches and that actor's combat
-// target equals the opponent noted when watching began -- and an empty one always matches. Watching that
-// begins in the moment an ally's last foe has died (in combat, no target) notes none, and an escort's leader
-// never loses sight of the one it escorts, so the escort waited for good (Glenroy, run 39a). Such a
-// spectator is finished once no watched actor is in combat. Game thread.
-// See: docs/commentary/morrowind_runtime.md#a-spectator-of-a-finished-fight
-void EndIdleSpectating() {
-    if (!g_runningPackage) return;
-    ForEachHighActor([](void* actor) {
-        char* package = IsDead(actor) ? nullptr : SpectatorPackageOf(actor);
-        if (!package || At<std::uint8_t>(package, ids::kOffSpectatorFinished) || !WatchesNoFight(package)) return;
-        At<std::uint8_t>(package, ids::kOffSpectatorFinished) = 1;
-        Log("combat: %08X stops watching -- nobody it watched is fighting", FormIdOf(actor));
-    });
-}
-
 void CombatTick() {
     ForEachFeud([](const std::string& name, void* actor, void* foe) {
         if (IsDead(actor) || IsDead(foe)) EndFeud(name, actor, foe);
@@ -258,8 +202,6 @@ void CombatTick() {
     PostToMainThread(RenewFeuds);
     untilGuards = kGuardTicks;
     PostToMainThread(GuardsEngage);
-    PostToMainThread(EndIdleSpectating);
-    PostToMainThread(RestartStalledEscorts);
 }
 
 }  // namespace
@@ -275,7 +217,6 @@ void InstallCombatCalls(GameHooks& hooks) {
                                   ids::kActorGetRelationshipRank);
     g_setRank = Native<SetRankFn>("Actor.SetRelationshipRank",
                                   ids::kActorSetRelationshipRank);
-    g_runningPackage = Native<RunningPackageFn>("AIProcess running package", ids::kProcessRunningPackage);
     hooks.setCombat = SetCombat;
     hooks.combatTick = CombatTick;
 }

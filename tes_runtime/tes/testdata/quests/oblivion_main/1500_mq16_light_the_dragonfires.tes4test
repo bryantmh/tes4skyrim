@@ -35,8 +35,9 @@ case mq16_to_temple_district
 defend MartinRef
 # Martin ESCORTS the player (MQ16MartinEscortPCToTempleDistrict, stages 21 .. 29) and walks only with the player
 # beside him (37p, 37q): the player keeps to him, through the one door out of the Chamber
-# (ICPalaceInteriorToMQ16ExteriorDoor) and across the Palace district.
-approach MartinRef
+# (ICPalaceInteriorToMQ16ExteriorDoor) and across the Palace district. The checkpoint leaves the player beside
+# him and his escort sets off at once; an `approach` then put the player in front of a walking Martin nine times
+# in 10 s, and he walked on toward the player, past the trigger planes, into Mehrunes Dagon (fight60 run 2).
 follow MartinRef
 until 3600 MartinRef.GetInCell ICPalaceElderCouncilChambers == 0
 approach MartinRef
@@ -44,13 +45,16 @@ until 600 GetStageDone MQ16 25
 until 600 GetStageDone MQ16 26
 until 7200 GetStageDone MQ16 27
 follow
-# Martin is through the door by 27 and `follow` leaves the player where his trail stopped, often out of the
-# door's loaded range (53b): the player walks to the door first.
+# Martin is through the door by 27 and `follow` leaves the player where his trail stopped (53b). The player goes
+# through after him at once: MQ16 makes him mortal, his death is the game over, and with the player 2+ game minutes
+# behind (a walk to the door and two waits at test pace) the Temple District daedra killed him alone (58e).
+# Joining Martin himself put the player inside the first trigger box he stood in (59f: x 24846; the box is
+# 164 thick at x 24790..24955), where no OnTrigger fires; going back to the door after that left him alone
+# again (59f replay). So the player comes out of the door's landing side (0004A91E, landing 26348 59330) and
+# walks west at once across both planes and past Martin, as a player coming through the door does.
 run
-player.moveto MQ16PalaceToTempleDistrictDoor
-wait 60
-activate MQ16PalaceToTempleDistrictDoor
-wait 120
+player.moveto 0004A91E
+wait 10
 # The two trigger boxes are thin planes across the way west (TrigZone02 at scale 4, turned 103 degrees): 0000CF24
 # (MQ16LeginoAttackTriggerZoneSCRIPT, 29) at x 24873 and 00094167 (MQ16MehrunesDagonTriggerZoneSCRIPT, 30) at x 24264.
 # Their centres are above the ground, so the walk goes to a marker on the ground past both.
@@ -88,12 +92,19 @@ end
 # greeting ("What happened? Where's Martin? ...", INFO 000ADC5C, MQ16 >= 60) offers "Martin is gone." -> "Yes. He
 # shattered the Amulet..." -> "...and Martin's blood, too...", which offers "But the gates are sealed." (INFO
 # 000ADD45), which offers "What about the Empire?" (INFO 000ADD1E).
+# A fight beside the player holds every force-greet until it is over (the Dialogue gate counts the fighters'
+# shouts as speakers), and at test pace two zombies (MQ12ZombieRiser01REF / 02REF) fought Jauffre and Baurus
+# in the Temple for 5 real minutes while the player stood by (60a): the player takes part, as a player does.
 case mq16_dragonfires
+defend JauffreRef
 until 3600 GetStage MQ16 >= 45
 until 1800 GetStageDone MQ16 46
 until 3600 GetStage MQ16 >= 50
 until 7200 GetStage MQ16 >= 60
 until 3600 GetStage MQ16 >= 65
+run
+000C5B42.kill
+000C5B43.kill
 hear 3600 OcatoRef What happened
 wait 30
 talk OcatoRef

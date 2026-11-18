@@ -23,6 +23,9 @@ constexpr std::size_t kSeqEndKey = 0x4c;
 constexpr std::size_t kSeqOwner = 0x60;
 constexpr std::size_t kSeqState = 0x68;
 constexpr std::size_t kSeqOffset = 0x6c;
+constexpr std::size_t kSeqWeightedTime = 0x54;
+constexpr std::size_t kManagerSequences = 0x50;    // NiControllerManager sequence array (IsAnimPlaying 0x357c22)
+constexpr std::size_t kManagerSequenceCount = 0x5a;
 constexpr std::size_t kControllerFlags = 0x10;     // NiTimeController::flags
 constexpr std::uint16_t kControllerActive = 0x8;
 constexpr int kPriority = 0;
@@ -94,6 +97,19 @@ void Stop(void* seq) {
 
 bool Active(void* seq) {
     return seq && At<std::uint32_t>(seq, kSeqState) != 0;
+}
+
+bool AnyPlaying(void* manager) {
+    if (!manager) return false;
+    void** seqs = At<void**>(manager, kManagerSequences);
+    const std::uint16_t count = At<std::uint16_t>(manager, kManagerSequenceCount);
+    for (std::uint16_t i = 0; seqs && i < count; ++i) {
+        void* seq = seqs[i];
+        if (!Active(seq)) continue;
+        const bool done = Cycle(seq) == kCycleClamp && At<float>(seq, kSeqWeightedTime) >= At<float>(seq, kSeqEndKey);
+        if (!done) return true;
+    }
+    return false;
 }
 
 void Resume(void* seq, float paused) {

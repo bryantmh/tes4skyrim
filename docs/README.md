@@ -109,6 +109,7 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [tes5_import_weather.md](commentary/tes5_import_weather.md) | tes5_import/record_types/world.py - weather and climate |
 | [tesgameselect.md](commentary/tesgameselect.md) | tools/release/make_game_select_esp.py, TESGameSelect/ - the new-game menu, held openings, starting gear and the Elder Scroll travel item |
 | [tes_runtime_alchemy.md](commentary/tes_runtime_alchemy.md) | tes_runtime/tes/alchemy*.cpp, tes_runtime/tes/crafting.cpp, tes5_import/record_types/apparatus.py - alchemy apparatus open Skyrim's menu and scale the potion; the shared crafting bench |
+| [tes_runtime_anim.md](commentary/tes_runtime_anim.md) | tes_runtime/tes/anim_playing.cpp - TES4 IsAnimPlaying answered from an object's own NIF sequences |
 | [tes_runtime_crime.md](commentary/tes_runtime_crime.md) | tes_runtime/tes/crime.cpp, tes5_import/record_types/crime.py - bounty realms, jails and the arrest |
 | [tes_runtime_guns.md](commentary/tes_runtime_guns.md) | tes_runtime/fallout/fire.cpp - the gun shot, reload key and ammo restriction in FalloutRuntime |
 | [tes_runtime_journal.md](commentary/tes_runtime_journal.md) | tes_runtime/tes/journal_objectives.cpp, asset_convert/ui/journal_patch.py - a clicked quest objective shows its stage's text |
@@ -147,6 +148,8 @@ A dated sweep over a corpus, with counts. Frozen once written; a re-audit is a N
 | [morrowind_opcode_testplan_morrowind.md](audits/morrowind_opcode_testplan_morrowind.md) | The same opcode test plan over Morrowind.esm's journal quests |
 | [morrowind_opcode_testplan_merged.md](audits/morrowind_opcode_testplan_merged.md) | One opcode test plan over Morrowind.esm and TR_Mainland.esm's quests together |
 | [mwscript_full_runs.md](audits/mwscript_full_runs.md) | The mwscript full-run worklog: standing rules, generic mechanisms, every quest's status and failed attempts |
+| [mwscript_full_runs_archive_1.md](audits/mwscript_full_runs_archive_1.md) | Superseded detail from the mwscript worklog, 10-31 .. 11-04 |
+| [mwscript_full_runs_archive_2.md](audits/mwscript_full_runs_archive_2.md) | The mwscript worklog before its 11-11 compaction: pin coordinates, probe names, disasm chains, batch results |
 | [oblivion_quest_runs.md](audits/oblivion_quest_runs.md) | The Oblivion (.tes4test) quest-run worklog: TES4-specific lessons, launch, run ledger, every quest's status |
 | [navmesh_since_0.686.md](audits/navmesh_since_0.686.md) | Navmesh release chart: area, cracks, islands, time and memory, 0.686 against the current build on six plugins |
 | [mwscript_opcodes.md](audits/mwscript_opcodes.md) | Which of MWScript's 298 commands MorrowindRuntime implements, by call-site cost |

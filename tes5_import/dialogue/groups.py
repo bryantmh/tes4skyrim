@@ -44,7 +44,7 @@ from .converter import (DIAL_TYPE_CONVERSATION, SERVICE_MENU_SCRIPTS,
     is_npc_to_npc_conversation, make_conversation_quest,
     make_generic_quest, register_conversation_chains,
     SCENE_TOPIC, classify_topic, collect_tclt_target_fids,
-    convert_DIAL, convert_INFO, make_dlbr, make_dlvw, service_menu_entry,
+    convert_DIAL, convert_INFO, in_dialogue_gate, make_dlbr, make_dlvw, service_menu_entry,
     service_menu_kind,
     should_skip_dial, voice_file_prefix,
     GREET_TOPIC_BY_QUEST, EMPTY_DIAL_FIDS, lip_texts, startable_quests)
@@ -908,6 +908,8 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
                 sibling_factions=ctx.get('sibling_factions'),
                 sibling_npcs=ctx.get('sibling_npcs'),
                 shared_state_bytes=ctx.get('shared_state_bytes', b''))
+            if get_formid(info_rec, 'FormID') in ctx.get('greeting_infos', ()):
+                injected += in_dialogue_gate()
             info_bytes = convert_INFO(
                 info_rec, injected_ctdas=injected,
                 fid_to_edid=ctx['fid_to_edid'],
@@ -1026,6 +1028,8 @@ def _group_bark_infos(bark_dials, info_by_dial, writer, bark_generic_quests,
                                'snam': snam, 'edid': edid, 'src_fid': dial_fid}
                 order.append(key)
             groups[key]['infos'].append(info_rec)
+            if edid.upper() == 'GREETING':
+                ctx.setdefault('greeting_infos', set()).add(get_formid(info_rec, 'FormID'))
     return groups, order, sge_extra
 
 

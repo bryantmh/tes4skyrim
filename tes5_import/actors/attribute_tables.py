@@ -16,7 +16,6 @@ from script_convert.message_menus import (CHARGEN_BIRTHSIGN_GLOBAL, CHARGEN_CLAS
 from tes4_export.record_types.morrowind import MW_SKILL_TO_TES4
 
 from ..base.equivalents import RACE_MAP, SKYRIM_VAMPIRE_RACES
-from ..packages.escort_when_near import ESCORT_HOLD_EDID, player_escorts
 from ..base.owned_records import (CHARGEN_REQUEST_GLOBAL, DIALOGUE_OPEN_GLOBAL, PLAYER_ATTRIBUTE_GLOBALS,
                                   TES4_ATTRIBUTE_NAMES, WELL_KNOWN_PROPERTIES, owner_row)
 from ..base.race_lookup import tes4_race_edid
@@ -128,20 +127,13 @@ def actor_lines(npcs: list, creatures: list, specs: dict) -> list:
 
 
 def global_lines(plugin: str, masters: list) -> list:
-    """attributes_formid.txt rows for the attribute globals this plugin itself holds, and its player escorts.
-
-    See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-returns
-    """
+    """attributes_formid.txt rows for the attribute globals this plugin itself holds."""
     rows = []
     names = [name.lower() for name in TES4_ATTRIBUTE_NAMES] + ['dialogueopen']
     for name, edid in zip(names, list(PLAYER_ATTRIBUTE_GLOBALS) + [DIALOGUE_OPEN_GLOBAL]):
         fid = WELL_KNOWN_PROPERTIES.get(edid, 0)
         if fid and fid >> 24 == len(masters):
             rows.append(f'{name}={plugin}|{fid:08X}')
-    escorts = [f'escortplayer={plugin}|{fid:08X}' for fid in player_escorts() if fid >> 24 == len(masters)]
-    hold = WELL_KNOWN_PROPERTIES.get(ESCORT_HOLD_EDID, 0)
-    if escorts and hold:
-        rows += escorts + [owner_row('escorthold', hold, plugin, masters)]
     return rows
 
 

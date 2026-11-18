@@ -47,8 +47,21 @@ def draw_layers(cv, walk, band, step):
                                   fill=(110, 60, 140) if n > 1 else (90, 90, 90))
 
 
-def draw_mesh(cv, walk, band, meshes):
-    """Outline each shipped triangle in the box and band by its depth under the highest walk surface."""
+def mesh_offset(hits, z, nearest):
+    """Depth of z under the highest surface, or with `nearest` its height over the nearest one; 0 with none."""
+    if not hits:
+        return 0
+    if nearest:
+        return z - min(hits, key=lambda h: abs(h - z))
+    return max(hits) - z
+
+
+def draw_mesh(cv, walk, band, meshes, nearest=False):
+    """Outline each shipped triangle in the box and band by its depth under the highest walk surface.
+
+    With `nearest`, the number is the triangle's height over the walk surface nearest it (a floor under a ceiling
+    is measured from that floor) and the colour goes by its size.
+    """
     b = cv.box
     for verts, tris in meshes:
         for t in tris:
@@ -57,10 +70,11 @@ def draw_mesh(cv, walk, band, meshes):
             if not (band[0] <= c[2] <= band[1] and b[0] <= c[0] <= b[2] and b[1] <= c[1] <= b[3]):
                 continue
             hits = [z for z in surfaces(walk, c[0], c[1]) if band[0] <= z <= band[1]]
-            below = max(hits) - c[2] if hits else 0
+            offset = mesh_offset(hits, c[2], nearest)
+            below = abs(offset) if nearest else offset
             colour = (60, 220, 60) if below < 15 else (250, 220, 0) if below < 40 else (255, 140, 0)
             cv.draw.polygon([cv.px(*q[:2]) for q in p], outline=colour)
-            cv.draw.text(cv.px(c[0], c[1]), '%d' % below, fill=(255, 255, 255))
+            cv.draw.text(cv.px(c[0], c[1]), '%d' % offset, fill=(255, 255, 255))
 
 
 def draw_axes(cv):

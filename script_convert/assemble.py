@@ -25,7 +25,10 @@ from script_convert.command_rows import (
     COMMAND_ROWS, ACTOR_ONLY_FUNCTIONS, OBJREF_SHARED_FUNCTIONS
 )
 from script_convert import symbols as _symbols
+from script_convert.conversation_sequence import hold_runs
 from script_convert.poll_motion import relative_sets
+from script_convert.movie_last import movie_last
+from script_convert.release_order import release_into_package
 from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as N
 from script_convert.unequip_guard import unequip_guard
@@ -37,14 +40,15 @@ from tes5_import.base.owned_records import DIALOGUE_OPEN_GLOBAL
 # ---------------------------------------------------------------------------
 
 def build(conv, name: str, source: str, extends: str, editor_id: str) -> str:
-    """Convert one standalone SCPT record to a full `.psc` file."""
+    """Convert one standalone SCPT record to a full `.psc` file.
+
+    The body converts before the declarations: resolving a name registers its
+    property. Each run of writes into a holding script sits inside its hold, and
+    an actor released and then given a script package gets both in one call.
+    See: docs/commentary/script_convert.md#remote-write-runs
+    """
     tree = _prepare(conv, name, source, extends, editor_id)
     extends = conv._script_extends
-
-    # The BODY converts FIRST: resolving a name is what registers the property
-    # for it, so the property table is only complete once every statement has
-    # been emitted.  Declarations are spliced in afterwards, at the top where
-    # Papyrus wants them.
     body = udf(conv, tree, extends)
     body += poll(conv, tree, extends)
     body += events(conv, tree, extends, skip_poll=True)
@@ -60,6 +64,9 @@ def build(conv, name: str, source: str, extends: str, editor_id: str) -> str:
     body += stage_latches(conv)
     body += quest_restart(conv, tree, extends, name)
     body = halt_guards(conv, body)
+    body = movie_last(release_into_package('\n'.join(body).split('\n')))
+    if conv.xref:
+        body = hold_runs(body, conv.xref.holds)
     body += remote_adders(conv, tree, editor_id)
 
     out = list(header(conv, name, extends, editor_id))
@@ -363,21 +370,29 @@ def variable_properties(conv, tree) -> list:
 
 def remote_adders(conv, tree, editor_id: str) -> list:
     """An add function per variable another script adds to: the read and the write as one step."""
+    out = []
+    for safe, ptype in _remote_added(conv, tree, editor_id):
+        total = f'{safe} + amount' if ptype == 'Float' else f'({safe} + amount) as Int'
+        out += ['', f'Function {REMOTE_ADD_PREFIX}{safe}(Float amount)', f'  {safe} = {total}', 'EndFunction']
+    return out + _HOLD_PAIR if out else out
+
+
+def _remote_added(conv, tree, editor_id: str) -> list:
+    """(property name, type) of each number variable another script adds to; any of them = the hold pair."""
     adds = conv.xref.remote_adds if conv.xref else ()
     out = []
     for var in (tree.variables if tree else ()):
         safe = safe_property_name(var.name)
         ptype = conv.sc.var_types.get(safe.lower(), 'Int')
         if ptype in ('Int', 'Float') and ((editor_id or '').lower(), var.name.lower()) in adds:
-            total = f'{safe} + amount' if ptype == 'Float' else f'({safe} + amount) as Int'
-            out += ['', f'Function {REMOTE_ADD_PREFIX}{safe}(Float amount)', f'  {safe} = {total}', 'EndFunction']
-    return out + _HOLD_PAIR if out else out
+            out.append((safe, ptype))
+    return out
 
 
 #: One writer at a time for a run of writes from another script; a lost release frees itself after 100 waits.
-_HOLD_PAIR = ['', 'Bool TES4_held', '', f'Function {REMOTE_HOLD}()', '  Int TES4_tries = 0',
+_HOLD_PAIR = ['', 'Bool TES4_held', 'Float TES4_heldAt', '', f'Function {REMOTE_HOLD}()', '  Int TES4_tries = 0',
               '  While TES4_held && TES4_tries < 100', '    Utility.WaitMenuMode(0.01)', '    TES4_tries += 1',
-              '  EndWhile', '  TES4_held = True', 'EndFunction', '',
+              '  EndWhile', '  TES4_held = True', '  TES4_heldAt = Utility.GetCurrentRealTime()', 'EndFunction', '',
               f'Function {REMOTE_RELEASE}()', '  TES4_held = False', 'EndFunction']
 
 
@@ -432,12 +447,30 @@ def quest_restart(conv, tree, extends: str, name: str) -> list:
     out += [] if _repeats_stages(conv, script) else ['    If akQuest.GetStageDone(aiStage)',
                                                      '      Return False',
                                                      '    EndIf']
-    out += ['    TES4Start(akQuest)',
-            '  EndIf',
-            '  Bool done = akQuest.SetStage(aiStage)',
-            '  TES4Polyfill.StageSet(akQuest)',
-            '  Return done']
-    return out + ['EndFunction']
+    out += ['    TES4Start(akQuest)', '  EndIf'] + _settling(conv, script)
+    return out + ['EndFunction'] + (_SETTLE_PAIR if conv.xref.fragment_stages_of(script) else [])
+
+
+#: A quest script's record of the stage fragment it has asked for and not yet seen finish.
+_SETTLE_PAIR = ['', 'Int TES4_settling = -1', 'Float TES4_settlingAt', '',
+                'Function TES4StagePending(Int aiStage)', '  TES4_settling = aiStage',
+                '  TES4_settlingAt = Utility.GetCurrentRealTime()', 'EndFunction', '',
+                'Function TES4StageRan(Int aiStage)', '  If TES4_settling == aiStage', '    TES4_settling = -1',
+                '  EndIf', 'EndFunction']
+
+
+def _settling(conv, script: str) -> list:
+    """TES4SetStage's SetStage, noting a stage whose fragment its own poll must wait for.
+
+    See: docs/commentary/script_convert.md#a-stage-fragment-runs-before-its-poll
+    """
+    stages = conv.xref.fragment_stages_of(script)
+    set_stage = ['  Bool done = akQuest.SetStage(aiStage)', '  TES4Polyfill.StageSet(akQuest)', '  Return done']
+    if not stages:
+        return set_stage
+    test = ' || '.join(f'aiStage == {stage}' for stage in stages)
+    return ([f'  If {test}', '    akQuest.TES4StagePending(aiStage)', '  EndIf'] + set_stage[:2]
+            + ['  If !done', '    akQuest.TES4StageRan(aiStage)', '  EndIf', set_stage[2]])
 
 
 def _declare(name: str, ptype: str) -> str:
@@ -846,7 +879,7 @@ def poll(conv, tree, extends: str) -> list:
     sc.poll_return_prefix = ''
     sc.glide_secs = ''
     out = _walk_guard(sc, out)
-    out, body, done = _pass_guard(sc, out, body, passes)
+    out, body, done = _pass_guard(out, body, passes, _pass_waits(conv, tree, extends))
     arm = done + _arm(conv, interval, load_gated)
     if not passes:
         return out + body + arm + ['EndEvent', '']
@@ -861,17 +894,32 @@ _PASS_VAR = 'TES4_PassAt'
 _PASS_STALE_SECS = '60.0'
 
 
-def _pass_guard(sc, head: list, body: list, passes: bool) -> tuple:
+def _pass_waits(conv, tree, extends: str) -> list:
+    """What a poll pass waits out besides its own last pass: a run of writes into it, its stage fragment.
+
+    See: docs/commentary/script_convert.md#a-stage-fragment-runs-before-its-poll
+    """
+    edid = conv.sc.edid
+    waits = ['(TES4_held && TES4_passNow - TES4_heldAt < 1.0)'] if _remote_added(conv, tree, edid) else []
+    if extends == 'Quest' and conv.xref.fragment_stages_of(papyrus_script_name(edid)):
+        waits.append('(TES4_settling >= 0 && TES4_passNow - TES4_settlingAt < 1.0)')
+    return waits
+
+
+def _pass_guard(head: list, body: list, passes: bool, waits: list) -> tuple:
     """(head, body, end) of a poll whose insurance pass waits out a pass still running.
 
     A pass parked in a latent call or behind a busy script let the insurance
     arm start more passes on top of it; each one queued behind the same call.
+    It also skips while any of `waits` holds (another script's run of writes
+    into it, its own stage fragment), so it never reads half of one.
     See: docs/commentary/script_convert.md#poll-pile-up
     """
     clear = f'{_PASS_VAR} = 0.0'
+    running = f'{_PASS_VAR} > 0.0 && TES4_passNow >= {_PASS_VAR} && TES4_passNow - {_PASS_VAR} < {_PASS_STALE_SECS}'
     head = [f'Float {_PASS_VAR} = 0.0'] + head + [
         '  Float TES4_passNow = Utility.GetCurrentRealTime()',
-        f'  If {_PASS_VAR} > 0.0 && TES4_passNow >= {_PASS_VAR} && TES4_passNow - {_PASS_VAR} < {_PASS_STALE_SECS}',
+        f'  If {" || ".join(waits + [f"({running})"])}',
         '    Return', '  EndIf', f'  {_PASS_VAR} = TES4_passNow']
     if not passes:
         body = [_before_returns(line, [clear]) for line in body]
@@ -1015,9 +1063,8 @@ def _dialogue_gate(conv, extends: str, load_gated: bool) -> list:
     boxes = sc.shows_box and not sc.has_menumode and extends in ('Actor', 'Quest', 'ObjectReference')
     if not (speaks or boxes):
         return []
-    conv.sc.property_refs[DIALOGUE_OPEN_GLOBAL] = 'GlobalVariable'
-    test = (f'TES4Polyfill.PlayerIsInDialogue() || ({DIALOGUE_OPEN_GLOBAL}'
-            f' && {DIALOGUE_OPEN_GLOBAL}.GetValue() > 0)')
+    held = _symbols.owned_global(conv, DIALOGUE_OPEN_GLOBAL)
+    test = f'TES4Polyfill.PlayerIsInDialogue() || ({held} && {held}.GetValue() > 0)'
     if extends == 'Actor':
         test = 'IsInDialogueWithPlayer() || ' + test
     return ([f'  If {test}  '
@@ -1248,7 +1295,7 @@ def door_preamble(conv, extends: str, npc_runs: bool = False) -> list:
     """
     if extends != 'ObjectReference':
         return []
-    uses = _symbols.scripted_uses_formlist(conv)
+    uses = _symbols.owned_formlist(conv, _symbols.SCRIPTED_USES)
     listed = [f'  If {uses}.HasForm(Self)',
               '    ; A script activated this door to run this block (TES4 `Activate ref 1`).',
               f'    {uses}.RemoveAddedForm(Self)']

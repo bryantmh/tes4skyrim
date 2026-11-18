@@ -3,7 +3,8 @@ Travel to the place and stay there.
 
 TES4 Ambush = wait at the location for the target; once it is within the location radius, act on it (for a
 non-hostile ambush, walk up to PTDT.Count). The Follow branch runs only while the target is within the radius
-OF THE PLACE (GetWithinDistance run on the Place input; the actor itself stops at the radius's edge);
+OF THE PLACE (GetWithinDistance run on the Place input; the actor itself stops at the radius's edge) and the
+actor is there too (a Follow of a target in another cell never moves an unloaded actor);
 otherwise Travel takes the actor to the place, flagged not to complete, so it waits there. Follow's and
 Travel's procedure inputs, flags and editor names are vanilla's Follow (00019B2C) and Travel (00016FAA) roots.
 See: docs/commentary/tes5_import_package.md#ambush-at-a-place
@@ -74,9 +75,10 @@ def ambush_template():
 
 
 def _procedure_tree() -> bytes:
-    """Stacked { Follow while the target is within the radius ; Travel }."""
-    gate = within_distance_gate(_IN_TARGET, _IN_RADIUS, on_input=_IN_PLACE_REF)
-    return stacked(procedure('Follow', 0, _FOLLOW_INPUTS, (gate,)),
+    """Stacked { Follow while the actor and the target are both within the radius of the place ; Travel }."""
+    near = within_distance_gate(_IN_TARGET, _IN_RADIUS, on_input=_IN_PLACE_REF)
+    there = within_distance_gate(_IN_PLACE_REF, _IN_RADIUS)
+    return stacked(procedure('Follow', 0, _FOLLOW_INPUTS, (near, there)),
                    procedure('Travel', 0, _TRAVEL_INPUTS))
 
 

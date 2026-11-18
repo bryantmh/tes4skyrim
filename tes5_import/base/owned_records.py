@@ -133,7 +133,7 @@ def create_tes4_special_records(writer: PluginWriter):
         'FACT', ESCORT_HOLD_EDID)
     writer.add_record('FACT', one_rank_faction(hold, ESCORT_HOLD_EDID, 'Held'))
     made[ESCORT_WHEN_NEAR_EDID] = _emit_template_root(writer, ESCORT_WHEN_NEAR_EDID,
-                                                      lambda fid: escort_root_record(fid, hold),
+                                                      escort_root_record,
                                                       set_escort_template_fid)
     made[AMBUSH_NEAR_EDID] = _emit_template_root(writer, AMBUSH_NEAR_EDID, ambush_root_record,
                                                  set_ambush_template_fid)
@@ -301,19 +301,28 @@ def create_destroyed_formlist(writer: PluginWriter, master_index=None) -> dict:
 
 #: derive_formid site and EditorID of the list of references a script has just activated by its own call.
 _SCRIPTED_USE_SITE, SCRIPTED_USES = 'SCRIPTED_USE_FLST', 'TES4ScriptedUses'
+#: derive_formid site and EditorID of the list of actors a script has restrained.
+_RESTRAINED_SITE, RESTRAINED = 'RESTRAINED_FLST', 'TES4Restrained'
 
 
-def create_scripted_use_formlist(writer: PluginWriter, master_index=None) -> dict:
-    """The FormList a scripted `Activate ref 1` marks its target in; a master's is adopted.
+def create_runtime_formlists(writer: PluginWriter, master_index=None) -> dict:
+    """The empty FormLists the polyfill fills at run time; a master's are adopted.
 
+    TES4ScriptedUses: a scripted `Activate ref 1` marks its target. TES4Restrained:
+    the actors a script restrained, held again after a MoveTo.
     See: docs/commentary/script_convert.md#a-scripted-activation-runs-the-door-script
+    See: docs/commentary/script_convert.md#setrestrained-is-restrained
     """
-    adopted = _adopted(master_index, b'FLST', (SCRIPTED_USES,))
-    if adopted:
-        return adopted
-    fid = writer.derive_formid(_SCRIPTED_USE_SITE, SCRIPTED_USES)
-    writer.add_record('FLST', pack_record('FLST', fid, 0, pack_string_subrecord('EDID', SCRIPTED_USES)))
-    return {SCRIPTED_USES: fid}
+    out = {}
+    for site, edid in ((_SCRIPTED_USE_SITE, SCRIPTED_USES), (_RESTRAINED_SITE, RESTRAINED)):
+        adopted = _adopted(master_index, b'FLST', (edid,))
+        if adopted:
+            out.update(adopted)
+            continue
+        fid = writer.derive_formid(site, edid)
+        writer.add_record('FLST', pack_record('FLST', fid, 0, pack_string_subrecord('EDID', edid)))
+        out[edid] = fid
+    return out
 
 
 #: Seconds one ResetFallDamageTimer protects for; a caller polling every tick keeps renewing it.

@@ -29,7 +29,7 @@ import struct
 
 from .ambush_near import ambush_template, place_reference
 from .sit_at import sit_at_template
-from .escort_when_near import NPC_NEAR_RADIUS, NPC_WAIT, escort_template, note_player_escort
+from .escort_when_near import NPC_NEAR_RADIUS, NPC_WAIT, escort_template
 from .templates import (
     ACQUIRE,
     EAT,
@@ -58,6 +58,7 @@ from .templates import (
 from ..base.conditions import convert_ctda_list_with_strings
 from ..base.owned_records import DIALOGUE_OPEN_GLOBAL, WELL_KNOWN_PROPERTIES
 from .interrupt_morrowind import morrowind_interrupt
+from ..record_types.world_falloutnv import is_fallout_source
 from .use_magic import spell_item_inputs
 from .location_morrowind import standing_wander_location
 from ..base.text_reader import (get_formid, get_int, get_str, remap_formid,
@@ -219,6 +220,12 @@ DEFAULT_INTERRUPT = 0x0044  # observe combat 0x04 | aggro radius 0x40
 
 #: A force greet's interrupt flags, measured from vanilla MS05InductionForcegreet.
 FORCEGREET_INTERRUPT = 0xFEFF
+
+#: PKDT interrupt flag "Observe combat behavior": watch a fight the actor is not part of.
+OBSERVE_COMBAT = 0x0004
+
+#: PKDT interrupt flag "Greet corpse behavior": walk to a dead body (ReactToDead) when one is near.
+GREET_CORPSE = 0x0008
 
 #: PSDT for any month, day and hour with no duration.
 ANY_TIME_PSDT = struct.pack('<bbBbb3xi', -1, -1, 0, -1, -1, 0)
@@ -600,7 +607,13 @@ def convert_flags(t4_flags: int, pack_type: int,
 def build_pkdt(flags: int, speed: int,
                interrupt: int = DEFAULT_INTERRUPT) -> bytes:
     """PKDT: Flags u32, Type u8, InterruptOverride u8, PreferredSpeed u8,
-    pad u8, InterruptFlags u16, pad u16  (12 bytes)."""
+    pad u8, InterruptFlags u16, pad u16  (12 bytes). A TES3/TES4 package never
+    allows observe-combat or greet-corpse (that game has neither procedure).
+
+    See: docs/commentary/tes5_import_package.md#no-spectators
+    """
+    if not is_fallout_source():
+        interrupt &= ~(OBSERVE_COMBAT | GREET_CORPSE)
     return struct.pack('<IBBBBHH', flags, PKDT_TYPE_PACKAGE, 0, speed, 0,
                        interrupt, 0)
 
@@ -1109,6 +1122,7 @@ def _pick_follow(p: _Pick) -> Inputs:
         return _pick_escort(p)
     i = Inputs(FOLLOW_TO if arrives else FOLLOW)
     i.set('target', p.tgt)
+    keep_within(i, float(get_int(p.rec, 'PTDT.Count', 0) or 0))
     i.set('accompany', 1 if get_int(p.rec, 'PKDT.Type', -1) == T4_ACCOMPANY
           else 0)
     if arrives:
@@ -1126,8 +1140,6 @@ def _pick_escort(p: _Pick) -> Inputs:
     if 'radius' in i.t.slots and not _targets_player(p.rec):
         i.set('radius', NPC_NEAR_RADIUS)
         i.set('wait', NPC_WAIT)
-    elif 'radius' in i.t.slots:
-        note_player_escort(get_formid(p.rec, 'FormID'))
     if p.use_horse:
         i.set('ride_horse', 1)
     return i
@@ -1186,10 +1198,17 @@ def _pick_ambush(p: _Pick) -> Inputs:
         i.set('location', p.loc)
         i.set('radius', radius or reach)
         i.set('place_ref', place_reference(p.loc))
+    keep_within(i, reach)
+    return i
+
+
+def keep_within(i: Inputs, reach: float) -> None:
+    """A follow kept within the authored `reach`; 0 keeps the template's radii.
+    See: docs/commentary/tes5_import_package.md#follow-keeps-its-authored-distance
+    """
     if reach > 0:
         i.set('min_radius', max(64.0, reach * 0.5))
         i.set('max_radius', reach)
-    return i
 
 
 def _pick_cast(p: _Pick) -> Inputs:
@@ -1414,14 +1433,14 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
                      and _targets_player(rec))
     hostile = not (is_forcegreet or _approaches_ref(rec, ptype))
     flags, speed = convert_flags(get_int(rec, 'PKDT.Flags'), ptype, hostile,
-                                 quest_gated=ctx.quest_of(pack_fid) is not None)
+                                 quest_gated=ctx.quest_of(pack_fid) is not None or bool(done_gate))
     # A scripted one-shot (force-greet, or "go operate that switch") must run
     # at vanilla's pace and with vanilla's interrupt authorisation, or the actor
     # dawdles / can never break off to do the thing.  Both were measured from
     # real instances: MS05InductionForcegreet and CWEscapeCitySceneActivateDoor.
     is_activate = _operate_target(rec, ctx)
     if is_forcegreet:
-        subs += pack_subrecord('PKDT', build_pkdt(_forcegreet_flags(rec, flags),
+        subs += pack_subrecord('PKDT', build_pkdt(_forcegreet_flags(rec, flags, bool(done_gate)),
                                                   SPEED_RUN,
                                                   FORCEGREET_INTERRUPT))
     elif is_activate:
@@ -1613,9 +1632,12 @@ _QUEST_PARAM_FUNCS = frozenset({
 })
 
 
-def _forcegreet_flags(rec: dict, flags: int) -> int:
-    """Force-greet PKDT flags: TES4's, Once Per Day restored (contracts doc, PKDT)."""
-    if get_int(rec, 'PKDT.Flags') & T4_ONCE_PER_DAY:
+def _forcegreet_flags(rec: dict, flags: int, gated: bool) -> int:
+    """TES4's flags, Once Per Day restored unless a completion gate replaces it.
+
+    See: docs/commentary/tes5_import_package.md#a-completion-gate-replaces-once-per-day
+    """
+    if get_int(rec, 'PKDT.Flags') & T4_ONCE_PER_DAY and not gated:
         flags |= T5_ONCE_PER_DAY
     return flags
 

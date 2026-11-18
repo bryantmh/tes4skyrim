@@ -61,7 +61,7 @@ from ..record_types.common import (
     pack_uint8_subrecord,
     pack_uint32_subrecord,
 )
-from ..base.conditions import (FUNC_GET_GLOBAL_VALUE, build_ctda,
+from ..base.conditions import (FUNC_GET_GLOBAL_VALUE, FUNC_IS_IN_DIALOGUE_WITH_PLAYER, build_ctda,
                                convert_ctda_list_with_strings,
                                order_condition_groups)
 from ..base.tes5_reader import subrecords
@@ -665,6 +665,14 @@ def _info_vmad(rec: dict, reveal_props, service_menu: str, xref,
 
 #: CTDA comparison operator `<` (high bits of the type byte).
 _CTDA_LESS = 0x80
+
+
+def in_dialogue_gate() -> bytes:
+    """`IsInDialogueWithPlayer == 1`: the line plays only when talked to.
+
+    See: docs/commentary/tes5_import_dialogue.md#problem-1-greeting-lines-are
+    """
+    return pack_subrecord('CTDA', build_ctda(FUNC_IS_IN_DIALOGUE_WITH_PLAYER, comp_value=1.0))
 
 
 def _said_once_gate(rec: dict, reveal_props) -> bytes:

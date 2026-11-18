@@ -1984,7 +1984,59 @@ body at OnEnd breaks it four different ways, each fixed by one helper.
   a script, and a line's OnBegin handoff (its gate test included), sit between
   them. The hold wraps only plain writes, never a call, so it cannot nest;
   a release lost to an aborted thread frees itself after 100 waits of 0.01 s.
-  NOT yet confirmed in game by the user.
+  Every converted script's runs are held, not only fragments: the MQ09
+  skeletons' OnDeath writes `timer`, `ghostRef`, `ghostTarget`, `lastBlade`
+  into MQ09 as four calls, and MQ09's poll could read `ghostRef` set with
+  `ghostTarget` still None. The owner's poll pass therefore also skips while a
+  hold under 1 s old (`TES4_heldAt`) is taken. Oblivion.esm: 40 more scripts
+  hold a run, 87 polls carry the check; `tests/test_script_remote_holds.py`.
+  This was first blamed for the first MQ09 ghost never greeting (run 60b); later
+  runs showed MQ09's branch ran and moved it, and the real cause was the
+  restraint (next entry).
+- <a id="setrestrained-is-restrained"></a>**`setrestrained` is Skyrim's
+  `SetRestrained`, and a release hands over its package first.** Measured in
+  two new-game runs with per-tick reads of MQ09's first ghost (60a, ghost
+  watch 2): stage 10 restrains the four ghosts and MQ09Script frees the first
+  only after a 3 s timer, then `addscriptpackage MQ09GhostBladeToPlayer`. The
+  converter wrote `SetDontMove`, which per the CK wiki only stops an actor
+  being pushed: right after the move the ghost walked off on its list package
+  `MQ09GhostBlade01ToShrine` (358, 931, 2056 from the player), left the cell,
+  was placed on its Shrine marker, and never greeted. `TES4Polyfill.
+  SetRestrained` calls Skyrim's `SetRestrained` ("will not move ... but will
+  continue to think ... and go into dialogue"); a release also clears
+  `SetDontMove`, so an actor restrained by an older build's save goes free.
+  With that the ghost held (154.58 at 0 and 20 ticks), yet still reached the
+  Shrine: the release and the `addscriptpackage` after it ran in one frame in
+  Oblivion but are separate Papyrus calls, so the freed ghost took its list
+  package first. `release_order.arm_before_release` emits a release directly
+  followed by an AddScriptPackage on the same actor package-first (MQ09Script,
+  MQ15AnaxesDoorSCRIPT, CPRollingRock01SCRIPT). That passed 2 of 3; two more
+  causes, measured on kept games:
+  1. **Skyrim's MoveTo drops a restraint** (life state 6 -> 0, actor +0xC8
+     bits 21-24) when the actor's package is moving it. The first ghost's
+     ToShrine is valid from its skeleton's death (GetDeadCount > 0), so
+     MQ09Script's `ghostRef.MoveTo` freed it. A restrained ghost on no moving
+     package kept the restraint across MoveTo and loading. Fix: the polyfill's
+     `SetRestrained` lists restrained actors in the import-owned FormList
+     `TES4Restrained`, and a converted non-player `moveto` is
+     `TES4Polyfill.MoveTo`, which restrains a listed actor again after the move
+     (measured: re-restrained after the move, the ghost stayed 42 away). 259
+     Oblivion scripts move through it, 21 restrain.
+  2. **Release and hand-over must land together.** Package-first (the
+     swap above) armed ToPlayer while the ghost was still restrained; in a
+     full run it ended at once and its OnEnd disarmed it, so after the release
+     the ghost stood unarmed on ToShrine (MQ09 checkpoint + console kill:
+     deterministic). Release-first let ToShrine run in between. Fix:
+     `release_order.release_into_package` merges the pair into
+     `TES4Polyfill.ReleaseIntoPackage`, which turns the actor's AI off, arms,
+     releases (the release also re-evaluates), turns AI on and evaluates once
+     (MQ09Script, MQ15AnaxesDoorSCRIPT).
+  Before: mq09_first_blade failed 3 of the last 4 full runs, and the console
+  reproduction every time. After: replays 3 of 3 and the console reproduction
+  opens the ghost's conversation beside the player. A console `setrestrained 1`
+  did NOT stop the ghost walking a package already running (347 -> 2004), so
+  Skyrim's restraint holds an actor only until a moving package starts.
+  `tests/test_script_restraint.py`.
 - <a id="lost-line-ends"></a>**`_end_watch` (pipeline.py) — a line's result
   must not depend on the player hearing it.** Measured in run 23c (the Blades'
   welcome at Cloud Ruler Temple, player left at the gate ~3,000 units away):
@@ -4717,6 +4769,24 @@ compare against the one the poll tail never updates — so it would never open.
 Papyrus is case-insensitive, so the duplicate declarations compiled and the fault
 would only have shown in game.
 
+<a id="a-stage-fragment-runs-before-its-poll"></a>
+### A stage fragment runs before its quest's poll reads the stage
+
+**Code:** `script_convert/assemble.py` (`quest_restart` / `_settling`, `_pass_waits`),
+`script_convert/quest_fragments.py`, `script_convert/cross_ref.py` (`fragment_stages_of`).
+
+TES4 `setstage` ran the stage's result script inside the call; Skyrim's `SetStage`
+queues the fragment on its own stack. The stage-arrival latch above waits one poll
+pass, which is not enough when the fragment starts with slow calls: MQ16 stage 65 runs
+EnablePlayerControls, two crime-gold calls and an AddScriptPackage before its
+`MQ16.timer = 15`, and MQ16Script's poll passed in between, read 65 with the old
+timer and set 80 (run 60, finale replays: 1 of 2 and 1 of 3 lost Ocato's greeting).
+Now a quest script whose quest has stage fragments (this plugin's own scripts only)
+notes the stage in `TES4SetStage` (`TES4StagePending`) when that stage has a
+fragment; the fragment's last line is `((Self as Quest) as <script>).TES4StageRan(N)`;
+the script's poll skips its pass while a noted stage is under 1 real second old.
+NOT yet confirmed in game.
+
 ### The dialogue poll gate
 <a id="the-dialogue-poll-gate"></a>
 
@@ -6713,3 +6783,42 @@ of that topic's INFOs. A top-level literal write or counter step (`_STATE_WRITE_
 variable in an INFO's set moves to the Begin fragment, unless an earlier line reads that variable or returns. Census:
 3,353 Oblivion INFOs have choices that test a variable, 1,666 of them write one, 1,656 fragments change; samples read
 (MQ09 ghostTalk, MS16 brotalk, SE10 ConvoVAR, TG04 PChasBloodPrice, the polled DarkConversations / FGD08 chains).
+
+**Stages too** (run 60a, mq10_burd): Burd's greeting 00026EE9 (valid at `GetStage MQ10 == 20`) runs `setstage MQ10, 30`,
+and its choice "Let's go." (0003A853) needs `GetStage MQ10 == 30`; the list was built at 20 and the choice was missing.
+A choice topic's `GetStage` / `GetStageDone` conditions (TES4 functions 58 / 59) enter the tested set as `stage:<quest>`,
+and the line's own top-level SetStage of that quest moves to Begin -- only when every line before it moved too, since
+the stage's result may read what they write. Running it at Begin is Oblivion's timing: FO3/FNV, its engine's heirs,
+run the INFO's Begin script as the line starts, and the exporter maps TES4's one result script to that Begin script
+([tes4_export_falloutnv.md](tes4_export_falloutnv.md#info-end-script)). Oblivion.esm: 35 fragments change (temp/run59/
+tif_diff.txt). Test: `test_a_stage_set_its_choice_tests_moves_to_begin`.
+
+## <a id="essential-death-reload"></a>EssentialDeathReload is a game over
+
+**Code:** `script_convert/command_rows.py` (`essentialdeathreload`), `script_convert/static_scripts/TES4Polyfill.psc`
+(`EssentialDeathReload`).
+
+TES4's `EssentialDeathReload "msg"` shows the message and forces a reload (UESP console-command table:
+"Forces you to reload after displaying a message"). It was written as a comment, so a quest NPC the story needs
+could die and the game went on with the quest dead: JauffreScript's OnDeath at MQ04 10..19 (run 58d: agent 01
+killed him in the Weynon Chapel), Martin in MQ13 / MQ14 (4 sites in Oblivion.esm), and 31 failure states in
+Nehrim.esm (an escort dies, a guard spots the player while sneaking, the player strays from a group).
+
+Now it is `TES4Polyfill.EssentialDeathReload(msg)`: `Debug.MessageBox(msg)`, a 0.1 s wait (Papyrus waits do not
+run while a menu is open, so the box is read first), then `Game.GetPlayer().Kill()`. Skyrim's own death flow
+then reloads the last save, as Oblivion did. No runtime DLL is involved. A player already dead returns at once, so
+a poll that keeps calling it does nothing more.
+
+- <a id="playbink-halts-the-game"></a>**A block's `playbink` plays after the rest of the
+  block** (`script_convert/movie_last.py`). TES4 `PlayBink` only QUEUED the movie: the
+  result script's later lines ran in the same frame. Skyrim's `Game.PlayBink` freezes
+  the game, Papyrus included, until the movie ends, then returns. MEASURED (run 60,
+  Debug.Trace around the call): wall clock 13:37:26 -> 13:38:24, while
+  `Utility.GetCurrentRealTime` advanced 0.06 s. (An earlier reading from console
+  `playbink` sampling, "the world runs behind the movie", was WRONG; a runtime "movie
+  hold" built on it masked the bug and is removed.) MQ16 stage 65 is `playbink
+  "OblivionOutro.bik"` then `set MQ16.timer to 15`: converted in source order the
+  fragment stopped inside PlayBink before its timer write, MQ16Script's poll set 80 on
+  the old timer, and Ocato's finale greeting was lost. A top-level `Game.PlayBink` now
+  moves to the end of its block (never past a `Return`; one inside an `If` stays).
+  Uses: Oblivion 1 stage, Nehrim 3 scripts, FalloutNV 4 records.

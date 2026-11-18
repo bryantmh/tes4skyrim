@@ -1,7 +1,8 @@
 # Full-run worklog (2026-11-01 ..), organized by quest
 
 ## 🛑 USER'S STANDING INSTRUCTIONS -- obey every one, every time
-1. After EVERY compaction or resume: read THIS WHOLE FILE before anything else (a hook enforces it).
+1. 🛑 (user, 11-16: "NO EXCEPTIONS EVER") Read THIS WHOLE FILE before working on ANY automated quest run --
+   at the start of the work, and after every compaction or resume (a hook enforces the latter). Not sections: all of it.
 2. Goal: two back-to-back clean full runs. Known failures fixed one by one first; in a full run, fix a failure
    and resume from it, never restart everything. Never stop a running loop or lane.
 3. One pass proves nothing: 3 consecutive passes per changed case (repeat_case.py); flaky history needs more.
@@ -60,16 +61,16 @@
 - Organized by quest: update the quest's entry IN PLACE -- status/rate, proven cause, fix, failed attempts.
   ~10 lines per entry max. No diary, no per-run narrative: a run gets ONE ledger line.
 - Superseded detail moves to the archive, never deleted. Archives (grep them when an entry lacks detail):
-  temp/full_run_2026_10_31/WORKLOG_ARCHIVE.md (10-31 .. 11-04) and WORKLOG_ARCHIVE_2.md (11-04 .. 11-11, the
-  full pre-compaction file: pin coordinates, probe names, disasm chains, batch results).
+  [mwscript_full_runs_archive_1.md](mwscript_full_runs_archive_1.md) (10-31 .. 11-04) and
+  [mwscript_full_runs_archive_2.md](mwscript_full_runs_archive_2.md) (11-04 .. 11-11, the full pre-compaction file: pin coordinates, probe names, disasm chains, batch results).
 - Before touching a quest: read its entry; never re-try an attempt listed under "Failed".
 - A quest that keeps coming back = a generic bug patched around per case: fix the mechanism once.
 - Context discipline: pull numbers (grep -c, tail -1, one field), never raw logs/scripts/JSON/disassembly.
-  Heavy digging -> haiku/sonnet subagent, one-paragraph answer. Scratch scripts/logs: temp/full_run_2026_10_31/.
+  Heavy digging -> haiku/sonnet subagent, one-paragraph answer. Run output lands in temp/full_run/ (disposable).
 
 ## Goal and procedure
 - GOAL: two back-to-back, fully autonomous, fully clean full runs of every .mwtest under
-  tes_runtime/morrowind/testdata (driver temp/full_run_2026_10_31/full_run.py).
+  tes_runtime/morrowind/testdata (driver tools/live/full_run.py; watch a lane with tools/live/watch_lane.py).
   **Morrowind lane 2/2 (runs 20, 21). Morroblivion lane 2/2 (runs 16, 19). Arktwend lane 0/2 -- ACCEPTED by the
   user 11-12 at 190/191 x3 (runs 41-43; the one fail = sohn_home, the test's own long player walk).**
 - Lanes (one instance each, env INSTANCES): (morrowind -> bloodmoon -> tribunal) | (arktwend) | (morroblivion).
@@ -91,7 +92,7 @@
 - TaskStop orphans a batch + its game (locks mwtest.jsonl, WinError 32) -> taskkill /T.
 - Unlink the ESM from a running game before an in-place patch (mesh_to_esm); the game keeps the old inode.
 
-## Run ledger (one line per lane run; detail in WORKLOG_ARCHIVE_2.md)
+## Run ledger (one line per lane run; detail in mwscript_full_runs_archive_2.md)
 | Run | Lane | Result | Fails |
 |---|---|---|---|
 | 6 (11-04) | all | -- | b2_escort, a1_2_key, bm_morale, tr_assassins, tate, sohn_worldend/home, fortress, brother, tr_shrine_dead, chargen_hall |
@@ -139,6 +140,28 @@
 | 41 | Ark | 190/191 | home (Ice Flow) |
 | 42 | Ark | 190/191 | home (plank walkway drop) |
 | 43 | Ark | 190/191 | home (X24Y1 ridge climb, on mesh; run43_sohn_home_stop.png) |
+| 46 (11-15) | Ark main, recorded, inst 2 | 137/138 then stopped | home (walkway leg north: (96247 7865 980) -> (98827 8624 1908), target 97560 4122; mesh rebuild w/ alpha+shared-ctrl fixes) |
+| 47 | Ark from sohn_home, rec | stall | home (stop not logged; log overwritten) |
+| 48 | " | stall | home (walkway leg north: stop 100216 8982 2044 on NordrenX24Y2's SE mesh edge; temp/sohn_stalls/a2_X24Y2_walk.png) |
+| 49 | " | stall | home (descent leg 120864 51537 -> 96068 8603: stop 109976 17030 133, NordrenX27Y4) |
+| 50 | " | until fail | home (Ice Flow, last walk 3127 16896 -1408, 1100 short; until 3000 likely Mauragin GetDistance, unconfirmed; a4_IceFlow_walk.png) |
+| 51 | " | stall | home (descent leg: stop 112082 17721 140, NordrenX27Y4, flat mesh; a5_X27Y4_walk.png) |
+| 52 | " | stall | home (descent leg: stop 109441 16447 290, NordrenX26Y4; attempt6_runtime.log) |
+| 53 | " | stall | home (descent leg, further on: stop 97303 15706 321, cell X23Y3; attempt7_runtime.log) |
+| 54 | " | stall | home (descent leg: stop 109575 16849 37, NordrenX26Y4; attempt8_runtime.log) |
+| 55 | " | stall | home (passed the descent; walkway leg north: stop 99416 7481 2427, X24Y1, target 97560 4122; attempt9_runtime.log) |
+| 56 | ", +leg 110200 17000 | stall | home (leg walked; engine still climbed the x 109400 bank, slid z 499->230 for ~14 s, got over; then stop 95476 12490 1248, X23Y3, climbing toward 96068 8603; attempt10_runtime.log) |
+| 57 | ", +5 legs, walkway target moved | stall | home (dip leg 109800 16400 reached, then the engine went NW into the dip and slid 36 s on the x 109300 bank, got over; then NO walk lines after 105495 14412 311 (X25Y3) following a burst of BaumFallScript binds -> game stopped walking, not a slide; attempt11_runtime.log). Added `walk 109600 16200 429` (6 of 10) from attempt 13 |
+| 58 | " | stall | home (over the dip by sliding again; walk to 94800 14900 stopped SILENTLY at 100093 14587 214: video shows the player standing still with Mauragin, no menu; same as 57. That target and 95400 12300, 109600 16200 were NOT inside a navmesh tri (94800 14900 over a hole, 226 from mesh) -> moved to 94575 14925 1121, 95400 12275 1338, 109675 16150 447 from attempt 14; attempt12_runtime.log) |
+| 59 | ", on-mesh legs | stall | home (over the dip AND the X23Y3 hill -- furthest yet; reached 96068 8603 exactly, then frozen at 96077.9 8604.9 for 4 min: video = tree trunk on the player's west, Mauragin in front; next leg goes west. 3 walk reissues, no movement. Old route came from the NE and passed by. Moved that target to 95700 8550 1314 (flat, on mesh, planner route in/out >= 382 from the tree spot) from attempt 16; attempts 13/15 stopped by hand; attempt14_runtime.log) |
+| 60 (11-16) | " + Face Discoloration Fix linked (attempts 16-18 stopped by hand) | stall | home (X23Y3 hill: slid z 1303..1390 on the straight 95400 12275 -> 94700 12200 run, stop 94988 12105 1475; I had dropped the gentle route's points there. Hill legs now 94575 14925 1121, 95800 12400 1344, 95800 12200 1396, 95700 12100 1401, 94700 12100 1515, 94600 12000 1549 (all in-tri, straight runs 17/21/4/14/14 deg, planner ok); 8 of 10 legs used; attempt19_runtime.log) |
+| 61 | " | harness kill | home (walking normally at 106615 15155 when the STALLED dump froze + ended it -> harness fixed: stall is report-only; attempt21_runtime.log) |
+| 62 | " + stall fix | stopped by hand | home (dip, hill, tree all passed; walkway leg went north from the landing 96576 4257 -- known plank issue, user: leave it; attempt22_runtime.log) |
+| 63 | " | **sohn_home PASS** 01:12:35, then 54/54 to the end | recorded second half: temp/recording_arktwend_sohn/attempt23/2026-11-16 01-05-25.mp4 (16:50, face fix) |
+| 64, 65 | rc sohn_home x3 (stops at first fail) | PASS, FAIL | fail = walk home slid on the X24Y1 ridge neck (101000 6750 2800); every saved walk home (passes too) climbs and jitters there (temp/full_run_2026_10_31/rc/*.log). USER 11-16: 2 of 3 "good enough" -> step 3 |
+| 66 | Ark main from New Game, recorded, face fix | 137/138 | home FAILED at its first `until 3000 Mauragin01 GetDistance < 600` (player at the crevice door 165364 78774; follower never came within 600). RECORDED first half: temp/recording_arktwend_sohn/attempt24/2026-11-16 01-43-55.mp4 (26:22); sohn_worldend checkpoint at 24:27 = splice point onto attempt23's clip. Step 3 DONE |
+| 67 (11-16) | Ark main from New Game, recorded (FOV 90 try), inst 2, stopped by the user | 104+33+48 over 3 attempts | theater_calisto_house (slid in the dip south of 14089 34673 heading for 33300 37150), sohn_home (walkway leg north to 100165 9004, stalled), dwarves_mao (walk issued 1 s after the canyon door: player back in Dwarven Shaft at 3112 3291 -- marker race, see dwarves entry). Clips temp/recording_arktwend_fov90/attempt1-4 |
+| 68 (11-16) | Ark main from New Game, recorded, face fix, inst 3 (theater legs + door-landing DLL; sohn_home as accepted) | **CLEAN 191/191, one attempt, no cut** | recording temp/recording_arktwend_final/attempt1/2026-11-16 22-28-21.mp4 (44:56, 2560x1440 60 fps, 15 GB) |
 arktwend_side 6/6 in every Arktwend run since 13.
 
 ---------------------------------------------------------------------------------------------------------
@@ -364,6 +387,10 @@ arktwend_side 6/6 in every Arktwend run since 13.
 # QUESTS -- ARKTWEND LANE (OPEN; arktwend_side 6/6). Best lanes: 190/191 (runs 35, 37, 41)
 
 ## Fixed (keep unless they fail again)
+- 11-16 dwarves_mao (run 67): the walk issued 1 s after the canyon door took the player back into Dwarven Shaft --
+  the runner's move-landing hold covered script moves only (MoveInto). Runtime: object_tick PlayerCellChanged now
+  starts the same hold (HoldMenusForPlayerMove) on every player cell change, so a door lands before the next walk.
+  rc 3/3; mechanism (marker in the old cell) inferred, not logged.
 - galeone_rowboat `until 6000`. storm_calisto `until Tuniervar >= 13`. storm_markus_reward `approach 05366940`
   (3/3). gargart_cell `approach 0552AFC2` after journal 1 (6/6; Skyrim melee holds ~230). goths_camp `approach
   05A96921` (6/6). verrat_brutus `pace 5`. enderal_brother `pace 2` (moving marker boxes within 1000). tate_door
@@ -394,6 +421,8 @@ arktwend_side 6/6 in every Arktwend run since 13.
 - Failed: start off-mesh (-343 47700) kept; on-mesh start WITHOUT defend 1/3; walk end (-343 49200) = race.
 
 ## theater_calisto_house -- watch (5/5 after the seam snap)
+- 11-16 run 67: walk 14089 34673 -> 33300 37150 turned south into the dip (14600 34200, z -44..280) and slid 5 min;
+  planner goes NE. USER-allowed legs at the planner's turns `walk 15170 35301 670`, `walk 18107 37130 847`: rc 3/3.
 - Case: walks + `bye if open`; X0Y6 hill = user's long-path leg exception (steers v2 + valley legs 9960 28811 /
   11602 31869 / 14089 34673).
 - Fixed: Wache02 must greet first (theater_guards walk); PastureLandX0Y6 user pin verts snapped onto the X0Y5 seam.
@@ -406,6 +435,16 @@ arktwend_side 6/6 in every Arktwend run since 13.
   stands), cemetery wall-end pin, X2Y5 rock pin, X0Y6 v8. 3/3 since; not in a lane fail since run 22.
 
 ## sohn_home -- OPEN (the one recurring Arktwend fail; runs 38, 40, 41)
+- 🛑 USER GOAL (11-16, do not substitute): (1) make sohn_home MOSTLY pass -- after EVERY failure look at the stop
+  and adjust the legs (up to 12 approved) BEFORE the next run, one attempt at a time; (2) the FIRST pass keeps
+  recording to the end of the quest (keep that clip); (3) then record a NEW run from New Game with the Face
+  Discoloration Fix linked (memory: feedback_recordings_need_face_fix) and let it run -- to the end, or to
+  sohn_home, either is fine (user splices). Driver: temp/arktwend_recording/record_attempts.py <first> 2 <token> 1 <n>.
+- 11-16 HARNESS BUG (fixed): wait_results ENDED the run on "RUN STALLED" (runner silent 180 s) and dumped the game
+  (freezing it). USER: a stall is report-only. Every attempt 2-21 ended at that dump (dump time == last walk line);
+  sohn_home's walk home writes nothing to the runner, so at recording pace (13-19x vs ~24x) it always passed 180 s.
+  Attempts 11/12/21 were walking normally when killed. Now: print, keep waiting. Real stalls seen tonight (dip
+  slide, tree at 96068 8603, walkway north) remain real; the "silent stops" were this bug, not the game.
 - Authored route (Grignir): crevice door a_Spalte_01 -> 'Ice Flow' -> 'Slate Cavern' -> exit -> descent -> Northron.
   Case: walk to each cave door + activate (0578DEC7, 05DDBAB8, 05B23937), walks down, walkway legs, walk home.
 - Fixed: doors had no door tri (door joins/landing seeds); crevice mouth pin + pins-after-door-choices; crevice
@@ -434,6 +473,22 @@ arktwend_side 6/6 in every Arktwend run since 13.
   pin_region attempt first (holes, resampled seam) reverted. rc plank_block 3/3.
 - RUN 43: walk home stalled ON mesh at the X24Y1 ridge neck (99335 5178 1245), climb/slide 5 min; predictor
   also routes north over the mountain, stops climb (101025 6648). Picture for the user; no pin yet.
+- 11-15 (runs 46-51+, after the Arktwend mesh rebuild): 6/6 home fails at THREE places (walkway leg north,
+  NordrenX27Y4 descent leg, Ice Flow). USER: navmesh at all 3 stops looks flawless (a little steep in places)
+  -> rerun several more times and log each to find a pattern (attemptN_runtime.log in temp/recording_arktwend_sohn).
+  route_pic predictor: "no floor" at the start on X27Y4's leg and all of Ice Flow; "reached ok" where the game
+  went north (calibration gaps).
+- 11-15 USER-directed extra leg (exception to rule 17): runs 49/51/52/54 stalled at the same dip, climb-and-slide
+  (z swings 37..390 in place). floor_points + minimax search (temp/sohn_stalls/gentle_route.py): the attempts'
+  climb at x 109400 has a 41-deg step; a route over the shoulder tops out at 19 deg -> `walk 110200 17000 303`
+  before `walk 96068 8603 1326`. First run with it: attempt 10 (run 56). Not checked with the predictor (no floor).
+- 11-16 USER allowed up to 10 more legs. Run 56: the engine still climbed the x 109400 bank after the leg -> added
+  `walk 109800 16400 329` (on the gentle slope). X23Y3 hill (run 56 stall 95476 12490; straight face 22-27 deg,
+  floor_points --route along run 55's track + minimax: switchback <= 15 deg) -> 4 legs 94800 14900 1143,
+  95400 12300 1311, 94700 12200 1474, 94600 12000 1549 (on mesh, planner-connected). Walkway north (46/48/55):
+  the player REACHED 96650 4180, then the walk to 97560 4122 went north: that target has TWO layers (planks z 43.3
+  tri 109 over ground z -120.8 tri 450, NAVM 021D9E2F); the planner routes straight east on the planks -> moved the
+  target to 97750 4130 44 (planks only). Theory (game snaps the target to the ground layer) UNPROVEN. 5 of 10 used.
 - Failed: Ice Flow route pin (removed 11-08); NordrenX24Y2 pin (seeded cell); tri-94 corridor (under a shelf);
   40-deg corridor pins in 3 cells (2 attempts); last-pack rule alone; follower-ahead theory.
 

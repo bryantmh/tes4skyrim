@@ -3006,7 +3006,7 @@ class TestCKWarningFixes:
         assert not (flags & 0x00800000), 'weapon drawn on a force greet'
         # interrupts must be authorised, exactly as vanilla force-greets are
         pkdt = build_pkdt(0, SPEED_RUN, interrupt=0xFEFF)
-        assert struct.unpack('<IBBBBHH', pkdt)[5] == 0xFEFF
+        assert struct.unpack('<IBBBBHH', pkdt)[5] == 0xFEF3
 
     def test_actor_ambush_at_a_place_waits_there(self):
         """MQ13NarinaCarvainToMartin: an Ambush on Martin at the Chapel marker (r 500) uses TES4AmbushNear."""
@@ -3026,6 +3026,20 @@ class TestCKWarningFixes:
             assert _choose(rec, PackContext(), 0x010376B9).t is FOLLOW
         finally:
             ambush_near.set_ambush_template_fid(0)
+
+    def test_follow_keeps_its_authored_distance(self):
+        """MQ05AstavFollowBaurus: a Follow's PTDT.Count (400) is its Max Radius, half of it the Min; 0 keeps 128/256."""
+        from tes5_import.packages.converter import _choose, PackContext
+        from tes5_import.packages.templates import FOLLOW
+        rec = {'Signature': 'PACK', 'FormID': '00022B0D', 'EditorID': 'MQ05AstavFollowBaurus',
+               'PKDT.Type': '1', 'PKDT.Flags': '4096',
+               'PTDT.Type': '0', 'PTDT.Target': '00032A17', 'PTDT.Count': '400'}
+        inp = _choose(rec, PackContext(), 0x01022B0D)
+        assert inp.t is FOLLOW
+        assert inp.values[FOLLOW.slots['min_radius']] == 200.0 and inp.values[FOLLOW.slots['max_radius']] == 400.0
+        rec['PTDT.Count'] = '0'
+        inp = _choose(rec, PackContext(), 0x01022B0D)
+        assert (inp.values[FOLLOW.slots['min_radius']], inp.values[FOLLOW.slots['max_radius']]) == (128.0, 256.0)
 
     def test_ambush_root_record_follows_near_else_travels(self):
         """The root is a Stacked tree: Follow gated on GetWithinDistance, then a non-completing Travel."""
@@ -3794,29 +3808,27 @@ class TestAmbientChatterPacing:
         # global GMSTs, never per package.
         assert not (DEFAULT_INTERRUPT & (0x01 | 0x02 | 0x08 | 0x80))
 
-    def test_interrupt_flags_authorise_combat_behaviour(self):
-        """The 0x0000 over-correction froze combat response: vanilla reserves
-        all-zero interrupts for scene lockdowns (dunCGAlduinBaitStayAtLinked-
-        RefNoCombat, pelagiusHoldPosSleepIgnoreCombat, CWFinaleEnemyLeader-
-        WaitForExecution...), while ordinary packages authorise the behaviour
-        bits (observe-combat set on 64.2% of Skyrim.esm's 5,961 packages).
-        With them denied the CharacterGen ambushes stood in a swords-out
-        staring match until the player threw the first punch — TES4 packages
-        never gate combat response at all."""
-        from tes5_import.packages.converter import DEFAULT_INTERRUPT
-        assert DEFAULT_INTERRUPT & 0x04, 'Observe combat behavior must be on'
-        assert DEFAULT_INTERRUPT & 0x40, 'Aggro Radius Behavior must be on'
-        # 0x10 "Reaction to player actions" authorises spoken reaction
-        # comments — a scene actor barking one over a scripted Say line
-        # disturbs conversation timing, so it stays OFF with the chatter bits.
-        assert not (DEFAULT_INTERRUPT & 0x10)
+    def test_interrupt_flags_keep_aggro_but_never_spectate(self):
+        """A TES4 package keeps aggro-radius combat but never observe-combat or greet-corpse.
+
+        See: docs/commentary/tes5_import_package.md#no-spectators
+        """
+        import struct
+        from tes5_import.packages.converter import (DEFAULT_INTERRUPT, FORCEGREET_INTERRUPT, GREET_CORPSE,
+                                                    OBSERVE_COMBAT, build_pkdt)
+        for interrupt in (DEFAULT_INTERRUPT, FORCEGREET_INTERRUPT, 0xFFFF):
+            written = struct.unpack_from('<H', build_pkdt(0, 2, interrupt), 8)[0]
+            assert not written & (OBSERVE_COMBAT | GREET_CORPSE)
+            assert written & 0x40
+        assert not DEFAULT_INTERRUPT & 0x10
 
     def test_pkdt_writes_the_interrupt_field(self):
+        """The interrupt flags land at byte 8 of the 12-byte PKDT."""
         import struct
-        from tes5_import.packages.converter import build_pkdt, DEFAULT_INTERRUPT
+        from tes5_import.packages.converter import build_pkdt, DEFAULT_INTERRUPT, GREET_CORPSE, OBSERVE_COMBAT
         b = build_pkdt(0, 2)
         assert len(b) == 12
-        assert struct.unpack_from('<H', b, 8)[0] == DEFAULT_INTERRUPT
+        assert struct.unpack_from('<H', b, 8)[0] == DEFAULT_INTERRUPT & ~(OBSERVE_COMBAT | GREET_CORPSE)
 
     def test_oblivion_pacing_gmsts_carried(self):
         """Oblivion is far slower than Skyrim on both ambient clocks; without

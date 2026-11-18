@@ -344,6 +344,39 @@ _ADD_SCRIPT_PACKAGE_RE = re.compile(
 _SCRIPT_ESCAPES = (('\\r\\n', '\n'), ('\\n', '\n'), ('\\r', '\n'),
                    ('\\t', ' '))
 
+#: `set [owner.]var to value`: the variable and the value, a reference EditorID or another variable.
+_SET_REF_RE = re.compile(r'^\s*set\s+(?:\w+\s*\.\s*)?(\w+)\s+to\s+(\w+)\s*$', re.I)
+
+
+def _collect_ref_assignments(scan_sources) -> dict:
+    """variable (lowercase) -> every value (lowercase) a script `set`s it to, over every script source."""
+    assigned = {}
+
+    def _collect(text: str, _implicit_ref: int = 0):
+        """Records each `set var to value` line of `text`."""
+        for line in _script_lines(text):
+            m = _SET_REF_RE.match(line)
+            if m:
+                assigned.setdefault(m.group(1).lower(), set()).add(m.group(2).lower())
+
+    scan_sources(_collect)
+    return assigned
+
+
+def _resolve_receiver(name: str, edid_to_fid: dict, assigned: dict, seen=None) -> set:
+    """The reference FormIDs `name` can stand for: itself if a record, else what the scripts set it to."""
+    name = name.lower()
+    if name in edid_to_fid:
+        return {edid_to_fid[name]}
+    seen = seen if seen is not None else set()
+    if name in seen:
+        return set()
+    seen.add(name)
+    out = set()
+    for value in assigned.get(name, ()):
+        out |= _resolve_receiver(value, edid_to_fid, assigned, seen)
+    return out
+
 
 def _script_lines(text: str):
     """Yield the script's LIVE source lines, comments and escapes resolved."""
@@ -422,27 +455,12 @@ def _scan_qust_packages(recs, scan) -> None:
 
 def build_script_assigned_packages(by_type: dict, fid_to_edid: dict,
                                    master_export: dict = None) -> dict:
-    """pack_fid -> set(actor ref_fid) for packages forced on by script.
+    """pack_fid -> set(actor ref_fid) for packages forced on by script (TES4 `AddScriptPackage`).
 
-    TES4's `AddScriptPackage` puts a package on an actor that does NOT list it
-    in its AI package array — the package exists only to be forced on later.
-    Skyrim has no equivalent call (`SetOverridePackage` is a Fallout 4 API and
-    is absent from SkyrimSE.exe 1.6; only `EvaluatePackage` and
-    `KeepOffsetFromActor` exist), so the forced package must instead be
-    attached to the actor's quest alias as an ALPC.  Then the converted
-    `EvaluatePackage()` can actually select it, because it is finally ON the
-    stack the engine arbitrates.
-
-    Without this the package is invisible to arbitration and silently never
-    runs: 35 of Nehrim's 43 script-assigned packages and 75 of Oblivion's 97
-    appear on no actor at all.  MQ00CalebroPackage04 is the visible case —
-    Nehrim's Celebro stops following the player because the package that should
-    take over was never anywhere the engine could find it.
-
-    Both call forms are recovered.  `ref.AddScriptPackage Pkg` names the actor
-    explicitly; a bare `AddScriptPackage Pkg` targets the script's own owner,
-    which for an INFO result script is the SPEAKER — resolved by the caller
-    via `speaker_refs`, since only the dialogue converter knows who that is.
+    `ref.AddScriptPackage Pkg` names the actor, directly or through a ref variable resolved over the scripts'
+    `set var to Ref` lines; a bare call targets the script's owner (an INFO's SPEAKER). Skyrim has no such
+    call, so each package is wired onto those actors' aliases.
+    See: docs/commentary/tes5_import_package.md#package-hosts
     """
     # `fid_to_edid` is keyed on RAW export FormIDs, but every id this plan
     # produces has to be in the same space as `get_formid()` — which applies
@@ -452,27 +470,30 @@ def build_script_assigned_packages(by_type: dict, fid_to_edid: dict,
     offset = get_formid_index_offset()
     out = {}
 
+    def _recs(sig):
+        """The masters' records of `sig`, then the plugin's own."""
+        return masters_then_own(by_type, master_export, sig)
+
+    def _sources(scan):
+        """Every script source, in one order: SCPT, INFO results, QUST stage results."""
+        _scan_scpt_packages(_recs, scan)
+        _scan_info_packages(_recs, scan)
+        _scan_qust_packages(_recs, scan)
+
+    assigned = _collect_ref_assignments(_sources)
+
     def _scan(text: str, implicit_ref: int = 0):
         if not text or 'addscriptpackage' not in text.lower():
             return
         for line in _script_lines(text):
             for m in _ADD_SCRIPT_PACKAGE_RE.finditer(line):
                 pfid = edid_to_fid.get(m.group(2).lower())
-                if not pfid:
-                    continue
-                ref = (edid_to_fid.get(m.group(1).lower()) if m.group(1)
-                       else implicit_ref)
-                if ref:
-                    out.setdefault(remap_formid(pfid, offset), set()).add(
-                        remap_formid(ref, offset))
+                refs = (_resolve_receiver(m.group(1), edid_to_fid, assigned) if m.group(1)
+                        else {implicit_ref} - {0})
+                for ref in refs if pfid else ():
+                    out.setdefault(remap_formid(pfid, offset), set()).add(remap_formid(ref, offset))
 
-    def _recs(sig):
-        """The masters' records of `sig`, then the plugin's own."""
-        return masters_then_own(by_type, master_export, sig)
-
-    _scan_scpt_packages(_recs, _scan)
-    _scan_info_packages(_recs, _scan)
-    _scan_qust_packages(_recs, _scan)
+    _sources(_scan)
     return out
 
 

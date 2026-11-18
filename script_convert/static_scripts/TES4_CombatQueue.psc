@@ -95,7 +95,32 @@ Event OnUpdate()
     EndIf
   EndWhile
   Draining = False
+  If RetryHeld()
+    RegisterForSingleUpdate(3.0)
+  EndIf
 EndEvent
+
+; TES4's melee alert (Oblivion.exe 0x622d40): an attacker whose path failed stands ready and
+; re-plans every 3 s, where Skyrim's ends the fight. A held attacker out of combat, with it and
+; its target alive and loaded, starts again; True while such a pair is held, so the retry goes on.
+; See docs/commentary/script_convert.md#startcombat-retries-like-melee-alert
+Bool Function RetryHeld()
+  LoadPairs()
+  Bool live = False
+  Int n = 0
+  While n < Pairs
+    Actor attacker = HeldAttackers[n]
+    Actor target = HeldTargets[n]
+    If attacker && target && !attacker.IsDead() && !target.IsDead() && attacker.Is3DLoaded() && target.Is3DLoaded()
+      live = True
+      If !attacker.IsInCombat()
+        TES4Polyfill.ForceCombatNow(attacker, target, None, None)
+      EndIf
+    EndIf
+    n += 1
+  EndWhile
+  Return live
+EndFunction
 
 ; True when this StartCombat follows, within a second, one this queue made on another live target:
 ; TES4 calls in one frame ADD targets (Oblivion.exe 0x514660), so it joins that fight rather than

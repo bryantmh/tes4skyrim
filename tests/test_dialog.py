@@ -1789,6 +1789,34 @@ class TestAddTopicUnlocks:
         finally:
             set_formid_index_offset(0)
 
+    def test_a_greeting_line_plays_only_when_talked_to(self):
+        """A TES4 GREETING line (activation only in Oblivion) tests IsInDialogueWithPlayer == 1; a HELLO line does not.
+
+        See: docs/commentary/tes5_import_dialogue.md#problem-1-greeting-lines-are
+        """
+        from tes5_import.base.conditions import FUNC_IS_IN_DIALOGUE_WITH_PLAYER
+        set_formid_index_offset(1)
+        try:
+            quest = {'FormID': '000A0001', 'EditorID': 'Q', 'DATA.Flags': '1', 'DATA.Priority': '50',
+                     'StageCount': '0'}
+            info = {'ParentDIAL': '000B0001', 'QSTI.Quest': '000A0001', 'ResponseCount': '0',
+                    'ChoiceCount': '0', 'ConditionCount': '0', 'DATA.Flags': '0'}
+            bt = {'QUST': [quest],
+                  'DIAL': [{'FormID': '000B0001', 'EditorID': 'GREETING', 'DATA.Type': '6',
+                            'QuestCount': '1', 'Quest[0]': '000A0001'},
+                           {'FormID': '000B0002', 'EditorID': 'HELLO', 'DATA.Type': '1',
+                            'QuestCount': '1', 'Quest[0]': '000A0001'}],
+                  'INFO': [dict(info, FormID='000C0001'),
+                           dict(info, FormID='000C0002', ParentDIAL='000B0002')]}
+            writer = _FakeWriter()
+            build_dialog_groups(bt, writer, npc_to_vtyp={})
+            funcs = {fid: {struct.unpack_from('<H', c, 8)[0] for c in _find_all_subrecords(rb, b'CTDA')}
+                     for sig, fid, rb in _walk_records(writer.groups['DIAL']) if sig == 'INFO'}
+            assert FUNC_IS_IN_DIALOGUE_WITH_PLAYER in funcs[0x010C0001]
+            assert FUNC_IS_IN_DIALOGUE_WITH_PLAYER not in funcs[0x010C0002]
+        finally:
+            set_formid_index_offset(0)
+
     def test_gates_and_revealer_vmads_in_output(self):
         from tes5_import.dialogue.unlocks import build_unlock_plan
         from tes5_import.base.conditions import FUNC_GET_GLOBAL_VALUE
@@ -2838,3 +2866,24 @@ class TestResetInteriorMovers:
         movers = scan_reset_movers(self._by_type(
             'Combatant0ARef.MoveTo OpponentMarkerRef'))
         assert not movers
+
+
+def test_said_once_greeting_retires_only_at_the_end_of_its_chain():
+    """Kathutet (MQ15): a say-once greeting is retired by the line ending its choice chain, not the first answer."""
+    from tes5_import.dialogue.unlocks import _said_once_reveals, said_once_global
+
+    def info(fid, topic, choices=(), flags=0):
+        """One export INFO with its choices."""
+        rec = {"FormID": fid, "ParentDIAL": topic, "DATA.Flags": str(flags)}
+        rec.update({"Choice[%d]" % i: c for i, c in enumerate(choices)})
+        return rec
+
+    infos = [info("0003C93C", "000000C8", ["0003E8EE"], flags=4),
+             info("0003E8F3", "0003E8EE", ["0003E8ED"]),
+             info("0003E8F4", "0003E8ED", ["0003E8EB"]),
+             info("0003E8F7", "0003E8EB"),
+             info("0003E8F9", "0003E8EB", ["0003E8EE"], flags=1)]
+    dials = {int(t, 16): {"EditorID": "T%s" % t} for t in ("0003E8EE", "0003E8ED", "0003E8EB")}
+    out = _said_once_reveals(infos, dials, lambda d: False, lambda edid, kind: (None, None, None, False))
+    gname = said_once_global(0x03C93C)
+    assert {f for f, gs in out.items() if gname in gs} == {0x03C93C, 0x03E8F7, 0x03E8F9}

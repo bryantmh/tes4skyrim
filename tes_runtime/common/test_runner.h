@@ -105,6 +105,9 @@ struct TestBackend {
     // Clicks the only button of an open message box that holds a step needing the world, as a player
     // clicks a notice's OK; true when it did. Null (the default): a held box fails the case.
     bool (*dismissNotice)() = nullptr;
+    // How many times `talk` clicks an NPC whose click opened nothing, as a player clicks again; 0 (the
+    // default) keeps the runner's single click.
+    int talkClicks = 0;
     bool (*inInterior)() = nullptr;
     std::string (*cell)() = nullptr;
     // `pace <speed>`: a --fast game's speed from here on; 0 is the default.

@@ -39,6 +39,7 @@ from script_convert.context_setup import (
     service_menu_topics, topic_reveals, add_topic_call)
 from script_convert.ownership import departed_owners, owner_key, write_owned
 from script_convert.message_menus import build_message_plan
+from script_convert.movie_last import movie_last
 from script_convert.commands_falloutnv import (quest_objective_indices,
                                                set_quest_objectives)
 from script_convert.poll_interval import quest_script_delays
@@ -802,6 +803,16 @@ def _said_once_lines(fid24: int, reveals) -> list:
     return out
 
 
+def _first_say_only(lines: list) -> list:
+    """`lines` run only on the line's first speaking (empty stays empty).
+
+    See: docs/commentary/tes5_import_dialogue.md#said-once-retires-at-the-chain-end
+    """
+    if not lines:
+        return []
+    return ['  If TES4_firstSay', *('  ' + b for b in lines), '  EndIf']
+
+
 def _info_fragment_psc(rec: dict, xref: CrossRefGraph, reveals: list,
                        service_kind: str) -> tuple:
     """(script name, Papyrus source) of one INFO's TES4_TIF__<fid> fragment.
@@ -814,15 +825,20 @@ def _info_fragment_psc(rec: dict, xref: CrossRefGraph, reveals: list,
     body_lines, prop_refs, conv = [], {}, None
     if result_script.strip():
         conv = primed_converter(rec, xref, result_script)
-        body_lines = conv.convert_fragment(result_script, 'TopicInfo')
+        body_lines = movie_last(conv.convert_fragment(result_script, 'TopicInfo'))
         prop_refs = dict(conv.sc.property_refs)
     length = _info_line_length(formid)
     seq_gate = sequence_gate(rec, _WORKER_CTX.get('quest_script_vars') or {},
                              _WORKER_CTX.get('quest_edid_by_fid') or {})
     tested = (_WORKER_CTX.get('choice_tests') or {}).get(int(formid, 16) & 0xFFFFFF, ())
     early, body_lines = split_choice_writes(body_lines, tested)
+    own = said_once_global(int(formid, 16) & 0xFFFFFF)
+    once = own in reveals and not seq_gate and bool(early or body_lines)
+    if once:
+        early, body_lines = _first_say_only(early), _first_say_only(body_lines)
     script_name = f'{script_prefix("_TIF__")}{formid}'
     out = [f'ScriptName {script_name} extends TopicInfo Hidden', '']
+    out += ['Bool TES4_firstSay', ''] if once else []
     declared = {gname.lower() for gname in reveals}
     out += [f'GlobalVariable Property {gname} Auto' for gname in reveals]
     if prop_refs:
@@ -831,7 +847,8 @@ def _info_fragment_psc(rec: dict, xref: CrossRefGraph, reveals: list,
         out.append('')
     begin = _info_begin_fragment(
         body_lines, seq_gate, length,
-        _said_once_lines(int(formid, 16) & 0xFFFFFF, reveals) + early, xref.holds)
+        ([f'  TES4_firstSay = {own}.GetValue() == 0'] if once else [])
+        + _said_once_lines(int(formid, 16) & 0xFFFFFF, reveals) + early, xref.holds)
     end = _info_end_fragment(
         body_lines, seq_gate,
         [g for g in reveals if not g.startswith(SAID_ONCE_PREFIX)],

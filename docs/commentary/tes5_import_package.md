@@ -358,9 +358,22 @@ set. Getting this wrong stalls scripted sequences with no error and no log
 line: `CGRatAmbushAPushBricks` (rat → `CGCrumbleWall01REF`) meant the
 CharacterGen wall never crumbled, `setstage MQ01 24` never ran, and the
 tutorial rats never turned hostile no matter how long the player waited.
-- **Follow (1)** → `Follow`, `PTDA` = target, `Accompany?=0`. With a
+- **Follow (1)** → `Follow`, `PTDA` = target, `Accompany?=0`, radii from `PTDT.Count`
+  ([§ authored distance](#follow-keeps-its-authored-distance)). With a
   same-cell `PLDT` destination → `FollowTo`
   ([§ follow with a destination](#follow-with-a-destination-is-followto)).
+
+  <a id="follow-keeps-its-authored-distance"></a>**A follow keeps its authored distance.** On
+  a TES4 Follow or Accompany, `PTDT.Count` is the distance the follower keeps: Oblivion.esm's
+  values are round distances (300 x23, 256 x18, 400 x17, 128 x15, 350 x14, 150 x13, 500 x12,
+  up to 2000; 45 have 0). The converter used it for an Ambush at an actor but dropped it on
+  Follow, so every follower crowded its leader at the template's 128 / 256. Run 58a: Astav
+  Wirich (MQ05AstavFollowBaurus, 400) ended up in front of Baurus on his way to the cellar
+  door of Luther Broad's, about 47 away; Baurus does not walk through him and Astav, already
+  close enough, does not move, so both stood for good. In a 60-trip loop it came on trip 19;
+  moving Astav aside, Baurus reached the cellar at once. Now Max Radius = Count, Min = half
+  of it (at least 64), the rule the Ambush already used (`converter.keep_within`); 0 keeps the
+  template's radii.
 - **Accompany (7)** → `Follow`, `Accompany?=1` — Skyrim models Accompany as a
   Follow input, so this is exact, not an approximation.
 - **Escort (2)** → `TES4EscortWhenNear`, the converter's own root
@@ -999,8 +1012,17 @@ moved from 551 to beside him: he walked on within 5 s). Two states were measured
 one an `evp` ends (42a), and one only the Escort gate turning false then true ends
 (43a, at the 03 -> 01 door: `evp` and `resetai` did nothing; the player stepping out
 of range and back sent him through the door at once) -- the dead-Escort state above.
-So the Escort branch also requires `GetInFaction TES4EscortHold == 0` (a hidden
-one-rank FACT, `owned_records.one_rank_faction`), and the runtime restarts a stalled
+🛑 REMOVED (run 60, user 11-17: runtime hooks had been masking real bugs). Those
+stalls were the HARNESS: `follow` / `approach` left the test player standing in
+Baurus's path, and Skyrim's pathing waits for a player in the way (measured: player
+40 in front -> he stands, 40 behind or beside -> he walks; fixed by the runner's
+StepAside / StepBack, rows 60b / 60a-11th of the worklog). With the restart off,
+meeting + sewer in one session passed 3 of 3. The hold condition is gone from the
+root; the `TES4EscortHold` FACT is still written only so FormIDs do not move. The
+text below records what had been built.
+
+So the Escort branch also required `GetInFaction TES4EscortHold == 0` (a hidden
+one-rank FACT, `owned_records.one_rank_faction`), and the runtime restarted a stalled
 escort (MorrowindRuntime `game_calls_escort.cpp` `RestartStalledEscorts`, every 10
 ticks): an actor running one of the plugin's player escorts -- `escortplayer` rows of
 `attributes_formid.txt`, written by `attribute_tables.global_lines` from
@@ -1262,3 +1284,42 @@ radius 64) instead. It holds wherever the actor is when the fallback takes
 over, so it neither pulls back an actor a script `MoveTo`'d nor lets one wander.
 Other NPCs keep `DefaultMasterPackageList`. Creatures are unchanged, since their
 PKID always ends in vanilla's always-valid `DefaultMasterPackageCreature`.
+
+<a id="a-completion-gate-replaces-once-per-day"></a>
+## A completion gate replaces Once Per Day
+
+**Code:** `packages/converter.py` (`_forcegreet_flags`, the `quest_gated` argument of `convert_flags`).
+
+A package with its own completion gate -- the armed faction of a script-forced package
+([package hosts](#package-hosts)) or the latch global of a quest-gated Once Per Day package -- is
+written WITHOUT Skyrim's Once Per Day. The gate already lets it run once until it completes; Skyrim's
+flag also spends the day on a run that was cut off, so the package is never picked again. Measured in
+the finale (run 60): Ocato's armed force-greet `MQ16OcatoToTempleEND` (TES4 flags Once Per Day |
+Must Complete | Always Run) began before the outro movie, was replaced after it by his list's
+`MQ16OcatoWaitInTemplePostQuest`, and stayed armed but never picked again: 3 of 6 replays lost his
+greeting. With only that bit cleared in the instance's plugin copy: 3 of 3 passed.
+
+<a id="no-spectators"></a>
+## No spectators
+
+A converted TES3 / TES4 package never allows interrupt flag 0x04 "Observe combat
+behavior" (CK wiki Package_Flags: "allow the actor to do 'observe combat' behavior when
+near combat that he is not part of" = the engine's Spectator package, type 24).
+Oblivion has no such procedure: its NPCs join a fight or keep their package. The
+converter had set 0x04 on every package (`DEFAULT_INTERRUPT` 0x44, force-greets
+0xFEFF), and in the finale (run 60a, 29th) Martin spectated the endless Dagon fight
+instead of running his stage-30 force-greet `MQ16MartinAskPC`; the spectator GMSTs at
+0 did not stop it (another start path), and a runtime hook that refused converted
+actors only masked this. `build_pkdt` now drops the bit for non-Fallout sources (FNV
+authors its own). Finale replays without any hook: Martin's walk and greeting pass.
+
+The same goes for 0x08 "Greet corpse behavior". MEASURED (1.6.1170): the dead-body
+reaction check 0x70ae90 calls 0x661f50(actor, 3), which reads bit 3 of the RUNNING
+package's interrupt word (+0x28), and starts an engine ReactToDead package (procedure
+type 25) that walks the actor to the body. Oblivion's reaction to a corpse is a
+detection bark (DIAL `Corpse`, type 6), not a walk. Ordinary converted packages never
+set the bit; force-greets (0xFEFF) and "operate an object" packages (0xFFFF), copied
+from vanilla, did. With the escort restart removed, Baurus (run 60, sewer replays) ran
+MQ05BaurusOpenSewerDoor (0xFFFB), went to react to a rat the player killed by the
+wheel (lying 17 above the floor), and stood on type-25 package FF000EB8 for 3600 ticks
+("Over here!"); `evp` ended it. `build_pkdt` drops 0x08 too.

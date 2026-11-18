@@ -21,8 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from asset_convert.collision import collision_extract as ce
 from tes5_import.navmesh import build
 from tes5_import.navmesh.from_pgrd import (collect_doors, compute_adjacency,
-                                      load_door_centroids)
-import tools.navmesh.audit as na
+                                      load_door_centroids, record_graph)
 from tools.navmesh.audit import build_index
 import tools.navmesh.check as nc
 
@@ -108,7 +107,7 @@ for cellname in [a for a in sys.argv[1:]
                  if not a.startswith('--') and a not in _skip]:
     c=[x for x in cells if (x.get('EditorID') or '').lower()==cellname.lower()][0]
     fid=(c.get('FormID') or '').upper()
-    nodes,edges=na._pgrd_nodes(pgrd_by_cell[fid])
+    nodes,edges=record_graph(pgrd_by_cell[fid])
     refrs=refr_by_cell.get(fid,[])
     doors=collect_doors(refrs,door_fids)
     v,t=build.build_navmesh(refrs, base_model, ce.get_collision, nodes, edges,

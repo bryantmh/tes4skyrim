@@ -3,13 +3,14 @@
 # when the four assassins are dead the quest sets 26, the Emperor and Baurus talk (27), Glenroy/Baurus/Emperor talk
 # (28), Baurus warns the player not to follow (29).
 
-# The player follows the Emperor's group down the passage; moveto stands in for the walk. Stage 22 needs the player
-# within 480 of CGMarkerCEmperor or 900 of CGMarkerC2Renote, so the player is moved next to the ambush room markers.
+# The player follows the Emperor's group down the passage, behind Baurus, the last of it. Stage 22 needs the player
+# within 480 of CGMarkerCEmperor or 900 of CGMarkerC2Renote. A moveto ahead left the group walking the prison stair
+# (prisonStairShort01, saw-tooth treads with 19-unit risers) with no player near: Baurus stuck at a riser there and
+# moved again only once the player came to him (run 60a: 26 -> 27 never; Renote on the same stair in 52a).
 case ambush_a_arrive
-until 3600 GetStage Charactergen >= 20
-run
-player.moveto CGMarkerC2Renote
-until 900 GetStage Charactergen >= 22
+follow BaurusRef
+until 3600 GetStage Charactergen >= 22
+follow
 end
 
 # The assassins reach the floor marker and fight (23); they kill Renote (CGRenoteScript OnHit CGAssassinNN sets 24).

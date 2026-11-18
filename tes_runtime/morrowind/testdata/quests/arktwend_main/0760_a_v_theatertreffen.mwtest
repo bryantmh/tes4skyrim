@@ -64,6 +64,11 @@ walk 11602 31869 450
 bye if open
 walk 14089 34673 450
 bye if open
+# Planner turns east of the valley: the engine turned south into the dip at (14600 34200) and slid (11-16 recording).
+walk 15170 35301 670
+bye if open
+walk 18107 37130 847
+bye if open
 walk 33300 37150 123
 bye if open
 walk 33300 37150 123

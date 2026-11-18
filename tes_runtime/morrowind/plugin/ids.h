@@ -349,23 +349,6 @@ constexpr std::uint64_t kActorStopCombat = 54770;
 // registrations like StartCombat. Both take the actor in r8, the other in r9.
 constexpr std::uint64_t kActorGetRelationshipRank = 54710;
 constexpr std::uint64_t kActorSetRelationshipRank = 54759;
-// The package an actor's AI process runs (39155: 0x6d6ed0 on 1.6.1170, 0x6e9a80 on 1.7.104): an override
-// package if one runs, else the process's own at +0x20. The process sits at Actor+0xF8.
-constexpr std::uint64_t kProcessRunningPackage = 39155;
-constexpr std::size_t kOffActorProcess = 0xF8;
-// TESPackage's procedure type byte; 0x18 is SpectatorPackage (vtable 0x18b8880, RTTI on 1.6.1170).
-constexpr std::size_t kOffPackageType = 0x24;
-constexpr std::uint8_t kSpectatorPackageType = 0x18;
-// SpectatorPackage: the actors it watches, 0x40 bytes each (+0 the watched actor's handle, +4 the opponent's
-// handle when it began watching), their count, and the "finished" byte. The procedure ends when the count is
-// 0 or that byte is set (42654: 0x7ac190 on 1.6.1170, 0x751d80 on 1.6.659, 0x7c0c50 on 1.7.104, all three
-// read these offsets).
-constexpr std::size_t kOffSpectatorWatched = 0x100;
-constexpr std::size_t kOffSpectatorWatchedCount = 0x110;
-constexpr std::size_t kSpectatorWatchedSize = 0x40;
-constexpr std::size_t kOffSpectatorOpponent = 0x4;
-constexpr std::size_t kOffSpectatorFinished = 0xF0;
-
 // ObjectReference.Enable(bool fadeIn) (0x9cdfa0), .Disable(bool fadeOut)
 // (0x9cddc0) and .IsDisabled() (0x9e5b90). Enable/Disable register with the
 // callback stored AFTER the registration call (`lea rax,[cb]` into

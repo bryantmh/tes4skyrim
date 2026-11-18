@@ -39,11 +39,15 @@ bye if open
 end
 
 # Jauffre is in the Chapel (WeynonPrioryChapel), fighting; the player helps him. "I'll go check on the Amulet."
-# (INFO 0001EE2B, MQ04.playerFoundSecretRoom == 0) sets 20.
+# (INFO 0001EE2B, MQ04.playerFoundSecretRoom == 0) sets 20. MQ04 makes Jauffre mortal for the fight, and his death
+# at stages 10..19 is Oblivion's game over (JauffreScript OnDeath: EssentialDeathReload); at test pace agent 01 killed him within a
+# second of the Chapel loading, before `defend` acted (run 58d), so the player strikes the two agents as they arrive.
 case mq04_find_jauffre
 defend JauffreRef
 run
 player.moveto JauffreRef
+MQ04MythicDawnAgent01Ref.kill
+MQ04MythicDawnAgent02Ref.kill
 wait 120
 approach JauffreRef
 talk JauffreRef

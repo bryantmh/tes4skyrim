@@ -45,5 +45,5 @@ ask "Where can I find Uriel's son?"
 bye
 until 300 GetStageDone MQ02 50
 until 300 GetStageDone MQ02 100
-expect GetStageDone MQ03 10
+until 300 GetStageDone MQ03 10
 end

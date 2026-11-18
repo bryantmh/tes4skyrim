@@ -2407,6 +2407,32 @@ which is both standable and deterministic. Heights within a step (32 units) are
 treated as the same floor and ranked by area, so a sliver never wins over the
 real door triangle beside it.
 
+### <a id="door-triangle-on-the-landing-side"></a>A load door's triangle is on its landing's side
+
+**Code:** `from_pgrd.toward_landings`, `door_reach.landing_of_door`, `pool._attach_door_landings`.
+
+The tie-break above picks between the triangles on BOTH sides of the threshold, and nothing in it knows
+which side a traveller uses. Vanilla does: of Skyrim.esm's NVNM door entries whose door teleports, 1,690
+lie on the side of the door's landing (the XTEL position stored on its partner door), 6 on the far side
+(each with its landing within 10-26 units of the door) and 7 level. Our Oblivion.esm had 597 on the far side
+against 3,625 (temp/run58/door_side_census.py).
+
+On the far side the door is unusable to a loaded actor. Run 58a: Baurus (MQ05BaurusLeaveLutherBroads, a
+Travel to the cellar of Luther Broad's) walked to the cellar door's landing (-175.66 375.48, inn side) and
+stood there with procedure -1 while the player was in the room. `evp` and `resetai` did nothing. The door
+00047CC5 was linked to triangle 79, the large triangle EAST of the door; the landing lies west. With the player
+out of the cell he went through at once, and a console activation of the door by him worked. Reproduced 1 of
+2 from the checkpoint at the same spot to two decimals.
+
+Each load door's point now moves toward its own landing, half the way and at most 32 units
+(DOOR_LANDING_NUDGE), before the triangle is picked. Counted as wrong only when the landing lies outside the
+picked triangle AND its centre is behind the door (vanilla: 0 such), replaying the pick on the shipped
+geometry (temp/run58/door_rule_sim.py) gave: door point as is 703 wrong, 8 toward 227, 16 toward 118, 32
+toward 345 (overshoots short landings), half-way capped at 32: 52. Two earlier versions were imported and
+measured: 8 toward the landing (558 -> 179) and 8 across the threshold along the door's facing (172; a door
+whose model has no threshold data keeps its raw RotZ, so the facing is not reliable). The geometry is
+untouched: door triangles are picked when the NVNM is packed, after the geometry cache.
+
 ### <a id="nvnm-xxxx-size-protocol"></a>An NVNM over 64 KB needs the XXXX size protocol
 
 A subrecord's own length field is 16-bit. When a payload exceeds 65,535 bytes

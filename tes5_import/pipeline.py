@@ -85,7 +85,7 @@ from .base.owned_records import (
     create_chargen_menu_records,
     create_day_clock,
     create_destroyed_formlist,
-    create_scripted_use_formlist,
+    create_runtime_formlists,
     create_dialogue_open_global,
     create_fall_damage_spell,
     create_force_combat_factions,
@@ -456,7 +456,7 @@ def _prescan_menu_records(by_type: dict, writer, _SC, _step_done, export_dir: st
     chargen_plan = _chargen_menu_records(writer, _SC, export_dir)
     WELL_KNOWN_PROPERTIES.update(create_force_combat_factions(writer, master_index))
     WELL_KNOWN_PROPERTIES.update(create_destroyed_formlist(writer, master_index))
-    WELL_KNOWN_PROPERTIES.update(create_scripted_use_formlist(writer, master_index))
+    WELL_KNOWN_PROPERTIES.update(create_runtime_formlists(writer, master_index))
     WELL_KNOWN_PROPERTIES.update(create_dialogue_open_global(writer, master_index))
     _step_done('chargen menu MESGs')
     return chargen_plan
@@ -867,21 +867,27 @@ def _prescan_furniture_and_actors(by_type: dict, ctx, writer, export_dir: str, _
     build_actor_indexes(by_type, writer, export_dir, ctx, _step_done)
 
 
-def _hosted_plan(plan, by_type: dict, ctx, writer):
-    """`plan` with its forced-package lists, and host quests when the plugin has no masters.
+def _prescan_forced_lists(ctx, writer) -> tuple:
+    """The forced-package FormLists, registered before any script binds."""
+    lists = forced_lists(writer, getattr(ctx, 'master_index', None))
+    WELL_KNOWN_PROPERTIES.update(lists[0])
+    return lists
+
+
+def _hosted_plan(plan, by_type: dict, ctx, writer, lists: tuple):
+    """`plan` with its forced-package `lists`, and host quests when the plugin has no masters.
 
     See: docs/commentary/tes5_import_package.md#package-hosts
     """
-    plan.forced_lists = forced_lists(writer, getattr(ctx, 'master_index', None))
+    plan.forced_lists = lists
     plan.starts_disabled = initially_disabled(by_type, ctx.master_export if ctx else None)
-    WELL_KNOWN_PROPERTIES.update(plan.forced_lists[0])
     if not ctx:
         plan.hosts = PackageHosts(writer, {get_formid(r, 'FormID'): r for r in by_type.get('QUST', [])})
     return plan
 
 
-def _prescan_package_plan(by_type: dict, ctx, writer, fid_to_edid: dict, _step_done):
-    """Build the package plan; returns (plan, context, script var map).
+def _prescan_package_plan(by_type: dict, ctx, writer, fid_to_edid: dict, _step_done, lists: tuple):
+    """Build the package plan around the forced-package `lists`; returns (plan, context, script var map).
 
     The MASTERS' packages, quests, actors and placements are indexed --
     an unresolved one silently drops the actor to its standing Sandbox
@@ -905,7 +911,7 @@ def _prescan_package_plan(by_type: dict, ctx, writer, fid_to_edid: dict, _step_d
     set_assigned_var_names(
         build_assigned_var_names(by_type, _master_export))
     _sv_owner = build_scriptvar_owner_map(by_type, fid_to_edid, _master_export)
-    pack_plan = _hosted_plan(PackagePlan(), by_type, ctx, writer)
+    pack_plan = _hosted_plan(PackagePlan(), by_type, ctx, writer, lists)
     _script_assigned = build_script_assigned_packages(by_type, fid_to_edid,
                                                       _master_export)
     print(f"  Script-forced packages (AddScriptPackage) bound to an alias: "
@@ -1251,6 +1257,7 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
                st.output_path, st.output_root)
     place_npc_markers(by_type, writer, st.num_tes4_masters)
     write_idle_table(st.output_path)
+    lists = _prescan_forced_lists(ctx, writer) if any(by_type.get(sig) for sig in _PACKAGE_READERS) else ({}, False)
     _scpt_master_export = _prescan_script_plans(by_type, ctx, st.xref,
                                                 st.fid_to_edid, export_dir,
                                                 _step_done)
@@ -1262,7 +1269,7 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
     _prescan_furniture_and_actors(by_type, ctx, writer, export_dir,
                                   _step_done)
     st.pack_plan, st.pack_ctx, st._script_vars = _prescan_package_plan(
-        by_type, ctx, writer, st.fid_to_edid, _step_done)
+        by_type, ctx, writer, st.fid_to_edid, _step_done, lists)
     _prescan_leveled_actors(by_type, ctx, writer, _step_done)
     _prescan_outfits_hair_skin(by_type, ctx, export_dir, writer)
 

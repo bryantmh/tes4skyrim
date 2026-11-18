@@ -12,14 +12,14 @@ See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-retu
 
 from dataclasses import replace
 
-from .custom_roots import PLAYER_REF, in_faction_gate, procedure, root_record, stacked, within_distance_gate
+from .custom_roots import PLAYER_REF, procedure, root_record, stacked, within_distance_gate
 from .templates import (ESCORT, T_BOOL, T_FLOAT, T_INT, T_LOCATION,
                         T_SINGLEREF, Template)
 
 #: EditorID of the root; a dependent plugin adopts its master's copy by this name.
 ESCORT_WHEN_NEAR_EDID = 'TES4EscortWhenNear'
 
-#: EditorID of the faction that holds an escorter in the Wait branch while the runtime restarts its Escort.
+#: EditorID of the retired escort-hold faction; still written so saves keep its FormID.
 ESCORT_HOLD_EDID = 'TES4EscortHold'
 
 #: Radius outside which the escorter waits: both games' fAIEscortWaitDistanceInterior.
@@ -69,27 +69,12 @@ _BASE = Template(
     slots={'target': 0, 'location': 2, 'wait': 3, 'radius': 4, 'ride_horse': 7},
 )
 
-_installed = {'fid': 0, 'player_escorts': set()}
+_installed = {'fid': 0}
 
 
 def set_escort_template_fid(fid: int) -> None:
     """Record the root converted escorts use (0 = vanilla Escort); a new run."""
     _installed['fid'] = fid
-    _installed['player_escorts'] = set()
-
-
-def note_player_escort(pack_fid: int) -> None:
-    """Record a package escorting the player on this root (runtime restart).
-
-    See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-returns
-    """
-    if _installed['fid']:
-        _installed['player_escorts'].add(pack_fid)
-
-
-def player_escorts() -> list:
-    """FormIDs of this run's converted player escorts, sorted."""
-    return sorted(_installed['player_escorts'])
 
 
 def escort_template() -> Template:
@@ -98,15 +83,15 @@ def escort_template() -> Template:
     return replace(_BASE, formid=fid) if fid else ESCORT
 
 
-def _procedure_tree(hold: int) -> bytes:
-    """Stacked { Escort if within the radius and not in `hold` ; Wait }."""
-    gate = (within_distance_gate(_IN_TARGET, _IN_RADIUS), in_faction_gate(hold, 0.0))
+def _procedure_tree() -> bytes:
+    """Stacked { Escort if within the radius ; Wait }."""
+    gate = (within_distance_gate(_IN_TARGET, _IN_RADIUS),)
     return stacked(procedure('Escort', 1, _ESCORT_INPUTS, gate),
                    procedure('Wait', 0, (_IN_WAIT_SECONDS, _IN_STOP_MOVING)))
 
 
-def escort_root_record(fid: int, hold: int) -> bytes:
-    """The PKDT type-19 root record at `fid`, defaulting its target to the player; `hold` is ESCORT_HOLD_EDID's FACT.
+def escort_root_record(fid: int) -> bytes:
+    """The PKDT type-19 root record at `fid`, defaulting its target to the player.
 
     Imports `converter` here: converter imports this module for escort_template.
     See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-returns
@@ -114,5 +99,5 @@ def escort_root_record(fid: int, hold: int) -> bytes:
     from .converter import Inputs, package_markers
     root_inputs = Inputs(_BASE)
     root_inputs.set_slot(0, (0, PLAYER_REF, 0))
-    return root_record(fid, ESCORT_WHEN_NEAR_EDID, _ROOT_PKDT, _BASE, root_inputs.emit(), _procedure_tree(hold),
+    return root_record(fid, ESCORT_WHEN_NEAR_EDID, _ROOT_PKDT, _BASE, root_inputs.emit(), _procedure_tree(),
                        _INPUT_NAMES, package_markers())

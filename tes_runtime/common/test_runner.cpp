@@ -74,6 +74,12 @@ constexpr int kPending = -2;
 // NPC the player is put -- on a spot the NPC itself stood on, so on the ground.
 constexpr float kFollowSlack = 150.0f;
 constexpr float kTrailStep = 40.0f;
+// Closer than this, a followed NPC is walking into the player (`fillTrail` games only).
+constexpr float kInTheWay = 32.0f;
+// A followed NPC standing this many ticks with the player close is waiting for the player to clear its path
+// (Skyrim's pathing does, Escort and Travel alike); the player then steps back this far along its trail.
+constexpr int kBlockedTicks = 60;
+constexpr float kStepBack = 150.0f;
 constexpr std::size_t kTrailPoints = 24;
 constexpr float kFollowBehind = 120.0f;
 // Ticks (one second) a dialogue step waits for a posted conversation to open.
@@ -123,6 +129,7 @@ struct Progress {
     int heldTicks = 0;         // ticks a menu has held a step that needs the world
     int loadTicks = 0;         // ticks a talk or activate has waited for its target's 3D
     int approachMoves = 0;     // moves one `approach` has posted without landing in reach
+    int talkClicks = 0;        // clicks one `talk` has made that opened nothing
     bool expectsHeld = true;
     std::string error;
     std::string expects;
@@ -130,6 +137,8 @@ struct Progress {
     std::size_t heardStart = 0;  // the first line begun since the case started
     std::string follow;          // the NPC `follow` keeps the player behind, or empty
     std::deque<Spot> trail;      // where that NPC has stood, oldest first
+    Spot followStill;            // where the followed NPC stood when it last moved
+    int followStillTicks = 0;    // ticks it has stood there
     int talkWait = 0;            // ticks a dialogue step has waited for the menu to open
     int boxUp = 0;               // ticks a `button` step has seen its MessageBox open
     bool defend = false;         // the player kills whatever attacks it
@@ -365,7 +374,8 @@ bool Approached(const std::string& npc) {
 
 // Activates `npc` as the player does, then waits for the conversation; true when done. A conversation already
 // open with `npc` (a force-greet) is taken as is: activating its speaker mid-greeting left later clicks
-// unanswered. One left open with someone else gets its Goodbye first, as the player clicks it.
+// unanswered. One left open with someone else gets its Goodbye first, as the player clicks it. A game with
+// `talkClicks` clicks again when a click opened nothing (the engine swallows some, 60a: Martin at Cloud Ruler).
 bool Talked(const std::string& npc) {
     if (g_case.ticksLeft < 0 && TalkingToOther(npc)) {
         if (g_game.bye) g_game.bye();
@@ -379,11 +389,17 @@ bool Talked(const std::string& npc) {
     }
     if (Talking()) {
         g_case.ticksLeft = -1;
+        g_case.talkClicks = 0;
         Said();
         return true;
     }
     if (--g_case.ticksLeft > 0) return false;
     g_case.ticksLeft = -1;
+    if (g_case.talkClicks++ < g_game.talkClicks) {
+        Log("test: a click on %s opened nothing; the player clicks again", npc.c_str());
+        return false;
+    }
+    g_case.talkClicks = 0;
     g_case.error = "talk " + npc + ": no conversation opened";
     return true;
 }
@@ -456,7 +472,7 @@ bool Answered(const TestStep& step) {
 
 // The menus a held game is reported with, so a failure names what held it.
 constexpr const char* kHoldingMenus[] = {
-    "MessageBoxMenu", "TutorialMenu", "Loading Menu", "Sleep/Wait Menu", "Dialogue Menu",
+    "MessageBoxMenu", "Tutorial Menu", "Loading Menu", "Sleep/Wait Menu", "Dialogue Menu",
     "Journal Menu", "Console", "Tween Menu", "MorrowindDialogueMenu", "MorrowindClassMenu",
     "MorrowindBirthMenu", "MorrowindRaceMenu", "MorrowindListMenu", "RaceSex Menu", "Book Menu",
     "ContainerMenu", "InventoryMenu", "LevelUp Menu", "StatsMenu", "Lockpicking Menu"};
@@ -892,6 +908,41 @@ void FillTrail(std::deque<Spot>& trail, const Spot& at) {
     }
 }
 
+// A `fillTrail` game: an NPC that turned round and walked back onto the player (closer than kInTheWay) has the
+// player on its way; the spot is then behind it against its newest heading, as a player steps aside (60b: Baurus
+// stood 8 from the player for minutes, and walked on at once when the player moved).
+bool StepAside(const std::deque<Spot>& trail, const Spot& at, float gap, float slack, Spot* out) {
+    if (!g_game.fillTrail || gap >= kInTheWay || trail.size() < 2) return false;
+    const Spot& from = trail[trail.size() - 2];
+    const float run = Apart(from, at);
+    if (run < 1.0f) return false;
+    *out = {at.x - (at.x - from.x) / run * slack, at.y - (at.y - from.y) / run * slack, at.z};
+    return true;
+}
+
+// A `fillTrail` game: the followed NPC has stood kBlockedTicks with the player within twice `slack` -- the
+// player is on its path (60a sewer stair top: Baurus stood 3600 ticks, and walked on the moment the player
+// was put behind him; with the player's collision off he still waited). The spot is kStepBack back along
+// its trail, the way it came, as a player clears the way.
+bool StepBack(const std::deque<Spot>& trail, const Spot& at, float gap, float slack, Spot* out) {
+    if (!g_game.fillTrail) return false;
+    if (Apart(g_case.followStill, at) >= 4.0f) {
+        g_case.followStill = at;
+        g_case.followStillTicks = 0;
+        return false;
+    }
+    if (++g_case.followStillTicks < kBlockedTicks || gap >= 2.0f * slack || trail.empty()) return false;
+    g_case.followStillTicks = 0;
+    *out = trail.front();
+    for (auto it = trail.rbegin(); it != trail.rend(); ++it) {
+        if (Apart(*it, at) >= kStepBack) {
+            *out = *it;
+            break;
+        }
+    }
+    return Apart(*out, at) >= kInTheWay;
+}
+
 void KeepFollowing() {
     if (g_case.follow.empty() || !g_game.position || !g_game.distance || !g_game.placeHere) return;
     const std::string& npc = g_case.follow;
@@ -902,6 +953,18 @@ void KeepFollowing() {
     while (trail.size() > kTrailPoints) trail.pop_front();
     const float gap = g_game.distance("player", npc);
     const float slack = g_game.followSlack > 0.0f ? g_game.followSlack : kFollowSlack;
+    Spot aside;
+    if (StepAside(trail, at, gap, slack, &aside)) {
+        Log("follow: %s walked onto the player (%g) -- the player steps behind it", npc.c_str(), gap);
+        g_game.placeHere("player", aside.x, aside.y, aside.z, std::atan2(at.x - aside.x, at.y - aside.y) * 57.29578f);
+        return;
+    }
+    if (StepBack(trail, at, gap, slack, &aside)) {
+        Log("follow: %s has stood still with the player %g from it -- the player steps back out of its way",
+            npc.c_str(), gap);
+        g_game.placeHere("player", aside.x, aside.y, aside.z, std::atan2(at.x - aside.x, at.y - aside.y) * 57.29578f);
+        return;
+    }
     const float behind = g_game.followBehind > 0.0f ? g_game.followBehind : kFollowBehind;
     if (gap <= slack || gap == std::numeric_limits<float>::max()) return;
     const Spot* spot = &trail.front();

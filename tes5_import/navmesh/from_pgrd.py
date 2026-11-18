@@ -142,6 +142,8 @@ GRID_DIVISOR_MAX = 12
 DOOR_LINK_MAX_DIST = 220.0
 #: Weight on the along-facing offset, preferring triangles on the threshold line.
 DOOR_LINK_ALONG_WEIGHT = 2.0
+#: Farthest a load door's point moves toward its landing before its Door Triangle is picked.
+DOOR_LANDING_NUDGE = 32.0
 
 
 _CELL_SIZE = 4096.0
@@ -1158,13 +1160,14 @@ def convert_PGRD(rec: dict, writer=None,
                  obstacles: list = None,
                  graph: tuple = None,
                  door_spots: dict = None,
+                 door_landings: dict = None,
                  seeded: bool = False,
                  edge_seeds: list = None,
                  pins: bool = True,
                  opens: tuple = None) -> tuple:
     """One TES4 PGRD as a TES5 NAVM: (navm_bytes, meta), or (None, None) when the pathgrid is too
     sparse or the build has under 3 verts.  `spawns`: points to reach; `obstacles`: pairs to bridge;
-    `graph`: the (points, edges) to build over; `door_spots`: {door ref: point} for its triangle;
+    `graph`: the points and edges to build over; `door_spots` / `door_landings`: door ref -> point;
     `seeded`: no gap flood; `edge_seeds`: neighbour mesh points; `pins` false: no pins;
     `opens` as _cell_geometry.
 
@@ -1206,7 +1209,7 @@ def convert_PGRD(rec: dict, writer=None,
         navm_fid = writer.derive_formid(
             'NAVM', (cell_fid, get_formid(rec, 'FormID')))
     nvnm, door_tris, (cx, cy, cz) = packed_nvnm(
-        (verts3d, tris, ledges), at_spots(doors, door_spots), water_z,
+        (verts3d, tris, ledges), at_spots(toward_landings(doors, door_landings), door_spots), water_z,
         (cell_fid, wrld_fid, grid_x, grid_y, is_exterior), navm_fid)
     navm_bytes = pack_navm_record(navm_fid,
                                   _navm_subrecords(rec, nvnm, base_objects))
@@ -1237,6 +1240,23 @@ def convert_PGRD(rec: dict, writer=None,
         'door_xndp': {fid: (navm_fid, ti) for (ti, fid) in door_tris},
     }
     return navm_bytes, meta
+
+
+def toward_landings(doors, landings) -> list:
+    """collect_doors rows, each door with a landing in `landings` (ref -> point) moved toward it in plan,
+    half the way and at most DOOR_LANDING_NUDGE: its Door Triangle is then the one a traveller arrives on.
+    See: docs/commentary/tes5_import_navmesh.md#door-triangle-on-the-landing-side
+    """
+    out = []
+    for d in doors:
+        land = (landings or {}).get(d[4])
+        gap = math.dist(land[:2], d[:2]) if land else 0.0
+        if gap < 1.0:
+            out.append(d)
+            continue
+        t = min(DOOR_LANDING_NUDGE, gap / 2.0) / gap
+        out.append((d[0] + (land[0] - d[0]) * t, d[1] + (land[1] - d[1]) * t, *d[2:]))
+    return out
 
 
 def at_spots(doors, spots) -> list:

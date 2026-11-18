@@ -267,6 +267,15 @@ have been on that channel. Do not attempt to fix this by writing GMSTs.
 ## Problem 1 — GREETING lines are on the ambient channel
 <a id="problem-1-greeting-lines-are"></a>
 
+**Fixed (run 60a, 2026-11-16), the vanilla way.** Vanilla Skyrim keeps hello lines off the ambient timer with a
+condition: of its 5,287 HELO INFOs, **267 test `IsInDialogueWithPlayer == 1`** (11 test `== 0`; census
+temp/run59/helo_census.py), so they play only when the speaker is in dialogue with the player -- activation or a
+force-greet. Every INFO the converter takes from a TES4 `GREETING` topic now gets that condition
+(`converter.in_dialogue_gate`, `groups._group_bark_infos` marks them, `_convert_topic_infos` adds it); `HELLO` lines,
+Oblivion's real ambient channel, are untouched. Found by Baurus repeating his stage-86 greeting "We've failed..."
+seven times aloud (a choice greeting has reset 0 since 39e), while the harness waited for him to stop speaking.
+Test: `test_a_greeting_line_plays_only_when_talked_to`. What follows is the original analysis.
+
 `tes5_import/dialogue/converter.py:859-860` maps both channels to one subtype:
 
 ```python
@@ -1975,3 +1984,34 @@ under a ForceGreet-subtype topic, the channel Skyrim's pursuing guard opens
 (vanilla `DGCrimeForcegreetTopic`, SNAM `PFGT`). Each copy is a shared INFO
 (`DNAM` = the converted greeting): vanilla carries 3,411 DNAM INFOs and none of
 them has TRDT or NAM1. Copies carry no replay lockout.
+
+## <a id="said-once-retires-at-the-chain-end"></a>A say-once line with choices retires at the end of its chain
+
+**Code:** `tes5_import/dialogue/unlocks.py` (`_said_once_reveals`, `_chain_ends`),
+`script_convert/pipeline.py` (`_said_once_lines`), `tes5_import/dialogue/converter.py`
+(`_said_once_gate`).
+
+A TES4 Say Once line that offers choices cannot keep the engine's Say Once: a conversation left
+before the player answers (Tab, a fight nearby, a menu) would spend the line and its choices with
+it. Each such line gets a global `TES4SaidOnce_<info>` and the condition `global < 2` instead of
+the flag; its Begin fragment moves the global 0 -> 1, and the lines that retire it move it 1 -> 2.
+
+Those used to be every line of its FIRST-level answer topics. Kathutet (MQ15, run 58c) shows why
+that is not enough: his greeting 0003C93C (Say Once) offers "I seek Mankar Camoran.", whose answer
+offers "What do you want, then?", whose answer offers battle / service / questions. A cave daedra
+attacked him after the first answer and closed the conversation; the first answer had already
+retired the greeting, so talking to him again gave only his generic greeting and goodbye and the
+quest could not go on (reproduced on demand, temp/run58/kathutet). Now a line retires the global
+only when it ENDS the chain below the greeting: it offers no further kept choices, or it is a
+Goodbye line. A conversation left anywhere earlier offers the greeting and its choices again.
+A chain that only loops never retires its line.
+
+Measured after the change (import 49, temp/run58/kathutet): with the daedra set on Kathutet after the
+first answer, talking to him again gives the greeting and its three choices, and the chain runs on to
+"I choose battle." and MQ15 32.
+
+A line offered again must not run its result script again: in Oblivion it ran once, when the line was
+first spoken, and 9 of these lines in Oblivion.esm give items (keys, SE39LLReward). The Begin fragment
+notes `TES4_firstSay` (the global still 0) before moving the global, and the result (both its Begin
+part and its End part) runs only when it is set (`script_convert/pipeline.py` `_first_say_only`). A
+line that is part of a polled conversation (it has a sequence gate) is left as it was.

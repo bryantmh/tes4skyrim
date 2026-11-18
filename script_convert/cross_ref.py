@@ -64,7 +64,7 @@ def _new_scan_out() -> dict:
         'script_formid_to_edid': {}, 'script_formid_to_type': {},
         'record_scri': {}, 'record_base': {}, 'record_type': {},
         'record_parent': {},
-        'quest_edids': set(), 'repeat_stage_quests': set(), 'npc_formids': set(),
+        'quest_edids': set(), 'repeat_stage_quests': set(), 'npc_formids': set(), 'fragment_stages': {},
         'gate_scripts': set(),
         'mgef_shaders': {}, 'spell_effects': {},
         'global_types': {}, 'global_values': {},
@@ -232,11 +232,22 @@ def _scan_pack(rec: dict, formid: str, _edid: str, out: dict) -> None:
 
 
 def _scan_qust(rec: dict, _formid: str, edid: str, out: dict) -> None:
-    """A quest's EditorID, and whether it allows repeated stages (DATA flag 0x08)."""
+    """A quest's EditorID, whether it allows repeated stages (DATA flag 0x08), and its stages with a fragment."""
     if edid:
         out['quest_edids'].add(edid.lower())
         if (_int_field(rec, 'DATA.Flags', 0) or 0) & 0x08:
             out['repeat_stage_quests'].add(edid.lower())
+        out['fragment_stages'][edid.lower()] = _fragment_stages(rec)
+
+
+def _fragment_stages(rec: dict) -> set:
+    """Stage indices whose log has journal text or a result script, as quest_fragments.stage_fragments counts."""
+    stages = set()
+    for i in range(_int_field(rec, 'StageCount', 0) or 0):
+        for j in range(_int_field(rec, f'Stage[{i}].LogCount', 0) or 0):
+            if rec.get(f'Stage[{i}].Log[{j}].Text') or rec.get(f'Stage[{i}].Log[{j}].ResultScript', '').strip():
+                stages.add(_int_field(rec, f'Stage[{i}].Index', 0) or 0)
+    return stages
 
 
 def _scan_door(rec: dict, _formid: str, _edid: str, out: dict) -> None:
@@ -412,6 +423,10 @@ class CrossRefGraph:
         self.quest_edids: set[str] = set()
         #: Lowercased EditorIDs of quests whose stages may be set again (TES4 Allow Repeated Stages).
         self.repeat_stage_quests: set[str] = set()
+        #: Lowercased quest EditorID -> the stage indices that have a stage fragment.
+        self.fragment_stages: dict[str, set] = {}
+        #: Lowercased Papyrus names of this plugin's own scripts (a master's compiled copy may predate a helper).
+        self.own_scripts: set[str] = set()
         #: FormIDs of scripts attached to a DOOR flagged Oblivion Gate.
         self.gate_scripts: set[str] = set()
         self.npc_formids: set[str] = set()
@@ -538,6 +553,7 @@ class CrossRefGraph:
         self.enchanted_books.update(out['enchanted_books'])
         self.quest_edids.update(out['quest_edids'])
         self.repeat_stage_quests.update(out['repeat_stage_quests'])
+        self.fragment_stages.update(out['fragment_stages'])
         self.gate_scripts.update(out['gate_scripts'])
         self.npc_formids.update(out['npc_formids'])
         self.mgef_shaders.update(out['mgef_shaders'])
@@ -677,6 +693,19 @@ class CrossRefGraph:
         if not script_edid:
             return 'Quest'
         return papyrus_script_name(script_edid)
+
+    def settling_script(self, quest_name: str) -> str:
+        """The quest's own script, which tracks its stage fragment; else ''.
+
+        See: docs/commentary/script_convert.md#a-stage-fragment-runs-before-its-poll
+        """
+        script = self.get_quest_script_type(quest_name)
+        return script if script.lower() in self.own_scripts else ''
+
+    def fragment_stages_of(self, script: str) -> list:
+        """Stages with a fragment, of every quest settled by `script`."""
+        return sorted({stage for quest, stages in self.fragment_stages.items()
+                       if self.settling_script(quest) == script for stage in stages})
 
     def get_cell_family(self, cell_name: str) -> list:
         """CELL EditorIDs that TES4 `GetInCell <cell_name>` matches.
@@ -1182,7 +1211,9 @@ class CrossRefGraph:
         self.build_ref_as_int_map(scpt_path)
         texts = _script_texts(os.path.dirname(scpt_path))
         self.index_remote_writes(texts)
-        self.index_remote_adds(texts, _own_script_edids(scpt_path))
+        own = _own_script_edids(scpt_path)
+        self.own_scripts = {papyrus_script_name(edid).lower() for edid in own}
+        self.index_remote_adds(texts, own)
 
     def index_remote_writes(self, texts) -> None:
         """Record every `set Owner.var to X` in `texts` against the script that OWNS var.

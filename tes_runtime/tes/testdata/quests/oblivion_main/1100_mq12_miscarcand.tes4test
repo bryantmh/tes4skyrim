@@ -30,13 +30,15 @@ until 600 MQ12LichREF.GetDisabled == 0
 end
 
 # Cloud Ruler Temple's Great Hall at 30: MQ12Script sets 25, Jauffre and Martin argue (MQ12JauffreMartin, six
-# lines; the last sets 26), then each greets the player (MQ12Talk) and the script sets 27.
+# lines; the last sets 26), then each greets the player (MQ12Talk) and the script sets 27. The player goes to the
+# hall itself: a moveto Martin at night lands wherever he sleeps, and he then walks to the hall without the player.
 case mq12_council
 run
-player.moveto MartinRef
+coc CloudRulerTempleGreatHall
 wait 120
 until 1800 GetStage MQ12 >= 25
 until 3600 GetStageDone MQ12 26
+approach MartinRef
 until 3600 GetStageDone MQ12 27
 # Jauffre is still speaking his hello to the player when 27 is set: the engine opens no second conversation.
 until 900 JauffreRef.IsTalking == 0

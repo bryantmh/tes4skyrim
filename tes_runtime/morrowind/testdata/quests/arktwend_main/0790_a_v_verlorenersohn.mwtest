@@ -541,9 +541,20 @@ until 600 GetPCCell "Slate Cavern" == 0
 walk 120864 51537 3974
 bye if open
 walk 120864 51537 3974
-walk 96068 8603 1326
+# NordrenX26Y4/X27Y4: up the shoulder (19 deg), not straight up the 41-deg bank at x 109400 the player slid on.
+walk 110200 17000 303
+walk 109800 16400 329
+walk 109675 16150 447
+# X23Y3 hill: up its gentle switchback, not straight up the 22-27 deg face (run 56 stalled at 95476 12490).
+walk 94575 14925 1121
+walk 95800 12400 1344
+walk 95800 12200 1396
+walk 95700 12100 1401
+walk 94700 12100 1515
+walk 94600 12000 1549
+walk 95700 8550 1314
 bye if open
-walk 96068 8603 1326
+walk 95700 8550 1314
 walk 94960 8289 1116
 bye if open
 walk 94960 8289 1116
@@ -551,7 +562,8 @@ walk 95936 5759 168
 bye if open
 walk 95936 5759 168
 walk 96650 4180 52
-walk 97560 4122 43
+# On the planks past the ground layer under them (97560 4122 had both; runs 46/48/55 detoured north).
+walk 97750 4130 44
 walk 98304 4352 344
 bye if open
 walk 98304 4352 344

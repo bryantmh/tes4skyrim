@@ -24,6 +24,10 @@ from script_convert.tes5.blocks import (
 
 #: TES4 condition function index; its param2 is the script-local var index.
 _GET_QUEST_VARIABLE = 79
+#: TES4 GetStage / GetStageDone: a choice testing one makes the line's own SetStage of that quest run at Begin.
+_STAGE_FUNCS = (58, 59)
+#: Prefix of a `tested` entry that stands for a quest's stage rather than a variable.
+_STAGE_KEY = 'stage:'
 
 #: Statement opening a SetStage call (or its TES4SetStage wrapper), which runs that fragment INLINE.
 _SETSTAGE_RE = re.compile(r'^\s*\w[\w.]*\.(?:TES4)?SetStage\s*\(', re.IGNORECASE)
@@ -121,27 +125,38 @@ def sequence_gate(rec: dict, script_vars: dict, names: dict) -> str:
     return ' || '.join(f'{counter} == {value}' for value in values)
 
 
+def _condition_test(raw: str, script_vars: dict, names: dict) -> str:
+    """`<quest>.<var>` a GetQuestVariable CTDA reads, `stage:<quest>` a GetStage(Done) one reads, else ''."""
+    try:
+        d = bytes.fromhex(raw)
+    except ValueError:
+        return ''
+    if len(d) < 20:
+        return ''
+    func = struct.unpack_from('<H', d, 8)[0]
+    quest = struct.unpack_from('<I', d, 12)[0] & 0x00FFFFFF
+    if not names.get(quest):
+        return ''
+    if func in _STAGE_FUNCS:
+        return (_STAGE_KEY + safe_property_name(names[quest])).lower()
+    name = script_vars.get(quest, {}).get(struct.unpack_from('<I', d, 16)[0])
+    if func != _GET_QUEST_VARIABLE or not name:
+        return ''
+    return f'{safe_property_name(names[quest])}.{safe_property_name(name)}'
+
+
 def _quest_var_tests(rec: dict, script_vars: dict, names: dict) -> set:
-    """`<quest>.<var>` (Papyrus names) of every GetQuestVariable condition of `rec`."""
+    """What the conditions of `rec` read: `<quest>.<var>` (Papyrus names) and `stage:<quest>` entries."""
     tested = set()
     i = 0
     while (raw := rec.get(f'Condition[{i}].Raw')) is not None:
         i += 1
-        try:
-            d = bytes.fromhex(raw)
-        except ValueError:
-            continue
-        if len(d) < 20 or struct.unpack_from('<H', d, 8)[0] != _GET_QUEST_VARIABLE:
-            continue
-        quest = struct.unpack_from('<I', d, 12)[0] & 0x00FFFFFF
-        name = script_vars.get(quest, {}).get(struct.unpack_from('<I', d, 16)[0])
-        if name and names.get(quest):
-            tested.add(f'{safe_property_name(names[quest])}.{safe_property_name(name)}')
-    return tested
+        tested.add(_condition_test(raw, script_vars, names))
+    return tested - {''}
 
 
 def choice_tested_vars(infos: list, script_vars: dict, names: dict) -> dict:
-    """INFO fid24 -> the quest variables its choices' lines test, for each INFO with choices.
+    """INFO fid24 -> the quest variables and stages its choices' lines test, for each INFO with choices.
 
     A choice names a topic; what it tests is what any of that topic's INFOs test.
     See: docs/commentary/script_convert.md#choice-gate-writes-run-at-begin
@@ -160,26 +175,31 @@ def choice_tested_vars(infos: list, script_vars: dict, names: dict) -> dict:
     return out
 
 
-def _writes_tested(line: str, tested) -> bool:
-    """Whether `line` is a literal write to, or a counter step of, a variable in `tested`."""
+def _written_name(line: str, tested) -> str:
+    """The lower-case name `line` writes among `tested` (a variable, or a quest whose stage it sets), else ''."""
+    stage = _STAGE_ADVANCE_RE.match(line)
+    if stage:
+        quest = (stage.group('quest') or stage.group('wrapped')).lower()
+        return quest if _STAGE_KEY + quest in tested else ''
     found = _STATE_WRITE_RE.match(line)
-    if found and found.group('base') is None and found.group('lhs') in tested:
-        return True
-    return any(_step_delta(line, var) is not None for var in tested)
+    hit = found.group('lhs') if found and found.group('base') is None and found.group('lhs') in tested else None
+    hit = hit or next((var for var in tested if _step_delta(line, var) is not None), None)
+    return hit.split('.')[-1].lower() if hit else ''
 
 
 def _movable(line: str, top: str, tested, before: str) -> bool:
-    """Whether a top-level `line` writes a `tested` variable that no line `before` it mentions."""
-    if re.match(r'\s*', line).group() != top or not _writes_tested(line, tested):
+    """Whether a top-level `line` writes a `tested` name that no line `before` it mentions."""
+    if re.match(r'\s*', line).group() != top:
         return False
-    var = next(v for v in tested if v.lower() in line.lower() or v.split('.')[1].lower() in line.lower())
-    return var.split('.')[1].lower() not in before
+    name = _written_name(line, tested)
+    return bool(name) and name not in before
 
 
 def split_choice_writes(lines: list, tested) -> tuple:
     """(writes, rest): `lines` split by whether a top-level line writes a `tested` variable.
 
-    A write moves only when nothing before it in the body reads the variable or returns.
+    A write moves only when nothing before it in the body reads the variable or returns; a stage set
+    only when every line before it moved too (its stage result may read what they write).
     See: docs/commentary/script_convert.md#choice-gate-writes-run-at-begin
     """
     top = re.match(r'\s*', lines[0]).group() if lines else ''
@@ -187,6 +207,7 @@ def split_choice_writes(lines: list, tested) -> tuple:
     for i, line in enumerate(lines):
         before = '\n'.join(lines[:i]).lower()
         moves = 'return' not in before and _movable(line, top, tested, before)
+        moves = moves and not (rest and _STAGE_ADVANCE_RE.match(line))
         (early if moves else rest).append(line)
     return early, rest
 

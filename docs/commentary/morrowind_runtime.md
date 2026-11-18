@@ -3325,9 +3325,12 @@ A fight on the player is recorded but changes no relationship: Skyrim keeps
 relationships per BASE record, and `ordinator wander`, placed 81 times, has
 three `StartCombat Player` rows, so one ordinator would turn them all.
 
-## <a id="a-spectator-of-a-finished-fight"></a>A spectator of a finished fight stops watching
+## <a id="a-spectator-of-a-finished-fight"></a>A spectator of a finished fight stops watching (REMOVED)
 
-**Code:** `plugin/game_calls_combat.cpp` (`EndIdleSpectating`), ids in `plugin/ids.h`.
+🛑 REMOVED: the runtime no longer finishes spectator packages. The real cause was the converter
+allowing "Observe combat behavior" on every converted package, so converted actors spectated at
+all; see [tes5_import_package.md](tes5_import_package.md#no-spectators). The engine findings below
+stay as a record.
 
 The symptom (Oblivion's tutorial, run 39a): after the fight on the way to marker F, Glenroy stood
 still for good, and his escort of the Emperor never went on. `evp` and `StopCombat` changed nothing.

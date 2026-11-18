@@ -14,7 +14,7 @@ import numpy as np
 from tes5_import.navmesh import corridor
 from tes5_import.navmesh.from_pgrd import (build_door_links, compute_adjacency,
                                            compute_water_flags, pack_nvnm, packed_nvnm,
-                                           record_graph)
+                                           record_graph, toward_landings)
 from tes5_import.navmesh.seeding import pathgrid_order, seeded_graph
 from tes5_import.navmesh.native_loader import load_native
 
@@ -167,6 +167,19 @@ def test_packed_nvnm_matches_python_packer():
         want = _python_packed(geometry, doors, water, frame, 0xABC)
         assert packed_nvnm(geometry, doors, water, frame, 0xABC) == want
         assert want[1] and b'\x02\x00\x00\x00' in want[0]
+
+
+def test_a_load_door_takes_the_triangle_on_its_landing_side():
+    """A door on the edge between a large and a small triangle links the small one when its landing is there."""
+    verts = [(0.0, -100.0, 0.0), (0.0, 100.0, 0.0), (-300.0, 0.0, 0.0), (60.0, 0.0, 0.0)]
+    tris = [(0, 1, 2), (1, 0, 3)]
+    door = (0.0, 0.0, 0.0, 0.0, 0x77, True, 80.0)
+    frame = (0x3C, 0x3D, 0, 0, False)
+    assert packed_nvnm((verts, tris, []), [door], None, frame, 0xABC)[1] == [(0, 0x77)]
+    for landing in ((50.0, 0.0, 0.0), (20.0, 90.0, 0.0)):
+        moved = toward_landings([door], {0x77: landing})
+        assert packed_nvnm((verts, tris, []), moved, None, frame, 0xABC)[1] == [(1, 0x77)]
+    assert toward_landings([door], {0x77: (0.5, 0.5, 0.0)}) == [door]
 
 
 def _plain(obj):

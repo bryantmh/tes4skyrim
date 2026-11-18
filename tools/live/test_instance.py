@@ -69,6 +69,7 @@ NEW_GAME_ID = 52118
 BUTTON_PRESS_ID = 52279
 #: Startup popups that pause the game, RTTI class -> registered menu name.
 STARTUP_POPUPS = (('MessageBoxMenu', 'MessageBoxMenu'), ('loginMenu@LoginMenu', 'Login Menu'))
+LOADING_MENU = 'LoadingMenu'
 UNPACKED_EXE = (r'C:\Program Files (x86)\Steam\steamapps\content\app_489830'
                 r'\depot_489833\SkyrimSE.1.6.1170.unpacked.exe')
 SKSE_DLL = 'skse64_1_6_1170.dll'
@@ -95,6 +96,18 @@ PREFS_INI = (('Display', 'bFull Screen', '0'), ('Display', 'bBorderless', '1'),
              ('AudioMenu', 'fAudioMasterVolume', '0.0000'), ('General', 'bUpsellOwned', '1'))
 #: The window size of a recorded run (`--record`), width then height.
 RECORD_SIZE = (('Display', 'iSize W', '2560'), ('Display', 'iSize H', '1440'))
+#: Skyrim.ini lines of a recorded run: field of view 90 (the user's choice; the game's own is ~65).
+RECORD_SKYRIM_INI = (('Display', 'fDefaultWorldFOV', '90'), ('Display', 'fDefault1stPersonFOV', '90'))
+
+
+def instance_folder(slot: int) -> str:
+    """Test instance `slot`'s game folder (1 = the first)."""
+    return FIRST_INSTANCE + ('' if slot == 1 else ' %d' % slot)
+
+
+def my_games(slot: int) -> str:
+    """Test instance `slot`'s My Games folder (SKSE logs, Saves)."""
+    return os.path.join(instance_folder(slot), '_profile', 'Documents', 'My Games', 'Skyrim Special Edition')
 
 
 def use_instance(slot: int) -> None:
@@ -104,11 +117,11 @@ def use_instance(slot: int) -> None:
     """
     global INSTANCE, PROFILE, DOCUMENTS, LOCAL_APPDATA, MY_GAMES, PID_FILE, PIPE, DESKTOP
     suffix = '' if slot == 1 else ' %d' % slot
-    INSTANCE = FIRST_INSTANCE + suffix
+    INSTANCE = instance_folder(slot)
     PROFILE = os.path.join(INSTANCE, '_profile')
     DOCUMENTS = os.path.join(PROFILE, 'Documents')
     LOCAL_APPDATA = os.path.join(PROFILE, 'LocalAppData')
-    MY_GAMES = os.path.join(DOCUMENTS, 'My Games', 'Skyrim Special Edition')
+    MY_GAMES = my_games(slot)
     PID_FILE = os.path.join(PROFILE, 'pid.txt')
     PIPE = r'\\.\pipe\tes_test_bridge' + suffix.strip()
     DESKTOP = 'TESConversionTest' + suffix.strip()
@@ -196,11 +209,16 @@ def write_prefs(root: str, preset: str, extra=()) -> None:
         apply_ini('SkyrimPrefs.ini', PREFS_INI + tuple(extra), f.read())
 
 
+def write_skyrim_ini(root: str) -> None:
+    """Skyrim.ini from the game's Skyrim_Default.ini and SKYRIM_INI."""
+    with open(os.path.join(root, 'Skyrim_Default.ini'), encoding='utf-8', errors='replace') as f:
+        apply_ini('Skyrim.ini', SKYRIM_INI, f.read())
+
+
 def write_profile(root: str, plugins) -> None:
     """Writes the sandbox profile: Skyrim.ini, SkyrimPrefs.ini and Plugins.txt."""
     os.makedirs(MY_GAMES, exist_ok=True)
-    with open(os.path.join(root, 'Skyrim_Default.ini'), encoding='utf-8', errors='replace') as f:
-        apply_ini('Skyrim.ini', SKYRIM_INI, f.read())
+    write_skyrim_ini(root)
     write_prefs(root, 'Low.ini')
     plugin_dir = os.path.join(LOCAL_APPDATA, 'Skyrim Special Edition')
     os.makedirs(plugin_dir, exist_ok=True)
@@ -355,15 +373,16 @@ def slot_running(slot: int) -> bool:
     return bool(running_pid())
 
 
-def launch(extra_env=None, prefs=()) -> None:
+def launch(extra_env=None, prefs=(), skyrim=()) -> None:
     """Starts the instance hidden, muted, sandboxed and under SKSE; refuses a second copy.
 
     The INI settings are re-applied first, because the game rewrites
-    SkyrimPrefs.ini on every run. `extra_env` adds variables for the game; `prefs` overrides PREFS_INI.
+    SkyrimPrefs.ini on every run. `extra_env` adds variables for the game; `prefs` overrides PREFS_INI and
+    `skyrim` SKYRIM_INI.
     """
     if running_pid():
         sys.exit('test instance already running (pid %d)' % running_pid())
-    apply_ini('Skyrim.ini', SKYRIM_INI)
+    apply_ini('Skyrim.ini', SKYRIM_INI + tuple(skyrim))
     apply_ini('SkyrimPrefs.ini', PREFS_INI + tuple(prefs))
     env = {'TES_BRIDGE_PIPE': PIPE,
            'TES_SANDBOX_MUTE': '1',
@@ -701,7 +720,7 @@ def handle_lines(bridge: Bridge, results: str, lines: list, handled: int, checkp
 #: Seconds the runtime log may stay unchanged before the game counts as hung (passing lanes' longest gap: 74 s).
 HUNG_SECONDS = 60
 
-#: Seconds the runner may write no request and no result before the run is stalled (longest step: 120 s).
+#: Seconds the runner may write nothing before a stall is reported (report only; the run goes on).
 STALLED_SECONDS = 180
 
 
@@ -747,9 +766,9 @@ def wait_results(path: str, seconds: float, bridge: Bridge, checkpoints: bool, g
         if lines and lines[-1].get('done'):
             break
         if runner.seconds() > STALLED_SECONDS:
-            print('RUN STALLED after %d result line(s): nothing from the runner for %d s' % (len(lines), STALLED_SECONDS))
-            crash_capture.snapshot(running_pid(), tag='stall_%s' % time.strftime('%m%d_%H%M%S'))
-            break
+            print('RUN STALLED after %d result line(s): nothing from the runner for %d s -- still waiting'
+                  % (len(lines), STALLED_SECONDS), flush=True)
+            runner = Quiet(path)
         if not running_pid():
             print('GAME EXITED after %d result line(s)' % len(lines))
             break
@@ -894,19 +913,32 @@ def enter_game(bridge: Bridge, args, cases: str) -> None:
             raise SystemExit('no save %s in the sandbox; make it with --checkpoints' % save)
         time.sleep(args.settle)
         dismiss_popups(bridge)
+        if args.fast:
+            god_mode_on(bridge)
         bridge.console('load %s' % save)
         if wait_message_box(bridge, LOAD_PROMPT_SECONDS):
             press_message_button(bridge, 0)
-            wait_menu(bridge, 'Loading Menu', LOAD_PROMPT_SECONDS)
-            ready_after_load(bridge, 300)
-            wait_menu_closed(bridge, 'Loading Menu', 300)
+        wait_menu(bridge, LOADING_MENU, LOAD_PROMPT_SECONDS)
+        ready_after_load(bridge, 300)
+        wait_menu_closed(bridge, LOADING_MENU, 300)
         bridge.wait_ready(120000)
     elif args.new_game is not None:
         start_new_game(bridge, args.settle, args.new_game)
     else:
         enter_cell(bridge, args.cell, args.settle)
     if args.fast:
-        bridge.console('tgm')
+        god_mode_on(bridge)
+
+
+def god_mode_on(bridge: Bridge) -> None:
+    """God mode on: `tgm` toggles, so one answering "disabled" is sent again.
+
+    See: docs/commentary/headless_testing.md#god-mode-after-a-load
+    """
+    answer = bridge.console('tgm').strip()
+    if 'disabled' in answer.lower():
+        answer = bridge.console('tgm').strip()
+    print('god mode: %s' % answer, flush=True)
 
 
 def join_cases(path: str, ext: str) -> str:
@@ -1024,7 +1056,7 @@ def run_cases(args, game: CaseGame) -> int:
     flags = {game.prefix + 'STOP_ON_FAIL': args.stop_on_fail, game.prefix + 'CHECKPOINTS': args.checkpoints}
     env.update({name: '1' for name, on in flags.items() if on})
     with recording(args.record):
-        launch(env, RECORD_SIZE if args.record else ())
+        launch(env, RECORD_SIZE if args.record else (), RECORD_SKYRIM_INI if args.record else ())
         debugger_attach(args)
         try:
             with connect(300) as bridge:
@@ -1075,6 +1107,7 @@ def recording(out_dir: str):
     finally:
         obs_record.stop(rec)
         write_prefs(INSTANCE, 'Low.ini')
+        write_skyrim_ini(INSTANCE)
 
 
 def report(lines: list, results: str, game: CaseGame) -> int:

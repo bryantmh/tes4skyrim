@@ -518,12 +518,17 @@ def property_declarations(property_refs, declared) -> list:
 
 #: EditorID of the import's FormList of references a script has just activated by its own call.
 SCRIPTED_USES = 'TES4ScriptedUses'
+#: EditorID of the import's FormList of actors a script has restrained.
+RESTRAINED = 'TES4Restrained'
 
 
-def scripted_uses_formlist(conv) -> str:
-    """Register SCRIPTED_USES as a FormList property of this script; its name.
+def owned_formlist(conv, name: str) -> str:
+    """Declare the import-owned FormList `name` on this script; its name."""
+    conv.sc.property_refs[name] = 'FormList'
+    return name
 
-    See: docs/commentary/script_convert.md#a-scripted-activation-runs-the-door-script
-    """
-    conv.sc.property_refs[SCRIPTED_USES] = 'FormList'
-    return SCRIPTED_USES
+
+def owned_global(conv, name: str) -> str:
+    """Declare the import-owned GlobalVariable `name` on this script; its name."""
+    conv.sc.property_refs[name] = 'GlobalVariable'
+    return name

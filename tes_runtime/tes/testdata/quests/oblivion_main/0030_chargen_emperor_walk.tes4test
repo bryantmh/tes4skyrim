@@ -28,7 +28,7 @@ CGGenericAssassin2.kill
 CGGenericAssassin3.kill
 0001774A.kill
 00017734.kill
-player.moveto CGMarkerFEmperor
+approach UrielSeptimRef
 until 900 GetStage Charactergen >= 54
 end
 
@@ -36,8 +36,9 @@ end
 # the party arrives in a cell that is not loaded, where Glenroy's escort never reports its end (run 5g: both stood
 # at G with 54 still set; 56 and 58 came the moment the player was moved there). Sent ahead to G, the party never
 # sets out from the unloaded cell behind (5i). So the player waits at F until the Emperor is at G, then joins him.
+# The wait also takes 56: at test pace the party can pass G between two looks and go on to I (60a, 19th: 68).
 case walk_marker_g
-until 3600 UrielSeptimRef.GetDistance CGMarkerGEmperor < 400
+until 3600 UrielSeptimRef.GetDistance CGMarkerGEmperor < 400 || GetStage Charactergen >= 56
 run
 player.moveto CGMarkerGEmperor
 until 900 GetStage Charactergen >= 56

@@ -46,6 +46,11 @@ void Stop(void* seq);
 // Whether `seq` is playing (any state but inactive).
 bool Active(void* seq);
 
+// Whether any of `manager`'s sequences is playing, as the engine's IsAnimPlaying script function (1.6.1170
+// 0x357b30) asks it, except that a clamped sequence whose time has reached its end key is done.
+// (docs/commentary/tes_runtime_anim.md#is-anim-playing)
+bool AnyPlaying(void* manager);
+
 // Restarts a `Stop`ped `seq` where it stopped, `paused` seconds later.
 void Resume(void* seq, float paused);
 

@@ -29,7 +29,7 @@ from script_convert.command_rows import (
     ACTOR_VALUE_READ_FUNCTIONS, Cmd, param_types
 )
 from script_convert.context_setup import add_topic_call
-from script_convert.symbols import scripted_uses_formlist
+from script_convert.symbols import RESTRAINED, SCRIPTED_USES, owned_formlist
 from script_convert.emit.commands import emit_row
 from script_convert.commands_falloutnv import FALLOUT_HANDLERS
 from script_convert.message_menus import PAGE_OPTIONS, parse_button_box, resolve_pipe_box
@@ -1314,7 +1314,7 @@ def activate(ctx, call) -> str:
         activator = ctx._get_action_ref_param()
     target = f'{ref}.' if ref else ''
     if run_flag == '1' and ref and parts:
-        return f'TES4Polyfill.ActivateScripted({ref}, {activator}, {scripted_uses_formlist(ctx)})'
+        return f'TES4Polyfill.ActivateScripted({ref}, {activator}, {owned_formlist(ctx, SCRIPTED_USES)})'
     if run_flag == '1':
         return f'{target}Activate({activator})'
     return f'{target}Activate({activator}, true)'
@@ -1378,7 +1378,9 @@ def move_to(ctx, call) -> str:
     readily as actors (SEHaskillSummonMarker is a STAT the summon spell
     relocates), so the SUBJECT must not be promoted to Actor: an `Actor
     Property` the VM refuses to bind on a STAT left the marker None and it
-    never moved.
+    never moved. A non-player subject goes through the polyfill, which holds a
+    restrained actor again after the move.
+    See: docs/commentary/script_convert.md#setrestrained-is-restrained
     """
     parts = ctx.arg_srcs()
     target = call.arg(0, 'None') if parts else 'None'
@@ -1393,9 +1395,11 @@ def move_to(ctx, call) -> str:
     if parts and parts[0].strip().isidentifier() and target == parts[0].strip():
         ctx.sc.property_refs.setdefault(parts[0].strip(), 'ObjectReference')
     ref = ctx._resolve_objref_ref(call.ref, call.extends)
-    offsets = ', '.join(p.strip() for p in parts[1:4])
-    return f'{ref}.MoveTo({target}, {offsets})' if offsets \
-        else f'{ref}.MoveTo({target})'
+    offsets = [p.strip() for p in parts[1:4]]
+    if ref != 'Game.GetPlayer()':
+        offsets += ['0'] * (3 - len(offsets))
+        return f'TES4Polyfill.MoveTo({ref}, {target}, {", ".join(offsets)}, {owned_formlist(ctx, RESTRAINED)})'
+    return f'{ref}.MoveTo({target}, {", ".join(offsets)})' if offsets else f'{ref}.MoveTo({target})'
 
 
 @command('placeatme')

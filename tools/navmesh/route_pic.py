@@ -115,7 +115,7 @@ def draw_cell(args, cv, box, grid, name, band, step):
     sub_cv = Canvas(sub, cv.scale)
     draw_layers(sub_cv, walk, band, step)
     _s, esm, rec = shipped_target(args.plugin, name, None)
-    draw_mesh(sub_cv, walk, band, navm_arrays(esm, rec).values())
+    draw_mesh(sub_cv, walk, band, navm_arrays(esm, rec).values(), nearest=True)
     cv.img.paste(sub_cv.img, tuple(int(v) for v in cv.px(sub[0], sub[3])))
     sx, sy = cv.px(sub[0], sub[1])
     cv.draw.rectangle([sx, sy - 22, sx + 1, sy], outline=(120, 200, 255))

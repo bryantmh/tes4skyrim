@@ -1025,6 +1025,17 @@ Bool Function HasVampireFed() Global
   Return vs.VampireStatus == 1
 EndFunction
 
+; TES4 EssentialDeathReload: the message, then the game ends as at the player's own death
+; (Skyrim reloads the last save). The wait lets the box be read first: it runs on once menus close.
+Function EssentialDeathReload(String asMessage) Global
+  If Game.GetPlayer().IsDead()
+    Return
+  EndIf
+  Debug.MessageBox(asMessage)
+  Utility.Wait(0.1)
+  Game.GetPlayer().Kill()
+EndFunction
+
 ; TES4 IsGuard: Skyrim guards are all members of GuardDialogueFaction
 ; (Skyrim.esm 0x0002BE3B).
 Bool Function IsGuard(Actor akActor) Global
@@ -1036,6 +1047,55 @@ Bool Function IsGuard(Actor akActor) Global
     Return False
   EndIf
   Return akActor.IsInFaction(guardFaction)
+EndFunction
+
+; TES4 SetRestrained: the actor stays put but still thinks and talks -- Skyrim's
+; SetRestrained.  SetDontMove (what older builds wrote) only stops it being
+; pushed: MQ09's first ghost walked off to the Shrine while "restrained" (run
+; 60a).  A release also clears SetDontMove, so a save from an older build lets
+; its actor go, and re-picks its package: one picked while it was restrained
+; does not change (MQ09's ghost kept ToShrine, run 60a).  akRestrained (None on an old save) lists the restrained actors
+; for MoveTo below.  See docs/commentary/script_convert.md#setrestrained-is-restrained
+Function SetRestrained(Actor akActor, Bool abRestrained, FormList akRestrained) Global
+  If akActor == None
+    Return
+  EndIf
+  akActor.SetRestrained(abRestrained)
+  If !abRestrained
+    akActor.SetDontMove(False)
+    akActor.EvaluatePackage()
+  EndIf
+  If akRestrained && abRestrained
+    akRestrained.AddForm(akActor)
+  ElseIf akRestrained
+    akRestrained.RemoveAddedForm(akActor)
+  EndIf
+EndFunction
+
+; TES4 `setrestrained 0` then `addscriptpackage P` on one actor ran in one frame,
+; so the freed actor's first package was P.  Its AI is held off while both
+; change: armed while restrained, P ended at once and disarmed itself; freed
+; first, it walked off on its list package (MQ09's first ghost, run 60a).
+; See docs/commentary/script_convert.md#setrestrained-is-restrained
+Function ReleaseIntoPackage(Actor akActor, Package akPackage, FormList akPackages, FormList akArmed, FormList akRestrained) Global
+  If akActor == None
+    Return
+  EndIf
+  akActor.EnableAI(False)
+  AddScriptPackage(akActor, akPackage, akPackages, akArmed)
+  SetRestrained(akActor, False, akRestrained)
+  akActor.EnableAI(True)
+  akActor.EvaluatePackage()
+EndFunction
+
+; TES4 MoveTo: a restrained actor stays restrained.  Skyrim's MoveTo drops the
+; restraint of an actor whose package is moving it (MQ09's ghosts, run 60a), so
+; a listed actor is restrained again.  See docs/commentary/script_convert.md#setrestrained-is-restrained
+Function MoveTo(ObjectReference akRef, ObjectReference akTarget, Float afX, Float afY, Float afZ, FormList akRestrained) Global
+  akRef.MoveTo(akTarget, afX, afY, afZ)
+  If akRestrained && akRestrained.HasForm(akRef)
+    (akRef as Actor).SetRestrained(True)
+  EndIf
 EndFunction
 
 ; TES4 SetActorRefraction: no refraction control in Papyrus; a translucent

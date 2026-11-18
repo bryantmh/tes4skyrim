@@ -764,7 +764,8 @@ void KillIfDrained(void* ref, void* name) {
 // thread. The kills come after the walk, since a death changes the process
 // lists being walked. An actor whose script is staged but not yet bound has not
 // run its first frame, which may disable it (a TES3 script runs before the AI).
-// `ally` (a runtime FormID, 0 for none) is an actor the player fights beside: its attackers die too.
+// `ally` (a runtime FormID, 0 for none) is an actor the player fights beside: its attackers die too, and so does
+// the one it is attacking (a fight the ally starts closes the player's conversation with it as surely: 60a).
 void KillAttackersOf(std::uint32_t ally) {
     void* player = PlayerRef();
     if (!player || !g_kill) return;
@@ -776,9 +777,9 @@ void KillAttackersOf(std::uint32_t ally) {
         if (InstanceByLocal(id) && !InstanceForRef(id)) return;
         void* target = IsDead(actor) ? nullptr : CombatTargetOf(actor);
         if (!target) return;
-        if ((ally && FormIdOf(target) == ally) || std::find(party.begin(), party.end(), target) != party.end()) {
-            attackers.push_back(actor);
-        }
+        const bool party_target = std::find(party.begin(), party.end(), target) != party.end();
+        if ((ally && FormIdOf(target) == ally) || party_target) attackers.push_back(actor);
+        if (ally && id == ally && !party_target && !IsDead(target)) attackers.push_back(target);
     });
     for (void* actor : attackers) {
         Log("test: the player kills %08X, which attacked the player, a follower or an ally", FormIdOf(actor));

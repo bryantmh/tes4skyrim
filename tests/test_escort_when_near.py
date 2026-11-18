@@ -37,19 +37,18 @@ def _escort_rec():
 
 def test_root_is_stacked_escort_gated_on_distance_then_wait():
     """Escort gated on GetWithinDistance(input 11, input 15), then an open-ended Wait."""
-    subs = _subs(ewn.escort_root_record(0x01000800, 0x01000801))
+    subs = _subs(ewn.escort_root_record(0x01000800))
     names = [p.rstrip(b'\0') for s, p in subs if s == b'PNAM' and len(p) != 4]
     assert names == [b'Escort', b'Wait']
-    gate, hold = [struct.unpack_from('<B3xfHHII', p) for s, p in subs if s == b'CTDA']
-    assert (gate[0], gate[2], gate[4], gate[5]) == (0x08, 0x027F, 11, 15)
-    assert (hold[1], hold[2], hold[4]) == (0.0, 71, 0x01000801)
+    gates = [struct.unpack_from('<B3xfHHII', p) for s, p in subs if s == b'CTDA']
+    assert [(g[0], g[2], g[4], g[5]) for g in gates] == [(0x08, 0x027F, 11, 15)]
     fnams = [struct.unpack('<I', p)[0] for s, p in subs if s == b'FNAM']
     assert fnams == [1, 0]
 
 
 def test_root_declares_the_instance_inputs():
     """The root declares 12 inputs, version 8, and XNAM 22."""
-    subs = _subs(ewn.escort_root_record(0x01000800, 0x01000801))
+    subs = _subs(ewn.escort_root_record(0x01000800))
     pkcu = next(p for s, p in subs if s == b'PKCU')
     assert struct.unpack('<III', pkcu) == (12, 0, 8)
     assert next(p for s, p in subs if s == b'XNAM') == bytes([22])
@@ -62,21 +61,6 @@ def test_escort_points_at_the_installed_root():
         pkcu = next(p for s, p in _subs(convert_PACK(_escort_rec(), PackContext()))
                     if s == b'PKCU')
         assert struct.unpack('<III', pkcu)[:2] == (12, 0x01000800)
-    finally:
-        ewn.set_escort_template_fid(0)
-
-
-def test_a_player_escort_is_listed_for_the_runtime_restart(monkeypatch):
-    """A converted escort of the player gets an `escortplayer` row, beside the hold faction's; an NPC's does not."""
-    from tes5_import.actors import attribute_tables
-    from tes5_import.base import owned_records
-    monkeypatch.setitem(owned_records.WELL_KNOWN_PROPERTIES, ewn.ESCORT_HOLD_EDID, 0x00000801)
-    ewn.set_escort_template_fid(0x01000800)
-    try:
-        convert_PACK(_escort_rec(), PackContext())
-        convert_PACK(dict(_escort_rec(), FormID='00000E9E', **{'PTDT.Target': '00001234'}), PackContext())
-        rows = [r for r in attribute_tables.global_lines('Oblivion.esm', []) if r.startswith('escort')]
-        assert rows == ['escortplayer=Oblivion.esm|00000E9D', 'escorthold=Oblivion.esm|00000801']
     finally:
         ewn.set_escort_template_fid(0)
 

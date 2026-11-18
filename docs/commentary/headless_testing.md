@@ -455,6 +455,16 @@ a speaker (+0x68). A scene spoken at the player without a menu holds one until
 its last line, and the engine opens no new conversation until then. Run 48a's
 talk with Martin opened nothing during Savlian's chapel speech.
 
+<a id="talk-waits-for-a-seat"></a>It also waits while the actor is sitting down
+or getting up. TESNPC::Activate (1.6.1170 0x3b9846) treats a player's
+activation as handled and does nothing while the actor's sit state is anything
+but standing (0), sitting (3) or sleeping (7). The sit state is bits 14..17 of
+the u32 at actor +0xC8, measured equal to GetSitting. A player clicks again; the
+runner's single click was lost. At test pace a sandboxing NPC changes seats
+every few seconds. In run 57f Martin at the Kvatch refugee camp opened nothing,
+and a scratch case of 12 talks failed at the second or third talk (twice). With
+the wait, 12 of 12 opened.
+
 Every movie call the runner makes (`ask`, `choose`, `bye`, `button`, `pick`) runs
 at UI time
 ([morrowind_runtime.md](morrowind_runtime.md#movies-are-touched-at-ui-time)).
@@ -468,7 +478,14 @@ the bridge the harness already holds, before the runner goes on or the game
 stops: open menus, the player's position and combat state, every script
 variable (`sqv`) and the stage of each quest the case's expectations read, and
 position / distance / combat / AI procedure of each reference the case names
-or that spoke in it. The lines print under the `FAIL` and go to
+or that spoke in it, plus the package the engine actually RUNS for it
+(`RunningPackage=<FormID> type <n>`: AddrLib 39155 on the actor's process at
++0xF8; TESPackage +0x24 is the procedure type, SKSE's order, Spectator = 24).
+`GetIsCurrentPackage` reads the package's own slot and missed the case that
+needed this: an unloaded Countess and Martin frozen under an engine-made
+(`FF`) package of type 32 while their real one still read current (run 60a);
+a runtime-made package also shows the first 16 bytes of its target (+0x38).
+The lines print under the `FAIL` and go to
 `_profile/fail_<case>.txt`, with a screenshot beside it
 (`fail_<case>.png`). An intermittent failure is therefore captured on its
 first occurrence; no `--keep` rerun is needed to see the state. The harness
@@ -509,6 +526,26 @@ stage / speaker conditions and the choices it offers. `--skeleton` adds a
 draft `case` per stage. What a case still needs from its author is what the
 player does between stages (where they stand, whom they fight), which the
 export cannot say.
+
+### <a id="god-mode-after-a-load"></a>God mode after a checkpoint load
+
+**Code:** `tools/live/test_instance.py` (`enter_game`, `god_mode_on`, `LOADING_MENU`).
+
+`--fast` turns god mode on with the console's `tgm`, which TOGGLES. Two replays from checkpoints (run 59: Menien,
+Mankar) ran without it: the player took damage in the load gap (Skyrim's "Health Low" help popup) and was later
+killed by a Paradise daedra, and Skyrim's own death reload stopped on the "Creations are loaded" prompt. The load
+wait looked for the loading screen by its menu name, "Loading Menu", but `open_menus` reports RTTI class names
+(`LoadingMenu`), so the wait for it to close passed at once and `tgm` went out while the save was still loading.
+Now every load waits on the class name, and `god_mode_on` reads tgm's answer ("God Mode enabled." / "God Mode
+disabled.") and sends it again when it turned god mode off. That was not enough on its own: a later Menien replay
+printed "God Mode enabled." and the Sigil Keeper still killed the player, because without the "Creations" prompt the
+wait for the loading screen to CLOSE ran before it had even OPENED, and the save then loaded over god mode. Every
+load now waits for the loading screen to appear, then to close, before `tgm`. That reading was WRONG too, measured
+on the kept game: a checkpoint load takes under a second, and god mode SURVIVES a load (after a death reload the
+first `tgm` answered "disabled"). The real gap: the save drops the player into a fight (Menien's tower: the Sigil
+Keeper's first hit 3 s after the load) while the harness was still in its menu waits (up to ~10 s, over a game
+minute at test pace) before `tgm`. So `god_mode_on` now runs BEFORE the `load` as well, and once more after it
+(either answer leaves it on). Note: a console `DamageAV` lowers health even in god mode; combat damage does not.
 
 ## Known limits
 

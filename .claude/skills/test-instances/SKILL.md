@@ -81,7 +81,7 @@ python -m tools.live.repeat_case --cases <folder> --case <case> --times 3 --inst
   act, never keep waiting. (A Hlaalu run sat idle 25 min on a failed case
   because none was set.) The same goes for any long background job.
   Watch: `Monitor` on `python tools/validate/safe_run.py python
-  temp/full_run_2026_10_31/watch_lane.py <run .out> <instance> 180` -- it prints
+  tools/live/watch_lane.py <run .out> <instance> 180` -- it prints
   each case result, `STALLED` after 180 s with no result (a busy log counts), and
   exits on the run's totals. Monitor timeout = 2x the expected run time.
 - Keep the next 2-3 quests' cases drafted, so a pass runs straight on.

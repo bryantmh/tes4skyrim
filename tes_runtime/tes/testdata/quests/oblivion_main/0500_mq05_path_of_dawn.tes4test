@@ -41,6 +41,7 @@ end
 
 # Baurus walks out to the cellar; Astav Wirich gets up and follows him (30, MQ05AstavWirichScript) and attacks
 # (31). The player follows and fights beside Baurus (`defend BaurusRef`); Astav's death sets 32.
+# This boundary saves while Baurus walks to the cellar door, as a player's save can: keep it (run 58a).
 case mq05_astav
 defend BaurusRef
 until 3600 GetStage MQ05 >= 30
@@ -186,6 +187,9 @@ run
 player.moveto 0006AE80
 wait 60
 until 3600 GetStage MQ05 >= 76
+# The lower hall's creatures attack as the party arrives (60a, 16:38:17: four killed by `defend` while the
+# talk opened, which closed it); a player deals with them first.
+wait 90
 approach BaurusRef
 talk BaurusRef
 ask "Alright. I'll cover you."

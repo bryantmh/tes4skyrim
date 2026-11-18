@@ -214,6 +214,7 @@ def _build(job, base_model_by_fid, door_fids, cache_opens, graph, door_spots=Non
         obstacles=job.get('obstacles'),
         graph=graph,
         door_spots=door_spots,
+        door_landings=job.get('door_landings'),
         seeded=bool(job.get('seeds')),
         edge_seeds=job.get('edge_seeds'),
         pins=pins,

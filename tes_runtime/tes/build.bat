@@ -20,8 +20,8 @@ del /q obj\*.obj 2>nul
 echo [build] compiling TESRuntime...
 cl /nologo /c /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG /I..\common ^
    plugin.cpp crime.cpp journal_objectives.cpp journal_log.cpp ^
-   crafting.cpp alchemy.cpp alchemy_hooks.cpp spin.cpp test_game.cpp ^
-   ..\common\addresses.cpp ..\common\engine.cpp ..\common\glide.cpp ^
+   crafting.cpp alchemy.cpp alchemy_hooks.cpp spin.cpp test_game.cpp anim_playing.cpp ^
+   ..\common\addresses.cpp ..\common\engine.cpp ..\common\glide.cpp ..\common\gamebryo_sequence.cpp ^
    ..\common\test_runner.cpp ^
    ..\common\hook.cpp ..\common\main_tick.cpp ^
    ..\common\json.cpp ..\common\log.cpp ..\common\paths.cpp ^

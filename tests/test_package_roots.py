@@ -58,7 +58,7 @@ def test_the_ambush_root_measures_from_its_place():
 
 
 @pytest.mark.parametrize('record', [
-    sit_at_root_record(0x01000ABC), escort_root_record(0x01000ABD, 0x01000ABE), ambush_root_record(0x01000ABF),
+    sit_at_root_record(0x01000ABC), escort_root_record(0x01000ABD), ambush_root_record(0x01000ABF),
 ], ids=['sit', 'escort', 'ambush'])
 def test_a_reference_condition_reads_a_single_ref_input(record):
     """A TargetSelector there faulted the engine on load (SkyrimSE+0x4a0a5f)."""

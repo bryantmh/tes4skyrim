@@ -441,6 +441,12 @@ class TestFunctionConversion:
         assert 'Debug.MessageBox' in result
         assert 'Hello World' in result
 
+    def test_essential_death_reload_ends_the_game_with_its_message(self, converter):
+        """Jauffre's / Martin's OnDeath game over is a real call, not a dropped comment."""
+        msg = '"You have failed. Jauffre has been slain. All hope is now lost."'
+        result = emit_function(converter, None, 'EssentialDeathReload', msg, 'Actor')
+        assert result.strip() == f'TES4Polyfill.EssentialDeathReload({msg})'
+
     def test_getpos_x(self, converter):
         result = emit_function(converter, 'myRef', 'GetPos', 'X', 'ObjectReference')
         assert 'GetPositionX' in result
@@ -2127,14 +2133,14 @@ class TestHasMagicEffect:
 class TestAnimAndPackage:
     def test_isanimplaying_bare(self, converter):
         result = conv_line(converter, 'if isAnimPlaying == 0', 'ObjectReference')
-        assert 'GetAnimationVariableBool("bAnimPlaying")' in result
+        assert 'GetAnimationVariableBool("TES4IsAnimPlaying")' in result
         assert ';TODO' not in result
 
     def test_isanimplaying_on_ref(self, converter):
         converter._property_refs['DoorRef'] = 'ObjectReference'
         result = conv_line(converter, 'if DoorRef.IsAnimPlaying == 0',
                                          'ObjectReference')
-        assert 'DoorRef.GetAnimationVariableBool("bAnimPlaying")' in result
+        assert 'DoorRef.GetAnimationVariableBool("TES4IsAnimPlaying")' in result
 
     def test_getiscurrentpackage(self, xref_magic):
         conv = ScriptConverter(xref_magic)
@@ -2326,7 +2332,7 @@ class TestUdfCallingReference:
         source = 'scn F\nref t\nbegin Function {t}\n MoveTo t\nend\n'
         out = converter.convert_standalone('F', source, 'Quest', 'F')
         assert 'Function TES4Call(ObjectReference akCallingRef, ' in out
-        assert 'akCallingRef.MoveTo(' in out
+        assert 'TES4Polyfill.MoveTo(akCallingRef, ' in out
 
     def test_call_passes_the_receiver(self, converter):
         """An explicit receiver is passed first; a quest script passes None."""
@@ -4628,7 +4634,16 @@ class TestMoveToBindsItsDestination:
         """Oblivion writes the offsets space-separated; comma-splitting glued
         them onto the target name and the call did not parse."""
         out = conv_line(converter, 'ref.MoveTo SomeMarker 0 100 0', 'Quest')
-        assert out == 'ref.MoveTo(SomeMarker, 0, 100, 0)'
+        assert out == 'TES4Polyfill.MoveTo(ref, SomeMarker, 0, 100, 0, TES4Restrained)'
+
+    def test_an_npc_move_keeps_its_restraint(self, converter):
+        """A non-player MoveTo goes through the polyfill with the restrained list, which
+        SetRestrained fills, so a restrained actor is held again after the move."""
+        moved = conv_line(converter, 'ghostRef.MoveTo SomeMarker', 'Quest')
+        held = conv_line(converter, 'ghostRef.SetRestrained 1', 'Quest')
+        assert moved == 'TES4Polyfill.MoveTo(ghostRef, SomeMarker, 0, 0, 0, TES4Restrained)'
+        assert held == 'TES4Polyfill.SetRestrained(ghostRef, true, TES4Restrained)'
+        assert converter.get_property_refs()['TES4Restrained'] == 'FormList'
 
     def test_player_target_is_not_a_property(self, converter):
         """`player` is a converter keyword, never a bound property."""
@@ -5150,6 +5165,19 @@ class TestInfoFragmentSkipping:
         assert not stats['errors'], stats['errors']
         return (tmp_path / f"TES4_TIF__{rec['FormID']}.psc").exists()
 
+    def test_reoffered_say_once_line_runs_its_result_only_the_first_time(self, tmp_path):
+        """A say-once greeting re-offered after an early exit must not give its item a second time."""
+        own = 'TES4SaidOnce_03C93C'
+        rec = {'FormID': '0003C93C', 'ParentDIAL': '000000AA',
+               'ResultScript': 'player.additem MQ15Key 1'}
+        assert self._emit(tmp_path, rec, info_reveals={0x03C93C: [own]})
+        psc = (tmp_path / 'TES4_TIF__0003C93C.psc').read_text()
+        assert f'TES4_firstSay = {own}.GetValue() == 0' in psc
+        first = psc.index(f'TES4_firstSay = {own}.GetValue() == 0')
+        assert first < psc.index(f'{own}.SetValue(1)')
+        gate = psc.index('If TES4_firstSay')
+        assert gate < psc.index('AddItem') < psc.index('TES4Polyfill.LineEnded')
+
     def test_plain_player_line_gets_no_fragment(self, tmp_path):
         """A menu line with no result script needs no fragment: the player
         picked it, so no SayLine is waiting on Begin/End timing."""
@@ -5246,7 +5274,7 @@ class TestObjectReferenceMethodsDoNotPromoteToActor:
     def test_moveto_does_not_promote_subject(self, converter):
         result = conv_line(converter,
             'SEHaskillSummonMarker.MoveTo SEHaskillSummonReturnMarker', 'Quest')
-        assert 'SEHaskillSummonMarker.MoveTo(' in result
+        assert 'TES4Polyfill.MoveTo(SEHaskillSummonMarker,' in result
         assert converter._property_refs.get('SEHaskillSummonMarker') != 'Actor'
 
     def test_actor_only_call_still_promotes(self, converter):
@@ -5377,6 +5405,23 @@ class TestQuestStartDoesNotClobberSeededWrites:
         assert split_choice_writes(read, tested) == ([], read)
         returned = ['  Return', step]
         assert split_choice_writes(returned, tested) == ([], returned)
+
+    def test_a_stage_set_its_choice_tests_moves_to_begin(self):
+        """Burd (MQ10): the greeting sets stage 30 and its choice "Let's go." needs GetStage MQ10 == 30.
+
+        See: docs/commentary/script_convert.md#choice-gate-writes-run-at-begin
+        """
+        from script_convert.conversation_sequence import choice_tested_vars, split_choice_writes
+        raw = struct.pack('<BxxxfHxxII', 0, 30.0, 58, 0x1E72C, 0).hex()
+        infos = [{'FormID': '00026EE9', 'ParentDIAL': '000000C8', 'Choice[0]': '0003A83F'},
+                 {'FormID': '0003A853', 'ParentDIAL': '0003A83F', 'Condition[0].Raw': raw}]
+        tested = choice_tested_vars(infos, {}, {0x1E72C: 'MQ10'})[0x26EE9]
+        assert tested == {'stage:mq10'}
+        stage = '  TES4_MQ10Script.TES4SetStage(MQ10 as TES4_MQ10Script, 30)'
+        assert split_choice_writes([stage], tested) == ([stage], [])
+        assert split_choice_writes(['  Foo()', stage], tested) == ([], ['  Foo()', stage])
+        other = '  TES4_MQ11Script.TES4SetStage(MQ11 as TES4_MQ11Script, 30)'
+        assert split_choice_writes([other], tested) == ([], [other])
 
     def test_object_script_has_no_restart(self, converter):
         """Only a quest script is restarted, so only it carries TES4Start."""

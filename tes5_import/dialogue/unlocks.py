@@ -381,42 +381,62 @@ def said_once_global(fid24: int) -> str:
     return f'{SAID_ONCE_PREFIX}{fid24:06X}'
 
 
-def _answer_topics(rec: dict, infos_by_topic: dict, dial_by_fid24: dict,
-                   should_skip_dial, classify_topic) -> set:
-    """The choice topics of a SAY-ONCE INFO that answer it: spoken, kept, not barks."""
-    if not int(rec.get('DATA.Flags') or 0) & 0x04:
-        return set()
+def _kept_choices(rec: dict, infos_by_topic: dict, dial_by_fid24: dict,
+                  should_skip_dial, classify_topic) -> set:
+    """The choice topics an INFO offers that are spoken, kept and not barks."""
     return {t for t in _info_choices(rec)
             if infos_by_topic.get(t) and dial_by_fid24.get(t) is not None
             and not should_skip_dial(dial_by_fid24[t])
             and not _is_bark_topic(dial_by_fid24[t], classify_topic)}
 
 
+def _chain_ends(start: set, infos_by_topic: dict, rec_by_fid24: dict, offers) -> set:
+    """INFOs ending the choice chain below the topics `start`: no further choices, or a Goodbye line."""
+    ends, seen, todo = set(), set(), list(start)
+    while todo:
+        topic = todo.pop()
+        if topic in seen:
+            continue
+        seen.add(topic)
+        for fid24 in infos_by_topic[topic]:
+            rec = rec_by_fid24.get(fid24, {})
+            more = set() if int(rec.get('DATA.Flags') or 0) & 0x01 else offers(rec)
+            if more:
+                todo += more
+            else:
+                ends.add(fid24)
+    return ends
+
+
 def _said_once_reveals(infos: list, dial_by_fid24: dict, should_skip_dial,
                        classify_topic) -> dict:
     """{INFO fid24 -> said-once globals its Begin fragment writes}.
 
-    A say-once INFO with answer topics loses the engine's Say Once: its own
-    global goes 0 -> 1 when it begins, and every INFO of its answer topics
-    moves it 1 -> 2. Only 2 retires the line, so a conversation left before
-    an answer offers it again.
+    A say-once INFO with choices loses the engine's Say Once: its own global
+    goes 0 -> 1 when it begins, and a line ENDING its choice chain moves it
+    1 -> 2. Only 2 retires the line, so a conversation left anywhere in the
+    chain offers it again.
+    See: docs/commentary/tes5_import_dialogue.md#said-once-retires-at-the-chain-end
     """
-    infos_by_topic = defaultdict(list)
-    for rec in infos:
-        infos_by_topic[_low24(rec.get('ParentDIAL', ''))].append(
-            _low24(rec.get('FormID', '')))
-    out = defaultdict(set)
+    infos_by_topic, rec_by_fid24 = defaultdict(list), {}
     for rec in infos:
         fid24 = _low24(rec.get('FormID', ''))
-        topics = _answer_topics(rec, infos_by_topic, dial_by_fid24,
-                                should_skip_dial, classify_topic)
+        infos_by_topic[_low24(rec.get('ParentDIAL', ''))].append(fid24)
+        rec_by_fid24[fid24] = rec
+
+    def offers(rec):
+        """The kept choice topics of one INFO."""
+        return _kept_choices(rec, infos_by_topic, dial_by_fid24, should_skip_dial, classify_topic)
+
+    out = defaultdict(set)
+    for fid24, rec in rec_by_fid24.items():
+        topics = offers(rec) if int(rec.get('DATA.Flags') or 0) & 0x04 else set()
         if not fid24 or not topics:
             continue
         gname = said_once_global(fid24)
         out[fid24].add(gname)
-        for answer in (f for t in topics for f in infos_by_topic[t]):
-            if answer and answer != fid24:
-                out[answer].add(gname)
+        for end in _chain_ends(topics, infos_by_topic, rec_by_fid24, offers) - {fid24, 0}:
+            out[end].add(gname)
     return out
 
 

@@ -42,6 +42,12 @@ case ms48_gate_ilend
 defend IlendVoniusRef
 activate MS48KvatchGate
 wait 60
+# The gate daedra attack Ilend; a hit during his greeting closes it (60a 30th try), so they die first.
+run
+000927B3.kill
+000927B4.kill
+000C791A.kill
+wait 90
 approach IlendVoniusRef
 talk IlendVoniusRef
 ask "It's all right. What's going on?"
@@ -58,10 +64,10 @@ end
 # opens no menu and comes only once his cries for help have stopped (4l: 90 ticks after the activation), so the
 # case activates him and waits for the stage, not for a conversation.
 case ms48_menien
-approach MenienGoneldRef01
 run
 MS48DremoraSigilKeeperRef.kill
 wait 90
+approach MenienGoneldRef01
 activate MenienGoneldRef01
 until 900 GetStageDone MS48 30
 bye if open

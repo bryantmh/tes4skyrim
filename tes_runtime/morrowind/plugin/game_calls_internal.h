@@ -155,12 +155,6 @@ bool ActorInCombat(void* actor);
 void ForEachHighActor(const std::function<void(void*)>& fn);
 // `Actor.GetCombatTarget`, or null. game_calls_query.cpp.
 void* CombatTargetOf(void* actor);
-// The package `actor`'s AI process runs now, or null. game_calls_combat.cpp.
-void* RunningPackageOf(void* actor);
-// A converted escort of the player that stands still with the player beside it re-checks its
-// package, the one move that restarts it. Game thread. game_calls_escort.cpp.
-// See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-returns
-void RestartStalledEscorts();
 // TEMP (Vaerin hostility diag): the actor's crime faction and the player's crime gold there.
 std::string TempCrimeNote(void* actor);
 int TempRelationRank(void* actor, void* other);

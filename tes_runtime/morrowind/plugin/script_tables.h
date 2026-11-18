@@ -474,13 +474,6 @@ const std::vector<AttributeGlobal>& AttributeGlobals();
 // while Skyrim's dialogue menu is up, which its force-greet packages test.
 const std::vector<FormRef>& DialogueGateGlobals();
 
-// The same file's `escortplayer` rows: each plugin's converted packages that escort the player on
-// its TES4EscortWhenNear root.
-// See: docs/commentary/tes5_import_package.md#escort-restarts-when-the-target-returns
-const std::vector<FormRef>& PlayerEscortPackages();
-// `escorthold` rows: the faction whose members those escorts' Escort branch skips (one per plugin
-// that has player escorts; a dependent names its master's).
-const std::vector<FormRef>& EscortHoldFactions();
 
 // The hidden faction a TES4 actor's attribute (0..7) is its rank in --
 // `faction.<av>` rows of attributes_formid.txt -- or null.

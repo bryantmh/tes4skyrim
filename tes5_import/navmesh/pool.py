@@ -26,7 +26,7 @@ from contextlib import contextmanager, nullcontext
 from core.navmesh_options import CORRIDOR, navmesh_generator
 from core.worker_budget import worker_count
 from . import cache_audit as navm_verify, native_loader, worker as navm_worker
-from .door_reach import door_seeds, landings_by_cell
+from .door_reach import door_seeds, landing_of_door, landings_by_cell
 from .edge_links import exterior_views
 from .seeding import drop_unplayable, grow_into_empty, master_views, seeded_record
 from .spawn_nodes import ACTOR_SIGS, is_airborne, spawn_point
@@ -615,7 +615,8 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
 
     jobs = []
     blocks = _interior_blocks(cells)
-    landings = landings_by_cell(_merged(by_type, master_export, 'REFR'))
+    all_refrs = _merged(by_type, master_export, 'REFR')
+    landings = landings_by_cell(all_refrs)
     master_cells = {get_formid(c, 'FormID') for c in values_of(master_export, 'CELL')}
     for block in sorted(blocks):
         for sub in sorted(blocks[block]):
@@ -624,9 +625,21 @@ def gather_navm_jobs(by_type: dict, door_fids: set = None,
     if seedable is None:
         seedable = {}
     _gather_exteriors(jobs, by_type, cells, indexes, pers_doors, overhang, seedable, regrow)
-    _attach_landings(jobs + list(seedable.values()), landings,
+    every_job = jobs + list(seedable.values())
+    _attach_landings(every_job, landings,
                      {get_formid(c, 'FormID'): get_formid(c, 'ParentWRLD') for c in cells if get_formid(c, 'ParentWRLD')})
+    _attach_door_landings(every_job, landing_of_door(all_refrs))
     return jobs
+
+
+def _attach_door_landings(jobs, by_door) -> None:
+    """Give each job `door_landings`: {door ref: landing} for the teleport doors it places.
+    See: docs/commentary/tes5_import_navmesh.md#door-triangle-on-the-landing-side
+    """
+    for job in jobs:
+        refrs = list(job.get('refr_recs') or ()) + list(job.get('extra_door_refrs') or ())
+        own = (get_formid(r, 'FormID') for r in refrs if r.get('XTEL.Door'))
+        job['door_landings'] = {fid: by_door[fid] for fid in own if fid in by_door}
 
 
 def _attach_landings(jobs, landings, world_of) -> None:

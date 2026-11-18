@@ -44,7 +44,8 @@ end
 # The first undead Blade (MQ09GhostBladeSpawn1): its death hands MQ09Script the ghost MQ09GhostBladeEntry, which is
 # moved to the body and, 3 s later, greets the player ("At long last ... you have freed me.", INFO 00036647).
 # "Who are you?" and "What happened to you?" each add 1 to MQ09.ghostTalk; at 2 "Is the Underking still here?"
-# (INFO 00036667) sets 50. kill stands in for the fight.
+# (INFO 00036667) sets 50. kill stands in for the fight. The ghost comes to the player itself (MQ09Script gives it
+# MQ09GhostBladeToPlayer after 3 s), so the player waits for its greeting: walking up to it cut that walk short.
 case mq09_first_blade
 run
 player.moveto MQ09GhostBladeSpawn1
@@ -52,8 +53,7 @@ wait 120
 run
 MQ09GhostBladeSpawn1.kill
 until 600 MQ09.ghostCount == 1
-approach MQ09GhostBladeEntry
-talk MQ09GhostBladeEntry
+hear 1800 MQ09GhostBladeEntry you have freed me
 ask "Who are you?"
 ask "What happened to you?"
 until 300 MQ09.ghostTalk == 2

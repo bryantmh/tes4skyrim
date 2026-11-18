@@ -215,22 +215,43 @@ bool SomeoneSpeaking() {
     return manager && At<std::uint32_t>(manager, ids::kOffTopicSpeaker) != 0;
 }
 
+// Whether `actor` is sitting down, getting up or lying down: the engine swallows a player's activation then.
+std::uint32_t SitState(void* actor) {
+    return At<std::uint32_t>(actor, ids::kOffActorState1) >> ids::kSitStateShift & ids::kSitStateMask;
+}
+
+bool BetweenSeatAndFeet(void* actor) {
+    const std::uint32_t state = SitState(actor);
+    return state != 0 && state != 3 && state != 7;
+}
+
 int Approach(const std::string& id);
-bool InTalkReach(void* npc, void* player);
+bool CanTalkFrom(void* npc, void* player, const std::string& id);
+bool MoveLanding();
 
 // Activates `id` as the player does. Talking to an actor waits, as a player does, while someone is still speaking
 // to the player (run 48a: a talk at the camp opened nothing during Savlian's chapel speech). An actor that has
 // walked out of talking reach since `approach` (at test pace a wandering NPC crosses a room between two steps)
-// is walked up to again first: false until that move lands, as the runner retries. One in reach is not turned
+// is walked up to again first: false while it is out of reach, as the runner retries (a "walked off" answer posts
+// no move, and the next try makes a fresh one: Martin hopping seats at the camp, 60a). A move is let land first:
+// asked again the next tick, Approach took the unlanded front move for a missed one and put the player inside
+// the ghost of Rielus, where no click opens anything (60a, mq09_first_blade). One in reach is not turned
 // to: turning the player as the conversation opens closes it. The re-approach comes before the 3D test: an actor
-// that has gone through a door is unloaded, and the player must follow it (run 53a, Martin at Cloud Ruler).
+// that has gone through a door is unloaded, and the player must follow it (run 53a, Martin at Cloud Ruler). One
+// sitting down or getting up is waited for, as the engine ignores the click then (run 57f: Martin seat-hopping
+// at the camp).
 bool Activate(const std::string& id) {
     void* ref = RefNamed(id);
     void* player = Player();
     if (!ref || !player || !g_c.activate || !g_c.is3DLoaded) return false;
     const bool actor = At<std::uint8_t>(ref, kFormType) == kFormTypeActor;
     if (actor && SomeoneSpeaking()) return false;
-    if (actor && !InTalkReach(ref, player) && Approach(id) > 0) return false;
+    if (actor && MoveLanding()) return false;
+    if (actor && !CanTalkFrom(ref, player, id)) {
+        Approach(id);
+        return false;
+    }
+    if (actor && BetweenSeatAndFeet(ref)) return false;
     if (!g_c.is3DLoaded(g_api.vm, 0, ref)) return false;
     g_c.activate(g_api.vm, 0, ref, player, false);
     return true;
@@ -251,6 +272,11 @@ void PressButton(int button) {
 // a player clicks a notice's OK (Blade1Script's practice reward comes whenever the player has stood 60 s near
 // the practicing Blades). A box offering a choice is left for the case to answer.
 bool DismissNotice() {
+    if (MenuOpen(ids::kTutorialMenuName)) {
+        Log("test: Skyrim's help popup holds the game -- it is closed with Exit");
+        CloseMenuNamed(ids::kTutorialMenuName);
+        return true;
+    }
     const std::uint32_t queued = g_c.boxQueue ? At<std::uint32_t>(g_c.boxQueue, ids::kOffQueueCount) : 0;
     if (!queued || !MenuOpen(ids::kMessageBoxMenuName)) return false;
     char* box = At<char**>(g_c.boxQueue, 0)[queued - 1];
@@ -354,7 +380,8 @@ void FacePlayerTo(void* target) {
 // `approach`: puts the player in front of `id`, wherever it stands, unless
 // already within talking reach in the same cell -- as a player walks up to
 // whoever they talk to -- and has them look at it. 1 when a move was posted,
-// 0 when none is needed, -1 while `id` does not resolve.
+// 0 when none is needed, -1 while `id` does not resolve. A second move to the same
+// NPC goes onto it: its front spot can be outside its cage or over a drop (Menien, runs 59b, 59 replays).
 // Whether the player stands within talking reach of `npc` in the same place. Two exterior cells count as
 // one place: an NPC beside a cell border is never in the player's cell from 80 away, and the move repeated
 // forever.
@@ -367,34 +394,81 @@ bool InTalkReach(void* npc, void* player) {
     return (npcCell == playerCell || outdoors) && Apart(player, npc) <= kTalkReach;
 }
 
+// The NPC the last front move went to, and where it stood then: a second move to a standing NPC that stayed put
+// means the front spot does not hold the player (outside a cage, over a drop: Menien, 59b), so that move goes
+// onto the NPC. A walking NPC gets a front move again (Savlian leaving for the chapel, 60a). One that sat down or
+// changed seats since, while the player stands where it was, got its walk-up: the step ends there and `talk`'s
+// activation catches it up (Jauffre changing seats every second at test pace missed 10 moves, 60a).
+std::string g_frontTried;
+float g_frontAt[2] = {0.0f, 0.0f};
+constexpr float kStayedPut = 64.0f;
+// Closer than this the player stands inside the NPC (a case's moveto onto it) and no click opens a
+// conversation (60b: Jauffre 0.00 away, three clicks); the player steps out to the front spot, unless the
+// last move put it there on purpose (`g_onto`).
+constexpr float kInsideIt = 40.0f;
+std::string g_onto;
+
+// Whether the player can talk to `npc` (`id`) from where it stands: in reach and not inside it.
+bool CanTalkFrom(void* npc, void* player, const std::string& id) {
+    return InTalkReach(npc, player) && (Apart(player, npc) >= kInsideIt || g_onto == id);
+}
+
+// How far `npc`, last found at g_frontAt, has moved to `at`.
+float MovedSinceFront(const float at[2]) {
+    return std::hypot(at[0] - g_frontAt[0], at[1] - g_frontAt[1]);
+}
+
 int Approach(const std::string& id) {
     void* npc = RefNamed(id);
     void* player = Player();
     if (!npc || !player || !g_c.moveTo || !g_c.parentCell) return -1;
-    if (InTalkReach(npc, player)) {
+    if (CanTalkFrom(npc, player, id)) {
         FacePlayerTo(npc);
         return 0;
     }
+    const float at[2] = {RefPositionAxis(g_api.vm, npc, 0), RefPositionAxis(g_api.vm, npc, 1)};
+    const bool stayed = MovedSinceFront(at) < kStayedPut;
+    const bool seated = SitState(npc) != 0;
+    const float mine[2] = {RefPositionAxis(g_api.vm, player, 0), RefPositionAxis(g_api.vm, player, 1)};
+    if (g_frontTried == id && !stayed && seated &&
+        std::hypot(mine[0] - g_frontAt[0], mine[1] - g_frontAt[1]) <= kTalkReach) {
+        g_frontTried.clear();
+        Log("test: %s walked off from where the player came up to it", id.c_str());
+        return 0;
+    }
+    const bool onto = g_frontTried == id && !seated && stayed;
+    g_frontTried = onto ? std::string() : id;
+    g_onto = onto ? id : std::string();
+    g_frontAt[0] = at[0];
+    g_frontAt[1] = at[1];
     const float heading = RefAngleDegrees(npc, 2) / kDegreesPerRadian;
-    g_c.moveTo(g_api.vm, 0, player, npc, std::sin(heading) * kTalkStandOff, std::cos(heading) * kTalkStandOff,
-               0.0f, false);
+    const float standOff = onto ? 0.0f : kTalkStandOff;
+    g_c.moveTo(g_api.vm, 0, player, npc, std::sin(heading) * standOff, std::cos(heading) * standOff, 0.0f, false);
     g_moveLanding = kMoveLandTicks;
     Log("test: the player walks up to %s", id.c_str());
     return 1;
 }
 
-// Whether the player's last `approach` move may still be landing.
-bool MoveLanding() { return g_moveLanding > 0 && g_moveLanding-- > 0; }
+// Whether the player's last `approach` move may still be landing: a move into another worldspace lands only once
+// its loading screen is gone, and the landing ticks count from then (run 58f: 10 moves posted during one load).
+bool MoveLanding() {
+    if (g_moveLanding > 0 && MenuOpen(ids::kLoadingMenuName)) return true;
+    return g_moveLanding > 0 && g_moveLanding-- > 0;
+}
 
 void SetPlayerDriven(bool on) {
     if (g_c.aiDriven) g_c.aiDriven(g_api.vm, 0, nullptr, on);
 }
 
-// `where` is a reference's runtime FormID in hex, or `x y z` in the player's cell.
+// `where` is a reference's runtime FormID in hex, or `x y z` in the player's cell. A reference already within
+// arrival distance is reached without driving the player: a force-greet that comes due while the player is
+// AI-driven is dropped for good (the Emperor's amulet greeting, 60a replays: walk from 72 away).
 void WalkTo(const std::string& where) {
     g_walk = Walk{};
     g_walk.toPoint = sscanf_s(where.c_str(), "%f %f %f", &g_walk.x, &g_walk.y, &g_walk.z) == 3;
     g_walk.target = g_walk.toPoint ? nullptr : RefNamed(where);
+    void* player = Player();
+    if (g_walk.target && player && Apart(player, g_walk.target) <= kArrivedDistance) return;
     g_walk.settleTicks = kWalkSettleTicks;
     if (g_c.thirdPerson) g_c.thirdPerson(g_api.vm, 0, nullptr);
     SetPlayerDriven(true);
@@ -569,6 +643,7 @@ void InstallTestRunner() {
     game.placeHere = PlaceHere;
     game.talkingWith = TalkingWith;
     game.dismissNotice = DismissNotice;
+    game.talkClicks = 2;
     game.fillTrail = true;
     // A converted escort that has stopped walks on only with the player inside about 85 (measured); the
     // runner rests the player up to one trail step (40) short of its spot, so the spot is the NPC's own.

@@ -4,9 +4,11 @@ See: docs/commentary/headless_testing.md#failure-snapshot
 """
 import os
 import re
+import struct
 
 from tools.live import tes4_cases
 from tools.live.game_bridge import BridgeError
+from tools.live.graph_vars import LOOKUP_BY_ID
 
 #: `GetStage Q` / `GetStageDone Q n` in an expectation: the quest it reads.
 STAGE_READ = re.compile(r'\bGetStage(?:Done)?\s+([A-Za-z_]\w*)')
@@ -23,6 +25,8 @@ ACTOR_READS = ('GetPos x', 'GetPos y', 'GetPos z', 'GetDistance player', 'IsInCo
                'GetDisabled', 'IsWeaponOut', 'GetCombatState')
 PLAYER_READS = ('player.GetPos x', 'player.GetPos y', 'player.GetPos z', 'player.IsInCombat')
 VALUE = re.compile(r'>>\s*(.+)$')
+#: 1.6.1170: Actor +0xF8 = its AI process; AddrLib 39155(process) = the package it runs; TESPackage +0x24 = type.
+OFF_PROCESS, RUNNING_PACKAGE, OFF_PACKAGE_TYPE, OFF_PACKAGE_TARGET = 0xF8, 39155, 0x24, 0x38
 
 
 def named(line: dict) -> tuple:
@@ -58,7 +62,34 @@ def read_ref(bridge, ref: str, names) -> str:
             values.append('%s=%s' % (command.replace('Get', '').replace(' ', ''), short(output)))
     except BridgeError as error:
         values.append('unreadable (%s)' % error)
-    return '%s: %s' % (ref, ' '.join(values))
+    return '%s: %s %s' % (ref, ' '.join(values), running_package(bridge, ref, names))
+
+
+def _u64(bridge, address: int) -> int:
+    """The 8 bytes at a live address, as a number."""
+    return struct.unpack('<Q', bytes.fromhex(bridge.readmem(address=address, length=8)['hex']))[0]
+
+
+def running_package(bridge, ref: str, names) -> str:
+    """`RunningPackage=<FormID> type <n>` the engine runs for `ref`; a runtime-made one adds its target's bytes.
+
+    See: docs/commentary/headless_testing.md#failure-snapshot
+    """
+    try:
+        runtime = int(ref, 16) if tes4_cases.HEX_ID.match(ref) else names.runtime(ref)
+        actor = int(bridge.call(id=LOOKUP_BY_ID, args_=[runtime])['result'])
+        package = int(bridge.call(id=RUNNING_PACKAGE, args_=[_u64(bridge, actor + OFF_PROCESS)])['result'])
+        if package < 0x10000:
+            return 'RunningPackage=none'
+        head = bytes.fromhex(bridge.readmem(address=package + 0x14, length=OFF_PACKAGE_TYPE - 0x13)['hex'])
+        form_id, kind = struct.unpack('<I', head[:4])[0], head[-1]
+        text = 'RunningPackage=%08X type %d' % (form_id, kind)
+        target = _u64(bridge, package + OFF_PACKAGE_TARGET) if form_id >> 24 == 0xFF else 0
+        if target:
+            text += ' target %s' % bridge.readmem(address=target, length=0x10)['hex']
+        return text
+    except (BridgeError, KeyError, ValueError) as error:
+        return 'RunningPackage=unreadable (%s)' % error
 
 
 def snapshot(bridge, line: dict, names, menus, out_dir: str) -> list:

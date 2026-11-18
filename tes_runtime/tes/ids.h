@@ -28,6 +28,10 @@ constexpr std::uint64_t kRefGetWorldSpace = 56636;
 constexpr std::uint64_t kRefIsDisabled = 56639;
 constexpr std::uint64_t kCellIsInterior = 56056;
 
+// TESObjectREFR's IAnimationGraphManagerHolder vtable (1.6.1170 0x17ae6c8, the fourth of the class's four);
+// slot 18 is GetGraphVariableBool (0x54c620). (anim_playing.cpp)
+constexpr std::uint64_t kRefGraphHolderVtable = 190265;
+
 // TESFaction crime data: TESObjectREFR* jail marker, follower wait marker,
 // stolen-goods container and player-inventory container. TESFaction::Load
 // (0x3ac9c0) stores the JAIL/WAIT/STOL/PLCN FormIDs there and InitItem
@@ -321,6 +325,13 @@ constexpr std::uint32_t kHandleIndexMask = 0xfffff;
 constexpr std::size_t kOffRefHandleCount = 0x28;
 constexpr int kHandleIndexShift = 11;
 
+// An actor's sit/sleep state: bits 14..17 of its u32 at +0xC8 (measured live, equal to GetSitting). TESNPC::Activate
+// (1.6.1170 0x3b9846) swallows a player's activation while it is anything but 0 (standing), 3 (sitting) or
+// 7 (sleeping): an NPC sitting down or getting up ignores the click.
+constexpr std::size_t kOffActorState1 = 0xc8;
+constexpr int kSitStateShift = 14;
+constexpr std::uint32_t kSitStateMask = 0xf;
+
 // The Dialogue Menu's movie callbacks, registered beside 'TopicClicked' and
 // 'CloseMenu' (0x914690): TopicClicked (0x914880) takes one number, the
 // clicked index, and selects it; CloseMenu (0x914980) is the player leaving.
@@ -348,6 +359,8 @@ constexpr std::uint32_t kGfxNumber = 3;
 
 constexpr const char* kDialogueMenuName = "Dialogue Menu";
 constexpr const char* kMessageBoxMenuName = "MessageBoxMenu";
+constexpr const char* kLoadingMenuName = "Loading Menu";
+constexpr const char* kTutorialMenuName = "Tutorial Menu";
 
 // SubtitleManager::AddSubtitle(manager, TESObjectREFR* speaker, const char*
 // text, bool force) (0x96cb00, 0x90d8c0 on 1.6.659): where every spoken line

@@ -89,9 +89,9 @@ class Cmd:
 
 #: See: docs/commentary/script_convert.md#command-rows
 COMMAND_ROWS = {
-    #: Int because TES4 call sites compare and assign 0/1.
+    #: Int for TES4's 0/1 tests; TESRuntime answers the variable from the mesh's own animation sequences.
     'isanimplaying': Cmd(
-        '({ref}.GetAnimationVariableBool("bAnimPlaying") as Int)', OBJREF),
+        '({ref}.GetAnimationVariableBool("TES4IsAnimPlaying") as Int)', OBJREF),
 
     #: GetArmorRating -> DamageResist actor value (what armor rating feeds).
     'getarmorrating': Cmd('{ref}.GetActorValue("DamageResist")', ACTOR, flags='actor_only'),
@@ -114,8 +114,9 @@ COMMAND_ROWS = {
     #: Reset3DState -> MoveTo self (reloads 3D).
     'reset3dstate': Cmd('{ref}.MoveTo({ref})'),
 
-    #: SetRestrained -> SetDontMove.
-    'setrestrained': Cmd('{ref}.SetDontMove({b0})', ACTOR, defaults={0: '0'}),
+    #: SetRestrained -> Skyrim's SetRestrained (SetDontMove only stops being pushed), via the polyfill.
+    'setrestrained': Cmd('TES4Polyfill.SetRestrained({ref}, {b0}, {restrained})', ACTOR, defaults={0: '0'},
+                         flags='actor_arg'),
 
     #: IsOnGround: Skyrim has only the inverse.
     'isonground': Cmd('!({ref}.IsFlying())', RAW),
@@ -327,7 +328,6 @@ COMMAND_ROWS = {
     'bookread': Cmd(note='GetBookRead'),
     'disablelinkedpathpoints': Cmd(note='{f}', flags='zero_arg'),
     'enablelinkedpathpoints': Cmd(note='{f}', flags='zero_arg'),
-    'essentialdeathreload': Cmd(note='{f}'),
     'flamesoff': Cmd(note='{f} has no Skyrim equivalent'),
     'flameson': Cmd(note='{f} has no Skyrim equivalent'),
     #: ForceFlee → StartCombat avoidance (approximate)
@@ -621,6 +621,7 @@ COMMAND_ROWS = {
     'message': Cmd('Debug.Notification', MAP, bare=True),
     'messagebox': Cmd('Debug.MessageBox', MAP, bare=True),
     'showmessage': Cmd('Debug.MessageBox', MAP, bare=True),
+    'essentialdeathreload': Cmd('TES4Polyfill.EssentialDeathReload', MAP, bare=True),
 
     # --------------------------------------------------------------------------
     # Math (OBSE)

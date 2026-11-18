@@ -36,11 +36,17 @@ end
 # Kathutet (KathutetRef): his greeting ("You destroyed the Sigil Tower at Ganonah ...", INFO 0003C93C) offers "I
 # seek Mankar Camoran." -> "What do you want, then?" (INFO 0003E8F4, MQ15 < 30) -> "I choose battle." (INFO
 # 0003E8F7, 32). The player kills him and takes the Bands from his body (MQ15BracersScript OnAdd: 45); kill and
-# RemoveAllItems stand in for the fight and the looting.
+# RemoveAllItems stand in for the fight and the looting. The grotto's own daedra can attack him mid-conversation
+# (run 58c): the player fights them, as a player would. `defend` covers only an attacker OF him; the cave daedra
+# MQ15CavesDaedra100 (000998EF) is one HE attacks, which cut his conversation again in 60a (18th), so the player
+# deals with it before talking.
 case mq15_kathutet
+defend KathutetRef
 run
 player.moveto KathutetRef
 wait 120
+run
+000998EF.kill
 approach KathutetRef
 talk KathutetRef
 ask "I seek Mankar Camoran."
@@ -137,8 +143,14 @@ end
 # Temple, where MQ15Script sets 90, 91 and 92 and the player holds the Amulet of Kings.
 case mq15_mankar
 defend
+# Mankar waits at his throne (REFR 00084A2E, the location of MankarCamoranSitInThrone). A move to Mankar himself
+# while his cell was not loaded left the player 1,227 from him (run 59d), so the player goes to the throne, as a
+# player walks up to it. The throne is not persistent, so the move to Mankar loads its cell first.
 run
 player.moveto MankarCamoranRef
+wait 60
+run
+player.moveto 00084A2E
 wait 120
 until 1800 GetStage MQ15 >= 78
 until 3600 GetStage MQ15 >= 80

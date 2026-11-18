@@ -12,6 +12,8 @@
 //   * turns and moves what a converted TES4 GameMode block steps every frame,
 //     at a steady 30 Hz (spin.cpp,
 //     docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates);
+//   * answers TES4 IsAnimPlaying on a reference with no behavior graph from its own
+//     NiControllerManager (anim_playing.cpp, docs/commentary/tes_runtime_anim.md#is-anim-playing);
 //   * runs headless quest cases when the test harness asks for them
 //     (test_game.cpp, docs/commentary/headless_testing.md#tes4-quest-cases).
 
@@ -21,6 +23,7 @@
 
 #include "addresses.h"
 #include "alchemy.h"
+#include "anim_playing.h"
 #include "crafting.h"
 #include "crime.h"
 #include "engine.h"
@@ -140,10 +143,12 @@ __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
     g_crimeInstalled = g_engineResolved && LoadCrimeSidecars();
     g_journalInstalled = InstallJournal();
     const bool spin = g_engineResolved && InstallSpin(g_messaging);
-    Log("hooks: jails %s, journal stage text %s, GameMode spin %s",
+    const bool anim = InstallAnimPlaying();
+    Log("hooks: jails %s, journal stage text %s, GameMode spin %s, IsAnimPlaying %s",
         g_crimeInstalled ? "installed" : "NOT installed",
         g_journalInstalled ? "installed" : "NOT installed",
-        spin ? "installed" : "NOT installed");
+        spin ? "installed" : "NOT installed",
+        anim ? "installed" : "NOT installed");
     return true;
 }
 

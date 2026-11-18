@@ -616,3 +616,20 @@ def test_quest_only_actor_holds_in_place():
     finally:
         set_quest_packages(())
         set_stand_still_list(0)
+
+
+def _pkdt_flags(rec: dict, ctx) -> int:
+    """The PKDT flags convert_PACK writes for `rec`."""
+    return struct.unpack_from('<I', _first(_subrecords(convert_PACK(rec, ctx)), 'PKDT'))[0]
+
+
+def test_an_armed_force_greet_drops_once_per_day():
+    """Ocato's MQ16OcatoToTempleEND: its armed faction gates it, so Once Per Day is not written.
+
+    See: docs/commentary/tes5_import_package.md#a-completion-gate-replaces-once-per-day
+    """
+    rec = _pack(0, **{'PKDT.Flags': 0x2404, 'PTDT.Type': 0, 'PTDT.Target': '00000014', 'PTDT.Count': 150})
+    armed = PackContext()
+    armed.done_latches[0x00001000] = (b'', b'CTDA')
+    assert _pkdt_flags(rec, PackContext()) & 0x400
+    assert not _pkdt_flags(rec, armed) & 0x400

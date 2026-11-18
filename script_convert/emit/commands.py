@@ -53,6 +53,7 @@ from script_convert.command_rows import (
 )
 
 from script_convert.misc_stats import COMMAND_STATS, misc_stat_global
+from script_convert.symbols import RESTRAINED, owned_formlist
 from script_convert.tes4 import lexer as L
 
 #: A placeholder is one atom: `{a0} == {a1}` compares, `Foo({a0})` does not.
@@ -219,6 +220,7 @@ _CONVERTER_VALUES = {
     'self_ref': lambda conv, extends: conv._self_reference(extends),
     'action_ref': lambda conv, extends: conv._get_action_ref_param(),
     'gates_shut': lambda conv, extends: _counted_stat(conv, 'closecurrentobliviongate'),
+    'restrained': lambda conv, extends: owned_formlist(conv, RESTRAINED),
 }
 
 

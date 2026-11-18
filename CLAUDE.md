@@ -81,7 +81,7 @@ These protect things that are hard or impossible to get back.
   edited a worklog is not locked. Update a quest's entry in place. **Past ~1200
   lines, compact it before adding more:** one ledger line per run, ~10 lines per
   quest entry (status, proven cause, fix, failed attempts); move superseded detail
-  to the next `temp/full_run_*/WORKLOG_ARCHIVE_<n>.md`, never delete it.
+  to the next `docs/audits/<worklog>_archive_<n>.md`, never delete it.
 
 - Spawn subagents only when it clearly saves cost: focused or repetitive work a
   smaller model can do from a complete prompt. Rarely more than 3. Haiku for

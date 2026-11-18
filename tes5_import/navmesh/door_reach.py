@@ -36,16 +36,27 @@ DOOR_SEED_SEARCH = 192.0
 #: How far below a seed its floor may lie (a landing marker floats above its floor).
 DOOR_SEED_DROP = 256.0
 
-def landings_by_cell(refrs) -> dict:
-    """{cell FormID: [(x, y, z)]}: where each teleport door's traveller lands, by the landing's cell."""
+def _landings(refrs):
+    """(door, point) per teleport door: where its traveller lands, beside that door's partner `door`."""
     by_fid = {get_formid(r, 'FormID'): r for r in refrs}
-    out = defaultdict(list)
     for r in refrs:
         partner = by_fid.get(get_formid(r, 'XTEL.Door'))
         point = spawn_point({k[5:]: r.get(k) for k in ('XTEL.PosX', 'XTEL.PosY', 'XTEL.PosZ')})
         if partner is not None and point is not None:
-            out[get_formid(partner, 'ParentCELL')].append(point)
+            yield partner, point
+
+
+def landings_by_cell(refrs) -> dict:
+    """{cell FormID: [(x, y, z)]}: where each teleport door's traveller lands, by the landing's cell."""
+    out = defaultdict(list)
+    for door, point in _landings(refrs):
+        out[get_formid(door, 'ParentCELL')].append(point)
     return out
+
+
+def landing_of_door(refrs) -> dict:
+    """{door FormID: (x, y, z)}: the landing beside each teleport door."""
+    return {get_formid(door, 'FormID'): point for door, point in _landings(refrs)}
 
 
 def door_seeds(cell_refrs, landings) -> list:
