@@ -1,10 +1,12 @@
 #include "chargen_menu.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -169,6 +171,8 @@ int g_waitTicks = 0;
 // A custom class's name and favored attributes, and what is hovered. Whether
 // a character event has arrived this session, so keys stop typing letters.
 std::string g_customName;
+// The class choice's "create a class": the list opens on the custom class.
+bool g_openCustom = false;
 std::vector<int> g_picks;
 int g_hoverPick = -1;
 bool g_hoverOk = false;
@@ -559,6 +563,10 @@ int SuggestedClassIndex() {
 // restored whole. With none yet, the first row, as OpenMW's PickClassDialog
 // starts.
 int ChosenClassIndex() {
+    if (g_openCustom) {
+        g_openCustom = false;
+        return static_cast<int>(Classes().size());
+    }
     const int suggested = SuggestedClassIndex();
     if (suggested >= 0) return suggested;
     const std::string chosen = ChosenClass();
@@ -635,10 +643,218 @@ void TakeRequest() {
     }
 }
 
+// ------------------------------------------------------------- the class choice
+
+// EnableClassMenu first asks how the class is chosen (OpenMW's
+// ClassChoiceDialog): answer the quiz, pick from the list, create a custom
+// class, or go back to the race menu. The quiz asks its questions in turn,
+// each answer order shuffled (sGenerateClassSteps), then offers the class its
+// answers point to (GenerateClassResultDialog).
+// See: docs/commentary/morrowind_runtime.md#class-choice
+enum class Choice { kNone, kAsking, kQuiz, kResult, kRace };
+enum class Way { kQuiz, kPick, kCreate, kBack };
+
+Choice g_choice = Choice::kNone;
+// The clicked button, stored by the box's callback for the next tick.
+std::atomic<int> g_clicked{-1};
+std::vector<Way> g_ways;
+int g_quizStep = 0;
+int g_quizScores[3] = {};
+// The specialization behind each shown answer, and the class they point to.
+int g_answerSpec[3] = {0, 1, 2};
+std::string g_quizClass;
+bool g_raceOpened = false;
+
+// OpenMW's six answer orders, one rolled per question.
+constexpr int kAnswerOrders[6][3] = {{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}};
+
+void OnClick(int button) { g_clicked = button; }
+
+// The next box, raised only once the last one has closed: a box raised while
+// the last is still closing is closed in its place, and that close answers it.
+std::string g_askText;
+std::vector<std::string> g_askButtons;
+bool g_askPending = false;
+
+void Ask(Choice next, const std::string& text, const std::vector<std::string>& buttons) {
+    g_choice = next;
+    g_askText = text;
+    g_askButtons = buttons;
+    g_askPending = true;
+}
+
+void RaisePending() {
+    if (!g_askPending || EngineMenuOpen(ids::kMessageBoxMenu)) return;
+    g_askPending = false;
+    Log("chargen: asks '%.40s' with %zu button(s)", g_askText.c_str(), g_askButtons.size());
+    Hooks().choiceBox(g_askText, g_askButtons, OnClick);
+}
+
+void AskHowToChoose() {
+    g_ways.clear();
+    std::vector<std::string> buttons;
+    const auto offer = [&buttons](Way way, const char* gmst, const char* fallback) {
+        g_ways.push_back(way);
+        buttons.push_back(GmstText(gmst, fallback));
+    };
+    if (!MenuQuiz().empty()) offer(Way::kQuiz, "sClassChoiceMenu1", "Answer his questions");
+    offer(Way::kPick, "sClassChoiceMenu2", "Pick from the class list");
+    offer(Way::kCreate, "sClassChoiceMenu3", "Create a custom class");
+    if (Hooks().showRaceMenu) offer(Way::kBack, "sBack", "Back");
+    Ask(Choice::kAsking, "", buttons);
+}
+
+// The widest line of an answer button, in characters: Skyrim's box sets its
+// buttons side by side, and Morrowind's longest answers run off the screen.
+constexpr std::size_t kAnswerLine = 34;
+
+// `text` broken into lines of at most kAnswerLine characters at spaces.
+std::string Wrapped(const std::string& text) {
+    std::string out;
+    std::size_t line = 0;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        const std::size_t space = text.find(' ', at);
+        const std::string word = text.substr(at, space == std::string::npos ? std::string::npos : space - at);
+        if (line && line + 1 + word.size() > kAnswerLine) {
+            out += '\n';
+            line = 0;
+        } else if (line) {
+            out += ' ';
+            ++line;
+        }
+        out += word;
+        line += word.size();
+        at = space == std::string::npos ? text.size() : space + 1;
+    }
+    return out;
+}
+
+void AskQuestion() {
+    const QuizRow& row = MenuQuiz()[g_quizStep];
+    const int* order = kAnswerOrders[std::rand() % 6];
+    std::vector<std::string> buttons;
+    for (int i = 0; i < 3; ++i) {
+        g_answerSpec[i] = order[i];
+        buttons.push_back(Wrapped(row.answers[order[i]]));
+    }
+    if (Hooks().say && !row.sound.empty()) Hooks().say("", row.sound, "");
+    Ask(Choice::kQuiz, row.question, buttons);
+}
+
+// The class the answers point to, OpenMW's showClassQuestionDialog verbatim.
+std::string QuizClass(int combat, int magic, int stealth) {
+    if (combat > 7) return "Warrior";
+    if (magic > 7) return "Mage";
+    if (stealth > 7) return "Thief";
+    switch (combat) {
+        case 4: return "Rogue";
+        case 5: return stealth == 3 ? "Scout" : "Archer";
+        case 6: return stealth == 1 ? "Barbarian" : stealth == 3 ? "Crusader" : "Knight";
+        case 7: return "Warrior";
+        default: break;
+    }
+    switch (magic) {
+        case 4: return "Spellsword";
+        case 5: return "Witchhunter";
+        case 6: return combat == 2 ? "Sorcerer" : combat == 3 ? "Healer" : "Battlemage";
+        case 7: return "Mage";
+        default: break;
+    }
+    switch (stealth) {
+        case 3: return magic == 3 ? "Bard" : "Warrior";
+        case 5: return magic == 3 ? "Monk" : "Pilgrim";
+        case 6: return magic == 1 ? "Agent" : magic == 3 ? "Assassin" : "Acrobat";
+        case 7: return "Thief";
+        default: return "Warrior";
+    }
+}
+
+void AskResult() {
+    g_quizClass = QuizClass(g_quizScores[0], g_quizScores[1], g_quizScores[2]);
+    Log("chargen: the quiz points to %s (%d combat, %d magic, %d stealth)", g_quizClass.c_str(),
+        g_quizScores[0], g_quizScores[1], g_quizScores[2]);
+    Ask(Choice::kResult,
+        GmstText("sMessageQuestionAnswer1", "Your personality and past reflect a:") + "\n\n" + g_quizClass,
+        {GmstText("sMessageQuestionAnswer2", "Accept this Class"),
+         GmstText("sMessageQuestionAnswer3", "Choose Another Class")});
+}
+
+// The list, as EnableClassMenu opened it before the choice; on the custom class for "create".
+void OpenClassList(bool custom) {
+    g_choice = Choice::kNone;
+    g_openCustom = custom;
+    g_asked = {kClassKind, nullptr, false};
+    NoteMenuOpening(ClassMenu().Name());
+}
+
+void ChooseWay(int button) {
+    switch (button >= 0 && button < static_cast<int>(g_ways.size()) ? g_ways[button] : Way::kPick) {
+        case Way::kQuiz:
+            g_quizStep = 0;
+            std::fill(std::begin(g_quizScores), std::end(g_quizScores), 0);
+            AskQuestion();
+            break;
+        case Way::kPick: OpenClassList(false); break;
+        case Way::kCreate: OpenClassList(true); break;
+        case Way::kBack:
+            g_choice = Choice::kRace;
+            g_raceOpened = false;
+            Hooks().showRaceMenu();
+            break;
+    }
+}
+
+void AnswerQuestion(int button) {
+    if (button < 0 || button > 2) {
+        AskHowToChoose();
+        return;
+    }
+    ++g_quizScores[g_answerSpec[button]];
+    if (++g_quizStep < static_cast<int>(MenuQuiz().size())) {
+        AskQuestion();
+    } else {
+        AskResult();
+    }
+}
+
+// OpenMW sets the quiz's class on both buttons; "choose another" then asks again.
+void AnswerResult(int button) {
+    const ClassRow* row = FindClassRow(g_quizClass);
+    if (row) ChooseClass(row->name, row->specialization, row->favored[0], row->favored[1]);
+    if (!row) Log("chargen: the class list has no %s -- the list opens instead", g_quizClass.c_str());
+    if (!row) {
+        OpenClassList(false);
+    } else if (button == 0) {
+        g_choice = Choice::kNone;
+    } else {
+        AskHowToChoose();
+    }
+}
+
+// Game thread: acts on a click, or asks again once the race menu "back" opened has closed.
+void TickChoice() {
+    const int clicked = g_clicked.exchange(-1);
+    const Choice asked = g_choice;
+    if (clicked >= 0) Log("chargen: button %d answers step %d", clicked, static_cast<int>(asked));
+    if (clicked >= 0 && asked == Choice::kAsking) ChooseWay(clicked);
+    if (clicked >= 0 && asked == Choice::kQuiz) AnswerQuestion(clicked);
+    if (clicked >= 0 && asked == Choice::kResult) AnswerResult(clicked);
+    RaisePending();
+    if (clicked >= 0 || g_choice != Choice::kRace) return;
+    const bool open = EngineMenuOpen(ids::kRaceSexMenu);
+    g_raceOpened = g_raceOpened || open;
+    if (g_raceOpened && !open) AskHowToChoose();
+}
+
 void RequestFromScript(int kind) {
-    if (g_asked.kind) return;
+    if (g_asked.kind || g_choice != Choice::kNone) return;
     if (!HasRows(kind)) {
         Log("chargen: the runtime's menu table lists no %s", kind == kClassKind ? "class" : "birthsign");
+        return;
+    }
+    if (kind == kClassKind && Hooks().choiceBox) {
+        AskHowToChoose();
         return;
     }
     g_asked = {kind, nullptr, false};
@@ -754,6 +970,10 @@ bool InstallChargenMenus() {
 }
 
 bool TickChargen() {
+    if (g_choice != Choice::kNone) {
+        TickChoice();
+        return true;
+    }
     if (ChargenMenuOpen()) {
         g_waitTicks = 0;
         return true;
@@ -773,6 +993,6 @@ bool TickChargen() {
     return true;
 }
 
-bool ChargenMenuOpen() { return ClassMenu().IsOpen() || SignMenu().IsOpen(); }
+bool ChargenMenuOpen() { return ClassMenu().IsOpen() || SignMenu().IsOpen() || g_choice != Choice::kNone; }
 
 }  // namespace tesruntime::mw

@@ -233,7 +233,7 @@ A case is a list of steps, run in file order:
 | `ask <topic>` | clicks a topic the list shows; fails naming the listed topics when it is not there |
 | `choose <n>` | answers pending choice `n`; fails naming the pending choices |
 | `bye` | clicks Goodbye; fails while a choice locks it |
-| `button <n>` | clicks button `n` of the open MessageBox |
+| `button <n>` | clicks button `n` of the open MessageBox once it has been up 2 ticks, then waits (up to 30 ticks) for that box to close, so the next `button` never clicks a box that is still closing. MorrowindRuntime's class quiz raises its next box at once; before the wait, one `button` answered two questions (2026-11-17) |
 | `activate <ref>` | activates the reference as the player does, without waiting for a conversation |
 | `until <ticks> <condition>` | waits for the condition to hold; fails the case after `ticks` with the condition's `left` |
 | `rest <max>[x<hours>] <bed\|-> <condition>` | sleeps `hours` (default 1) in the bed, or waits on the spot for `-`, up to `max` times until the condition holds; each sleep counts once, when its Sleep/Wait menu closes. A script that counts `Day` changes (stronghold builders, Boethiah's shrine) takes `x24`: one day per sleep, seconds instead of ~30 min of 1-hour sleeps |
@@ -468,6 +468,60 @@ the wait, 12 of 12 opened.
 Every movie call the runner makes (`ask`, `choose`, `bye`, `button`, `pick`) runs
 at UI time
 ([morrowind_runtime.md](morrowind_runtime.md#movies-are-touched-at-ui-time)).
+
+### <a id="quiet"></a>Silences between lines: `expect quiet <= N`
+
+**Code:** `tools/live/silences.py`; the runner's `Listen` / `NoteMenusOpened` in
+`tes_runtime/common/test_runner.cpp`.
+
+`hear` proves a line was said, never how long the silence before the next one
+lasted. The Morroblivion census office's 11 s of silence after Socucius's quiz
+offer, and the Emperor's late "Let me see your face...", passed every case.
+Wall-clock silences also mean nothing under `--fast`: script timers count game
+time, which runs about 10x ahead, while voice audio plays in real time. At test
+speed, Socucius's 21.16 s timer ran out after 2 real seconds, and the box
+came up over his 9.82 s line.
+
+- Each spoken line in the results carries `ms` (`GetTickCount64` when
+  `AddSubtitle` ran) and `game` (the engine's game clock in ms,
+  MorrowindRuntime's `TESTestGameMs`). The runner also writes
+  `{"menu","ms","game","tick","during"}` when a `MessageBoxMenu`,
+  `MorrowindClassMenu` or `MorrowindBirthMenu` opens, because a script's
+  silence often ends at a box, not a line.
+- The silence is the one a player at normal speed hears, worked out at any
+  speed (`silences.silence`). An event that came while the line's audio still
+  played was released by game time alone, so its silence is the game time
+  since the line began, less the line's length (Socucius: 21.16 - 9.82 =
+  11.3 s). An event that came after the audio ended may have waited on it, so
+  only the time after the end counts, the smaller of its real and game
+  readings: a 0.3 s real pause is 3 game seconds at 10x. That branch can only
+  under-report a timer that happens to outlast the audio. The first branch can
+  over-report: see the noise below.
+- A line ends at its start plus its own voice file's length. The harness finds
+  the response by its text in the loaded plugins' exports (`INFO.txt`), then
+  its `<quest>_<topic>_<fid>_<n>.mp3`, taking the longest voice type. The index
+  takes about 3 s, on the first `quiet` of a run.
+- `expect quiet <= N` passes when the longest silence in the case so far, from
+  a line's end to the next line or menu, is at most N seconds. A line with no
+  voice file counts as length 0, and the report names it.
+- At test speed the measure carries up to ~5 s of noise. Any real-time delay
+  between a script's timer and its next line or box (a poll, the Papyrus VM)
+  reads as game time multiplied by the speed: at 17-23x, 0.25 real seconds is
+  4-6 game seconds. Socucius's fixed gap measured 0.6, 1.9, 2.7 and 5.5 s on
+  four runs (2026-11-17), against 11.3 s before the fix. Cases use
+  `quiet <= 6`, which still catches the 8-11 s gaps that were bugs. A case
+  that needs a tighter bound can lower its own speed with `pace`.
+- A pair where the second line is the next response of the same INFO is not
+  measured: the engine plays an INFO's responses back to back on its own, and
+  on the muted test instance it times each response by its text length in game
+  time, not by its voice file. In run `ob_before` (2026-11-17) the Emperor's
+  four greeting responses came 3.6-6.9 game seconds apart but 0.17 real
+  seconds apart. That would read as false gaps.
+- `expect quiet <= N since <text>` measures from the first line of the case
+  containing `<text>` (any case and spacing) and judges -1 when no line does.
+  Scope it to NPC-driven stretches: NPCs walking to their marks are silence
+  too, and a step the player takes (`ask`, `button`) puts the harness's own
+  delay into it.
 
 ### <a id="failure-snapshot"></a>Failure snapshot
 

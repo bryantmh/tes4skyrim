@@ -1876,6 +1876,29 @@ engine.**
 * The NPC-to-NPC driver (`tes5_import/dialogue/conversations.py`) uses the same
   primitive: `Utility.Wait(TES4Polyfill.SayLine(A, T, fallback) + 0.6)`.
 
+#### <a id="stage-say-waits"></a>A quest stage's Say waits for its line; an INFO's and a callback's do not
+
+`SayLine` blocks until the line begins (0.18s median, 0.84s max for a line the
+engine accepts; `SAY_ACCEPT_WAIT` for one it refuses). Where that wait lands
+decides which call a site gets:
+
+* **A poll (`OnUpdate`)**: the wait costs only that script's own tick. `SayLine`.
+* **A quest stage fragment**: `SetStage` does not return until the stage's
+  fragments finish (CK wiki, `SetStage - Quest`, Notes), so the wait lands on
+  whoever set the stage, after the line has already started. Nothing audible
+  is lost. `SayLine`.
+* **An INFO fragment, or an `OnPackageStart/End`, `OnHit`, `OnCombatStateChanged`
+  callback** (`DISPATCH_EVENTS`): the line or package transition itself waits.
+  `SayLineNoWait`, which says the line and returns the topic's longest line.
+
+Stage fragments used `SayLineNoWait` until 2026-11-17, and that overcharged
+the timer. The Emperor's stage-16 "You ... I've seen you ..." (INFO
+`00032B11`, 3.06s) was charged CharGenVoice's longest line, 5.85s. Stage 17,
+gated on `convTimer <= 0`, then started about 2.8s late, which played as a
+silent gap before his "Let me see your face..." force-greet. Oblivion.esm had
+4 stage-fragment sites (`QF_Charactergen` 2, `QF_SE06` 2) and 22 in callbacks,
+which still use `SayLineNoWait`.
+
 #### Why results stay in the END fragment
 
 Oblivion ran an INFO's result script when the line **finished**. The evidence
@@ -4234,6 +4257,14 @@ the pass stamps it and clears it at every exit (each `Return` and the bottom). A
 without clearing is taken for dead after the 60 s. Run 32a, the same battle on the guarded scripts:
 MQ14 stage 100 ran through to MQ15 10 and the Papyrus log holds 0 stack dumps (530,240 before).
 
+**Nothing follows a body that ends in a top-level `Return`** (`assemble._ends_in_return`).
+The bottom clear (`TES4_PassAt = 0.0`) and re-arm are unreachable there, since `_before_returns`
+already put both before the `Return`. Papyrus also parses `Return` and an assignment on the next line
+as one statement (`Parser error: (block statement) invalid token: =`). The guard's bottom clear
+broke 46 Morrowind_ob scripts this way: 3 scripts whose GameMode is a bare `RETURN`
+(`fbmwRedoranQuestScript`, `fbmwHlaaluVoteCount`) or ends in one (`fbmwCalvusNPCScript`), plus every
+fragment that names them. The re-arm alone had compiled, because it starts with `If`, a keyword.
+
 <a id="oblivion-gate-capture"></a>**`TES4Polyfill.EnterOblivionGate` was never emitted.** The gate's identity is
 known only on the authored line that discards it (`set MQ00.nearOblivionGate
 to 0`), so the capture must precede the body. Re-added as
@@ -6144,6 +6175,17 @@ time: TES4Polyfill.SayLine blocks until the INFO's OnBegin fragment reports
 the selected line's own length (say_durations, `info:<FID>`), and only falls
 back to this when the line has no voice file at all.  See the "Say() timers"
 section of docs/commentary/script_convert.md.
+
+<a id="info-length-key"></a>**The per-line key is the low 24 bits under index `00`.**
+A TES4 voice file names its INFO as `<quest>_<topic>_<fid>_<n>.mp3`, and the
+`<fid>` always carries index `00` (all 19,340 Oblivion, 1,610 Nehrim and 344
+Morrowind_ob lines), whatever the plugin's masters. Until 2026-11-17 both
+readers (`pipeline._info_fragment_psc` and the NPC-conversation driver) looked
+lines up by the full FormID, so in a plugin with masters every line missed and
+its Begin fragment reported 0. `SayLine` then charged the topic's longest line:
+Socucius Ergalla's 9.82s class-quiz offer (`0103D326`) was charged 21.16s, about
+11s of silence before the quiz box. Both now go through
+`say_durations.info_seconds`.
 
 ## The StartQuest post-pass fails open
 <a id="startquest-postpass-fails-open"></a>

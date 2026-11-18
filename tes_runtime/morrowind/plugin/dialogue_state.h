@@ -263,6 +263,10 @@ struct GameHooks {
     void  (*playBink)(const std::string& file, bool allowSkipping) = nullptr;
     // A headless run's click on button `button` of the open MessageBox.
     void  (*pressButton)(int button) = nullptr;
+    // The engine's modal with buttons for the runtime's own question (the class
+    // choice and quiz): `answer` gets the clicked button, never a script.
+    void  (*choiceBox)(const std::string& text, const std::vector<std::string>& buttons,
+                       void (*answer)(int button)) = nullptr;
     // A headless run's view of the engine's menus: whether the menu registered
     // as `name` is open, and the close a player's Done or Escape sends it.
     bool  (*menuOpen)(const std::string& name) = nullptr;

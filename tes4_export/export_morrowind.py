@@ -53,6 +53,7 @@ from .record_types.morrowind_actors import (MORROWIND_ACTOR_EXPORTERS,
 from .record_types.morrowind_packages import (package_records,
                                               prune_dropped_packages)
 from .record_types.morrowind_dialog import dialogue_records
+from .record_types.morrowind_quiz import quiz_records
 from .record_types.morrowind_magic import (MORROWIND_MAGIC_EXPORTERS,
                                            authored_indices,
                                            effect_editor_id,
@@ -608,6 +609,9 @@ def export_plugin(source_path: str, export_dir: str, masters=()) -> dict:
     ctx.origin_shifts = OriginShifts(
         export_dir, [own_meshes] + _master_mesh_roots(export_dir, masters))
     out = convert_plugin(records, ctx)
+    for sig, rows in quiz_records(source_path, header.page.codec, ctx).items():
+        known = {form_id for form_id, _lines in out.get(sig, [])}
+        out.setdefault(sig, []).extend(row for row in rows if row[0] not in known)
     owned = sum(1 for _f, lines in out.get('CREA', [])
                 if any(l.startswith('MorrowindModel') for l in lines))
     if out.get('CREA'):

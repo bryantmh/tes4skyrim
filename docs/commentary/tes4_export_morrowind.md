@@ -1503,6 +1503,21 @@ records are attached (1,474 VMAD attachments) and inert. The converter needs a
 Morrowind block mode and the `->` member-call syntax before the bodies survive;
 Morrowind.esm carries 632 scripts, and 1,231 across the three ESMs.
 
+## <a id="class-quiz"></a>The class quiz comes from Morrowind.ini
+
+**Code:** `tes4_export/record_types/morrowind_quiz.py`.
+
+`EnableClassMenu` first offers three ways to pick a class. "Answer his
+questions" asks ten questions that no plugin holds: the game reads them from
+`[Question 1]` .. `[Question 10]` in Morrowind.ini (`Question`, `AnswerOne` ..
+`AnswerThree`, `Sound`), and OpenMW imports them as its `Question_<n>_*`
+fallback settings (`charactercreation.cpp`, `sGenerateClassSteps`). The ini
+sits beside the install's `Data Files`, so only a masterless plugin's export
+dumps it: one `MWQZ` record per question (`chargenquiz:<n>`), and for each
+`Sound` the same mouthless `Say` SOUN a scripted line spoken by no actor gets
+(`morrowind_say.say_sound`). The runtime plays it when the question is asked,
+as OpenMW does. All 10 questions are in the Steam install's Morrowind.ini.
+
 ## <a id="leveled-lists"></a>Leveled lists
 
 `LEVI` -> `LVLI` and `LEVC` -> `LVLC` (which the importer writes as LVLN). The

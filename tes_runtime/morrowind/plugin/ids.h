@@ -942,6 +942,8 @@ constexpr std::uint64_t kBSFixedStringCtor = 69161;
 // Skyrim's own dialogue menu, the one a Morrowind speaker diverts away from.
 constexpr const char* kVanillaDialogueMenu = "Dialogue Menu";
 constexpr const char* kMessageBoxMenu = "MessageBoxMenu";
+// Skyrim's race/sex menu, which the class choice's "back" opens (OpenMW's GM_Race).
+constexpr const char* kRaceSexMenu = "RaceSex Menu";
 // The Sleep/Wait menu, and the paths in sleepwaitmenu.swf its Sleep button
 // works through: the hours slider, and the handler the button calls.
 constexpr const char* kSleepWaitMenu = "Sleep/Wait Menu";

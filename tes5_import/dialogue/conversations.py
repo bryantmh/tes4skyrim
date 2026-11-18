@@ -731,7 +731,11 @@ def _chain_body(chain, i: int, cond: str, say) -> str:
 
 
 def generate_driver_psc(plan, say_durations: dict = None) -> str:
-    """The full TES4NPCConv<plugin>.psc source, or '' when no chains."""
+    """The full TES4NPCConv<plugin>.psc source, or '' when no chains.
+
+    script_convert is imported late: script_convert imports tes5_import.
+    """
+    from script_convert.say_durations import info_seconds
     if not plan['chains']:
         return ''
     say_durations = say_durations or {}
@@ -739,10 +743,9 @@ def generate_driver_psc(plan, say_durations: dict = None) -> str:
     def _fallback(hop_or_head, topic_edid):
         """Length TES4Polyfill.SayLine assumes if the line the engine picks
         has no measured voice file (it normally returns the real length)."""
-        if hop_or_head is not None:
-            d = say_durations.get(f'info:{hop_or_head:08X}')
-            if d:
-                return min(float(d), 15.0)
+        d = info_seconds(say_durations, hop_or_head) if hop_or_head is not None else 0.0
+        if d:
+            return min(d, 15.0)
         d = say_durations.get((topic_edid or '').lower())
         if d:
             return min(float(d), 10.0)

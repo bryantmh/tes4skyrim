@@ -36,11 +36,15 @@ until 300 "chargen dock guard".state == -1
 end
 
 # Into the census office, where the officer records the class and the sign.
+# EnableClassMenu first asks how: questions (0), the class list (1), a custom
+# class (2) or back (3); the list is button 1. morrowind_chargen_quiz answers
+# the questions instead.
 case chargen_class
 activate "chargen customs door"
 until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 1
 run
 player->PositionCell 160 -111 220 90 "Seyda Neen, Census and Excise Office"
+button 1
 pick Warrior
 pick The Warrior
 button 0

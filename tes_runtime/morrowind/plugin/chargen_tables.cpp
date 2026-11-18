@@ -47,6 +47,13 @@ void Take(ChargenTable& table, const std::string& key, const std::string& value)
         const std::vector<std::string> f = SplitFields(value, '|');
         Slot(kind == "class" ? table.classes : table.signs, index) =
             f.empty() ? std::string() : Unescape(f.front());
+    } else if (kind == "quiz") {
+        const std::vector<std::string> f = SplitFields(value, '|');
+        if (f.size() < 5) return;
+        QuizRow& row = Slot(table.quiz, index);
+        row.question = Unescape(f[0]);
+        for (int i = 0; i < 3; ++i) row.answers[i] = Unescape(f[1 + i]);
+        row.sound = Unescape(f[4]);
     }
 }
 
@@ -210,6 +217,14 @@ void LoadSharedChargen(const std::string& rootDir) {
 }
 
 const std::vector<ChargenTable>& ChargenTables() { return g_tables; }
+
+const std::vector<QuizRow>& MenuQuiz() {
+    static const std::vector<QuizRow> kNone;
+    for (const ChargenTable& table : g_tables) {
+        if (!table.quiz.empty()) return table.quiz;
+    }
+    return kNone;
+}
 
 const std::vector<ClassRow>& MenuClasses() { return g_classes; }
 

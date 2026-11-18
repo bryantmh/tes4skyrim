@@ -141,7 +141,7 @@ def _stage_runtime_sidecars(st, export_dir: str) -> None:
     if not is_tes3_export(export_dir) and not is_fallout_source():
         staged += write_attribute_tables(st.by_type, st.writer, st.output_path)
     if not is_fallout_source():
-        staged += write_chargen_table(st.chargen_plan, st.writer, st.output_path)
+        staged += write_chargen_table(st.chargen_plan, st.writer, st.output_path, export_dir)
         staged += write_stats_table(st.by_type, st.writer, st.output_path, export_dir)
     if staged:
         print(f'  Staged {staged} runtime sidecar file(s)')

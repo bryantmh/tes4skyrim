@@ -15,6 +15,7 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <set>
 
@@ -86,6 +87,8 @@ constexpr float kFollowBehind = 120.0f;
 constexpr int kTalkWaitTicks = 30;
 // Ticks a MessageBox must have been up before a `button` press.
 constexpr int kBoxSettleTicks = 2;
+// Ticks a `button` step waits, after its press, for that box to close before it ends.
+constexpr int kBoxGoneTicks = 30;
 // Ticks between a `punch` step's swings: room for one unarmed attack to land.
 constexpr int kPunchTicks = 45;
 // Times one `walk` may put its player back on the navmesh after a slide off it.
@@ -450,11 +453,20 @@ bool MenuReported(const char* name) { return g_game.menuOpen && g_game.menuOpen(
 bool Answered(const TestStep& step) {
     if (step.kind == Kind::kButton) {
         if (!g_game.pressButton) return Retried(false, "no button hook");
+        // Pressed, it ends once that box has gone (or after kBoxGoneTicks), so the next `button` cannot
+        // press a box that is still closing: the runtime's class quiz raises its next box at once.
+        if (g_case.boxUp < 0) {
+            const bool gone = !MenuReported("MessageBoxMenu") || ++g_case.boxUp >= 0;
+            if (gone) g_case.boxUp = 0;
+            return gone;
+        }
         // Pressed only once the box has been up for kBoxSettleTicks: a click in its opening frame is lost.
         const bool up = MenuUp("MessageBoxMenu") && ++g_case.boxUp > kBoxSettleTicks;
-        if (up) g_game.pressButton(step.number);
-        if (up) g_case.boxUp = 0;
-        return Retried(up, "no MessageBox opened");
+        if (!up) return Retried(false, "no MessageBox opened");
+        g_game.pressButton(step.number);
+        g_case.boxUp = -kBoxGoneTicks;
+        g_case.ticksLeft = -1;
+        return false;
     }
     if (step.kind == Kind::kPick) {
         return Retried(g_game.menuPick && g_game.menuPick(step.text),
@@ -638,13 +650,35 @@ bool Punched(const TestStep& step) {
     return true;
 }
 
+// Menus whose opening ends a silence as a line does, for the harness's `quiet`;
+// whether each was open at the last tick.
+const char* const kSilenceEnders[] = {"MessageBoxMenu", "MorrowindClassMenu", "MorrowindBirthMenu"};
+bool g_enderOpen[std::size(kSilenceEnders)] = {};
+
+// Each silence-ending menu that opened since the last tick goes to the results with its time.
+void NoteMenusOpened(const TestCase& test) {
+    if (!g_game.menuOpen) return;
+    for (std::size_t i = 0; i < std::size(kSilenceEnders); ++i) {
+        const bool open = g_game.menuOpen(kSilenceEnders[i]);
+        if (open && !g_enderOpen[i]) {
+            const unsigned game = g_game.gameMs ? g_game.gameMs() : 0;
+            WriteLine("{\"menu\":" + Json(kSilenceEnders[i]) + ",\"ms\":" + std::to_string(GetTickCount64()) +
+                      ",\"game\":" + std::to_string(game) + ",\"tick\":" + std::to_string(g_tick) +
+                      ",\"during\":" + Json(test.name) + "}");
+        }
+        g_enderOpen[i] = open;
+    }
+}
+
 // The lines begun since the last tick: each goes to the results now, so the
 // run shows when it was spoken, and joins the case for `hear` and its line.
 void Listen(const TestCase& test) {
+    NoteMenusOpened(test);
     if (!g_game.spoken) return;
     for (const SpokenLine& line : g_game.spoken()) {
         const std::string spoke = "{\"speaker\":" + Json(line.speaker) + ",\"text\":" + Json(line.text);
-        WriteLine(spoke + ",\"tick\":" + std::to_string(g_tick) + ",\"during\":" + Json(test.name) + "}");
+        WriteLine(spoke + ",\"ms\":" + std::to_string(line.ms) + ",\"game\":" + std::to_string(line.game) +
+                  ",\"tick\":" + std::to_string(g_tick) + ",\"during\":" + Json(test.name) + "}");
         g_case.said += (g_case.said.empty() ? "" : ",") + spoke + "}";
         g_heard.push_back(line);
     }

@@ -52,10 +52,12 @@ end
 # ONE case from the step into the cell to the questions: once the player is in the box the quest waits for nobody,
 # and at test pace 14 -> 17 and the greeting all fit inside the walk (run 5a: the first judge already read 17, and
 # the checkpoint save of the case that used to end there closed the conversation).
+# "You ... I've seen you ..." (stage 16) runs straight into the force-greet's four lines with no gap a player hears.
 case chargen_emperor_in_cell
 walk 00097A3B
 until 1800 GetStage Charactergen >= 17
 hear 1800 UrielSeptimRef Gods give me strength
+expect quiet <= 6 since seen you
 wait 30
 ask "What's going on?"
 ask "Who are you?"

@@ -5092,6 +5092,53 @@ the runtime the message pages open instead, and their pick overwrites the
 global. A `SetClass` on anyone but the player, or naming a class the menu does
 not list, keeps its `;NE:` note.
 
+<a id="class-choice"></a>**`EnableClassMenu` asks how first (2026-11-17).**
+Morrowind's census officer leaves the choice to the player, and the game asks
+before any list opens. OpenMW's `ClassChoiceDialog` shows `sClassChoiceMenu1`
+("Answer his questions (Generates Class)"), `sClassChoiceMenu2` ("Give him the
+info (Pick from Class List)"), `sClassChoiceMenu3` ("Fill out forms yourself
+(Create Custom Class)") and `sBack`. Until this date the runtime opened the
+list at once, so the player never saw the choice. `morrowind_main`'s
+`chargen_class` picked from the list and passed anyway.
+
+`chargen_menu.cpp` now raises that choice as the engine's modal
+(`Hooks().choiceBox`, whose click goes to the runtime, never to a script's
+`GetButtonPressed`; a headless `button` routes there while the box is up):
+
+- **Questions:** the install's quiz (`chargen.txt` `quiz.<i>` rows, from the
+  export's `MWQZ` dump of Morrowind.ini, see
+  [tes4_export_morrowind.md](tes4_export_morrowind.md#class-quiz)). Each
+  question is a box with its three answers in one of OpenMW's six orders,
+  rolled per question, and plays its recording through the `Say` path, as
+  `sGenerateClassSteps` does. The class is OpenMW's `showClassQuestionDialog`
+  table verbatim. The result box reads `sMessageQuestionAnswer1` and the class,
+  with `sMessageQuestionAnswer2` (accept) and `sMessageQuestionAnswer3`
+  (choose another). Both buttons set the class, as `selectGeneratedClass` does
+  for both, and "choose another" asks again. A class the shared list lacks
+  opens the list instead. With no quiz rows, the choice offers no questions.
+  OpenMW stops the question's recording on an answer (`stopSay`); this does
+  not.
+- **List:** the class menu, as before.
+- **Create:** the class menu opened on its custom-class row (name and favored
+  attributes; no major or minor skills, as above).
+- **Back:** Skyrim's race menu (OpenMW's `GM_Race`), and the choice again once
+  it closes.
+
+A converted TES4 script's `ShowClassMenu` is unchanged: its game asked its own
+way before it.
+
+**Long buttons are wrapped.** Skyrim's message box sets its buttons side by
+side, and a quiz answer of 150 characters ran off both edges of the screen (the
+Morrowind and the Morroblivion quiz alike). A button is broken at spaces into
+lines of at most 34 characters: `kAnswerLine` for the runtime's own boxes,
+`owned_records.BUTTON_LINE` for every converted MESG. A new movie with stacked
+buttons, as OpenMW's `InfoBoxDialog` draws them, was judged too large for this
+fix.
+
+**A box waits for the last one to close.** The runtime raises its next question
+only once `MessageBoxMenu` is down. Raised at once, it replaced the box still
+closing, and that close answered it: one click answered two questions.
+
 **Spells.** The runtime grants a chosen sign's spells for every game and
 takes the last sign's back, as OpenMW rebuilds them. A row names each spell by
 its TES3 id, or for a TES4 sign as `Owner.esm@FormID`, the owner read off the

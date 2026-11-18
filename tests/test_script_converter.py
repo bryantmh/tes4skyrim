@@ -2768,6 +2768,14 @@ class TestInfoFragmentEmission:
         psc = self._emit(tmp_path, {'FormID': '00000ABC'})
         assert 'TES4Polyfill.LineBegan(akSpeakerRef, 0, Self.GetFormID())' in psc
 
+    def test_a_plugin_with_masters_finds_its_line_by_the_low_bits(self, tmp_path):
+        """Voice files carry index 00, so 0103D326 is `info:0003D326`.
+
+        See: docs/commentary/script_convert.md#info-length-key
+        """
+        psc = self._emit(tmp_path, {'FormID': '0103D326'}, {'info:0003D326': 9.82})
+        assert 'TES4Polyfill.LineBegan(akSpeakerRef, 9.82, Self.GetFormID())' in psc
+
     def test_result_runs_before_line_ended(self, tmp_path):
         """A poll waiting on this speaker (SayLine's busy wait) proceeds the
         moment LineEnded runs, so the result's state writes must be visible
@@ -2866,6 +2874,28 @@ class TestSayTimerConversion:
         result = converter.convert_standalone('TestNoPoll', src,
                                               'ObjectReference', 'TestNoPoll')
         assert 'TES4_SecondsPassed' not in result
+
+    def test_nothing_follows_a_poll_that_ends_in_return(self, converter):
+        """Papyrus parses `Return` and a next-line assignment as one statement and fails.
+
+        See: docs/commentary/script_convert.md#poll-pile-up
+        """
+        src = 'Scriptname TestReturn\n\nshort votes\n\nbegin gamemode\nreturn\nend\n'
+        result = converter.convert_standalone('TestReturn', src, 'Quest', 'TestReturn')
+        event = result.split('Event OnUpdate()', 1)[1].split('EndEvent', 1)[0]
+        assert event.rstrip().splitlines()[-1].strip() == 'Return'
+
+    def test_a_quest_stage_waits_for_its_line_and_an_info_does_not(self, converter):
+        """A stage's Say returns the line's own length; an INFO's still fires and goes on.
+
+        See: docs/commentary/script_convert.md#stage-say-waits
+        """
+        converter._property_refs['UrielSeptimRef'] = 'Actor'
+        body = 'set convTimer to UrielSeptimRef.Say CharGenVoice'
+        stage = '\n'.join(converter.convert_fragment(body, 'Quest'))
+        info = '\n'.join(converter.convert_fragment(body, 'TopicInfo'))
+        assert 'TES4Polyfill.SayLine(UrielSeptimRef, CharGenVoice' in stage
+        assert 'TES4Polyfill.SayLineNoWait(UrielSeptimRef, CharGenVoice' in info
 
     def test_say_assignment_becomes_a_blocking_sayline(self, converter):
         """`set T to ref.Say topic` -> T := TES4Polyfill.SayLine(ref, topic, fallback).

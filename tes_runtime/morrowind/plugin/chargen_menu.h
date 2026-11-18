@@ -24,7 +24,7 @@ bool InstallChargenMenus();
 // or waiting, when nothing else should open.
 bool TickChargen();
 
-// Whether either menu is open.
+// Whether either menu is open, or the class choice before them is under way.
 bool ChargenMenuOpen();
 
 // `name` with each word's first letter capitalized: a custom class's name is

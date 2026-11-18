@@ -47,9 +47,19 @@ struct SignRow {
     std::vector<SignLine> lines;
 };
 
+// One question of the class quiz Morrowind.ini holds: the question, its three
+// answers (combat, magic, stealth, OpenMW's sGenerateClassSteps), and the
+// recording, a `Say` path.
+// See: docs/commentary/morrowind_runtime.md#class-choice
+struct QuizRow {
+    std::string question;
+    std::string answers[3];
+    std::string sound;
+};
+
 // One plugin's side of the menus: the request global its converted scripts
-// ask through, the two choice globals they read back, and its own class and
-// sign names in its menu order.
+// ask through, the two choice globals they read back, its own class and
+// sign names in its menu order, and its install's class quiz.
 struct ChargenTable {
     std::string plugin;
     int layer = -1;
@@ -58,7 +68,11 @@ struct ChargenTable {
     FormRef signChoice;
     std::vector<std::string> classes;
     std::vector<std::string> signs;
+    std::vector<QuizRow> quiz;
 };
+
+// The class quiz of the first table that has one, or empty.
+const std::vector<QuizRow>& MenuQuiz();
 
 void ClearChargenTables();
 

@@ -207,6 +207,54 @@ void HearsAcrossCases(const std::string& dir) {
           "a hear takes a line begun during the case before it");
 }
 
+// A box that is still closing for a few ticks after its click, and the next one
+// opening as it goes, as the runtime's class quiz chains them.
+bool g_boxShown = false;
+int g_boxClosing = 0;
+int g_boxId = 0;
+int g_boxesLeft = 0;
+std::vector<int> g_pressedOn;
+
+bool BoxOpen(const std::string& name) { return name == "MessageBoxMenu" && (g_boxShown || g_boxClosing > 0); }
+
+void PressBox(int) {
+    g_pressedOn.push_back(g_boxId);
+    g_boxShown = false;
+    g_boxClosing = 5;
+}
+
+void TickBoxes() {
+    if (g_boxClosing > 0 && --g_boxClosing == 0 && g_boxesLeft > 0) {
+        --g_boxesLeft;
+        ++g_boxId;
+        g_boxShown = true;
+    }
+}
+
+// Each `button` clicks a box of its own, never one an earlier step clicked that is still closing.
+void ButtonsClickEachBoxOnce(const std::string& dir) {
+    const std::string cases = dir + "\\buttons.tes4test";
+    const std::string results = dir + "\\buttons.jsonl";
+    Write(cases, "case quiz\nbutton 0\nbutton 0\nbutton 0\nend\n");
+    Fresh(results);
+    SetEnvironmentVariableA("TES_TEST_CASES", cases.c_str());
+    SetEnvironmentVariableA("TES_TEST_RESULTS", results.c_str());
+    TestBackend game;
+    game.inWorld = InWorld;
+    game.menuOpen = BoxOpen;
+    game.pressButton = PressBox;
+    SetTestBackend(game);
+    ResetTestRunner();
+    g_boxShown = true;
+    g_boxId = 1;
+    g_boxesLeft = 2;
+    for (int i = 0; i < 400; ++i) {
+        TickBoxes();
+        TickTestRunner();
+    }
+    Check(g_pressedOn == std::vector<int>({1, 2, 3}), "each button clicks the next box, not a closing one");
+}
+
 }  // namespace
 
 int main() {
@@ -218,6 +266,7 @@ int main() {
     RelaysToTheHarness(dir);
     HearsAndWalks(dir);
     HearsAcrossCases(dir);
+    ButtonsClickEachBoxOnce(dir);
     std::printf("%s\n", g_failures ? "FAILED" : "all passed");
     return g_failures ? 1 : 0;
 }

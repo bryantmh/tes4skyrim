@@ -9,6 +9,7 @@ these call nothing else in that file, and only import_plugin calls them.
 """
 
 import struct
+import textwrap
 
 from .master_export import values_of
 from ..overrides.adoption import adopted_formid, generated_formid
@@ -167,13 +168,7 @@ def create_message_menu_records(writer: PluginWriter, plan: dict) -> dict:
             if text is None:
                 continue
             fid = generated_formid(writer, 'MESG', name, 'SCRIPT_MESG', name)
-            subs = pack_string_subrecord('EDID', name)
-            subs += pack_string_subrecord('DESC', text)
-            subs += pack_subrecord('INAM', struct.pack('<I', 0))
-            subs += pack_subrecord('DNAM', struct.pack('<I', 1))
-            for button in buttons:
-                subs += pack_string_subrecord('ITXT', button)
-            writer.add_record('MESG', pack_record('MESG', fid, 0, subs))
+            writer.add_record('MESG', message_record(fid, name, text, buttons))
             name_to_fid[name] = fid
     return name_to_fid
 
@@ -182,14 +177,21 @@ def create_message_menu_records(writer: PluginWriter, plan: dict) -> dict:
 CHARGEN_REQUEST_GLOBAL = 'TES4ChargenRequest'
 
 
-def _chargen_page(fid: int, name: str, title: str, buttons: list) -> bytes:
-    """One chargen MESG page."""
+#: A message box button's widest line, in characters; Skyrim sets buttons side by side (MorrowindRuntime's kAnswerLine).
+BUTTON_LINE = 34
+
+
+def message_record(fid: int, name: str, text: str, buttons: list) -> bytes:
+    """One modal MESG: its text, then each button, a long one wrapped onto lines of BUTTON_LINE.
+
+    See: docs/commentary/morrowind_runtime.md#class-choice
+    """
     subs = pack_string_subrecord('EDID', name)
-    subs += pack_string_subrecord('DESC', title)
+    subs += pack_string_subrecord('DESC', text)
     subs += pack_subrecord('INAM', struct.pack('<I', 0))
     subs += pack_subrecord('DNAM', struct.pack('<I', 1))
     for button in buttons:
-        subs += pack_string_subrecord('ITXT', button)
+        subs += pack_string_subrecord('ITXT', '\n'.join(textwrap.wrap(button, BUTTON_LINE)) or button)
     return pack_record('MESG', fid, 0, subs)
 
 
@@ -220,7 +222,7 @@ def create_chargen_menu_records(writer: PluginWriter, plan: dict) -> dict:
             name_to_fid[name] = adopted or writer.chargen_fid_base + k
             k += 1
             if not adopted or plan[key].get('own', True):
-                writer.add_record('MESG', _chargen_page(name_to_fid[name], name, title, buttons))
+                writer.add_record('MESG', message_record(name_to_fid[name], name, title, buttons))
 
     assert k <= 0x40, f'chargen menu pages overflow the fixed-id window ({k})'
     for slot, key in ((0x40, 'birthsign'), (0x41, 'class')):

@@ -1,0 +1,31 @@
+# The census officer's class quiz, the branch morrowind_main skips: "Answer his
+# questions" (button 0 of EnableClassMenu's choice), ten questions from
+# Morrowind.ini (each its first shown answer; the order is rolled per
+# question), then "Accept this Class" (button 0) on the class they point to.
+# The birthsign and the stat review follow as in morrowind_main.
+# Run: python -m tools.live.test_instance mwtest --cases <this folder> --load mwtest_chargen_race --fast --stop-on-fail --timeout 1800
+# See docs/commentary/morrowind_runtime.md#class-choice
+
+case quiz_class
+activate "chargen customs door"
+until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 1
+run
+player->PositionCell 160 -111 220 90 "Seyda Neen, Census and Excise Office"
+button 0
+button 0
+button 0
+button 0
+button 0
+button 0
+button 0
+button 0
+button 0
+button 0
+button 0
+button 0
+pick The Warrior
+button 0
+button 0
+button 0
+until 300 "chargen class".state == -1
+end

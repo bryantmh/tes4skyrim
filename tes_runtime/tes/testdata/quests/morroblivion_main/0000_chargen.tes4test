@@ -44,7 +44,7 @@ end
 
 # The player walks to the Census and Excise Office's dock-side door (0181BCE5) and goes in; the trigger zone inside it
 # (01F8E962) hands the player to Socucius Ergalla, who offers the class quiz; the player skips it (button 1 of
-# "Take Quiz|Skip Quiz"), and stage 10 opens the class menu.
+# "Take Quiz|Skip Quiz"), and stage 10 opens the class menu. The box comes up as his 9.8 s offer ends.
 case mb_chargen_census
 walk 0181BCE5
 activate 0181BCE5
@@ -52,6 +52,7 @@ wait 300
 walk 01F8E962
 until 1800 fbmwChargen.ClassQuizStage >= 1
 wait 120
+expect quiet <= 6 since been expecting you
 button 1
 end
 

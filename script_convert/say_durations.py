@@ -140,3 +140,9 @@ def scan_voice_durations(export_dir: str, use_cache: bool = True,
     except OSError:
         pass
     return durations
+
+
+def info_seconds(durations: dict, formid) -> float:
+    """An INFO's measured line length, 0.0 if unvoiced; voice files use index 00."""
+    fid = int(formid, 16) if isinstance(formid, str) else int(formid)
+    return float((durations or {}).get(f'info:{fid & 0xFFFFFF:08X}') or 0.0)

@@ -884,7 +884,7 @@ def poll(conv, tree, extends: str) -> list:
     out, body, done = _pass_guard(out, body, passes, _pass_waits(conv, tree, extends))
     arm = done + _arm(conv, interval, load_gated)
     if not passes:
-        return out + body + arm + ['EndEvent', '']
+        return out + body + ([] if _ends_in_return(body) else arm) + ['EndEvent', '']
     return (out + [f'  {_POLL_PASS}()'] + arm + ['EndEvent', '', f'Function {_POLL_PASS}()']
             + body + ['EndFunction', ''] + _menu_pass_loop(interval))
 
@@ -937,6 +937,13 @@ def _before_returns(text: str, stmts: list) -> str:
             lines += [indent + s for s in stmts]
         lines.append(line)
     return '\n'.join(lines)
+
+
+def _ends_in_return(body: list) -> bool:
+    """True when the body ends in a top-level bare `Return`; nothing after runs."""
+    code = [line.partition(';')[0].rstrip() for line in '\n'.join(body).split('\n')]
+    code = [line for line in code if line.strip()]
+    return bool(code) and code[-1] == '  Return'
 
 
 def _walk_guard(sc, head: list) -> list:

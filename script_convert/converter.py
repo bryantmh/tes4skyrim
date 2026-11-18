@@ -195,9 +195,12 @@ class ScriptConverter:
     # match that too.
 
     def _say_may_block(self) -> bool:
-        """True when a blocking SayLine is safe here (a poll, not a callback)."""
+        """True when a blocking SayLine is safe here (a poll or a quest stage, not a callback).
+
+        See: docs/commentary/script_convert.md#stage-say-waits
+        """
         ev = (self._current_event or '').lower()
-        if 'onupdate' in ev:
+        if 'onupdate' in ev or ev == 'stagefragment':
             return True
         if 'fragment' in ev:
             return False
@@ -254,14 +257,6 @@ class ScriptConverter:
         # line charged 2.0s of closed guard even though SayLine had already
         # returned -- dead air on the timer of every line in the topic.
         pre = SAY_START_WAIT + 0.25
-        # ð A BLOCKING SayLine IS ONLY SAFE IN A POLL.  It waits for the
-        # engine's OnBegin fragment -- 0.18s median, up to SAY_START_WAIT when
-        # the line is refused.  In OnUpdate that costs this script's own tick.
-        # On the ENGINE'S DISPATCH PATH (a quest-stage or INFO fragment, or an
-        # OnPackageStart/End, OnHit, OnCombatStateChanged callback) it stalls
-        # the transition itself: the stage cannot advance, the package cannot
-        # swap.  That is the stutter that accompanies a line at a STAGE CHANGE
-        # rather than a polled line.  Those sites fire and don't wait.
         call_fn = 'SayLine' if self._say_may_block() else 'SayLineNoWait'
         call = f'TES4Polyfill.{call_fn}({speaker}, {topic}, {fallback:g})'
         if self.sc.var_types.get(target.lower().split('.')[-1]) == 'Int':
@@ -553,6 +548,9 @@ class ScriptConverter:
 
         Returns list of converted lines (indented for function body).
         Preserves _property_refs across calls (quest fragments share a converter).
+        A quest stage's Say waits for its line; an INFO's does not.
+
+        See: docs/commentary/script_convert.md#stage-say-waits
         """
         # A fragment gets a FRESH context, carrying over the property table
         # and the GetInCell families that go with it: the caller emits both
@@ -565,12 +563,7 @@ class ScriptConverter:
             property_refs=dict(prev.property_refs),
             cell_families=dict(prev.cell_families),
             scro_aliases=dict(prev.scro_aliases))
-        # A fragment body runs on the ENGINE'S DISPATCH PATH: a quest stage
-        # cannot advance, and an INFO cannot finish, while the fragment is
-        # still executing.  A blocking SayLine there stalls the transition
-        # itself -- the stutter that accompanies a line at a stage change.
-        # _say_may_block() reads this to emit SayLineNoWait instead.
-        self._current_event = 'Fragment'
+        self._current_event = 'StageFragment' if extends == 'Quest' else 'Fragment'
         # PARSED, not re-scanned: a fragment is a script without the block
         # wrappers, which is a parser MODE rather than a second hand-written
         # loop.  The three regexes this replaces (the `scn` skip, the

@@ -33,10 +33,14 @@ struct TestStep {
     int number = 0;     // the ticks, choice or button
 };
 
-// One line an actor began to speak: the speaker's runtime FormID in hex and the text.
+// One line an actor began to speak: the speaker's runtime FormID in hex, the text, and
+// when it began in real (GetTickCount64) and game milliseconds, which the harness's
+// `quiet` measures silences by.
 struct SpokenLine {
     std::string speaker;
     std::string text;
+    unsigned long long ms = 0;
+    unsigned game = 0;
 };
 
 struct TestCase {
@@ -130,6 +134,8 @@ struct TestBackend {
     // The lines actors began to speak since the last call, in order. Each goes
     // to the results the tick it is read, and `hear` waits on them.
     std::vector<SpokenLine> (*spoken)() = nullptr;
+    // The game clock in milliseconds (0 when unknown), stamped beside real time on what `quiet` measures.
+    unsigned (*gameMs)() = nullptr;
     // Names first reached since the last call (stubbed commands), for the case's line.
     std::vector<std::string> (*newIssues)() = nullptr;
     // Commands with a real implementation; the summary lists those no case names.

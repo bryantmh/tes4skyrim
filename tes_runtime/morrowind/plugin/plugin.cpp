@@ -176,6 +176,14 @@ __declspec(dllexport) bool TESTestPick(const char* name) {
     return name && pick && pick(name);
 }
 
+// The engine's game clock in milliseconds, which a sped-up test game runs ahead of
+// real time; 0 while unresolved. TESRuntime's runner stamps lines with it.
+// See: docs/commentary/headless_testing.md#quiet
+__declspec(dllexport) std::uint32_t TESTestGameMs() {
+    const auto clock = tesruntime::mw::Hooks().frameClockMs;
+    return clock ? clock() : 0;
+}
+
 // `pace <speed>` in a converted TES4 game's cases: this runtime's frame governor
 // steers every game it is loaded in, so TESRuntime's runner sets its speed here.
 __declspec(dllexport) bool TESTestPace(float speed) {

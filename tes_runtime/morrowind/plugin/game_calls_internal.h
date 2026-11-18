@@ -265,6 +265,9 @@ void InstallControlCalls(GameHooks& hooks);
 void InstallMessageCalls(GameHooks& hooks);
 void ShowButtonMessage(const std::string& text,
                        const std::vector<std::string>& buttons);
+// The engine's modal with `buttons`, whose click goes to `result`.
+void ShowBox(const std::string& text, const std::vector<std::string>& buttons,
+             void (*result)(unsigned int button));
 // Skyrim's corner notification, which is what OpenMW's buttonless message box
 // is: the line a refused action shows. Nothing for empty text.
 void Notify(const std::string& text);

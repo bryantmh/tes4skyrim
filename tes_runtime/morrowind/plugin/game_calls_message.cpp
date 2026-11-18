@@ -88,6 +88,16 @@ void OnButton(unsigned int button) {
     State().buttonPressed = static_cast<int>(button);
 }
 
+// The runtime's own box's answer (the chargen class choice), which no script's
+// GetButtonPressed may take; null while none is open.
+void (*g_onChoice)(int button) = nullptr;
+
+void OnChoice(unsigned int button) {
+    const auto answer = g_onChoice;
+    g_onChoice = nullptr;
+    if (answer) answer(static_cast<int>(button));
+}
+
 //: The constants the wrapper passes beside the text and the buttons.
 constexpr std::uint32_t kKind = 4;
 constexpr std::uint32_t kArg5 = 0xa;
@@ -169,20 +179,33 @@ void ReadBookFromInventory(void* book) {
 // See: docs/commentary/morrowind_runtime.md#messagebox-buttons
 void ShowButtonMessage(const std::string& text,
                        const std::vector<std::string>& buttons) {
+    ShowBox(text, buttons, OnButton);
+}
+
+// The engine's modal with `buttons`, whose click goes to `result`.
+void ShowBox(const std::string& text, const std::vector<std::string>& buttons,
+             void (*result)(unsigned int button)) {
     if (!g_showMessageBox) {
         Log("game: MessageBox \"%s\" -- ShowMessageBox unresolved",
             text.c_str());
         return;
     }
-    PostToMainThread([text, buttons]() {
+    PostToMainThread([text, buttons, result]() {
         const char* name[kMaxButtons] = {nullptr};
         for (std::size_t i = 0; i < buttons.size() && i < kMaxButtons; ++i) {
             name[i] = buttons[i].c_str();
         }
-        g_showMessageBox(text.c_str(), OnButton, false, kKind, kArg5, name[0],
+        g_showMessageBox(text.c_str(), result, false, kKind, kArg5, name[0],
                          name[1], name[2], name[3], name[4], name[5], name[6],
                          name[7], name[8], name[9], nullptr);
     });
+}
+
+// The runtime's own box: `answer` gets the clicked button, never a script.
+void ShowChoiceBox(const std::string& text, const std::vector<std::string>& buttons,
+                   void (*answer)(int button)) {
+    g_onChoice = answer;
+    ShowBox(text, buttons, OnChoice);
 }
 
 // What clicking button `button` of the open box does, for a headless run:
@@ -190,7 +213,7 @@ void ShowButtonMessage(const std::string& text,
 void PressButton(int button) {
     PostToMainThread([button]() {
         PostMenuMessage(ids::kMessageBoxMenu, kMessageForceHide);
-        OnButton(static_cast<unsigned int>(button));
+        (g_onChoice ? OnChoice : OnButton)(static_cast<unsigned int>(button));
     });
 }
 
@@ -211,6 +234,7 @@ void InstallMessageCalls(GameHooks& hooks) {
     g_playBink = Native<PlayBinkFn>("Game.PlayBink", ids::kGamePlayBink);
     hooks.playBink = PlayBink;
     hooks.pressButton = PressButton;
+    hooks.choiceBox = ShowChoiceBox;
     InstallBookDefines();
 }
 

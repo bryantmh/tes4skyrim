@@ -14,12 +14,13 @@ import os
 from script_convert.message_menus import (CHARGEN_BIRTHSIGN_GLOBAL, CHARGEN_CLASS_GLOBAL,
                                           table_field)
 from tes4_export.record_types.morrowind import MW_SKILL_TO_TES4
+from tes4_export.record_types.morrowind_quiz import QUIZ_SIG
 
 from ..base.equivalents import RACE_MAP, SKYRIM_VAMPIRE_RACES
 from ..base.owned_records import (CHARGEN_REQUEST_GLOBAL, DIALOGUE_OPEN_GLOBAL, PLAYER_ATTRIBUTE_GLOBALS,
                                   TES4_ATTRIBUTE_NAMES, WELL_KNOWN_PROPERTIES, owner_row)
 from ..base.race_lookup import tes4_race_edid
-from ..base.text_reader import get_float, get_int, get_str
+from ..base.text_reader import get_float, get_int, get_str, parse_export_file
 from ..dialogue.morrowind_sidecar import (ACTORS_TABLE, RACES_TABLE, SIDECAR_DIR,
                                           SKILLS_TABLE, is_tes3_export, plugin_stem)
 from ..dialogue.morrowind_teleport import TELEPORTS_TABLE, copy_rows
@@ -170,14 +171,27 @@ def write_stats_table(by_type: dict, writer, output_path: str, export_dir: str) 
     return _write(os.path.join(out_dir, STATS_TABLE), lines)
 
 
-def write_chargen_table(plan: dict, writer, output_path: str) -> int:
-    """Stage the chargen menus' table for MorrowindRuntime; 1 if written.
+def quiz_lines(export_dir: str) -> list:
+    """chargen.txt's `quiz.<i>=question|one|two|three|sound` rows, from the export's MWQZ dump.
+
+    See: docs/commentary/morrowind_runtime.md#class-choice
+    """
+    path = os.path.join(export_dir, f'{QUIZ_SIG}.txt')
+    recs = sorted(parse_export_file(path) if os.path.isfile(path) else [], key=lambda r: get_int(r, 'Number'))
+    fields = ('Question', 'AnswerOne', 'AnswerTwo', 'AnswerThree')
+    return [f'quiz.{i}=' + '|'.join([table_field(rec.get(key, '')) for key in fields]
+                                    + [table_field(rec.get('Sound', '').replace('/', chr(92)).lower())])
+            for i, rec in enumerate(recs)]
+
+
+def write_chargen_table(plan: dict, writer, output_path: str, export_dir: str) -> int:
+    """Stage the chargen menus' table for MorrowindRuntime, with the export's class quiz; 1 if written.
 
     See: docs/commentary/morrowind_runtime.md#chargen-menus
     """
     plugin = os.path.basename(output_path)
     out_dir = os.path.join(os.path.dirname(output_path), SIDECAR_DIR, plugin_stem(plugin))
-    lines = chargen_lines(plan, plugin, writer.masters) if plan else []
+    lines = (chargen_lines(plan, plugin, writer.masters) if plan else []) + quiz_lines(export_dir)
     if lines:
         os.makedirs(out_dir, exist_ok=True)
     return _write(os.path.join(out_dir, CHARGEN_TABLE), lines)

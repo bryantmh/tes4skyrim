@@ -126,7 +126,7 @@ def _topic(key: str, path: str, text: str, fids: list, ctx) -> tuple:
     return dial, (ctx.derive(f'barksay:{key}'), lines)
 
 
-def _sound(key: str, path: str, ctx) -> tuple:
+def say_sound(key: str, path: str, ctx) -> tuple:
     """The SOUN a mouthless speaker plays the same recording through."""
     form_id = ctx.derive(f'barksaysound:{key}')
     return form_id, [f'EditorID=MWSaySound{form_id[-6:]}',
@@ -154,5 +154,5 @@ def say_lines(records, ctx) -> dict:
             out['DIAL'].append(dial)
             out['INFO'].append(info)
         if _has_mouthless_speaker(speakers, ctx):
-            out['SOUN'].append(_sound(key, named, ctx))
+            out['SOUN'].append(say_sound(key, named, ctx))
     return out

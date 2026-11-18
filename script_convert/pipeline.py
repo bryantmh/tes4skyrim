@@ -46,7 +46,7 @@ from script_convert.poll_interval import quest_script_delays
 from script_convert.redress import armor_names, redress_runs
 from script_convert.quest_fragments import (quest_fragment_psc,
                                             scripted_count, stage_fragments)
-from script_convert.say_durations import scan_voice_durations
+from script_convert.say_durations import info_seconds, scan_voice_durations
 from script_convert.scro_refs import (preload_scro_refs, resolve_scro_aliases,
                                       scro_list)
 from script_convert.symbols import property_declarations, IMPLICIT_NAMES
@@ -779,15 +779,6 @@ def _info_batch(records: list, output_dir: str, xref: CrossRefGraph,
             stats['errors'].append(f'INFO {formid}: {e}')
 
 
-def _info_line_length(formid: str) -> float:
-    """The INFO's measured voice length, all responses; 0 when unvoiced."""
-    try:
-        return float((ScriptConverter.say_durations or {}).get(
-            f'info:{formid.upper()}') or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def _said_once_lines(fid24: int, reveals) -> list:
     """Begin-fragment lines moving the said-once globals among `reveals`.
 
@@ -829,7 +820,7 @@ def _info_fragment_psc(rec: dict, xref: CrossRefGraph, reveals: list,
         body_lines = movie_last(conv.convert_fragment(result_script, 'TopicInfo'))
         prop_refs = dict(conv.sc.property_refs)
         body_lines = redress_runs(body_lines, armor_names(prop_refs))
-    length = _info_line_length(formid)
+    length = info_seconds(ScriptConverter.say_durations, formid)
     seq_gate = sequence_gate(rec, _WORKER_CTX.get('quest_script_vars') or {},
                              _WORKER_CTX.get('quest_edid_by_fid') or {})
     tested = (_WORKER_CTX.get('choice_tests') or {}).get(int(formid, 16) & 0xFFFFFF, ())

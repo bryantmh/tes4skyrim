@@ -37,7 +37,7 @@ from asset_convert.lod.esm_scan import plugin_masters
 from core.chargen_source import candidates
 from core.subprocess_flags import POPEN_FLAGS
 from source_paths import find_game_path
-from tools.live import crash_capture, fail_snapshot, hidden_launch, instance_lock, obs_record, tes4_cases
+from tools.live import crash_capture, fail_snapshot, hidden_launch, instance_lock, obs_record, silences, tes4_cases
 from tools.live.game_bridge import Bridge, BridgeError
 from tools.navmesh import navmesh_rescue
 from tools.release.package_runtime_dll import (EXPORT_ROOT, MOD_NAME, MODS, chargen_table,
@@ -1007,15 +1007,21 @@ def tes4_game() -> CaseGame:
     runs console lines and judges conditions, and reports each case's Papyrus errors.
     See: docs/commentary/headless_testing.md#tes4-quest-cases
     """
-    names = tes4_cases.build_names(os.path.join(LOCAL_APPDATA, 'Skyrim Special Edition', 'Plugins.txt'))
+    plugins_txt = os.path.join(LOCAL_APPDATA, 'Skyrim Special Edition', 'Plugins.txt')
+    names = tes4_cases.build_names(plugins_txt)
+    lengths = silences.Lengths(silences.export_dirs(plugins_txt))
 
     def respond(bridge: Bridge):
         """The line handler for one run; reads the Papyrus log from its start."""
         papyrus = tes4_cases.PapyrusLog(os.path.join(MY_GAMES, 'Logs', 'Script', 'Papyrus.0.log'))
+        quiet = silences.Silences(lengths)
 
         def reply(line: dict):
             """A request's answer; None for every other line, printing spoken lines and noting a case's
-            Papyrus errors."""
+            Papyrus errors and its silences."""
+            quiet.note(line)
+            if 'judge' in line and silences.QUIET.match(line['judge']):
+                return quiet.judge(line['judge'])
             if 'speaker' in line:
                 tes4_cases.print_spoken(line, names)
             if 'case' in line:

@@ -344,12 +344,22 @@ std::string HexId(void* form) {
     return hex;
 }
 
+// The game clock in milliseconds, which MorrowindRuntime keeps for every converted game; 0 without it.
+unsigned GameMs() {
+    using ClockFn = std::uint32_t (*)();
+    static const auto clock = [] {
+        HMODULE runtime = GetModuleHandleA(ids::kMorrowindRuntimeDll);
+        return runtime ? reinterpret_cast<ClockFn>(GetProcAddress(runtime, "TESTestGameMs")) : nullptr;
+    }();
+    return clock ? clock() : 0;
+}
+
 // Every AddSubtitle call: the line is noted for the runner, then shown as the
 // engine meant.
 void AddSubtitleHook(void* manager, void* speaker, const char* text, bool force) {
     if (speaker && text && *text) {
         const std::lock_guard<std::mutex> lock(g_spokenMutex);
-        g_spoken.push_back({HexId(speaker), text});
+        g_spoken.push_back({HexId(speaker), text, GetTickCount64(), GameMs()});
     }
     g_c.addSubtitle(manager, speaker, text, force);
 }
@@ -653,6 +663,7 @@ void InstallTestRunner() {
     game.walkDone = WalkDone;
     game.walkStop = WalkStop;
     game.spoken = Spoken;
+    game.gameMs = GameMs;
     HookSubtitles();
     test::SetTestBackend(game);
     const bool ticking = StartMainThreadTick(kTickMs, test::TickTestRunner);
