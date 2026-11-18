@@ -2060,6 +2060,27 @@ body at OnEnd breaks it four different ways, each fixed by one helper.
   2, judged the turn not its own and skipped `nextspeaker = 2`; OnBegin then
   stepped 2 -> 3, and its own fallback found the count already spent. (Cut, most
   likely, by Mankar's next poll Say: SayLine had given up before the engine
+- <a id="redress-after-inventory-change"></a>**An item call that moves armor on
+  an actor re-dresses it (`redress.py`, `TES4Polyfill.Redress`).** Oblivion
+  re-scores an NPC's inventory when it changes and wears the best piece per
+  slot; Skyrim never does. MQ05 stage 20 takes Baurus's Blades armor away so he
+  can go undercover, and Oblivion dresses him in the LowerShirt11 /
+  LowerPants08 he carries; MQ06 stage 10 hands the armor back with `addItem`.
+  Converted, he stood bare-chested in loincloth, boots and bracers from MQ05 to
+  the end of the main quest (2026-11-17 recording: the Bruma chapel, the Great
+  Gate, Cloud Ruler, the finale). Each run of `AddItem` / `RemoveItem` /
+  `RemoveAllItems` on one non-player reference that names an Armor property
+  (or removes everything) is followed by one `TES4Polyfill.Redress(<ref>)`,
+  which walks the actor's inventory (SKSE `GetNthForm`) and equips per slot in
+  the importer's outfit order: upper body first, armor over clothing, then gold
+  value ([upper-body-first](tes5_import_actors.md#upper-body-first)). Jewelry,
+  the player and dead actors are left alone. **The equip is locked**
+  (`abPreventRemoval`): measured on Baurus at Luther Broad's, an unlocked
+  `equipitem LowerShirt11` read `GetEquipped 0` straight away (the NPC's AI puts
+  its outfit back), while the locked one held, also across a move from Luther
+  Broad's to Cloud Ruler Temple. Because a locked piece is not swapped out by the
+  AI, each equip first unequips whatever is worn in the new piece's slots
+  (SKSE `GetWornForm`).
   began the line.) Failed in 1 of 7 runs of the speech; not reproduced on demand.
 - <a id="turn-handoff"></a>**`split_turn_handoff` — the handoff cannot wait for
   OnEnd.** In TES4 the result script set `convCount`/`speaker` and charged
@@ -5641,6 +5662,21 @@ only the safe name is registered, `if message == 0` is compiled as the TES4
 
 ### Step 6: Variable → Property Conversion
 
+  <a id="playgroup-waits-for-3d"></a>
+  An object's `playgroup` is `TES4Polyfill.PlayGroup(obj, "<Group>")`, which
+  waits (at most 5 real seconds) while the object is enabled in an attached cell
+  but has no 3D yet, then calls `PlayAnimation`. MQ16 stage 58 enables
+  MQ16EndgameBattle (the dragon-vs-Dagon fight that ends as the stone statue) and
+  its script plays `Equip` on its next pass; in the 2026-11-17 full run the
+  object had no 3D then (`(05062C7D): does not have 3d`), the animation never
+  started, `TES4IsAnimPlaying` read false at once, and the finale ended on the
+  model's opening pose: Dagon standing, no statue. Measured on a kept game: a
+  freshly enabled MQ16EndgameBattle shows that opening pose; setting the script's
+  `startAnimating` to 1 with its 3D loaded played the fight to the statue; a
+  console `setdestroyed 1` / `0` on it changed nothing visible (the stage
+  58 / 60 `setdestroyed` calls are not the cause). After the change the finale
+  ends on the statue with Dagon gone. The fire shader the same script plays one
+  line earlier (`pms effectfiredragon`) still meets no 3D.
 ```
 TES4: short doOnce            → Int Property doOnce = 0 Auto
 TES4: float timer             → Float Property timer = 0.0 Auto

@@ -2768,6 +2768,29 @@ class TestOutfitSplit:
         assert outfit == [1]
         assert [f for f, _ in carried] == [2]  # loser is carried, not dropped
 
+    def test_upper_body_robe_keeps_its_feet_over_dearer_shoes(self):
+        """Ruma Camoran: a robe covering the feet is chosen before her shoes, whatever they cost."""
+        from tes5_import.actors.outfits import split_inventory
+        robe = self.BODY | self.LEGS | self.FEET | (1 << 4)
+        self._index(CLOT=[self._clot('00000001', 'MythicDawnRobe', robe, value=0),
+                          self._clot('00000002', 'LowerShoes08', self.FEET, value=1)])
+        outfit, carried = split_inventory([(1, 1), (2, 1)])
+        assert outfit == [1]
+        assert [f for f, _ in carried] == [2]
+
+    def test_a_list_closes_only_the_slots_every_leaf_fills(self):
+        """One long shirt among a list's leaves must not keep the actor's pants off."""
+        from tes5_import.actors.outfits import split_inventory
+        self._index(
+            CLOT=[self._clot('00000001', 'LowerShirt01', self.BODY, value=1),
+                  self._clot('00000002', 'LowerShirt09', self.BODY | self.LEGS, value=1),
+                  self._clot('00000004', 'LowerPants01', self.LEGS, value=1)],
+            LVLI=[self._lvli('00000003', 'LL0NPCClothingShirtLower', ['00000001', '00000002']),
+                  self._lvli('00000005', 'LL0NPCClothingPantsLower', ['00000004'])],
+        )
+        outfit, _ = split_inventory([(3, 1), (5, 1)])
+        assert sorted(outfit) == [3, 5]
+
     def test_leveled_clothing_list_loses_to_armor(self):
         """Azzan: his steel competed with LL0NPCClothingShirt/Pants/ShoesMiddle,
         not with plain CLOT records. A leveled list must claim the union of its
@@ -6389,13 +6412,11 @@ class TestPlayGroupTargetRouting:
     def test_activator_ref_gets_playanimation(self):
         out = self._convert('CGPrisonSecretWallRef.playgroup forward 1',
                             {'CGPrisonSecretWallRef': 'ACTI'})
-        assert 'PlayAnimation("Forward")' in out, out
         assert 'SendAnimationEvent' not in out, (
             'an activator has no behavior graph — SendAnimationEvent is inert '
             'and the door never moves')
-        assert 'CGPrisonSecretWallRef.PlayAnimation' in out, (
-            'PlayAnimation is an ObjectReference method: it must play on the '
-            'named ref, not on Self')
+        assert 'TES4Polyfill.PlayGroup(CGPrisonSecretWallRef, "Forward")' in out, (
+            'the group must play on the named ref, not on Self')
 
     def test_actor_ref_keeps_animation_event(self):
         out = self._convert('ArmandChristopheRef.playgroup idle 1',
@@ -6412,7 +6433,7 @@ class TestPlayGroupTargetRouting:
 
     def test_self_call_in_object_script_still_plays_the_sequence(self):
         out = self._convert('playgroup forward 1', {})
-        assert 'Self.PlayAnimation("Forward")' in out, out
+        assert 'TES4Polyfill.PlayGroup(Self, "Forward")' in out, out
 
 
 class TestOwnedGroupAnchoring:

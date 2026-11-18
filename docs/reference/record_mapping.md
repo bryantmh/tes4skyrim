@@ -201,27 +201,10 @@ because it runs too early or in the wrong order:
 - **INFO** — Dialog response structure changed significantly. VMAD fragments replace result scripts.
 - **NPC_/CREA** — Attribute system removed, skill system changed, many new subsystems (templates, outfits, perks, keywords).
 - **Outfit split (`tes5_import/actors/outfits.py`)** — TES4's single CNTO inventory (engine picks what to wear at
-  spawn) → TES5 DOFT/OTFT (worn) + CNTO (carried), disjoint. Per-biped-slot conflict resolution keeps
-  one winner per slot (armor > clothing > value). **ChanceNone contract:** only a *guaranteed* winner
-  (plain ARMO/CLOT, or an LVLI with `LVLD.ChanceNone==0` down to slot-filling leaves) may EVICT a
-  lower-priority item from its slot. A probabilistic list (e.g. `LL0NPCArmorLightGreaves25`, ChanceNone
-  75) must NOT evict a guaranteed clothing base under it (`LL0NPCClothingPantsLower`, ChanceNone 0) —
-  Skyrim resolves the outfit once and has no equivalent of Oblivion's per-spawn re-scoring, so evicting
-  the guaranteed pants left ~75% of bandits bare-legged. Keep both; engine wears greaves when rolled,
-  pants otherwise. The `NN` in Bethesda's list names (`...Greaves25`, `...Cuirass100`) is the equip
-  probability. Trace any actor with `python -m tools.audit.trace_outfit export/Oblivion.esm <EditorID>`.
-  **A plugin WITH MASTERS must index its masters' items too** (`load_item_index(by_type,
-  ctx.master_export)`): a dependent plugin dresses its actors out of its MASTER's wardrobe, so most
-  inventory entries name a record the plugin does not contain. DLCBattlehornCastle draws 155 of its 165
-  NPC inventory entries from Oblivion.esm; indexing only its own 45 records left every one of them
-  unclassifiable, so they fell to the non-wearable default, stayed in CNTO, and all 22 NPCs — knights,
-  captain, maid, cook — spawned with NO outfit at all (index 45 items/9 wearable → 8,501/1,609; 20/22
-  now dressed, the 2 without being a dog and a lich). Only the item signatures are indexed, never the
-  master's whole export: at ~1.17M records that is the difference between ~30k dicts and all of them
-  (and the navmesh phase then forks workers off this process — see the memory note in `load_item_index`).
-  The index keys on the low 24 bits, so the plugin's own records are loaded LAST and win. An override
-  plugin that only retitles NPCs is unaffected and must stay so: Translation.esp's 1,284 NPC overrides
-  keep the master's DOFT byte-identically, 0 lost.
+  spawn) → TES5 DOFT/OTFT (worn) + CNTO (carried), disjoint, one winner per slot with the upper-body
+  piece chosen first. Rules and measurements:
+  [tes5_import_actors.md](../commentary/tes5_import_actors.md#outfit-split). An override plugin that only
+  retitles NPCs keeps the master's DOFT byte-identically (Translation.esp's 1,284 NPC overrides, 0 lost).
 - **RACE** — Almost entirely restructured. Only basic data (height/weight/skill boosts/spells) can transfer.
 - **ENCH/SPEL** — ENIT/SPIT completely restructured. Effects need MGEF FormID resolution.
 - **ARMO/CLOT** — Missing ARMA records means armor won't render in-game.

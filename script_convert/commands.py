@@ -478,7 +478,7 @@ def play_group(ctx, call) -> str:
     # NiControllerSequence names in Oblivion NIFs are capitalized.
     obj = (ctx._resolve_objref_ref(call.ref, call.extends) if call.ref
            else ctx._implicit_self(call.extends))
-    play = f'{obj}.PlayAnimation("{anim.capitalize()}")'
+    play = f'TES4Polyfill.PlayGroup({obj}, "{anim.capitalize()}")'
     return (f'{play}\n  TES4Polyfill.ReleaseBreakaway({obj})'
             if _needs_havok_release(ctx, call) else play)
 

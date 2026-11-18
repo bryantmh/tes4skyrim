@@ -28,6 +28,7 @@ from script_convert import symbols as _symbols
 from script_convert.conversation_sequence import hold_runs
 from script_convert.poll_motion import relative_sets
 from script_convert.movie_last import movie_last
+from script_convert.redress import armor_names, redress_runs
 from script_convert.release_order import release_into_package
 from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as N
@@ -65,6 +66,7 @@ def build(conv, name: str, source: str, extends: str, editor_id: str) -> str:
     body += quest_restart(conv, tree, extends, name)
     body = halt_guards(conv, body)
     body = movie_last(release_into_package('\n'.join(body).split('\n')))
+    body = redress_runs(body, armor_names(conv.sc.property_refs))
     if conv.xref:
         body = hold_runs(body, conv.xref.holds)
     body += remote_adders(conv, tree, editor_id)
@@ -1256,7 +1258,7 @@ def gate_capture(conv, tree, extends: str) -> list:
 
 def _gate_door_lets_in(conv, tree) -> bool:
     """Does this script sit on a door flagged Oblivion Gate and call `Activate` in its OnActivate?"""
-    if not conv.xref.is_gate_script(conv.sc.edid):
+    if not conv.xref or not conv.xref.is_gate_script(conv.sc.edid):
         return False
     return any('activate' in {e.called for e in N.walk_exprs_in(block.body)}
                for block in (tree.blocks if tree else ()) if block.btype.lower() == 'onactivate')

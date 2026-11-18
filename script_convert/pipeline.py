@@ -43,6 +43,7 @@ from script_convert.movie_last import movie_last
 from script_convert.commands_falloutnv import (quest_objective_indices,
                                                set_quest_objectives)
 from script_convert.poll_interval import quest_script_delays
+from script_convert.redress import armor_names, redress_runs
 from script_convert.quest_fragments import (quest_fragment_psc,
                                             scripted_count, stage_fragments)
 from script_convert.say_durations import scan_voice_durations
@@ -827,6 +828,7 @@ def _info_fragment_psc(rec: dict, xref: CrossRefGraph, reveals: list,
         conv = primed_converter(rec, xref, result_script)
         body_lines = movie_last(conv.convert_fragment(result_script, 'TopicInfo'))
         prop_refs = dict(conv.sc.property_refs)
+        body_lines = redress_runs(body_lines, armor_names(prop_refs))
     length = _info_line_length(formid)
     seq_gate = sequence_gate(rec, _WORKER_CTX.get('quest_script_vars') or {},
                              _WORKER_CTX.get('quest_edid_by_fid') or {})

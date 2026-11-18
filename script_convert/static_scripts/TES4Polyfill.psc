@@ -1130,6 +1130,87 @@ Function RestoreFallDamage(Actor akActor, Spell akFallSpell) Global
   EndIf
 EndFunction
 
+; TES4 re-dressed an NPC whenever its inventory changed: the best wearable per
+; slot, the upper-body piece first.  Skyrim never does, so a converted
+; AddItem / RemoveItem of armor on an actor is followed by this pass over its
+; inventory (the importer's outfit split uses the same order).  Jewelry is left
+; alone; the player is never touched.
+; See docs/commentary/script_convert.md#redress-after-inventory-change
+Function Redress(ObjectReference akRef) Global
+  Actor who = akRef as Actor
+  If !who || who == Game.GetPlayer() || who.IsDead()
+    Return
+  EndIf
+  Armor[] worn = new Armor[128]
+  Int count = 0
+  Int i = who.GetNumItems()
+  While i > 0 && count < 128
+    i -= 1
+    Armor piece = who.GetNthForm(i) as Armor
+    If piece && RedressSlots(piece) != 0
+      worn[count] = piece
+      count += 1
+    EndIf
+  EndWhile
+  Int taken = 0
+  While count > 0
+    Int best = 0
+    i = 1
+    While i < count
+      If RedressRank(worn[i]) > RedressRank(worn[best])
+        best = i
+      EndIf
+      i += 1
+    EndWhile
+    Armor pick = worn[best]
+    count -= 1
+    worn[best] = worn[count]
+    Int slots = RedressSlots(pick)
+    If Math.LogicalAnd(slots, taken) == 0
+      taken = Math.LogicalOr(taken, slots)
+      RedressWear(who, pick, slots)
+    EndIf
+  EndWhile
+EndFunction
+
+; Wear akPiece: take off what holds its slots, then equip it LOCKED -- an NPC's
+; AI swaps an unlocked non-outfit piece back to its outfit at once (measured on
+; Baurus, 2026-11-17: GetEquipped 0 right after an unlocked equip).
+Function RedressWear(Actor akWho, Armor akPiece, Int aiSlots) Global
+  If akWho.IsEquipped(akPiece)
+    Return
+  EndIf
+  Int n = 0
+  While n < 32
+    Int bit = Math.LeftShift(1, n)
+    If Math.LogicalAnd(aiSlots, bit) != 0
+      Form held = akWho.GetWornForm(bit)
+      If held && held != akPiece
+        akWho.UnequipItem(held, False, True)
+      EndIf
+    EndIf
+    n += 1
+  EndWhile
+  akWho.EquipItem(akPiece, True, True)
+EndFunction
+
+; A wearable's slots for Redress, without amulet and ring (they never contend).
+Int Function RedressSlots(Armor akPiece) Global
+  Return Math.LogicalAnd(akPiece.GetSlotMask(), Math.LogicalNot(0x60))
+EndFunction
+
+; Redress order: upper body first, then armor over clothing, then gold value.
+Float Function RedressRank(Armor akPiece) Global
+  Float rank = akPiece.GetGoldValue() as Float
+  If akPiece.GetWeightClass() != 2
+    rank += 1000000.0
+  EndIf
+  If Math.LogicalAnd(akPiece.GetSlotMask(), 0x4) != 0
+    rank += 2000000.0
+  EndIf
+  Return rank
+EndFunction
+
 ; ==========================================================================
 ; Day/Time Helpers
 ; ==========================================================================
@@ -1280,6 +1361,23 @@ Function ReleaseBreakaway(ObjectReference akRef) Global
   ; Motion_Dynamic = 1.  abAllowActivate must be true or the body stays asleep
   ; and never starts simulating.
   akRef.SetMotionType(1, true)
+EndFunction
+
+; TES4 playgroup on an animated object.  An object enabled a moment ago in a
+; loaded cell has no 3D yet, and PlayAnimation then does nothing; Oblivion played
+; the group once the object had loaded.  So wait, at most 5 real seconds, while
+; the object is enabled in an attached cell and still loading.
+; See docs/commentary/script_convert.md#playgroup-waits-for-3d
+Function PlayGroup(ObjectReference akRef, String asGroup) Global
+  If akRef == None
+    Return
+  EndIf
+  Cell home = akRef.GetParentCell()
+  Float giveUp = Utility.GetCurrentRealTime() + 5.0
+  While !akRef.Is3DLoaded() && !akRef.IsDisabled() && home && home.IsAttached() && Utility.GetCurrentRealTime() < giveUp
+    Utility.Wait(0.05)
+  EndWhile
+  akRef.PlayAnimation(asGroup)
 EndFunction
 
 ; SetDestroyed(1) deferred until the clip that preceded it has finished.

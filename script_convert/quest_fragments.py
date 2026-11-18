@@ -13,6 +13,7 @@ from script_convert.conversation_sequence import hold_runs
 from script_convert.converter import ScriptConverter
 from script_convert.cross_ref import CrossRefGraph
 from script_convert.movie_last import movie_last
+from script_convert.redress import armor_names, redress_runs
 from script_convert.objective_completion import (
     objective_lines,
     superseded_stages,
@@ -69,7 +70,8 @@ def _fragment_lines(conv, rec: dict, xref, edid: str, frag: tuple,
     for gname in stage_reveals.get((edid.lower(), stage_idx), []):
         out.append(f'  {add_topic_call(ScriptConverter.topic_reveals, gname)}')
     if script_src.strip():
-        out.extend(hold_runs(conv.convert_fragment(script_src, 'Quest'), xref.holds))
+        body = conv.convert_fragment(script_src, 'Quest')
+        out.extend(hold_runs(redress_runs(body, armor_names(conv.sc.property_refs)), xref.holds))
     settler = xref.settling_script(edid)
     if settler:
         out.append(f'  ((Self as Quest) as {settler}).TES4StageRan({stage_idx})')

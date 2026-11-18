@@ -45,6 +45,8 @@ them does.
 - [Voice type resolution](#voice-resolution)
 - [Morrowind vampirism is Skyrim's vampirism](#morrowind-vampirism)
 - [Diseases pass on through Skyrim's creature-disease mechanism](#disease-contact)
+- [Outfits: one inventory split into worn and carried](#outfit-split)
+  - [The upper-body piece is chosen first](#upper-body-first)
 
 ## <a id="npcs-use-skyrim-rigs"></a>Only creatures get converted rigs; NPCs use Skyrim's
 
@@ -1515,3 +1517,67 @@ Confirmed in game 2026-11-12 (Morrowind `rat_diseased` Witbane and `alit_blighte
   Affects Duration) and skill Restoration; with those the player catches it.
 - **Not ported:** Morrowind's disease from looting a carrier's corpse. Oblivion is not yet reimported
   with this change.
+
+## <a id="outfit-split"></a>Outfits: one inventory split into worn and carried
+
+**Code:** `tes5_import/actors/outfits.py`
+
+A TES4 actor has one CNTO inventory holding everything (armor, clothing, weapons, keys, potions, loot
+lists), and the engine picks what to wear from it at runtime, best item per slot. A TES5 actor wears
+exactly what its DOFT outfit lists, equips every item of it with no scoring, and adds the outfit ON TOP
+of CNTO at load. Feeding the raw inventory into both broke three ways:
+
+1. **CK errors.** Loot lists, keys, potions and gold in an OTFT ("LeveledItem ... contains non-armor
+   objects", "Unable to find valid outfit form"), thousands of lines.
+2. **Duplicates.** Every wearable in CNTO and the outfit gave two of each on the corpse.
+3. **Random equipping.** 205 Oblivion NPCs carry armor AND clothes for the same slot
+   (SE32TestJoelGhost: an iron set and shirt/pants/shoes); Skyrim equips all and an arbitrary one wins.
+
+So every entry is classified once: wearables go to the outfit after per-slot conflict resolution, the
+rest stays in CNTO, and the two are disjoint. Nothing is dropped: an outranked wearable stays carried.
+
+- <a id="outfit-no-weapons"></a>**Only ARMO/CLOT (and all-wearable LVLI) enter an outfit.** All 481
+  vanilla OTFTs in Skyrim.esm list only ARMO or all-armor LVLI, never WEAP/AMMO/LIGH; Skyrim's combat AI
+  equips the best weapon from CNTO. Putting weapons in the outfit broke NPC combat equipping entirely.
+- <a id="outfit-index"></a>**The item index holds only carryable types**, masters' included. Indexing
+  all of `by_type` took the plugin's ~1M REFRs too: hundreds of MB in the parent, then 31 navmesh workers
+  forked from it sent the machine to swap ("Generating 8228 navmeshes" looked hung). A dependent plugin
+  dresses its actors from its master's wardrobe: DLCBattlehornCastle draws 155 of 165 NPC inventory
+  entries from Oblivion.esm, and indexing only its own 45 records left all 22 NPCs undressed. Keys are
+  the low 24 bits, the plugin's own records loaded last (an override wins); lookups mask the load-order
+  byte, or every item reads as non-wearable.
+- <a id="outfit-lvli-repeats"></a>**A repeated sublist is a weight, not a cycle.** Oblivion weights an
+  entry by listing it twice (LL2NPCStaff25 names LL1NPCStaff1Normal100 twice); a visited set shared
+  across siblings marked the staff list non-wearable and disarmed every leveled-weapon actor
+  (TESTVampireMage). Cycle detection tracks ancestors only.
+- <a id="outfit-lvli-slots"></a>**A leveled list claims the union of its leaves' slots.** Treating
+  lists as slotless put Azzan in LL0NPCClothingShirt/Pants/ShoesMiddle over his steel set.
+- <a id="outfit-guaranteed"></a>**Only a guaranteed winner closes a slot.** A plain ARMO/CLOT, or an
+  LVLI with ChanceNone 0 down to every slot-filling leaf. Bandits carry chance armor
+  (LL0NPCArmorLightGreaves25, ChanceNone 75; the `NN` in the name is the equip odds) over a guaranteed
+  base (LL0NPCClothingPantsLower); letting the greaves evict the pants left ~75% of bandits bare-legged.
+  Both are kept, as vanilla bandit outfits are authored. A guaranteed item is kept only if EVERY slot it
+  could need is still free: LL0VampireShirt spans body and legs, lost body to a cuirass, and would have
+  been equipped anyway for the legs, re-covering the chest. But a winner CLOSES only the slots it fills
+  whatever it rolls (the slots all its leaves share): one long shirt among LL0NPCClothingShirtLower's 15
+  leaves (LowerShirt09, body + legs) made the whole list close the legs, and 31 Oblivion NPCs carrying
+  such a shirt list beside LL0NPCClothingPantsLower / PantsMiddle or LL0VampirePants100 stood
+  bare-legged.
+- **Ranking:** armor beats clothing (any ARMO leaf makes a list armor), then the higher gold value, then
+  FormID for reproducible output. Trace an actor with
+  `python -m tools.audit.trace_outfit export/Oblivion.esm <EditorID>`.
+
+### <a id="upper-body-first"></a>The upper-body piece is chosen first
+
+The engine does not rank all wearables against each other. Its default-equipment pass (FNV decomp,
+`references/fnv_decomp/src/fallout_shared/tesnpc.cpp` lines 965-988, Oblivion's lineage) walks the
+biped slots in order; the upper-body winner is remembered, and a later slot's item is skipped when the
+upper-body item already covers that slot or when the item itself covers the upper body. So a garment
+that covers the upper body keeps every slot it spans, whatever it is worth.
+
+Ranked by value alone, Oblivion's Mythic Dawn Robe (upper body, lower body, hands, feet; value 0) lost
+the feet to any pair of shoes (value 1+) and with it its place in the outfit: Ruma Camoran, Eldamil,
+Raven Camoran and every Mythic Dawn guard stood in hood and shoes (2026-11-17 recording, 7:08 and
+21:01). A census found 35 Oblivion NPCs whose only upper-body garment was dropped this way, including
+the four Black Hand speakers (DBBlackHandRobe) and five shirts (Wumeek, Edgar Vautrine, Severius Atius,
+Erissare Arenim, MS13FallenKnightF). Items covering the upper body are now resolved before the rest.

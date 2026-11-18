@@ -73,32 +73,32 @@ def _convert(src, xref, extends='ObjectReference'):
 def _assert_inert(out):
     """The call kept the graph event and did not play a sequence."""
     assert 'SendAnimationEvent' in out, out
-    assert 'PlayAnimation' not in out, out
+    assert 'PlayGroup(' not in out, out
 
 
 def test_enable_parent_activator_gets_playanimation():
     """The enable parent behind `getParentRef` is an activator: play its sequence."""
     out = _convert(PARENT_SRC, _xref())
-    assert 'targetref.PlayAnimation("Forward")' in out, out
+    assert 'TES4Polyfill.PlayGroup(targetref, "Forward")' in out, out
     assert 'SendAnimationEvent' not in out, out
 
 
 def test_every_placement_and_owner_agreeing_still_promotes():
     """Two placements of one base and a second base, every parent an activator."""
     xref = _xref(parents=('ACTI', 'ACTI'), more_owners=(('ACTI',),))
-    assert 'targetref.PlayAnimation("Forward")' in _convert(PARENT_SRC, xref)
+    assert 'TES4Polyfill.PlayGroup(targetref, "Forward")' in _convert(PARENT_SRC, xref)
 
 
 def test_door_parent_gets_playanimation():
     """A door is an animated object too."""
     out = _convert(PARENT_SRC, _xref(parents=('DOOR',)))
-    assert 'targetref.PlayAnimation("Forward")' in out, out
+    assert 'TES4Polyfill.PlayGroup(targetref, "Forward")' in out, out
 
 
 def test_getself_on_an_activator_script_gets_playanimation():
     """`getSelf` is the record the script sits on, here an activator."""
     out = _convert(SELF_SRC, _xref())
-    assert 'selfRef.PlayAnimation("Backward")' in out, out
+    assert 'TES4Polyfill.PlayGroup(selfRef, "Backward")' in out, out
     assert 'SendAnimationEvent' not in out, out
 
 
@@ -107,7 +107,7 @@ def test_actor_enable_parent_keeps_the_event():
     for sig in ('NPC_', 'CREA', 'LVLC', 'LVLN'):
         out = _convert(PARENT_SRC, _xref(parents=(sig,)))
         assert 'Debug.SendAnimationEvent(targetref, "moveStart")' in out, (sig, out)
-        assert 'PlayAnimation' not in out, (sig, out)
+        assert 'PlayGroup(' not in out, (sig, out)
 
 
 def test_getself_on_an_actor_script_keeps_the_event():
@@ -119,7 +119,7 @@ def test_only_an_animated_object_base_is_proof():
     """A quest or a weapon is no actor, and no animated object either."""
     for sig, extends in (('QUST', 'Quest'), ('WEAP', 'ObjectReference')):
         out = _convert(SELF_SRC, _xref(owner_sig=sig), extends)
-        assert 'PlayAnimation' not in out, (sig, out)
+        assert 'PlayGroup(' not in out, (sig, out)
         assert 'SendAnimationEvent' in out, (sig, out)
 
 
@@ -151,7 +151,7 @@ def test_disagreeing_owners_keep_the_event():
     """`getSelf` on two bases of different kinds names no one signature."""
     x = _xref()
     _attach(x, 'T', 5, 'DOOR', ('ACTI',))
-    assert 'selfRef.PlayAnimation' in _convert(SELF_SRC, _xref())
+    assert 'PlayGroup(selfRef' in _convert(SELF_SRC, _xref())
     _assert_inert(_convert(SELF_SRC, x))
 
 
@@ -257,7 +257,7 @@ def test_another_scripts_same_named_variable_does_not_veto():
                               'set U.targetref to player'])
     assert xref.remote_writes == {('u', 'targetref')}
     assert not xref.remote_write_names
-    assert 'targetref.PlayAnimation("Forward")' in _convert(PARENT_SRC, xref)
+    assert 'TES4Polyfill.PlayGroup(targetref, "Forward")' in _convert(PARENT_SRC, xref)
 
 
 def test_every_script_source_is_read_for_remote_writes(tmp_path):
@@ -314,14 +314,14 @@ def test_a_named_actor_or_leveled_list_keeps_the_event():
         out = '\n'.join(ScriptConverter(x).convert_fragment(
             'SpawnRef.playgroup forward 1', 'ObjectReference'))
         assert 'SendAnimationEvent' in out, (sig, out)
-        assert 'PlayAnimation' not in out, (sig, out)
+        assert 'PlayGroup(' not in out, (sig, out)
 
 
 def test_every_placeable_sequence_object_kind_is_proof():
     """Each placeable object kind whose mesh can carry a sequence takes PlayAnimation."""
     for sig in ('ACTI', 'DOOR', 'CONT', 'FLOR', 'FURN', 'LIGH', 'MISC', 'STAT'):
         out = _convert(SELF_SRC, _xref(owner_sig=sig))
-        assert 'selfRef.PlayAnimation("Backward")' in out, (sig, out)
+        assert 'TES4Polyfill.PlayGroup(selfRef, "Backward")' in out, (sig, out)
 
 
 def _record(fields):
@@ -359,7 +359,7 @@ def test_the_script_stage_graph_proves_the_gate(tmp_path):
     from script_convert.context_setup import build_xref
     _write_export(tmp_path)
     out = _convert(PARENT_SRC, build_xref(str(tmp_path)))
-    assert 'targetref.PlayAnimation("Forward")' in out, out
+    assert 'TES4Polyfill.PlayGroup(targetref, "Forward")' in out, out
 
 
 def test_the_script_stage_graph_reads_another_scripts_write(tmp_path):
@@ -407,4 +407,4 @@ def test_a_foreach_over_no_name_leaves_other_variables_traced():
            '  foreach 5 <- player\n'
            '  loop\n'
            '  targetref.playgroup forward 0\nend\n')
-    assert 'targetref.PlayAnimation("Forward")' in _convert(src, _xref())
+    assert 'TES4Polyfill.PlayGroup(targetref, "Forward")' in _convert(src, _xref())
