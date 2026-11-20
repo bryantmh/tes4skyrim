@@ -551,6 +551,8 @@ waiting for an NPC, SetDisposition for persuasion, generic fixes only, no docs/t
 | 60a / 60b (33rd) | NEW GAME x2, hook-free build (no spectator hook / idle-spectator tick / movie hold / lone-speaker cap / escort restart) | **95 of 95, 95 of 95** | 🟢 TWO CLEAN BACK-TO-BACK FULL RUNS. Crash watcher: no fault |
 | (2o change) | | | RUNTIME FIX: chargen_menu.cpp TickChargen closes Skyrim's Dialogue Menu (and waits) before opening an asked menu, not only when the game is paused -- restores docs/commentary/script_convert.md#chargen-menu-reopens-the-dialogue's contract (Message.Show closed it; the runtime's own menu didn't) |
 | visuals (11-17 recording) | mq05_jauffre..baurus_luther, mq05_shrine_clue..mq06_harrow, mq16_to_temple_district..dragonfires x3 | all PASS | 🟢 USER: naked NPCs + finale without statue in the 95/95 recording (temp/recording_ob_main). CAUSES (conversion): (1) outfit split ranked by value, so a robe covering the feet lost to cheaper shoes and left the outfit (35 Oblivion NPCs: Mythic Dawn, Ruma, Eldamil, Black Hand) -- upper-body piece first, a list closes only the slots all its leaves fill (tes5_import_actors.md#upper-body-first; 91 outfits change, 0 FormIDs moved); (2) Skyrim never re-dresses an NPC after RemoveItem / AddItem: Baurus naked from MQ05 20 to the end -- TES4Polyfill.Redress after each armor item run, LOCKED equip (unlocked is undone by the NPC's AI at once) (script_convert.md#redress-after-inventory-change); (3) MQ16EndgameBattle played `Equip` before its 3D loaded, finale stuck on the opening pose (Dagon, no statue) -- TES4Polyfill.PlayGroup waits for 3D (script_convert.md#playgroup-waits-for-3d). Player shirtless after MQ15 = the case's equipitem MQ15Bracers (hands) displacing the Mythic Dawn robe (hands), authored data |
+| voice gate (11-19) | baurus_speech..ms48_chapel_martin, no checkpoints written | **16 of 16** | regression check for the recorded-voice gate (tes5_import_dialogue.md#recorded-voice-gate); one run |
+| voice gate (11-19) | NEW folder morroblivion_guilds (`--load mwtest_mb_chargen_exit`): Eydis Fire-Eye's Advancement | before 0 ("Advancement" not listed after joining), after: see the Morroblivion guilds entry | Fargoth's chargen-exit force-greet can land in the load gap: the case waits, then `bye if open` |
 
 ---------------------------------------------------------------------------------------------------------
 # GENERIC MECHANISMS (harness / runner)
@@ -729,3 +731,14 @@ waiting for an NPC, SetDisposition for persuasion, generic fixes only, no docs/t
 4. Open harness items: the bridge faults returning to an abandoned request (TESGameBridge.dll+0x8d0a); the kill
    lists in 0010/0020/0030/0300 could become `defend` where the story does not need an NPC to die first.
 5. None of the game fixes is confirmed in game by the user yet: no regression tests written.
+
+---------------------------------------------------------------------------------------------------------
+# QUESTS -- MORROBLIVION GUILDS (tes_runtime/tes/testdata/quests/morroblivion_guilds)
+
+## Fighters Guild advancement (0000) -- PASSING (3/3, 11-19)
+- Eydis Fire-Eye (Balmora, TES4FemaleNord, rank 7) never listed Advancement: every Fighters Guild 1Advancement line
+  inherited the voice set of NPCs named in OTHER guilds' lines. Fixed by the recorded-voice gate
+  (docs/commentary/tes5_import_dialogue.md#recorded-voice-gate). Before: 0 (joins, "Seek me out ... advancement", topic
+  never listed); after: "Perform your duties and practice your skills. You are not ready yet." 3 runs in a row.
+- Starts from `mwtest_mb_chargen_exit`. Fargoth's force-greet can land in the load gap or in the case: `wait 120` +
+  `bye if open` before travelling (a `hear` on him failed when the greeting came before the first step).

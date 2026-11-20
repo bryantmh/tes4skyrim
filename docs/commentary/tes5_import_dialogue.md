@@ -65,7 +65,27 @@ game, see the `oblivion-dialog-system`, `skyrim-dialog-system`, and
 ## Voice types and conditions
 <a id="voice-types-conditions"></a>
 
-- **GetIsVoiceType (func 426)**: Every Skyrim INFO must have this condition. Routes dialogue to the correct voice type. OR'd for multiple voice types. NPC-specific INFOs use GetIsID(npc_fid) from TES4 + GetIsVoiceType for the NPC's voice type. Generic fallback INFOs (no GetIsID) inherit voice types from NPC-specific siblings in the same topic — this prevents conditionless INFOs from making topics appear for ALL NPCs.
+- **GetIsVoiceType (func 426)**: Routes dialogue to the correct voice type. OR'd for multiple voice types. NPC-specific INFOs use GetIsID(npc_fid) from TES4 + GetIsVoiceType for the NPC's voice type. A line that names no speaker is gated by the recorded-voice rule below.
+
+<a id="recorded-voice-gate"></a>
+**The recorded-voice gate (`_generic_voice_types`).** A line that names no speaker (no positive GetIsID, no Morrowind bark race) gets its voice gate from, in order:
+1. **Its recordings.** If the extracted `sound/Voice/<plugin>` tree holds a recording of the line, the gate is exactly the voice types holding one (`recorded_voice_types` in `asset_convert/audio/audio_converter.py`, the same folder walk the audio stage files recordings by, so the two cannot disagree). In Skyrim a line chosen for a speaker with no file flashes past unreadably; Oblivion recorded many generic lines for only some race folders, so a voice type without a recording falls through to a sibling line instead.
+2. **No recording, and the line names its own speaker audience** (GetInCell / GetIsClass / GetIsRace / GetInFaction / GetFactionRank run on the speaker, not the player): no voice gate. The line already says who speaks it.
+3. **Otherwise** it inherits the voice types of every NPC named by GetIsID anywhere in the topic, so a conditionless line cannot reach every NPC.
+
+Before this rule every speaker-less line took step 3. In a topic several quests share, that is the voice set of NPCs named by OTHER quests' lines: Morroblivion's `1Advancement` is shared by ten guilds and Houses, so Eydis Fire-Eye (`TES4FemaleNord`, Fighters Guild rank 7) failed all nine Fighters Guild lines, which allowed only the seven voice types named in other guilds' lines, and never offered Advancement. The identity gate got the same audience exemption on 2026-07-12 (AnvilTopic); the voice gate had been left behind.
+
+Measured on the 2026-11-19 imports (`tools/dialog/voice_audit.py`, before -> after):
+
+| Plugin | Lines gated to a voice with no file (MISSING_IN_VTYP) | Voiced lines with no gate | File lookups OK |
+|---|---|---|---|
+| Oblivion.esm | 8,064 -> 259 | 1,726 -> 573 | 30,500 -> 34,387 |
+
+- Of Oblivion's 259 left, 235 lines name their speakers and Oblivion recorded only one of them (a rumor four named NPCs speak, recorded only as a female High Elf); the audio stage files a take only under the voice that recorded it, so those speakers stay silent there, as in Oblivion. The other 6 are Bethesda's 0-byte / 209-byte stub recordings.
+- Nehrim: voiced lines reaching an NPC whose voice has no recording of them fell from 32,353 (line, NPC) pairs to 2,838. MQ04Kim03's "Ja, gut. Mache ich." was gated to `TES4MaleHochelf` (Zugfuehrer, named by another quest's line in the topic) and is now gated to the Alemanne voices it was recorded in, which Kim speaks with.
+- Morrowind_ob is almost entirely unvoiced: 3,709 lines that state their speaker audience lost the inherited gate; its 13 newly gated voiced lines all have their file.
+- Every humanoid voice type an Oblivion NPC uses has recordings; 20 Nehrim NPCs (`TES4MaleImperial`, `TES4FemaleHochelf`, `TES4FemaleImperial`) have none, so they no longer get voiced generic lines they could never play.
+- Recorded sets are at most 14 voice types (Oblivion), so the OR-chain stays inside the engine's condition limit.
 - **CTDA OR flag**: bit 0 of type byte. Voice type chain: VT1(OR)|VT2(OR)|...|VTn(AND) → evaluates as (any voice type matches) AND (remaining TES4 conditions). LAST voice type CTDA must NOT have OR flag.
 - **Voice type injection order**: Voice type CTDAs are injected BEFORE TES4-converted conditions in INFO. This isolates the OR chain from any trailing OR flags in TES4 data.
 

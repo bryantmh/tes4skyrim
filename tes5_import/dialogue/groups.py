@@ -16,7 +16,9 @@ from .quest import (bark_choice_gate_bytes, compute_quest_priorities,
 from ..base.vanilla_quests import engine_quest_edid
 from ..base.writer import pack_group
 from .arrest import force_greet_topic
-from .barks_morrowind import bark_voice_types
+from .voice_gate import bind_recordings, info_voice_types
+from ..base.equivalents import (CUSTOM_VTYP_EDIDS, VOICE_TYPE_MAP,
+                                VTYP_EDID_BY_FID)
 from ..record_types.common import (get_formid, get_int, get_str,
                                    pack_record, pack_string_subrecord,
                                    pack_subrecord)
@@ -358,6 +360,22 @@ def _emit_conversation_topics(dials, topic_args, bark_dials, conv_synth_fids,
     return all_dial_content, all_dlbr
 
 
+def _run_vtyp_edids() -> dict:
+    """This run's {VTYP FormID: EditorID}, with the recorded-voice index bound to it.
+
+    Read from what the writer RECORDED; the CUSTOM_VTYP_EDIDS table is only the
+    fallback for a run that wrote no VTYPs (an override plugin).
+    See: docs/commentary/tes5_import_dialogue.md#voice-files-lip-sync-audio
+    """
+    vtyp_edid_by_fid = dict(VTYP_EDID_BY_FID)
+    if not vtyp_edid_by_fid:
+        for vt_edid, key in CUSTOM_VTYP_EDIDS.items():
+            if VOICE_TYPE_MAP.get(key):
+                vtyp_edid_by_fid[VOICE_TYPE_MAP[key]] = vt_edid
+    bind_recordings(vtyp_edid_by_fid)
+    return vtyp_edid_by_fid
+
+
 def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
                         fid_to_edid: dict = None, xref=None,
                         well_known_props: dict = None,
@@ -443,23 +461,7 @@ def build_dialog_groups(by_type: dict, writer, npc_to_vtyp: dict,
         _quest_lookup_tables(by_type, dials, fid_to_edid, generic_quest_fid,
                              offset, script_vars)
 
-    # VTYP FormID -> EditorID, so an NPC-specific line can record the folder its
-    # speaker's voice type resolves to (voice files are relocated there).
-    # Read the mapping the writer RECORDED, never rebuild it from
-    # CUSTOM_VTYP_EDIDS: that table is Oblivion's race list, so walking it
-    # backwards labels a FormID with whatever race name happens to point at it.
-    # After localised races join the map, `VOICE_TYPE_MAP[('HighElf','Male')]`
-    # is the *Hochelf* voice type — and the reconstruction stamped it
-    # `TES4MaleHighElf`, sending 42 Nehrim voice files to a folder no speaker
-    # ever reads.  It also cannot see a VTYP no fixed race points at.
-    from ..base.equivalents import (CUSTOM_VTYP_EDIDS, VOICE_TYPE_MAP,
-                                   VTYP_EDID_BY_FID)
-    vtyp_edid_by_fid = dict(VTYP_EDID_BY_FID)
-    if not vtyp_edid_by_fid:        # no VTYPs written this run (override plugin)
-        for vt_edid, key in CUSTOM_VTYP_EDIDS.items():
-            vt_fid = VOICE_TYPE_MAP.get(key)
-            if vt_fid:
-                vtyp_edid_by_fid[vt_fid] = vt_edid
+    vtyp_edid_by_fid = _run_vtyp_edids()
 
     # TES4 quest priorities: Oblivion picks the first passing INFO in QUEST
     # PRIORITY order (highest first), NOT file order. Our flattened topics are
@@ -1277,24 +1279,7 @@ def _build_injected_ctdas(info_rec, is_bark, npc_to_vtyp, topic_vtyps,
     isolated. Single-quest topics get no quest gate — quest ownership
     provides it natively.
     """
-    # Voice types: from this INFO's own GetIsID NPCs, else the topic's voice set.
-    own_npcs = read_getisid_fids(info_rec, offset=offset, positive_only=True)
-    # A SPEAK-AS topic is spoken by the emitting reference -- an XMarker STAT,
-    # a shrine ACTI, a door -- and a non-actor has NO voice type, so this gate
-    # can never pass and every line in the topic is silent.  Keyed on the
-    # TOPIC, never the NPC: SEThadon is a real actor who also lends his
-    # identity to a marker-spoken shout, and keying on him stripped gates from
-    # lines he speaks himself.  See talking_activators.py.
-    from ..base.conditions import is_speak_as_record
-    _speak_as_info = is_speak_as_record(info_rec)
-    if _speak_as_info:
-        vtyps = set()
-    elif own_npcs or bark_voice_types(info_rec):
-        vtyps = ({npc_to_vtyp[n] for n in own_npcs if n in npc_to_vtyp}
-                 or bark_voice_types(info_rec))
-    else:
-        # Generic INFO: inherit the topic's voice types (greetings included).
-        vtyps = set(topic_vtyps)
+    vtyps = info_voice_types(info_rec, npc_to_vtyp, topic_vtyps, offset)
     voice_bytes = b''
     if vtyps:
         voice_bytes = build_or_chain(FUNC_GET_IS_VOICE_TYPE, sorted(vtyps))

@@ -1,0 +1,22 @@
+# Morroblivion guild advancement. Eydis Fire-Eye (mwEydisFireEyeREF, TES4FemaleNord, Fighters Guild rank 7) runs the
+# Balmora guild. Every Fighters Guild line under 1Advancement (quest fbmwFGAdvancement) names no speaker; they are gated on
+# the speaker's guild rank. They used to inherit the voice types of NPCs named in OTHER guilds' Advancement lines, which
+# left out TES4FemaleNord, so Eydis never offered the topic.
+# See docs/commentary/tes5_import_dialogue.md#recorded-voice-gate
+# Run: python -m tools.live.test_instance questtest --cases <this folder> --load mwtest_mb_chargen_exit --fast --checkpoints --stop-on-fail --timeout 3600
+
+# Not a member yet: the topic is listed only once a line adds it, so the player joins as a player would. "Sign me up"
+# (INFO 01322F58) adds Advancement. A new member qualifies on neither skills nor reputation (FighterAdvancement 0).
+# Leaving the census office, Fargoth force-greets the player, sometimes already in the gap between the checkpoint's
+# load and the first step; a player says goodbye before travelling, or the open conversation holds them in Seyda Neen.
+case mb_fg_join_and_advance
+wait 120
+bye if open
+approach mwEydisFireEyeREF
+talk mwEydisFireEyeREF
+ask "Join the Fighters Guild"
+ask "Sign me up"
+until 900 player.GetInFaction fbmwFightersGuild == 1
+ask "Advancement"
+hear 900 mwEydisFireEyeREF You are not ready yet
+end

@@ -16,6 +16,7 @@ on numeric index and on name; they are NOT hand-curated lore. See the skill's
 conditions reference for the methodology.
 """
 
+import operator
 import struct
 
 from tes4_export.record_types.morrowind import MW_ENCHANT_SKILL
@@ -1167,4 +1168,28 @@ def has_audience_condition(rec: dict) -> bool:
                 return True
         except (ValueError, struct.error):
             continue
+    return False
+
+
+#: TES4 comparison operator nibble -> the comparison it makes.
+_COMPARE = {0x00: operator.eq, 0x20: operator.ne, 0x40: operator.gt,
+            0x60: operator.ge, 0x80: operator.lt, 0xA0: operator.le}
+
+
+def has_speaker_audience(rec: dict) -> bool:
+    """True if an un-OR'd condition on the SPEAKER keeps out everyone outside a cell, class, race or faction.
+
+    A test counts when it is false for an outsider: 0 for the membership
+    functions, rank -1 for GetFactionRank. GetIsID is not an audience here.
+    See: docs/commentary/tes5_import_dialogue.md#recorded-voice-gate
+    """
+    prev_or = False
+    for func, op, value, on_target, _, or_next in _condition_tests(rec):
+        grouped, prev_or = prev_or or or_next, or_next
+        if func not in _AUDIENCE_FUNCS or func == FUNC_GET_IS_ID:
+            continue
+        outsider = -1.0 if func == 73 else 0.0
+        if not (on_target or grouped
+                or _COMPARE.get(op, operator.eq)(outsider, value)):
+            return True
     return False
