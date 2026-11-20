@@ -3,6 +3,8 @@ ScriptName TES4_ScriptPackageDone extends Package Hidden
 Such a package runs from the call until it completes; the actor is in the
 package's faction (Armed) for exactly that long, and the package's first
 condition tests it. Completing takes the actor out and re-checks its packages.
+A forced force greet also runs Fragment_Hold OnBegin: its conversation's exit
+is held until a line's choices are answered (TES4Polyfill.HoldExitUntilAnswered).
 See docs/commentary/tes5_import_package.md#package-hosts}
 
 Faction Property Armed Auto
@@ -10,4 +12,8 @@ Faction Property Armed Auto
 Function Fragment_0(Actor akActor)
   akActor.RemoveFromFaction(Armed)
   TES4Polyfill.ReevaluateAfterEnd(akActor, Self)
+EndFunction
+
+Function Fragment_Hold(Actor akActor)
+  TES4Polyfill.HoldExitUntilAnswered(akActor)
 EndFunction

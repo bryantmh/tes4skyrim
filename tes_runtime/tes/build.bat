@@ -20,12 +20,12 @@ del /q obj\*.obj 2>nul
 echo [build] compiling TESRuntime...
 cl /nologo /c /EHa /std:c++17 /O2 /MD /W3 /DNDEBUG /I..\common ^
    plugin.cpp crime.cpp journal_objectives.cpp journal_log.cpp ^
-   crafting.cpp alchemy.cpp alchemy_hooks.cpp spin.cpp test_game.cpp anim_playing.cpp ^
+   crafting.cpp alchemy.cpp alchemy_hooks.cpp spin.cpp test_game.cpp anim_playing.cpp exit_hold.cpp movie.cpp ^
    ..\common\addresses.cpp ..\common\engine.cpp ..\common\glide.cpp ..\common\gamebryo_sequence.cpp ^
    ..\common\test_runner.cpp ^
    ..\common\hook.cpp ..\common\main_tick.cpp ^
    ..\common\json.cpp ..\common\log.cpp ..\common\paths.cpp ^
-   ..\common\mod_event.cpp ..\common\ui_message.cpp /Fo:obj\
+   ..\common\mod_event.cpp ..\common\ui_message.cpp ..\common\ref_handle.cpp /Fo:obj\
 if errorlevel 1 (
     echo [build] ERROR: TESRuntime compilation failed
     exit /b 1

@@ -583,13 +583,16 @@ void PersuadedUntil(const TestCase& test, const TestStep& step) {
     Expect(test.actor, condition);
 }
 
-// `bye if open` closes a greeting the fight may or may not have forced.
+// `bye if open` closes a greeting the fight may or may not have forced; `bye locked` is a Goodbye the game must
+// refuse while a choice is pending.
 void Click(const TestStep& step) {
     const auto listed = [](std::vector<std::string> (*list)()) {
         return list ? Joined(list()) : std::string("(not readable)");
     };
     if (!Talking()) {
         if (step.kind != Kind::kBye || step.text != "if open") g_case.error = "no conversation is open";
+    } else if (step.kind == Kind::kBye && step.text == "locked") {
+        if (g_game.bye && g_game.bye()) g_case.error = "Goodbye was not locked: the conversation was left";
     } else if (step.kind == Kind::kChoose && !(g_game.choose && g_game.choose(step.number))) {
         g_case.error = "no choice " + std::to_string(step.number) + "; pending: " + listed(g_game.choices);
     } else if (step.kind == Kind::kBye && !(g_game.bye && g_game.bye())) {

@@ -41,7 +41,7 @@ from concurrent.futures import ProcessPoolExecutor
 from .registry import IMPORT_DISPATCH, TYPE_MAP
 from .overrides.nested import (build_nested_overrides)
 from .dialogue.quest import compute_quest_priorities, convert_QUST, package_host
-from .packages.converter import latches_when_done
+from .packages.converter import forces_greet, latches_when_done
 from .record_types.items import is_engine_form
 from .packages.done_latch import create_latch, latch_condition, latch_vmad
 from .packages.hosts import armed_gate, create_armed_faction, write_forced_lists
@@ -340,7 +340,7 @@ def _latch_pack(st, rec: dict) -> None:
     fid = get_formid(rec, 'FormID')
     if fid in st.pack_plan.armed:
         faction = st.pack_plan.armed_factions[fid] = create_armed_faction(st.writer, fid)
-        st.pack_ctx.done_latches[fid] = armed_gate(faction)
+        st.pack_ctx.done_latches[fid] = armed_gate(faction, hold=forces_greet(rec))
     elif latches_when_done(rec, st.pack_ctx):
         latch = create_latch(st.writer, fid)
         st.pack_ctx.done_latches[fid] = (latch_vmad(latch), latch_condition(latch))

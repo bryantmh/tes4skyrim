@@ -931,6 +931,16 @@ Bool Function SetStage(Quest akQuest, Int aiStage) Global
   Return done
 EndFunction
 
+; A conversation the source forced on the player (a force greet) cannot be left
+; while one of its lines offers choices, as Oblivion hides Goodbye then: TESRuntime
+; holds the Dialogue Menu's exit for `akSpeaker`'s next conversation.
+; See docs/commentary/tes_runtime_dialogue.md#no-exit-while-choices-are-offered
+Function HoldExitUntilAnswered(Actor akSpeaker) Global
+  If akSpeaker
+    akSpeaker.SendModEvent("TES4HoldExit")
+  EndIf
+EndFunction
+
 ; TES4 `StartConversation Player [topic]`.  Papyrus cannot open dialogue, so the
 ; actor joins one alias of the topic's pool on the importer's TES4ForceGreets
 ; quest; that alias's ForceGreet package walks over and opens the topic.

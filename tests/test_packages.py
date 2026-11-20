@@ -633,3 +633,33 @@ def test_an_armed_force_greet_drops_once_per_day():
     armed.done_latches[0x00001000] = (b'', b'CTDA')
     assert _pkdt_flags(rec, PackContext()) & 0x400
     assert not _pkdt_flags(rec, armed) & 0x400
+
+
+def _vmad(record: bytes) -> bytes:
+    """The VMAD subrecord's bytes of a packed PACK, or b'' without one."""
+    return next((d for s, d in _subrecords(record) if s == 'VMAD'), b'')
+
+
+def test_a_force_greet_holds_the_exit_on_begin():
+    """A Find of the player opens a conversation the source forced: its OnBegin arms the exit hold.
+
+    See: docs/commentary/tes_runtime_dialogue.md#no-exit-while-choices-are-offered
+    """
+    greet = _pack(0, **{'PTDT.Type': 0, 'PTDT.Target': '00000014', 'PTDT.Count': 150})
+    walk = _pack(0, **{'PTDT.Type': 2, 'PTDT.Target': '00000014', 'PTDT.Count': 1})
+    vmad = _vmad(convert_PACK(greet, PackContext()))
+    assert b'TES4_ForceGreetHold' in vmad and b'Fragment_0' in vmad
+    assert _vmad(convert_PACK(walk, PackContext())) == b''
+
+
+def test_hold_fragment_sits_beside_the_done_fragment():
+    """An armed force greet and a StartConversation slot carry Fragment_Hold OnBegin; a flee slot does not."""
+    from tes5_import.dialogue.force_greets import pool_package
+    from tes5_import.packages.converter import force_greet_inputs, build_pkdt
+    from tes5_import.packages.hosts import armed_gate
+    held, plain = armed_gate(0x01000F00, hold=True)[0], armed_gate(0x01000F00)[0]
+    assert b'Fragment_Hold' in held and b'Fragment_Hold' not in plain
+    pkdt = build_pkdt(0, SPEED_RUN, 0)
+    slot = pool_package('Slot', 0x01000F01, 0, 0x01000F02, force_greet_inputs((1, 0)), pkdt, hold=True)
+    flee = pool_package('Flee', 0x01000F03, 0, 0x01000F02, force_greet_inputs((1, 0)), pkdt)
+    assert b'Fragment_Hold' in _vmad(slot) and b'Fragment_Hold' not in _vmad(flee)

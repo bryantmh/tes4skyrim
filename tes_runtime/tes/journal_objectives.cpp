@@ -13,6 +13,7 @@
 #include "ids.h"
 #include "journal_log.h"
 #include "log.h"
+#include "movie.h"
 
 namespace tesruntime {
 
@@ -39,28 +40,15 @@ struct BSString {
 using LookupFormFn = void* (*)(std::uint32_t formId);
 using ParentCellFn = void* (*)(void* vm, std::uint32_t stack, void* ref);
 using InstanceTextFn = void (*)(void* record, void* quest, BSString* out);
-using SetMemberFn = bool (*)(void* objectInterface, void* object,
-                             const char* name, GFxValue* value,
-                             bool isDisplayObject);
-using ReleaseManagedFn = void (*)(void* objectInterface, GFxValue* value,
-                                  void* data);
 using CreateStringFn = void (*)(void* view, GFxValue* value, const char* text);
 using CreateObjectFn = void (*)(void* view, GFxValue* value,
                                 const char* className, GFxValue* args,
                                 UInt32 numArgs);
-using CreateFunctionFn = void (*)(void* view, GFxValue* value,
-                                  GFxFunctionHandler* handler, void* refCon);
-using GetVariableFn = bool (*)(void* view, GFxValue* value, const char* path);
-using SetVariableFn = void (*)(void* view, const char* path, GFxValue* value,
-                               UInt32 flags);
 
 std::uintptr_t g_playerSlot = 0;
-std::uintptr_t g_menuManagerSlot = 0;
 LookupFormFn g_lookupForm = nullptr;
 ParentCellFn g_parentCell = nullptr;
 InstanceTextFn g_instanceText = nullptr;
-SetMemberFn g_setMember = nullptr;
-ReleaseManagedFn g_releaseManaged = nullptr;
 
 JournalLog g_journal;
 
@@ -304,45 +292,16 @@ public:
 ObjectiveLogFunction g_function;
 JournalTraceFunction g_trace;
 
-void Release(GFxValue* value) {
-    if ((value->type & ids::kGfxValueManaged) && g_releaseManaged) {
-        g_releaseManaged(value->objectInterface, value, value->data.object);
-    }
-    *value = GFxValue();
-}
-
-bool AddFunction(void* view, GFxValue* object, const char* name,
-                 GFxFunctionHandler* handler) {
-    GFxValue function;
-    VCall<CreateFunctionFn>(view, ids::kMovieViewCreateFunctionSlot)(
-        view, &function, handler, nullptr);
-    const bool set = g_setMember(object->objectInterface, object->data.object,
-                                 name, &function, false);
-    Release(&function);
-    return set;
-}
-
-// Whether `path` in the movie holds anything other than undefined.
-bool Defined(void* view, const char* path) {
-    GFxValue value;
-    const bool found = VCall<GetVariableFn>(
-        view, ids::kMovieViewGetVariableSlot)(view, &value, path);
-    const bool defined = found && (value.type & ids::kGfxValueTypeMask) != 0;
-    Release(&value);
-    return defined;
-}
-
 // Gives a movie carrying `marker` the runtime's functions at `path`, once.
 void InstallInto(void* view, const char* marker, const char* path) {
-    if (!Defined(view, marker) || Defined(view, path)) return;
+    if (!MovieDefined(view, marker) || MovieDefined(view, path)) return;
     GFxValue object;
     VCall<CreateObjectFn>(view, ids::kMovieViewCreateObjectSlot)(
         view, &object, nullptr, nullptr, 0);
-    const bool ok = AddFunction(view, &object, kFunctionName, &g_function) &&
-                    AddFunction(view, &object, kTraceName, &g_trace);
-    VCall<SetVariableFn>(view, ids::kMovieViewSetVariableSlot)(
-        view, path, &object, 0);
-    Release(&object);
+    const bool ok = AddMovieFunction(view, &object, kFunctionName, &g_function) &&
+                    AddMovieFunction(view, &object, kTraceName, &g_trace);
+    SetMovieVariable(view, path, &object);
+    ReleaseValue(&object);
     Log("journal: %s added to a patched journal movie -- %s", path,
         ok ? "ok" : "SetMember FAILED");
 }
@@ -353,8 +312,8 @@ void InstallInto(void* view, const char* marker, const char* path) {
 // See: docs/reference/tes_runtime_fragments.md#legacy-sidecar-paths
 void InstallInto(void* view) {
     InstallInto(view, ids::kJournalPatchMarker, ids::kJournalFunctionsPath);
-    if (Defined(view, ids::kLegacyJournalPatchMarker) &&
-        !Defined(view, ids::kLegacyJournalFunctionsPath)) {
+    if (MovieDefined(view, ids::kLegacyJournalPatchMarker) &&
+        !MovieDefined(view, ids::kLegacyJournalFunctionsPath)) {
         Log("journal: DEPRECATED -- a journal movie patched before the runtime "
             "split; rebuild it with Build > Quest Journal Stage Text");
     }
@@ -365,38 +324,20 @@ void InstallInto(void* view) {
 // Every open menu's movie. The journal's movie is not always loaded by the
 // engine's own LoadMovie -- Quest Journal Overhaul loads its own -- so SKSE's
 // per-movie `skse` object cannot be relied on to reach it.
-void InstallIntoOpenMenus() {
-    void* manager = g_menuManagerSlot
-                        ? *reinterpret_cast<void**>(g_menuManagerSlot)
-                        : nullptr;
-    if (!manager || !g_setMember) return;
-    void** menus = At<void**>(manager, ids::kOffMenuStack);
-    const std::uint32_t count = At<std::uint32_t>(manager,
-                                                  ids::kOffMenuStackCount);
-    for (std::uint32_t i = 0; menus && i < count; ++i) {
-        void* view = menus[i] ? At<void*>(menus[i], ids::kOffMenuView)
-                              : nullptr;
-        if (view) InstallInto(view);
-    }
-}
+void InstallIntoOpenMenus() { ForEachOpenMovie(InstallInto); }
 
 }  // namespace
 
 bool InstallJournal() {
     g_playerSlot = Resolve("PlayerCharacter singleton", ids::kPlayerSingleton,
                            nullptr);
-    g_menuManagerSlot = Resolve("MenuManager singleton",
-                                ids::kMenuManagerSingleton, nullptr);
     g_lookupForm = reinterpret_cast<LookupFormFn>(
         Resolve("LookupFormByID", ids::kLookupFormById, nullptr));
     g_parentCell = reinterpret_cast<ParentCellFn>(
         Resolve("ObjectReference.GetParentCell", ids::kRefGetParentCell, nullptr));
     g_instanceText = reinterpret_cast<InstanceTextFn>(
         Resolve("quest instance text", ids::kQuestInstanceText, nullptr));
-    g_setMember = reinterpret_cast<SetMemberFn>(
-        Resolve("GFxValue SetMember", ids::kGfxSetMember, nullptr));
-    g_releaseManaged = reinterpret_cast<ReleaseManagedFn>(
-        Resolve("GFxValue ReleaseManaged", ids::kGfxReleaseManaged, nullptr));
+    const bool movies = ResolveMovieCalls();
     if (!g_playerSlot || !g_lookupForm || !g_parentCell || !g_instanceText) {
         Log("journal: NOT installed -- an engine address did not resolve, so "
             "objectives keep showing only the current journal text");
@@ -404,7 +345,7 @@ bool InstallJournal() {
     }
     Log("journal: installed; patched journal movies get %s %s",
         ids::kJournalFunctionsPath,
-        g_menuManagerSlot && g_setMember ? "when they open"
+        movies ? "when they open"
                                          : "NEVER -- the menu stack or "
                                            "SetMember did not resolve");
     return true;

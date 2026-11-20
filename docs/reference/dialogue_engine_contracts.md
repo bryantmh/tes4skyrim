@@ -184,9 +184,12 @@ do:
   covers up to 16 topics. A private branch per topic gives N one-topic
   conversations.
 
-Keeping the player in an Oblivion force-greet is the PACKAGE's job: a
-still-qualifying package re-greets when the player walks out
-([force greet must retire](package_ai_contracts.md#a-force-greet-must-be-able-to-retire)).
+A converted conversation is held open by TESRuntime instead, as Oblivion holds
+it: once a line has choices, the player cannot leave until they answer
+([no exit while choices are offered](../commentary/tes_runtime_dialogue.md#no-exit-while-choices-are-offered)).
+A force greet does NOT re-greet a player who walked out: it keeps Skyrim's Once
+Per Day ([force greet must retire](package_ai_contracts.md#a-force-greet-must-be-able-to-retire)),
+which is spent as soon as the greeting opens.
 Scope a conversation by AUTHORED links (TCLT, AddTopic), never by graph
 reachability: "everything reachable from the greeting" swept in 266 topics,
 including companion commands used outside any forced conversation (`MQFollow`,

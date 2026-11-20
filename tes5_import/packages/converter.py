@@ -29,6 +29,7 @@ import struct
 
 from .ambush_near import ambush_template, place_reference
 from .sit_at import sit_at_template
+from .greet_hold import hold_vmad
 from .escort_when_near import NPC_NEAR_RADIUS, NPC_WAIT, escort_template
 from .templates import (
     ACQUIRE,
@@ -1404,7 +1405,12 @@ def latches_when_done(rec: dict, ctx: PackContext) -> bool:
     """
     if not get_int(rec, 'PKDT.Flags') & T4_ONCE_PER_DAY or ctx.quest_of(get_formid(rec, 'FormID')) is None:
         return False
-    return not (get_int(rec, 'PKDT.Type', -1) in (T4_AMBUSH, T4_FIND) and _targets_player(rec))
+    return not forces_greet(rec)
+
+
+def forces_greet(rec: dict) -> bool:
+    """An Ambush or Find aimed at the player: Oblivion's scripted walk-up that opens a conversation."""
+    return get_int(rec, 'PKDT.Type', -1) in (T4_AMBUSH, T4_FIND) and _targets_player(rec)
 
 
 def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
@@ -1423,14 +1429,10 @@ def convert_PACK(rec: dict, ctx: PackContext = None) -> bytes:
     if edid:
         subs += pack_string_subrecord('EDID', edid)
     done_vmad, done_gate = ctx.done_latches.get(pack_fid, (b'', b''))
-    subs += done_vmad
+    is_forcegreet = forces_greet(rec)
+    subs += done_vmad or (hold_vmad() if is_forcegreet else b'')
 
     ptype = get_int(rec, 'PKDT.Type', -1)
-    # An Ambush aimed at the PLAYER is Oblivion's scripted-approach idiom, not
-    # a hostile ambush: the actor walks over so dialogue can fire.  Real
-    # ambushes wait on a location (no PTDT) or target another actor.
-    is_forcegreet = (ptype in (T4_AMBUSH, T4_FIND)
-                     and _targets_player(rec))
     hostile = not (is_forcegreet or _approaches_ref(rec, ptype))
     flags, speed = convert_flags(get_int(rec, 'PKDT.Flags'), ptype, hostile,
                                  quest_gated=ctx.quest_of(pack_fid) is not None or bool(done_gate))

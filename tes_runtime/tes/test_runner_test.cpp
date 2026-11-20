@@ -255,6 +255,27 @@ void ButtonsClickEachBoxOnce(const std::string& dir) {
     Check(g_pressedOn == std::vector<int>({1, 2, 3}), "each button clicks the next box, not a closing one");
 }
 
+// `bye locked` passes when the game refuses the Goodbye and fails when the conversation is left.
+void ByeLockedNeedsARefusal(const std::string& dir) {
+    const std::string cases = dir + "\\bye_locked.tes4test";
+    const std::string results = dir + "\\bye_locked.jsonl";
+    Write(cases, "case refused\nbye locked\nend\ncase left\nbye locked\nend\n");
+    Fresh(results);
+    SetEnvironmentVariableA("TES_TEST_CASES", cases.c_str());
+    SetEnvironmentVariableA("TES_TEST_RESULTS", results.c_str());
+    static int byes = 0;
+    TestBackend game;
+    game.inWorld = InWorld;
+    game.talking = Talking;
+    game.bye = []() { return ++byes > 1; };
+    SetTestBackend(game);
+    ResetTestRunner();
+    const std::vector<std::string> lines = TickUntil(results, 3);
+    Check(lines.size() == 3 && lines[0].find("\"ok\":true") != std::string::npos &&
+              lines[1].find("Goodbye was not locked") != std::string::npos,
+          "bye locked passes on a refused Goodbye and fails on a left conversation");
+}
+
 }  // namespace
 
 int main() {
@@ -267,6 +288,7 @@ int main() {
     HearsAndWalks(dir);
     HearsAcrossCases(dir);
     ButtonsClickEachBoxOnce(dir);
+    ByeLockedNeedsARefusal(dir);
     std::printf("%s\n", g_failures ? "FAILED" : "all passed");
     return g_failures ? 1 : 0;
 }

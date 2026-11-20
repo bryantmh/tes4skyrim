@@ -14,6 +14,7 @@ import struct
 from script_convert.constants import FORCE_GREET_QUEST
 from script_convert.pipeline import build_vmad_package_fragment
 from ..base.master_export import values_of
+from ..packages.greet_hold import HOLD_FRAGMENT
 from ..packages.converter import (ANY_TIME_PSDT, build_pkdt, dialogue_gate,
                                   FORCEGREET_INTERRUPT, force_greet_inputs,
                                   Inputs, package_markers, SPEED_RUN)
@@ -67,11 +68,14 @@ def _topic_input(key: str, dials: dict) -> tuple:
 
 
 def pool_package(edid: str, fid: int, alias_id: int, quest_fid: int,
-                 inputs: Inputs, pkdt: bytes) -> bytes:
-    """One pool slot's PACK: EDID VMAD PKDT PSDT [dialogue gate] QNAM PKCU <inputs> markers."""
+                 inputs: Inputs, pkdt: bytes, hold: bool = False) -> bytes:
+    """One pool slot's PACK: EDID VMAD PKDT PSDT [dialogue gate] QNAM PKCU <inputs> markers.
+
+    `hold`: the conversation it forces keeps the player until a choice is answered.
+    """
     subs = pack_string_subrecord('EDID', edid)
     subs += pack_subrecord('VMAD', build_vmad_package_fragment(
-        DONE_SCRIPT, {'Slot': ('int', alias_id)}))
+        DONE_SCRIPT, {'Slot': ('int', alias_id)}, on_begin=HOLD_FRAGMENT if hold else ''))
     subs += pack_subrecord('PKDT', pkdt)
     subs += pack_subrecord('PSDT', ANY_TIME_PSDT)
     subs += dialogue_gate(inputs.t)
@@ -87,7 +91,7 @@ def _package(edid: str, fid: int, alias_id: int, quest_fid: int,
              topic: tuple) -> bytes:
     """One slot's ForceGreet PACK."""
     return pool_package(edid, fid, alias_id, quest_fid, force_greet_inputs(topic),
-                        build_pkdt(0, SPEED_RUN, FORCEGREET_INTERRUPT))
+                        build_pkdt(0, SPEED_RUN, FORCEGREET_INTERRUPT), hold=True)
 
 
 def pool_quest(fid: int, edid: str, full: str, pack_fids: list) -> bytes:

@@ -11,6 +11,7 @@ from ..base.owned_records import adopted_or_derived, one_rank_faction
 from ..base.writer import (pack_formid_subrecord, pack_record, pack_string_subrecord, pack_subrecord,
                            pack_uint32_subrecord)
 from .custom_roots import in_faction_gate
+from .greet_hold import HOLD_FRAGMENT
 
 #: EditorID of the quest that hosts every actor's package alias.
 HOST = 'TES4Packages'
@@ -56,9 +57,10 @@ def create_armed_faction(writer, pack_fid: int) -> int:
     return fid
 
 
-def armed_gate(faction: int) -> tuple:
-    """(VMAD, CTDA) of a forced package: disarm on end, valid only while armed."""
-    vmad = pack_subrecord('VMAD', build_vmad_package_fragment(DISARM_SCRIPT, object_props={'Armed': faction}))
+def armed_gate(faction: int, hold: bool = False) -> tuple:
+    """(VMAD, CTDA) of a forced package: disarm on end, valid only while armed; `hold` = a force greet's exit hold."""
+    vmad = pack_subrecord('VMAD', build_vmad_package_fragment(DISARM_SCRIPT, object_props={'Armed': faction},
+                                                              on_begin=HOLD_FRAGMENT if hold else ''))
     return vmad, in_faction_gate(faction, 1.0)
 
 

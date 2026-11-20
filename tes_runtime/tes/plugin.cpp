@@ -14,6 +14,8 @@
 //     docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates);
 //   * answers TES4 IsAnimPlaying on a reference with no behavior graph from its own
 //     NiControllerManager (anim_playing.cpp, docs/commentary/tes_runtime_anim.md#is-anim-playing);
+//   * keeps a conversation a converted force greet opened while a line's choices are offered, as Oblivion hides Goodbye then
+//     (exit_hold.cpp, docs/commentary/tes_runtime_dialogue.md#no-exit-while-choices-are-offered);
 //   * runs headless quest cases when the test harness asks for them
 //     (test_game.cpp, docs/commentary/headless_testing.md#tes4-quest-cases).
 
@@ -27,6 +29,7 @@
 #include "crafting.h"
 #include "crime.h"
 #include "engine.h"
+#include "exit_hold.h"
 #include "journal_objectives.h"
 #include "log.h"
 #include "paths.h"
@@ -44,6 +47,7 @@ constexpr UInt32 kSerializationId = 'TES4';
 bool g_engineResolved = false;
 bool g_crimeInstalled = false;
 bool g_journalInstalled = false;
+bool g_exitHoldInstalled = false;
 SKSEMessagingInterface* g_messaging = nullptr;
 
 bool CaptureVm(void* vm) {
@@ -62,6 +66,7 @@ void OnMessage(SKSEMessagingInterface::Message* msg) {
             StartCrimeTick();
         }
         if (g_journalInstalled) StartJournalTick();
+        if (g_exitHoldInstalled) StartExitHoldTick();
         if (g_engineResolved) {
             // The bench opener first: the apparatus hooks refuse to go in
             // without it.
@@ -144,11 +149,12 @@ __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
     g_journalInstalled = InstallJournal();
     const bool spin = g_engineResolved && InstallSpin(g_messaging);
     const bool anim = InstallAnimPlaying();
-    Log("hooks: jails %s, journal stage text %s, GameMode spin %s, IsAnimPlaying %s",
+    g_exitHoldInstalled = InstallExitHold(g_messaging);
+    Log("hooks: jails %s, journal stage text %s, GameMode spin %s, IsAnimPlaying %s, choice hold %s",
         g_crimeInstalled ? "installed" : "NOT installed",
         g_journalInstalled ? "installed" : "NOT installed",
         spin ? "installed" : "NOT installed",
-        anim ? "installed" : "NOT installed");
+        anim ? "installed" : "NOT installed", g_exitHoldInstalled ? "installed" : "NOT installed");
     return true;
 }
 

@@ -17,10 +17,12 @@
 
 #include "addresses.h"
 #include "engine.h"
+#include "exit_hold.h"
 #include "glide.h"
 #include "hook.h"
 #include "ids.h"
 #include "log.h"
+#include "movie.h"
 #include "test_runner.h"
 #include "ui_message.h"
 
@@ -35,7 +37,6 @@ using ActivateFn = void (*)(void* vm, std::uint32_t stack, void* ref, void* acti
                             bool defaultOnly);
 using AddItemFn = void (*)(void* vm, std::uint32_t stack, void* ref, void* item,
                            std::int32_t count, bool silent);
-using IsMenuOpenFn = bool (*)(void* manager, void** name);
 using FxCallbackFn = void (*)(void* args);
 using AddSubtitleFn = void (*)(void* manager, void* speaker, const char* text, bool force);
 using PathToFn = std::int32_t (*)(void* actor, void* target, float speed);
@@ -75,7 +76,6 @@ struct Calls {
     RefBoolFn is3DLoaded = nullptr;
     ActivateFn activate = nullptr;
     AddItemFn addItem = nullptr;
-    IsMenuOpenFn isMenuOpen = nullptr;
     void** menuManager = nullptr;
     void** topicManager = nullptr;
     FxCallbackFn topicClicked = nullptr;
@@ -133,11 +133,7 @@ std::string Lower(std::string text) {
     return text;
 }
 
-bool MenuOpen(const std::string& name) {
-    if (!g_c.isMenuOpen || !g_c.menuManager || !*g_c.menuManager) return false;
-    FixedString fixed(name.c_str());
-    return fixed.ptr && g_c.isMenuOpen(*g_c.menuManager, &fixed.ptr);
-}
+bool MenuOpen(const std::string& name) { return MenuIsOpen(name.c_str()); }
 
 // The open menu registered as `name`, or null.
 void* MenuObject(const char* name) {
@@ -294,9 +290,7 @@ std::vector<std::string> Topics() {
     std::vector<std::string> out;
     void* manager = g_c.topicManager ? *g_c.topicManager : nullptr;
     if (!manager) return out;
-    auto* node = At<void**>(manager, ids::kOffTopicList);
-    if (node && At<std::uint8_t>(manager, ids::kOffTopicSkipFirst)) node = static_cast<void**>(node[1]);
-    for (; node; node = static_cast<void**>(node[1])) {
+    for (void** node = FirstListedTopic(manager); node; node = static_cast<void**>(node[1])) {
         const char* text = node[0] ? At<const char*>(node[0], 0) : nullptr;
         const auto length = node[0] ? At<std::uint16_t>(node[0], 8) : 0;
         out.push_back(!text ? std::string() : length == 0xffff ? std::string(text)
@@ -332,8 +326,17 @@ bool Choose(int index) { return ClickTopic(index - 1); }
 
 // Leaves the conversation as the Tab key does: the menu's own CloseMenu callback marks the exit as the player's,
 // and the hide message takes the menu down even while a choice list is showing (the callback alone waits for a
-// line to end).
+// line to end). While the choice hold keeps the player in, Tab goes to the movie's cancel method as a player's
+// does, and the answer is false: Goodbye is locked by a pending choice.
 bool Bye() {
+    if (ExitHeld()) {
+        PostToUiTask([]() {
+            ForEachOpenMovie([](void* view) {
+                if (MovieDefined(view, ids::kDialogueCancelPath)) InvokeMovie(view, ids::kDialogueCancelPath);
+            });
+        });
+        return false;
+    }
     return CallMovie(g_c.closeDialogue, ids::kDialogueMenuName, nullptr,
                      []() { CloseMenuNamed(ids::kDialogueMenuName); });
 }
@@ -604,7 +607,6 @@ bool ResolveCalls() {
     Bind(g_c.is3DLoaded, "ObjectReference.Is3DLoaded", ids::kRefIs3DLoaded);
     Bind(g_c.activate, "ObjectReference.Activate", ids::kRefActivate);
     Bind(g_c.addItem, "ObjectReference.AddItem", ids::kRefAddItem);
-    Bind(g_c.isMenuOpen, "MenuManager::IsMenuOpen", ids::kMenuManagerIsMenuOpen);
     Bind(g_c.menuManager, "MenuManager singleton", ids::kMenuManagerSingleton);
     Bind(g_c.topicManager, "MenuTopicManager singleton", ids::kMenuTopicManager);
     Bind(g_c.topicClicked, "DialogueMenu TopicClicked", ids::kDialogueTopicClicked);
@@ -617,7 +619,7 @@ bool ResolveCalls() {
     Bind(g_c.deleteRef, "ObjectReference.Delete", ids::kRefDelete);
     Bind(g_c.moveTo, "ObjectReference.MoveTo", ids::kRefMoveTo);
     Bind(g_c.boxQueue, "message box queue", ids::kMessageBoxQueue);
-    return g_c.player && g_c.parentCell && g_c.isMenuOpen && g_c.menuManager && ResolveGlide();
+    return g_c.player && g_c.parentCell && ResolveMovieCalls() && g_c.menuManager && ResolveGlide();
 }
 
 }  // namespace

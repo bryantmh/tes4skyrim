@@ -136,12 +136,15 @@ constexpr std::size_t kMovieViewCreateObjectSlot = 0x0d;
 constexpr std::size_t kMovieViewCreateFunctionSlot = 0x0f;
 constexpr std::size_t kMovieViewSetVariableSlot = 0x10;
 constexpr std::size_t kMovieViewGetVariableSlot = 0x11;
+constexpr std::size_t kMovieViewInvokeSlot = 0x16;
 
 // GFxValue type at +8: masked, 3 is a number; bit 6 marks a value the movie
 // owns and must be released.
 constexpr std::uint32_t kGfxValueTypeMask = 0x8f;
 constexpr std::uint32_t kGfxValueNumber = 3;
 constexpr std::uint32_t kGfxValueManaged = 0x40;
+// A movie clip or other display object (SKSE GFxValue::kType_DisplayObject): SetMember must be told so.
+constexpr std::uint32_t kGfxValueDisplayObject = 8;
 
 // What asset_convert/ui/journal_patch.py sets on a patched movie's root, and
 // where the runtime puts the object carrying its functions.
@@ -321,6 +324,23 @@ constexpr std::size_t kOffTopicSkipFirst = 0xb7;
 // the reference's handle index, which the reference keeps above the 11 count bits of its u32 at +0x28
 // (measured live: speaker 0x00110AD7, that actor's +0x28 = 0x0856BC04).
 constexpr std::size_t kOffTopicSpeaker = 0x68;
+// The line whose choices the manager lists next, as its choice-list builder (35287: 0x5e1830 on 1.6.1170,
+// 0x594010 on 1.6.659) finds it: the item a node at +0x18 points to, else the item at +0x38. An item names its
+// INFO at +0x30, valid while its byte +0x10 is set and +0x48 is clear. The INFO's choices come from the lookup
+// 25659 (0x3ed950: TESTopicInfo* -> its choice-topic list, null without one).
+constexpr std::size_t kOffTopicSelectedNode = 0x18;
+constexpr std::size_t kOffTopicFallbackItem = 0x38;
+constexpr std::size_t kOffItemHasInfo = 0x10;
+constexpr std::size_t kOffItemInfo = 0x30;
+constexpr std::size_t kOffItemNoChoices = 0x48;
+constexpr std::uint64_t kInfoChoices = 25659;
+// The in-dialogue idle countdown on an actor's AIProcess (actor +0xF8): 39301 reads it, 39302 adds to it
+// (1.6.1170 0x6e0a00 / 0x6e0a20, both on process +0x10 -> +0x340). The engine fills it from
+// fAIInDialogueModewithPlayerTimer when a conversation starts (0x66085e) and on each new topic (0x67a307), and
+// the conversation ends when it runs out.
+constexpr std::size_t kOffActorProcess = 0xf8;
+constexpr std::uint64_t kDialogueIdleLeft = 39301;
+constexpr std::uint64_t kDialogueIdleAdd = 39302;
 constexpr std::uint32_t kHandleIndexMask = 0xfffff;
 constexpr std::size_t kOffRefHandleCount = 0x28;
 constexpr int kHandleIndexShift = 11;
@@ -358,6 +378,8 @@ constexpr std::size_t kOffGfxNumber = 0x10;
 constexpr std::uint32_t kGfxNumber = 3;
 
 constexpr const char* kDialogueMenuName = "Dialogue Menu";
+// The vanilla Dialogue Menu movie's cancel method: what Tab, Escape and its Exit button call.
+constexpr const char* kDialogueCancelPath = "_root.DialogueMenu_mc.onCancelPress";
 constexpr const char* kMessageBoxMenuName = "MessageBoxMenu";
 constexpr const char* kLoadingMenuName = "Loading Menu";
 constexpr const char* kTutorialMenuName = "Tutorial Menu";

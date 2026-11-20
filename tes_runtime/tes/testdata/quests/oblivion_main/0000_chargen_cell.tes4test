@@ -53,13 +53,21 @@ end
 # and at test pace 14 -> 17 and the greeting all fit inside the walk (run 5a: the first judge already read 17, and
 # the checkpoint save of the case that used to end there closed the conversation).
 # "You ... I've seen you ..." (stage 16) runs straight into the force-greet's four lines with no gap a player hears.
+# The player's controls are off from stage 14, and each question shows once (Charactergen.what / who / why == 0), so
+# a Tab out at a choice list used to leave a greeting with no questions: `bye locked` presses Tab there, at the
+# greeting's choice and after the first answer, and the conversation must stay open (Oblivion hides Goodbye while
+# choices are listed). The `wait 2100` sits at the choices past Skyrim's in-dialogue idle timer (60 real s under
+# test pacing), which must not close the conversation either.
 case chargen_emperor_in_cell
 walk 00097A3B
 until 1800 GetStage Charactergen >= 17
 hear 1800 UrielSeptimRef Gods give me strength
 expect quiet <= 6 since seen you
 wait 30
+bye locked
+wait 2100
 ask "What's going on?"
+bye locked
 ask "Who are you?"
 ask "Why am I in jail?"
 until 300 Charactergen.what == 1

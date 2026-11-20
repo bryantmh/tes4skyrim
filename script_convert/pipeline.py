@@ -1158,17 +1158,20 @@ def build_vmad_info_fragment(info_formid: str, property_values: dict = None,
     return bytes(buf)
 
 
-def build_vmad_package_fragment(script_name: str, value_props: dict = None,
-                                object_props: dict = None) -> bytes:
-    """VMAD attaching `script_name` to a PACK, whose `Fragment_0` runs OnEnd.
+def build_vmad_package_fragment(script_name: str, value_props: dict = None, object_props: dict = None,
+                                on_begin: str = '', on_end: str = 'Fragment_0') -> bytes:
+    """VMAD attaching `script_name` to a PACK: function `on_begin` runs OnBegin, `on_end` OnEnd ('' for none).
 
     xEdit wbVMADFragmentedPACK: the script block, then bind version 2, flags
-    (bit1 = OnEnd), FileName, and one entry per set flag bit.
+    (bit0 = OnBegin, bit1 = OnEnd), FileName, and one entry per set flag bit, OnBegin first.
     """
+    fragments = [name for name in (on_begin, on_end) if name]
+    flags = (0x01 if on_begin else 0) | (0x02 if on_end else 0)
     buf = build_vmad_object_script(script_name, object_props, value_props)
-    buf += struct.pack('<bB', 2, 0x02) + _pack_wstring(script_name)
-    buf += struct.pack('<B', 1) + _pack_wstring(script_name)
-    return buf + _pack_wstring('Fragment_0')
+    buf += struct.pack('<bB', 2, flags) + _pack_wstring(script_name)
+    for name in fragments:
+        buf += struct.pack('<B', 1) + _pack_wstring(script_name) + _pack_wstring(name)
+    return buf
 
 
 # Papyrus property object-type codes for the VMAD property record (objectFormat 2).
