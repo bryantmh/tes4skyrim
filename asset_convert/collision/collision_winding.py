@@ -15,6 +15,7 @@ from itertools import permutations, product
 
 from core.collision_options import winding_fix_enabled
 from asset_convert.collision.collision_falloutnv import is_fallout_source
+from asset_convert.collision.collision_original import is_morroblivion_mesh
 
 #: An authored normal must oppose the face normal by this much to count.
 AUTHORED_NORMAL_DOT = -0.3
@@ -347,7 +348,7 @@ def repair_inverted_floors(tris, visual_tris=None, groups=None,
     """Rewind collision triangles wound backwards; `(repaired_tris, n_flipped)`.
 
     Step 0 (the authored normal) is ungated; the render-mesh repair is gated
-    per plugin except for FO3/FNV sources, and supersedes step 0 where it
+    per plugin except for FO3/FNV sources and Morroblivion's own meshes, and supersedes step 0 where it
     reaches a verdict; a face matching `original_tris` (the Morrowind
     original) takes its facing over both.  `groups` is for call compatibility.
     See: docs/commentary/asset_convert_collision.md#morroblivion-collision-is-copied-render
@@ -357,7 +358,7 @@ def repair_inverted_floors(tris, visual_tris=None, groups=None,
         return tris, 0
 
     flip = _authored_flips(tris, authored_normals)
-    if not (winding_fix_enabled() or is_fallout_source()):
+    if not (winding_fix_enabled() or is_fallout_source() or is_morroblivion_mesh()):
         return _rewound(tris, flip)
 
     oracle = RenderOracle(visual_tris)

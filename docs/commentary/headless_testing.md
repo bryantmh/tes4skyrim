@@ -11,6 +11,7 @@ nothing written to the player's install, INIs, saves or logs.
 python -m tools.live.test_instance build      # once, and after any rebuild (see below)
 python -m tools.live.test_instance launch
 python -m tools.live.test_instance smoke      # coc, no pausing menu, time runs, screenshot
+python -m tools.live.test_instance launch --hd  # High preset at 2560x1440 for proof shots; `stop` restores Low
 python -m tools.live.test_instance menus | shot | status | close <Menu> | stop
 ```
 
@@ -136,10 +137,16 @@ table (everything bound later: SKSE, every plugin) and the exe's import slot
 Verified: the player's `skse64.log`, `Skyrim.ini`, `SkyrimPrefs.ini` and
 `Plugins.txt` kept their timestamps across every run.
 
-With `TES_SANDBOX_MUTE=1` a thread re-mutes the process's Windows audio
-session every 2 s (`hr=0` logged), on top of `fAudioMasterVolume=0`. Master
-volume rather than `bEnableAudio=0` keeps sound-timed behaviour, such as line
-durations, real.
+<a id="sandbox-mute"></a>With `TES_SANDBOX_MUTE=1` a thread re-mutes the process's Windows audio
+session every 2 s (`hr=0` logged). That mute is the ONLY silencing: the game
+itself runs at `fAudioMasterVolume=1`, and never at 0. At game volume 0 the
+engine does not wait out a line's voice file; it moves to the next response by
+the text alone. Measured 2026-11-20 at real speed on the Emperor's greeting
+(`chargen_emperor_in_cell`, `pace 1`): at volume 0 each response ended 0.85 to
+2.98 s before its voice file did; at volume 1, with the session still muted,
+0.07 to 0.93 s (the measure takes the longest voice type's file). The instance
+ran at volume 0 from 2026-10-26 until then, so every line-timing reading in
+between (`quiet`, `hear` waits, gaps) came from text-timed lines.
 
 ## <a id="startup-popups"></a>Startup popups that pause the game
 
@@ -513,11 +520,11 @@ came up over his 9.82 s line.
   `quiet <= 6`, which still catches the 8-11 s gaps that were bugs. A case
   that needs a tighter bound can lower its own speed with `pace`.
 - A pair where the second line is the next response of the same INFO is not
-  measured: the engine plays an INFO's responses back to back on its own, and
-  on the muted test instance it times each response by its text length in game
-  time, not by its voice file. In run `ob_before` (2026-11-17) the Emperor's
-  four greeting responses came 3.6-6.9 game seconds apart but 0.17 real
-  seconds apart. That would read as false gaps.
+  measured: the engine plays an INFO's responses back to back on its own. In
+  run `ob_before` (2026-11-17) the Emperor's four greeting responses came
+  3.6-6.9 game seconds apart but 0.17 real seconds apart, read as false gaps.
+  That run was at game volume 0, which times responses by text, not by voice
+  file ([sandbox mute](#sandbox-mute)); the instance no longer runs that way.
 - `expect quiet <= N since <text>` measures from the first line of the case
   containing `<text>` (any case and spacing) and judges -1 when no line does.
   Scope it to NPC-driven stretches: NPCs walking to their marks are silence

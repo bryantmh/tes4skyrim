@@ -118,6 +118,11 @@ def twin_meshes(export_dir: str, morroblivion, vanilla_esm: str, index) -> dict:
     models = MorroblivionModels(export_dir, [(n, None) for n in morroblivion],
                                 vanilla_esm)
     roots = [asset_root(export_dir, name) / 'meshes' for name in morroblivion]
+    return paired_meshes(models, roots, index)
+
+
+def paired_meshes(models: MorroblivionModels, roots, index) -> dict:
+    """{vanilla archive mesh key: replacement file under `roots`} for every record-paired mesh `models` owns."""
     out = {}
     for rel in (r for r in models.owners if r.endswith('.nif')):
         model = archive_path(models.replacement(rel, index))

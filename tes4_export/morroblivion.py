@@ -33,6 +33,12 @@ VANILLA_ESMS = ('Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm')
 #: Record type whose models the creature table supplies instead.
 _CREATURE = 'CREA'
 
+#: TES3 record types worn as body parts.
+_WEARABLES = ('ARMO', 'CLOT')
+
+#: TES3 subrecords listing a wearable's body parts.
+_PART_SUBS = ('INDX', 'BNAM', 'CNAM')
+
 #: Vanilla creature mesh (lower case, backslashes) -> the Morroblivion CREA EditorID wearing its replacement.
 MORROBLIVION_CREATURES = {
     'r\\duskyalit.nif': '0Alit',
@@ -99,6 +105,11 @@ def archive_path(value: str) -> str:
     return value.replace('\\\\', '\\').replace('/', '\\').strip().lstrip('\\').lower()
 
 
+def body_parts(rec) -> tuple:
+    """A TES3 wearable's body-part subrecords (INDX/BNAM/CNAM payloads), in order."""
+    return tuple(bytes(s.data) for s in rec.subrecords if s.type in _PART_SUBS)
+
+
 class MorroblivionModels:
     """The Morroblivion replacement for every vanilla mesh a plugin may name.
 
@@ -117,7 +128,7 @@ class MorroblivionModels:
         falls back from onto the source archives when it does not exist.
         """
         self.owners, self.models, self.creatures = {}, {}, {}
-        self.editor_ids = {}
+        self.editor_ids, self.wearable_parts = {}, {}
         self.own_meshes = Path(own_meshes) if own_meshes else None
         self._own_archive = None
         self._source_path = source_path
@@ -130,11 +141,13 @@ class MorroblivionModels:
                 self._index_models(str(record_dir(export_root, name)))
 
     def _index_owners(self, esm_path: str) -> None:
-        """Record which vanilla ids name each mesh, first ESM first."""
+        """Record which vanilla ids name each mesh, and each wearable's body parts, first ESM first."""
         for rec in read_file(esm_path)[1]:
             sub = get_subrecord(rec, 'MODL')
             if rec.deleted or sub is None:
                 continue
+            if rec.type in _WEARABLES:
+                self.wearable_parts.setdefault(rec.record_id.lower(), body_parts(rec))
             path = archive_path(get_string(sub))
             if path:
                 self.owners.setdefault(path, []).append(rec.record_id)
@@ -243,7 +256,7 @@ def remap_vanilla_models(out: dict, ctx) -> tuple:
                 if shift:
                     lines.append(f'Model.OriginShift={shift!r}')
                     shifted += 1
-    return changed, shifted, _fix_placements(
+    return changed, shifted, fix_placements(
         out, ctx.morroblivion.models, ctx.morroblivion.editor_ids)
 
 
@@ -271,7 +284,7 @@ def _compose(lines: list, pitch: float) -> bool:
     return True
 
 
-def _fix_placements(out: dict, models: dict, editor_ids: dict) -> int:
+def fix_placements(out: dict, models: dict, editor_ids: dict) -> int:
     """Apply Morroblivion's hand corrections to every placed reference.
 
     Both corrections resolve through the MASTERS' indexes, because the bases

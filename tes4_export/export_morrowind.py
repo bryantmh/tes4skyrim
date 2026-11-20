@@ -24,6 +24,7 @@ from core.plugin_masters import masters_from_export_header
 from .morroblivion import (MORROBLIVION_PREFIX, MorroblivionModels,
                            remap_vanilla_models)
 from .morrowind_patch import PATCH_NAME, blacklisted_bases
+from .morroblivion_hybrid import apply_hybrid, remove_copies
 from .morroblivion_origin import OriginShifts
 from .morrowind_armor import add_body_models, master_records
 from .morrowind_cell import (FLAG_HAS_WATER, FLAG_INTERIOR,
@@ -77,6 +78,7 @@ _MAGIC_EFFECT_COUNT = 143
 MORROWIND_SOURCE_KEY = 'morrowindSource'
 SOURCE_VANILLA = 'vanilla'
 SOURCE_MORROBLIVION = 'morroblivion'
+SOURCE_HYBRID = 'hybrid'
 
 #: The vanilla ESMs Morroblivion replaces wholesale.
 VANILLA_MASTERS = ('morrowind.esm', 'tribunal.esm', 'bloodmoon.esm')
@@ -526,6 +528,10 @@ def run_export(file_name: str, source: str, export_dir: str,
               'Export again with --morrowind-source vanilla, or choose '
               'Settings > Morrowind source > Vanilla.')
         return False
+    if mode == SOURCE_HYBRID and not morroblivion_exports(export_dir):
+        print(f'[{file_name}] ERROR: hybrid mode takes its meshes from Morroblivion; '
+              'convert Morrowind_ob.esm first (python convert.py -f Morrowind_ob.esm).')
+        return False
     masters, missing = converted_master_dirs(export_dir, file_name, source, mode)
     if missing:
         print(f'[{file_name}] ERROR: '
@@ -533,7 +539,7 @@ def run_export(file_name: str, source: str, export_dir: str,
         return False
     if masters:
         print(f"  Borrowing objects from {', '.join(_master_list(masters))}")
-    result = export_plugin(source, export_dir, masters)
+    result = export_plugin(source, export_dir, masters, mode == SOURCE_HYBRID)
     total = sum(result['counts'].values())
     print(f"  Wrote {total} records to {result['output']}")
     if result['dropped']:
@@ -593,13 +599,18 @@ def morroblivion_exports(export_dir: str) -> list:
                                         n.lower()))
 
 
-def export_plugin(source_path: str, export_dir: str, masters=()) -> dict:
+def export_plugin(source_path: str, export_dir: str, masters=(), hybrid: bool = False) -> dict:
     """Convert one Morrowind plugin into the standard export tree.
 
     Records land in `record_dir(export_dir, <plugin>)`, the same resolver every
     other stage uses, so nothing downstream needs to know the source was TES3.
+    `hybrid` swaps in Morroblivion's reviewed meshes
+    (docs/commentary/tes4_export_morrowind.md#hybrid-mode).
     """
     plugin = os.path.basename(source_path)
+    removed = remove_copies(export_dir, plugin)
+    if removed:
+        print(f'  Removed {removed} files an earlier hybrid export copied')
     header, records = read_file(source_path)
     ctx = _plugin_context(export_dir, masters, records, plugin)
     _load_part_tables(ctx, source_path, records, export_dir)
@@ -622,6 +633,9 @@ def export_plugin(source_path: str, export_dir: str, masters=()) -> dict:
         print(f'  Morroblivion models: {remapped} vanilla mesh references remapped'
               + (f', {shifted} origin-shifted' if shifted else '')
               + (f', {corrected} ref corrections (pitch/Z)' if corrected else ''))
+    if hybrid:
+        apply_hybrid(out, records, ctx, plugin, source_path, masters,
+                     morroblivion_exports(export_dir))
     out_dir = str(record_dir(export_dir, plugin))
     counts = write_export(out, out_dir)
     write_header(out_dir, ctx.master_names, sum(counts.values()),

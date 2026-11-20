@@ -1,0 +1,159 @@
+# Shivering Isles. SE02 "Through the Fringe of Madness", after 0000_se01_door (SE01Door 201 set SE02 5 and the player stands at
+# SE01DoorMarkerREF, west of Passwall in the Fringe). The quest has two ways to kill the Gatekeeper: Jayred's bone arrows
+# (stages 50 60 70 80 90, drafted here) and Relmyna's tears (25 30 130 140: Nanette's secret, the love letter, spying on
+# Relmyna's midnight visit, the handkerchief; not drafted). Either way the Gatekeeper's death sets 150, the player takes the
+# keys from the corpse (160 / 161 / 162 by SE02QuestScript), Haskill is summoned to talk (SE02.HaskillGreet 2), a Gates of
+# Madness door then lets the player through and entering the Realm sets 190. 200 is SE03's.
+# DRAFT 2026-11-17: not run yet.
+
+# SEGatesOfMadnessDoorScript: the first activation of a Gate while SE02 < 7 sets 7 (the door is locked: XLOC level 100, key
+# SE02KeyToMania / SE02KeyToDementia). The player lands on XSEGatekeeperProtectGates, about 2000 from the gate, and walks to it;
+# the landing is within 3000 of SE02OrcCaptainRef, so SE02OrcCaptainScript starts the scene as it would for a player coming
+# up the road: the adventurers fight the Gatekeeper (SE02OrcCaptainOrders, killed one by one), the captain runs off and his
+# GameMode / OnDeath sets 10. After 10 the Gatekeeper is hostile again (SE02GatekeeperScript), so the player leaves: a moveto
+# to XSE02ConversationSpotA, on the Passwall side, stands in for walking back.
+case se02_gates
+run
+player.moveto XSEGatekeeperProtectGates
+wait 60
+# A walk to the gate ends 128.4 from its centre against its collision and never counts as arrived (run si_2a):
+# moveto the gate, as the sewer-exit gate case does.
+run
+player.moveto SEFringeToManiaREF
+wait 30
+activate SEFringeToManiaREF
+until 300 GetStage SE02 >= 7
+# The captain's orders (fightStage 1..7, which ends in 10) begin only once the player is within 1024 of him
+# (warnPlayerDoOnce; run si_2b sat at 7 with the player at the gate, 2,300 away). A player on the road from Passwall
+# passes him; approach stands in.
+approach SE02OrcCaptainRef
+until 7200 GetStage SE02 >= 10
+run
+player.moveto XSE02ConversationSpotA
+wait 60
+end
+
+# Jayred Ice-Veins (SEJayredIceVeinsRef) is at home or wandering round SEPasswallWanderRef (his package list, ordered: eat
+# 12-14 and 18-20 at the inn, wander 10-20, sleep 0-6), so the hour is set to 15 and the player waits for him to be outside.
+# After 10, "Gatekeeper" (INFO 0008E4C8, say once, sets SE02.JayredGardens) adds "Gardens of Flesh and Bone" (INFO 0008E4F7,
+# sets 50) which offers "Lead on." (INFO 0008E4F5, goodbye: 60, SEJayredIceVeinsRef.LeadToGardens 1, a lockpick). With
+# LeadToGardens 1 his package SE02JayredEscortPlayerToGardens leads to XSE02JayredFindBones (-50378 360), 10000 units west and
+# past SE02GardenCourtyardGateRef (locked). An escort walks on only while the player is close behind, so the player follows
+# (`follow`) and he stops at the gate, saying SE02JayredSayUnlockGate ("Hurry! Pick that lock open.", GetLocked, within 512).
+case se02_jayred_lead
+run
+set gamehour to 15
+until 3600 SEJayredIceVeinsRef.GetInCell SEPasswallJayredsTent == 0
+run
+player.moveto SEJayredIceVeinsRef
+wait 120
+approach SEJayredIceVeinsRef
+talk SEJayredIceVeinsRef
+ask "Gatekeeper"
+ask "Gardens of Flesh and Bone"
+until 300 GetStage SE02 >= 50
+ask "Lead on."
+until 300 GetStage SE02 >= 60
+bye if open
+follow SEJayredIceVeinsRef
+hear 9000 SEJayredIceVeinsRef Hurry
+follow
+end
+
+# The gate is picked by the player (lockpicking is not a step: `unlock` stands in) and opened; SE02GardenCourtyardGateScript
+# then enables SE02GardensSpawn1Ref..3Ref. Jayred goes on to XSE02JayredFindBones, where SEJayredIceVeinsScript sees
+# GetInCell XPGardens (the Gardens' dummy parent cell, which holds XPGardensExterior) and sets EscortedPlayerToGardens 1 and
+# FindBones 1; SE02JayredFindBones ends (OnPackageDone) with "Here we are!" and 70. The player follows and fights beside
+# him (`defend`). His SE02JayredForceGreet (70 done, 80 not) says INFO 00012067 ("From these Gatekeeper bones I can make some
+# arrows.", say once), which offers "When will these bone arrows be ready?" (INFO 0003EA9C: 80, sets ArrowMakingStartDay and
+# ArrowMakingFinishHour = GameHour + 2).
+case se02_gardens
+walk SE02GardenCourtyardGateRef
+run
+SE02GardenCourtyardGateRef.unlock
+wait 30
+activate SE02GardenCourtyardGateRef
+defend SEJayredIceVeinsRef
+follow SEJayredIceVeinsRef
+until 9000 SEJayredIceVeinsRef.EscortedPlayerToGardens == 1
+until 9000 GetStage SE02 >= 70
+hear 3600 SEJayredIceVeinsRef From these Gatekeeper bones
+ask "When will these bone arrows be ready?"
+until 300 GetStage SE02 >= 80
+bye if open
+follow
+end
+
+# SEJayredMakeArrows (80 done) takes him to SEJayredShootArrows in his tent. "Bone Arrows" (added by INFO 00012067; INFO
+# 00012063, SE02.metaStageArrows 80) is only offered once his script's finish hour or day has passed (GameHour above
+# ArrowMakingFinishHour, or GameDaysPassed above ArrowMakingStartDay); midnight is passed by setting the hour, as a player
+# waits (as in oblivion_main/0500). The result sets 90, gives 20 bone arrows to both and offers "Follow me." / "Wait here."
+# ("Follow me.", INFO 00012065, goodbye: SEJayredIceVeinsRef.FollowWaitToggle 1 starts SE02JayredFollowPlayer).
+case se02_arrows
+run
+set gamehour to 23.9
+wait 300
+run
+set gamehour to 10
+player.moveto SEJayredShootArrows
+until 9000 SEJayredIceVeinsRef.GetInCell SEPasswallJayredsTent == 1
+wait 120
+approach SEJayredIceVeinsRef
+talk SEJayredIceVeinsRef
+ask "Bone Arrows"
+until 300 GetStage SE02 >= 90
+ask "Follow me."
+until 300 SEJayredIceVeinsRef.FollowWaitToggle == 1
+bye if open
+end
+
+# Jayred follows the player out of the tent (the player takes the door, SEPasswallJayredsTent's 00011FC2) and over the
+# ground; two moveto hops with a wait for him to catch up stand in for the walk (the Gatekeeper's ground is about 9000 from
+# his door). SE02JayredFightGatekeeper takes him into the fight within 3000 of XSEGatekeeperProtectGates. SE02GatekeeperScript
+# (leash round the same marker) makes the Gatekeeper attack the player there, so the player lands on it and fights
+# beside Jayred (`defend`); with the orc scene over (10) he is no longer essential. His OnDeath sets JournalTimer 4 and 150
+# (SE02FIN starts, congratulatePlayer 1). Jayred's SE02JayredCongratulatePlayer (150 done, under 200, within 1000) force-greets
+# with INFO 00012F37 ("The Gatekeeper is slain. Congratulations. ...").
+case se02_gatekeeper
+activate 00011FC2
+wait 120
+until 1800 SEJayredIceVeinsRef.GetInCell SEPasswallJayredsTent == 0
+run
+player.moveto XSE02ConversationSpotA
+until 3600 SEJayredIceVeinsRef.GetDistance player < 600
+run
+player.moveto XSEGatekeeperProtectGates
+defend SEJayredIceVeinsRef
+until 9000 GetStage SE02 >= 150
+hear 3600 SEJayredIceVeinsRef The Gatekeeper is slain
+bye if open
+end
+
+# SE02GatekeeperScript OnDeath adds SE02KeyToMania and SE02KeyToDementia to the corpse (stage under 150); the player takes
+# them (RemoveAllItems stands in for looting; the Gatekeeper is SE02Gatekeeper1Ref for a player under level 3, see
+# SEDoorToShiveringIslesScript). SE02QuestScript then sets 162 (both keys) and moves Haskill to the player with
+# SEHaskillSummonForcegreet: INFO 00081DDF ("So, you've managed to kill the Gatekeeper. Pity. ..."), whose result sets
+# SE02.HaskillGreet 2 (the quest script makes it 3 and fades him out after 5 s).
+case se02_keys_haskill
+run
+SE02Gatekeeper1Ref.RemoveAllItems player
+until 600 GetStage SE02 >= 162
+hear 1800 SEHaskillREF managed to kill the Gatekeeper
+until 600 SE02.HaskillGreet >= 2
+bye if open
+end
+
+# The Gates of Madness: with 160 and SE02.HaskillGreet 2 (before that the door says "You must speak with Haskill first."),
+# activating a Gate with its key takes the player through (SEGatesOfMadnessDoorScript gives the blessing and unlocks the
+# other door). The player walks the last stretch from XSEGatekeeperProtectGates to SEFringeToManiaREF. Entering the Realm
+# (SE02QuestScript: player.GetInCell SEGatesOfMadness) sets 190, which shows the map markers and ends the quest's journal.
+case se02_gates_of_madness
+run
+player.moveto XSEGatekeeperProtectGates
+wait 60
+run
+player.moveto SEFringeToManiaREF
+wait 30
+activate SEFringeToManiaREF
+until 900 GetStage SE02 >= 190
+end

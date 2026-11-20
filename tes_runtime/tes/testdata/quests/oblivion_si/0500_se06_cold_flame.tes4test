@@ -1,0 +1,210 @@
+# Shivering Isles. SE06 "The Cold Flame of Agnon" and its battle helper SE06Battle (Cylarne). SE04Shell 200 sets SE06 5
+# (after SE04 and SE05 have both ended); the player stands anywhere in the Isles and the first case moves him to Sheogorath.
+#
+# Path taken: the GOLDEN SAINTS, ATTACK DOWN THE MAIN PASSAGE. Sheogorath's intro (6, 8) -> the wardens at Cylarne (9, 15) ->
+# the Kaneh and Mirel argument (30) and Mirel's "The Underdeep" (35) -> Kaneh's plans (40, 50) -> the Saints march (51 -> 80 ->
+# 100; the main-passage door is unlocked by 100) -> the battle with Kaneh and her Saints as allies (SE06Battle 5 -> SE06 105;
+# the Saints stall at the closed gate: 124; the player opens it: SE06Battle 28 -> SE06 125; SE06Battle 20, 30, 50, 90 and 200
+# are set by the Saints' own movement through trigger zones) -> all of the Dark Seducers dead (SE06 140, set by
+# SE06DarkSeducerSCRIPT / SE06DarkSeducerWardenSCRIPT / SEUlfriSCRIPT OnDeath once DeadSeducers reaches TotalSeducers,
+# 15 + 3 added by stage 125) -> Kaneh sacrifices herself on the Altar of Despair (150, 160, 162, 170, 180) -> the player
+# walks into the Flame of Agnon (SE06FlameOfAgnonSCRIPT: 190) -> Dervenin in the Sacellum (196, 198, Mania) -> the player walks
+# into the Mania torch trigger (SE06GreatFlameManiaSCRIPT: 200).
+# NOT drafted: the Dark Seducer path (Ulfri: 60 .. 75, 130, 175), the Underdeep scouting (37, 38, SE06Battle 100 .. 190) and
+# the lie/truth chain (SE06HelpAttackA3 and below), "I don't want to get involved" (42, 62), the Dementia ending (Arctus,
+# 195, 199) and Stela's door chain (19, 20).
+# SE06 200: stopquest SE06 and setstage SE07 5 (starts SE07; the next case file picks it up).
+# SE06 variable indexes (SE06SCRIPT export): 1 DSDeployment, 2 PlayerScout, 3 GSDeployment, 4 convStage.
+# DRAFT 2026-11-17: not run yet.
+
+# Sheogorath at SE06 5 (the stage-5 greeting, INFO 00012CC0, "Well, well. So you've experienced both shades of madness.")
+# offers "What do you mean?" (00082462: adds "Great Torch") -> "How can I be a Daedric Prince?" (00082463, SAYONCE, adds 1 to
+# SE06.SheoIntroVAR) -> "Why me?" (00082464, SAYONCE, adds 1) -> "Where will you be?" (00082465 needs SheoIntroVAR == 2, so
+# both earlier answers come first) -> "What's next?" (00082461: result SetStage SE06 6; stage 6 sets SE04Shell 210 and SE06 8).
+# Stage 8 adds the topic SE06FlameAgnon, gives both Cylarne wardens SE06CylarneKey and enables Mirel and Kaneh.
+case se06_sheogorath
+run
+player.moveto SESheogorathREF
+wait 120
+approach SESheogorathREF
+talk SESheogorathREF
+ask "What do you mean?"
+ask "How can I be a Daedric Prince?"
+ask "Why me?"
+ask "Where will you be?"
+ask "What's next?"
+until 300 GetStage SE06 >= 6
+until 300 GetStage SE06 >= 8
+bye if open
+until 300 SEKanehREF.GetDisabled == 0
+end
+
+# Arriving at Cylarne: the player stands at the journal marker (SE06CylarnJournalMarkerREF); SE06FlameOfAgnonSCRIPT sets 9 within
+# 500 of it (stage 8 only). The Golden Saint warden (SE06GoldenSaintWardenRef, INFO 00018DC2, "Halt. Mortals are not permitted
+# within the walls of holy Cylarne.", needs SE06 < 10) offers "Stand aside. Sheogorath sent me." (00018DC3: adds the key and
+# the topic Kaneh) -> "I need to light the Flame of Agnon." (INFO 0003E6BB, goodbye: setstage 15, and the package
+# SE06GSWardenUnlockMainDoor, after which SE06GoldenSaintWardenSCRIPT unlocks and opens SE06DoorExteriorToRaptureRef).
+# The marker is more than 1100 from Kaneh and Mirel, so their argument has not started.
+case se06_cylarne_wardens
+run
+player.moveto SE06CylarnJournalMarkerREF
+wait 120
+until 300 GetStage SE06 >= 9
+approach SE06GoldenSaintWardenRef
+talk SE06GoldenSaintWardenRef
+ask "Stand aside. Sheogorath sent me."
+until 300 player.GetItemCount SE06CylarneKey >= 1
+ask "I need to light the Flame of Agnon."
+until 300 GetStage SE06 >= 15
+bye if open
+end
+
+# Kaneh (SEKanehREF) and Mirel (SEMirelREF) stand outside, 160 apart. SE06SCRIPT starts the conversation SE06KanehMirel (Mirel
+# to Kaneh) once the player is within 1100 of both (needs convStage 0 and neither stage 30, 35, 50 nor 70 done). Its four lines
+# (INFO 00012102, 00012103, 00012CBC, 00012104) each add 1 to SE06.convStage; 00012102 adds the topic "The Underdeep"
+# and the last sets 30. The player waits for it to end, then talks to Mirel: his greeting (INFO 000192E4, "Greetings, stranger.
+# Are you here to help us drive the Mazken out of C...", SAYONCE) -> "The Underdeep" (INFO 00012CBD, stage 35) offers "Why won't
+# Kaneh listen?" (00012CBE needs PlayerScout 0; it says the Underdeep may be a trap) -- "You're right. I've scouted it
+# myself." (00012CBF needs PlayerScout 1) is not asked.
+case se06_mirel
+run
+player.moveto SEKanehREF
+wait 120
+approach SEKanehREF
+until 1800 GetStage SE06 >= 30
+talk SEMirelREF
+ask "The Underdeep"
+until 300 GetStage SE06 >= 35
+ask "Why won't Kaneh listen?"
+bye if open
+end
+
+# Kaneh: the first greeting (INFO 00012CC5, "This is no place for a mortal. We are about to join battle...", needs 40 not done,
+# SAYONCE) offers "Sheogorath sent me. I need your help." (INFO 000131AB; gives SE06CylarneKey if missing). Then "Flame of Agnon"
+# (INFO 000131AC, SAYONCE: setstage 40, adds "Battle plans" = SE06HelpAttack). "Battle plans" (INFO 00012CC9, SAYONCE, needs 50 and
+# 70 not done) offers five choices; "What about the Underdeep?" (INFO 00012CCA, needs 30 or 35 done) is a plain answer; asked again,
+# "Battle plans" is INFO 00012CCB with four choices, and "I'll help you. Let's go." (INFO 00012CCC, goodbye) sets 50. Stage 50
+# (script text SE06 50, GSDeployment stays 0: the main passage) closes SE06NewLockedGate01REF and 03, sets Kaneh alert, and
+# Kaneh's SE06ShoutStartAttack (a say with a timer) ends: SE06SCRIPT sets 51, which sets 80 (Ulfri not essential, the Dark
+# Seducer faction hates the player) and 80 sets 100 (SE06DoorExteriorToMainPassageRef is unlocked). All of it needs no player.
+case se06_kaneh_plans
+talk SEKanehREF
+ask "Sheogorath sent me. I need your help."
+ask "Flame of Agnon"
+until 300 GetStage SE06 >= 40
+ask "Battle plans"
+ask "What about the Underdeep?"
+ask "Battle plans"
+ask "I'll help you. Let's go."
+until 300 GetStage SE06 >= 50
+until 1800 GetStage SE06 >= 51
+until 1800 GetStage SE06 >= 80
+until 1800 GetStage SE06 >= 100
+bye if open
+end
+
+# The Saints go through the main-passage door (SE06DoorExteriorToMainPassageRef, an ExRuinsGate01 in the exterior, unlocked by
+# stage 100) into XPCylarne01. The player follows Kaneh as Baurus's escort is followed in oblivion_main, then takes the
+# door as a player does. SE06SCRIPT (stage 100, GSDeployment 0) sets SE06Battle 5 when Kaneh is in XPCylarne01 within 750 of the
+# player; SE06Battle 5 sets SE06 105 (Kaneh and Mirel evp, and Kaneh says the attack shout again; fQuestDelayTime 5).
+case se06_enter_passage
+defend SEKanehREF
+follow SEKanehREF
+until 3600 SEKanehREF.GetDistance SE06DoorExteriorToMainPassageRef < 500 || SEKanehREF.GetInCell XPCylarne01 == 1
+activate SE06DoorExteriorToMainPassageRef
+until 3600 SEKanehREF.GetInCell XPCylarne01 == 1
+follow
+until 3600 GetStage SE06Battle >= 5
+until 600 GetStage SE06 >= 105
+end
+
+# The Saints fight their way west. SE06TrigZoneGSEnablePathgridSCRIPT (trigger zones SE06PathgridTrigger01A, 01B, 01C) sets
+# SE06Battle 20 when a Saint is past the first ambush room. Kaneh then stops (the gate SE06NewLockedGate01REF is closed;
+# the player cannot pass either) and her greeting (INFO 00043CD1, "Those traps up ahead will cut my Aureals to pieces!", needs
+# SE06Battle 20 done, 25 and 30 not, SE06 100 .. 129; goodbye, SAYONCE: setstage 124) asks for the gate to be opened. The
+# gate opens by its linked button (RuinsButtonDementia02, 00050E19 at -1904 -688, 205 from the gate; the ref's link is not in the
+# export, so this is the button nearest to SE06NewLockedGate01REF). SE06RuinsGateClosedSCRIPT sets SE06Battle 28 when
+# SE06NewLockedGate01REF is activated by its parent with SE06Battle 5 done; 28 sets SE06 125 and SE06Battle 30 (the Saints
+# go on; SE06MainPassageRoomADSAttack enables 3 more Dark Seducers: TotalSeducers 18).
+case se06_gate
+defend SEKanehREF
+until 3600 GetStage SE06Battle >= 20
+talk SEKanehREF
+until 300 GetStage SE06 >= 124
+bye if open
+activate 00050E19
+until 600 GetStage SE06Battle >= 28
+until 300 GetStage SE06 >= 125
+until 300 GetStage SE06Battle >= 30
+end
+
+# The battle: the player fights beside the Saints (`defend`). SE06Battle 50 and 90 follow the Saints through SE06PathgridTrigger01B
+# and 01C, SE06TrigZoneGoldenSaintsReachAltarSCRIPT sets SE06Battle 200 when a Saint reaches the altar (the Dark Seducers
+# counterattack there). Kaneh's or Ulfri's death sets 120 (a journal line only); every Dark Seducer killed counts in
+# SE06.DeadSeducers; 140 comes at 18. Ulfri, Stela and the wardens are all among them.
+case se06_battle
+defend SEKanehREF
+until 9000 GetStage SE06Battle >= 90
+until 9000 GetStage SE06Battle >= 200
+until 9000 GetStage SE06 >= 140
+until 300 GetStage SE06Battle >= 200
+end
+
+# Kaneh at 140: her greeting (INFO 000131A8, "Victory is ours! I have already selected a candidate for the honor of...", needs
+# SE06 == 140 exactly) offers "What are you going to do?" (INFO 000400DD, a plain answer), "Thanks for your help." (INFO
+# 000400DF, goodbye) and "Great. Get on with it." (INFO 000400DE, goodbye); its result (setstage 150) runs after the greeting's
+# last line, before the choice is clicked. 150 evp's her: the package SE06CommanderToSuicide takes her to the Altar of Despair,
+# its OnPackageEnd (SEKanehSCRIPT) sets 160, 2.8 s later 162 (SE06FlameDespairREF.FlameOn 1), a second later she dies (kill);
+# SE06FlameDementiaScript then plays the flame animation, and 4 s of its timers later sets 170 (stage 130 not done = a Golden
+# Saint victory), which disables Kaneh and sets 180 (SE06FlameOfAgnonRef enabled, SEObelisks 55). Kaneh and the flame run only
+# while their cell is loaded, so the player follows her.
+case se06_kaneh_sacrifice
+talk SEKanehREF
+ask "What are you going to do?"
+ask "Thanks for your help."
+until 300 GetStage SE06 >= 150
+follow SEKanehREF
+until 3600 GetStage SE06 >= 160
+until 600 GetStage SE06 >= 162
+until 900 SEKanehREF.GetDead == 1
+until 1800 GetStage SE06 >= 170
+until 300 GetStage SE06 >= 180
+end
+
+# The Flame of Agnon burns in the courtyard outside (SE06FlameOfAgnonRef, enabled by 180, at -38153 69912 1457). The player
+# comes out of the ruins (a moveto to the journal marker stands in for the walk through the passage and its doors) and walks
+# into the flame: SE06FlameOfAgnonSCRIPT (onTrigger player) adds the spell SE06FlameOfAgnonSpell and 4 s later sets 190 (the
+# key stops being a quest object; Sheogorath is moved to the Sacellum, ghosted).
+case se06_flame
+run
+player.moveto SE06CylarnJournalMarkerREF
+wait 120
+walk SE06FlameOfAgnonRef
+until 900 GetStage SE06 >= 190
+end
+
+# The Sacellum Arden-Sul in New Sheoth (cell SENSSacellumArdenSul): Dervenin (SEDerveninRef, Mania) greets the burning player
+# (INFO 000400D9, "You've brought it! The holy Flame of Agnon...", needs 190 .. 197, SAYONCE: result setstage 196) and offers
+# "I was leaning towards Dementia..." (INFO 000400E4, a plain answer), "I'll light the Great Torch for you." (INFO 000400E3,
+# goodbye: setstage 198, SE06.SheoMove 2, SE06.maniaGateVAR 1 which plays SE06TorchGateManiaRef forward and sets 2, the player's
+# Court of Madness rank 4) and "Let me think about it." The Mania trigger (SE06TrigZoneGreatTorchMania, 00018DE7 at -746 533
+# 69) is walked into, not placed in: SE06GreatFlameManiaSCRIPT (the player has the Flame spell) enables
+# SE06FlameManiaSacellumREF, takes the spell, disables controls and wakes Sheogorath if SE13 < 100, and 4 s later sets 200 (a
+# GetStage SE06 test still reads 200 after stopquest). 200 sets SE07 5.
+case se06_torch
+run
+player.moveto SEDerveninRef
+wait 120
+approach SEDerveninRef
+talk SEDerveninRef
+ask "I was leaning towards Dementia..."
+ask "I'll light the Great Torch for you."
+until 300 GetStage SE06 >= 196
+until 300 GetStage SE06 >= 198
+bye if open
+until 900 SE06.maniaGateVAR == 2
+walk 00018DE7
+until 900 SE06FlameManiaSacellumREF.GetDisabled == 0
+until 900 GetStage SE06 >= 200
+until 900 GetStage SE07 >= 5
+end

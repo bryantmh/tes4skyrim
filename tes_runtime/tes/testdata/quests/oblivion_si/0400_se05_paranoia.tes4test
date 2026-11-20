@@ -1,0 +1,247 @@
+# Shivering Isles. SE05 "The Lady of Paranoia" (the Dementia half: Syl, Duchess of Dementia, Crucible). SE04Shell 10 set
+# SE05 10 and the player stands in Sheogorath's palace in New Sheoth (the 0300 file's hand-off).
+#
+# Path taken: the torture route to the end, with the stage-60 night eavesdrop and Ma'zaddha's dead-man's evidence.
+#   10 Syl -> 20 Herdir -> 30 (Herdir follows) -> Kithlan tortured twice = 40 -> Anya tortured once = 50 -> Ma'zaddha
+#   tortured once = 55 -> Caldana Monrius tortured once = 60 -> night eavesdrop on Ma'zaddha and Nelrene = 70 -> confront
+#   Ma'zaddha = 80 -> a day later his body (92), his key (95), the cupboard's sword (100) -> Nelrene = 110 -> Muurine = 120
+#   -> Syl = 130 -> the chamber, Muurine's death and Syl's thanks = 200.
+# Not drafted: Kithlan's audience hint (15; Syl is talked to directly, her greeting at SE05 < 20 allows it), the
+# no-torture answers (disposition 80 with Kithlan 00080D40), the other informants (Anya's second answer, Cutter, Bernice,
+# Bhisha, Ushnar), the failed eavesdrop (65) and Nelrene's "I heard you" route (90). SE05 45 is set by nothing.
+# Torture (SE05HerdirTortureSpellScript): each torture choice ("Liar. Herdir, torture him!", "Liar! Herdir, torture her."
+# by the target's sex; INFO 000805A7 / 0007FF45, a goodbye) is offered only while SEHerdirRef.FollowPlayer == 1 (the
+# SE05HerdirFollowPlayer package's own gate) and the target is within 3000 of Herdir. The result sets Herdir's
+# TargetRef and CastSpell; he casts, the target is held in place, and when the spell ends the TARGET force-greets the
+# player (topic SE05PostTortureGreet). So a torture and its follow-up greeting are one case's steps, never split.
+# DRAFT 2026-11-17: not run yet.
+
+# Syl, at SE05 < 20: "Why do you approach the Duchess of Dementia? Do you seek death?" (INFO 00043E22) offers "I was told
+# to find you." (INFO 0007FE20) -> "Who's spying on you?" (INFO 000139B3) -> "How can I help?" (INFO 0001361F, a goodbye;
+# result Stage20Update 1; SESylScript, a GameMode poll, sets 20 and adds the topic Conspiracy). The travel is the
+# player's: moveto.
+case se05_syl
+run
+player.moveto SESylRef
+wait 120
+approach SESylRef
+talk SESylRef
+ask "I was told to find you."
+ask "Who's spying on you?"
+ask "How can I help?"
+until 600 GetStage SE05 >= 20
+bye if open
+end
+
+# Herdir at the torture chamber (SE05 20): "What brings you to this delightful corner of the House of Dementia?" (INFO
+# 000805E8) offers "You're supposed to come with me." (INFO 000805EA) -> "Fine. Let's go." (INFO 000805ED, a goodbye):
+# result SE05 30 and SEHerdirRef.FollowPlayer 1.
+case se05_herdir
+run
+player.moveto SEHerdirRef
+wait 120
+approach SEHerdirRef
+talk SEHerdirRef
+ask "You're supposed to come with me."
+ask "Fine. Let's go."
+until 600 GetStage SE05 >= 30
+until 300 SEHerdirRef.FollowPlayer == 1
+bye if open
+end
+
+# Kithlan (SE05 30, topic "Conspiracy" from SE05 20): "No conspiracies here. Go pester someone else." (INFO 00080D41:
+# Herdir within 3000, KithlanTorture < 2, disposition < 80) offers the torture choices. The first torture ends in
+# Kithlan's force-greet "I swear, I know nothing about a conspiracy!" (INFO 00080D43, KithlanTorture 1, offers the
+# choices again); the second in "All right, all right... please, just stop." (INFO 00080D42: KithlanTorture >= 2,
+# result SE05 40). Herdir follows the player (a short moveto leaves him behind, so the case waits for him).
+case se05_kithlan
+run
+player.moveto SEKithlanRef
+until 3600 SEHerdirRef.GetDistance SEKithlanRef < 1500
+approach SEKithlanRef
+talk SEKithlanRef
+ask "Conspiracy"
+ask "Liar. Herdir, torture him!"
+hear 3600 SEKithlanRef know nothing about a conspiracy
+ask "Liar. Herdir, torture him!"
+hear 3600 SEKithlanRef just stop
+until 300 GetStage SE05 >= 40
+bye if open
+end
+
+# Anya Herrick (SE05 40): "What? N...No. I don't know anything about anything." (INFO 00080D3D: AnyaTorture == 0,
+# Herdir within 3000) offers the choices. One torture ends in her force-greet "Please. I am not involved..." (INFO
+# 00080D79, AnyaTorture >= 1), which offers "What are you talking about?" (INFO 00080D7A): SE05 50.
+case se05_anya
+run
+player.moveto SEAnyaHerrickRef
+until 3600 SEHerdirRef.GetDistance SEAnyaHerrickRef < 1500
+approach SEAnyaHerrickRef
+talk SEAnyaHerrickRef
+ask "Conspiracy"
+ask "Liar! Herdir, torture her."
+hear 3600 SEAnyaHerrickRef I am not involved
+ask "What are you talking about?"
+until 300 GetStage SE05 >= 50
+bye if open
+end
+
+# Ma'zaddha at home (SE05 50): "I'm afraid I have no idea what you're talking about." (INFO 0008117E: stage 50,
+# MazaddhaTorture == 0, Herdir within 3000) offers the choices. His force-greet "You may continue to do your worst,
+# Inquisitor, ..." (INFO 000811CA, stages 50 .. 69) sets 55 and keeps MazaddhaTorture at 1 (needed at 70).
+case se05_mazaddha_torture
+run
+player.moveto SEMazaddhaRef
+until 3600 SEHerdirRef.GetDistance SEMazaddhaRef < 1500
+approach SEMazaddhaRef
+talk SEMazaddhaRef
+ask "Conspiracy"
+ask "Liar. Herdir, torture him!"
+hear 3600 SEMazaddhaRef do your worst
+until 300 GetStage SE05 >= 55
+bye if open
+end
+
+# SE05 55: Herdir clears the Nelrene/Muurine/Cutter/Bernice counts. Caldana Monrius (SECaldanaMonriusRef, her house): "Nothin'
+# in it for me, so I've nothin' to say to you." (INFO 0008ADED: stage 55, Herdir within 3000) offers the choices; her
+# force-greet "All right, all right!" (INFO 00089616, a goodbye, one torture) sets 60.
+case se05_caldana
+run
+player.moveto SECaldanaMonriusRef
+until 3600 SEHerdirRef.GetDistance SECaldanaMonriusRef < 1500
+approach SECaldanaMonriusRef
+talk SECaldanaMonriusRef
+ask "Conspiracy"
+ask "Liar! Herdir, torture her."
+hear 3600 SECaldanaMonriusRef All right, all right
+until 300 GetStage SE05 >= 60
+bye if open
+end
+
+# SE05 60: Ma'zaddha (SE05MazaddhaWaitforConversation, 0:00-4:00) and Nelrene (SE05NelreneWaitforMazaddha, 23:00-4:00) meet
+# at SE05MazaddhaConvMarker / SE05NelreneMarker (Crucible, 42590 13630 1440; 42708 13607). SE05QuestScript sets
+# Ma'zaddha's AtMarker within 200 and sends Nelrene (EVP); with the player within 1000 and unseen, SEMazaddhaSCRIPT has Nelrene
+# StartConversation SE05Eavesdrop every 5 s (SE05Conv 1, 3, 5); the last line (INFO 00081179, "Good. I shall expect a
+# progress report soon...") sets 70. Seen (detection >= 3) it is INFO 00081183 / 00089441 "Shh! Someone is nearby!" and
+# 65 instead. The player stands at the SEDemDoor02 beside the plaza (000451EA, 43560 13658, about 980 from Ma'zaddha).
+case se05_eavesdrop
+run
+set gamehour to 23.5
+until 7200 SEMazaddhaRef.GetDistance SE05MazaddhaConvMarker < 200
+until 3600 SENelreneRef.GetDistance SE05NelreneMarker < 100
+run
+player.moveto 000451EA
+until 3600 GetStage SE05 >= 70 || GetStage SE05 == 65
+expect GetStage SE05 >= 70
+end
+
+# SE05 70: Ma'zaddha, still at the marker, answers "Conspiracy" with "I've told you, I don't know anything. You can't
+# prove a thing!" (INFO 00080D7C: stage >= 70, MazaddhaTorture >= 1, 80 not done) offering "I heard you talking to
+# Nelrene." (INFO 00080D7C's choice, topic SE05MazaddhaSawYou, INFO 00081186: "What?") -> "Who else is involved?" (INFO
+# 00081188) -> "Very well. Bring me names." (INFO 0008118A) = 80; "Meet me in my house tomorrow at midnight."
+case se05_mazaddha_confront
+wait 300
+approach SEMazaddhaRef
+talk SEMazaddhaRef
+ask "Conspiracy"
+ask "I heard you talking to Nelrene."
+ask "Who else is involved?"
+ask "Very well. Bring me names."
+until 300 GetStage SE05 >= 80
+bye if open
+end
+
+# SE05 80: once Ma'zaddha is indoors with the player in another cell (SEMazaddhaSCRIPT) he is disabled
+# (SE05.MazaddhaClear 1, DayCheck = the day count) and SE05QuestScript enables his body (SEMazaddhaDeadRef) while the player is
+# out of his house. When the day count passes DayCheck (SE05.MazaddhaDead 1) it unlocks his door (SEMazaddhaDoorRef).
+# The player is away and lets the night pass: `set gamehour` stands in for waiting, as in mq05_shrine_clue.
+case se05_mazaddha_home
+run
+set gamehour to 5
+until 7200 SE05.MazaddhaClear == 1
+run
+set gamehour to 23.9
+wait 300
+until 3600 SE05.MazaddhaDead == 1
+until 600 SEMazaddhaDeadRef.GetDisabled == 0
+end
+
+# The body (SEMazaddhaDeadScript): within 200 of it sets 92. Taking the key from it (SE05Key; SE05QuestScript polls the
+# inventory) sets 95 and SE05MazaddhaCupboardRef's ownership; the cupboard (upstairs, SENSMazaddhasHouseUpstairs) holds
+# the evidence, and SE05Shortsword in the inventory sets 100. The player enters at the house door
+# (SEMazaddhaDoorRef, inside the house); RemoveAllItems stands in for looting.
+case se05_evidence
+run
+player.moveto SEMazaddhaDoorRef
+wait 60
+approach SEMazaddhaDeadRef
+until 600 GetStage SE05 >= 92
+run
+SEMazaddhaDeadRef.RemoveAllItems player
+until 300 player.GetItemCount SE05Key >= 1
+until 300 GetStage SE05 >= 95
+run
+player.moveto SE05MazaddhaCupboardRef
+wait 60
+run
+SE05MazaddhaCupboardRef.RemoveAllItems player
+until 300 player.GetItemCount SE05Shortsword >= 1
+until 300 GetStage SE05 >= 100
+end
+
+# Nelrene (SE05 100, 110 not done): "You have no proof! You cannot hold me accountable for anything!" (INFO 000811C8:
+# Nelrene, stage >= 90, 100 done) offers "I have your ceremonial sword." (INFO 0008199F, SE05 110).
+case se05_nelrene
+run
+player.moveto SENelreneRef
+wait 120
+approach SENelreneRef
+talk SENelreneRef
+ask "Conspiracy"
+ask "I have your ceremonial sword."
+until 300 GetStage SE05 >= 110
+bye if open
+end
+
+# Muurine (SE05 110): "I see you've done quite a bit of work to track me down." (INFO 00081368: 100 and 110 done, 120 not;
+# "Conspiracy"), a confession whose result sets 120 and SEHerdirRef.FollowPlayer 3.
+case se05_muurine
+run
+player.moveto SEMuurineRef
+wait 120
+approach SEMuurineRef
+talk SEMuurineRef
+ask "Conspiracy"
+until 300 GetStage SE05 >= 120
+bye if open
+end
+
+# Syl (SE05 120): "What news do you have to report, Inquisitor?" (INFO 00081369) offers "Muurine was behind it." (INFO
+# 0008136A, a goodbye): SE05 130, Muurine is moved to SE05MuurineCageMarker, the chamber gate is locked, and Syl walks
+# to SE05SylChamberMarker (package SE05SyltoChamber).
+case se05_report
+run
+player.moveto SESylRef
+wait 120
+approach SESylRef
+talk SESylRef
+ask "Muurine was behind it."
+until 300 GetStage SE05 >= 130
+bye if open
+end
+
+# The chamber (House of Dementia, 660 -3072 -1200). When Syl is within 300 of SE05SylChamberMarker her script has her say
+# SE05SylEndSpeech to Muurine, then (Speech 3) she pushes the switch (SE05SylPushSwitch; SE05ButtonScript, Speech 4) and
+# three SE05ShockSpell casts kill Muurine; 3 s after her death SESylScript has Syl StartConversation the player: "You see
+# now what happens when those who oppose me fail ..." (INFO 00081792, stage 130, Muurine dead), which sets 200 (the
+# SE05Bow, SE05TrophyRef, Nelrene disabled, SEObelisks 50; SE06 5 only if SE04 is 200). The player arrives with Syl (she
+# only walks to the marker; the player stands by her) and takes no part in the kill.
+case se05_chamber
+until 7200 SESylRef.GetDistance SE05SylChamberMarker < 300
+run
+player.moveto SESylRef
+until 3600 SEMuurineRef.GetDead == 1
+until 3600 GetStage SE05 >= 200
+until 300 player.GetItemCount SE05Bow >= 1
+bye if open
+end

@@ -35,7 +35,7 @@ QUAD_VERTS = 17
 
 
 def _cell(seed: int, n_alpha=(2, 1, 0, 3)):
-    """One `lands` entry shaped exactly like `_decode_land` returns."""
+    """One `lands` entry shaped exactly like `decode_land` returns."""
     rng = np.random.default_rng(seed)
     alpha = {}
     for quad, count in enumerate(n_alpha):

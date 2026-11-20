@@ -8,7 +8,7 @@ import argparse
 from core.collision_options import WINDING_FIX_DEFAULT_PLUGINS
 from core.navmesh_options import DEFAULT_GENERATOR, GENERATORS
 from tes4_export import text_encoding
-from tes4_export.export_morrowind import (MORROWIND_SOURCE_KEY,
+from tes4_export.export_morrowind import (MORROWIND_SOURCE_KEY, SOURCE_HYBRID,
                                           SOURCE_MORROBLIVION, SOURCE_VANILLA)
 
 #: Pipeline steps in run order, with the `--*-only` flag that selects each alone.
@@ -123,7 +123,7 @@ def _add_run_args(parser) -> None:
                              "tree when no Oblivion.exe is configured or the "
                              "native harness is missing.")
     parser.add_argument("--morrowind-source",
-                        choices=(SOURCE_VANILLA, SOURCE_MORROBLIVION),
+                        choices=(SOURCE_VANILLA, SOURCE_MORROBLIVION, SOURCE_HYBRID),
                         help="Export Morrowind-engine plugins in this mode for "
                              "this run only, instead of the configured "
                              "Settings > Morrowind source (which is left "

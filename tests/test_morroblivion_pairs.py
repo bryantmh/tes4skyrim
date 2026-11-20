@@ -12,17 +12,17 @@ import numpy as np
 from asset_convert.character.ground_halves import _layout, fit_errors
 from tes4_export.morroblivion_pair_scripts import (_END_FRAGMENT, Twin, _child_script,
                                                    _functions)
-from tes4_export.morroblivion_pairs import _right_ids, _with_twins
+from tes4_export.morroblivion_pairs import right_ids, _with_twins
 from tes4_export.morrowind_ids import IdIndex, interior_key
 from tes5_import.overrides.vmad_swap import SCRIPT_SWAP_KEY, swap_vmad_script
 
 
 def test_right_twin_is_the_left_id_with_one_side_word_swapped():
     """`left`, a lone `l` and a trailing `l` each name the right twin."""
-    assert 'steel_gauntlet_right' in _right_ids('steel_gauntlet_left')
-    assert 'indoril right gauntlet' in _right_ids('indoril left gauntlet')
-    assert 'darkbrotherhood gauntlet_r' in _right_ids('DarkBrotherhood gauntlet_L')
-    assert 'bm_ice_gauntletr' in _right_ids('BM_Ice_gauntletL')
+    assert 'steel_gauntlet_right' in right_ids('steel_gauntlet_left')
+    assert 'indoril right gauntlet' in right_ids('indoril left gauntlet')
+    assert 'darkbrotherhood gauntlet_r' in right_ids('DarkBrotherhood gauntlet_L')
+    assert 'bm_ice_gauntletr' in right_ids('BM_Ice_gauntletL')
 
 
 def _turn_about_z(degrees: float) -> np.ndarray:

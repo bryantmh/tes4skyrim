@@ -98,6 +98,9 @@ _G32.SelectObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
 _G32.GetBitmapBits.argtypes = (wintypes.HANDLE, ctypes.c_long, ctypes.c_void_p)
 _G32.DeleteObject.argtypes = (wintypes.HANDLE,)
 _G32.DeleteDC.argtypes = (wintypes.HANDLE,)
+DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ctypes.c_void_p(-4)
+_U32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+_U32.SetThreadDpiAwarenessContext.argtypes = (ctypes.c_void_p,)
 
 
 def _find_window(desk, window_class: str) -> int:
@@ -125,10 +128,15 @@ def capture(desktop: str, window_class: str):
     desk = _U32.OpenDesktopW(desktop, 0, False, DESKTOP_READOBJECTS_ENUMERATE)
     if not desk:
         return None
+    # Physical pixels: a DPI-unaware caller gets a scaled-down window rect on a scaled display and
+    # captures only its top-left part.
+    previous = _U32.SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
     try:
         hwnd = _find_window(desk, window_class)
         return _capture_window(hwnd) if hwnd else None
     finally:
+        if previous:
+            _U32.SetThreadDpiAwarenessContext(previous)
         _U32.CloseDesktop(desk)
 
 

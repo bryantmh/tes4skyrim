@@ -1,0 +1,193 @@
+# Shivering Isles. SE04Shell "Understanding Madness" (up to the two Dukes' quests) and SE04 "Addiction" (Thadon, Duke of
+# Mania: the Chalice of Reversal). SE03A 200 set SE04Shell 5 and the player stands in Sheogorath's palace
+# (cell SENSCastleSheogorath) after leaving Xedilian.
+#
+# Path taken: Sheogorath's tutorial and intro speech, then SE04 through WIDE-EYE (SE04 20, SEWideEye in Thadon's House of
+# Mania). The other source of the Chalice's whereabouts, Kithlan in the House of Dementia (SE04 30), is not drafted, nor is
+# Haskill's own advice. Inside the Burrow the player is not made to find Felldew again: the first dose (Felldew from the
+# special Elytra outside) is taken at the door and each cell is entered by its door (a moveto to the far side of the loading
+# door stands in for the walk), so the withdrawal stages (SE04 45 at about 90 s of game time) may be reached on the way.
+#
+# SE04Shell: 5 (SE03A) -> Sheogorath "I was attacked by Knights..." -> "Xedilian functions once more." (INFO 00044F52:
+# SEHaskillREF.tutorialVAR 1, spell SElpSummonHaskill, stage 3) -> the player summons Haskill twice (his lines and Sheogorath's
+# advance tutorialVAR 2, 3, 4) -> the intro speech (SheoIntroVAR 2) -> "Learn? Learn what?" (INFO 00044F54: SE04 5, SE05 10,
+# SE04Shell 10). SE04Shell 10's result chain (SE04 0 -> SE03A 200 -> SE04Shell 5) is the authors' own; the case waits on
+# GetStageDone, not GetStage. SE04Shell 20 and 30 (journal lines for "finished Thadon's / Syl's task") are set by nothing.
+# SE04Shell 200 (SE04ShellScript: SE04 200 and SE05 200, sets SE06 5, stops SE04 and SE05) WAITS FOR SE05, as does 210 (set by
+# SE06 6): not here. SE04 100 is set by nothing; 200 is the end.
+# DRAFT 2026-11-17: not run yet.
+
+# Sheogorath's greeting at SE04Shell 5 with SE04.SheoTalk 0: "Well now, what news do you have to report?" (INFO 00044F51)
+# offers "I was attacked by Knights..." (INFO 00082489) -> "Xedilian functions once more." (INFO 00044F52, a goodbye; its
+# result runs after the last line: tutorialVAR 1, the spell, stage 3). The travel from Xedilian is the player's: moveto.
+case se04shell_xedilian
+run
+player.moveto SESheogorathREF
+wait 120
+approach SESheogorathREF
+talk SESheogorathREF
+ask "I was attacked by Knights..."
+ask "Xedilian functions once more."
+until 300 SEHaskillREF.tutorialVAR == 1
+until 300 GetStageDone SE04Shell 3 == 1
+bye if open
+end
+
+# Summoning Haskill: SESummonHaskillSpellSCRIPT (the lesser power SElpSummonHaskill, only in the Isles) moves him to the
+# player and force-greets (SEHaskillSummonForcegreet). With tutorialVAR 1 his line is "Ah... our Lord has granted you the
+# power to summon me." (INFO 00081B7E, goodbye, tutorialVAR 2, needs summoned != 0). He leaves 5 s after the summon plus a
+# fade (summoned back to 0), and a second summon before that only says "summoned too recently". Sheogorath's next greeting
+# with tutorialVAR 2 is "Isn't that a hoot?" (INFO 00081B69, goodbye, tutorialVAR 3); the second summon (tutorialVAR 3)
+# says "Ah, summoned again." (INFO 00081B7D, goodbye, tutorialVAR 4). Casting the power by console stands in for the player
+# choosing it. All in one case: no boundary between a summon and its force-greet.
+case se04shell_summon
+run
+player.cast SElpSummonHaskill player
+hear 1800 SEHaskillREF granted you the power
+until 300 SEHaskillREF.tutorialVAR == 2
+bye if open
+until 1800 SEHaskillREF.summoned == 0
+approach SESheogorathREF
+talk SESheogorathREF
+until 300 SEHaskillREF.tutorialVAR == 3
+bye if open
+run
+player.cast SElpSummonHaskill player
+hear 1800 SEHaskillREF summoned again
+until 300 SEHaskillREF.tutorialVAR == 4
+bye if open
+until 1800 SEHaskillREF.summoned == 0
+end
+
+# With tutorialVAR 4 Sheogorath's greeting is "Good, good! You'll need all the help you can get ..." (INFO 00081B68), which
+# offers "Jyggalag? Who is that?" and "What is the Greymarch?". "What would You ask of me now?" (INFO 00044F53) is gated on
+# SE04Shell.SheoIntroVAR == 2 (GetQuestVariable, index 1), and only "Me? How?" (INFO 0008245F) and "What is the Greymarch?"
+# (INFO 00082460) add 1 each: "Me?" is offered only by "Jyggalag? Who is that?" (INFO 0008245E). So: Jyggalag -> "Me? How?"
+# (1) -> "What is the Greymarch?" (2) -> "What would You ask of me now?" -> "Learn? Learn what?" (INFO 00044F54: SE04 5,
+# SE05 10, SheoTalk 1, SE04Shell 10).
+case se04shell_intro
+approach SESheogorathREF
+talk SESheogorathREF
+ask "Jyggalag? Who is that?"
+ask "Me? How?"
+ask "What is the Greymarch?"
+ask "What would You ask of me now?"
+ask "Learn? Learn what?"
+until 300 GetStageDone SE04Shell 10 == 1
+until 300 GetStage SE04 >= 5
+until 300 GetStage SE05 >= 10
+bye if open
+end
+
+# Thadon in the House of Mania (SE04 5). His greeting "Ahh yes, THERE you are!" (INFO 000131D3, only GetIsID SEThadon at
+# this stage) offers four answers; each of the first three and "You... don't care?" adds the topic "Chalice of Reversal"
+# (INFO 000131D8 for "You've been waiting forever."). The topic (INFO 000131D9) offers "Yes, I have." (INFO 0001330A) ->
+# "Who?" (INFO 0001330B) -> "What happened?" (INFO 00019524, a goodbye) whose result sets SE04.Stage10Update 1; SEThadonScript
+# (GameMode) sets SE04 10, which enables SE04ElytraStartingRef. ("You mean Syl!" needs SE05 200: not offered.)
+case se04_thadon
+run
+player.moveto SEThadonRef
+wait 120
+approach SEThadonRef
+talk SEThadonRef
+ask "You've been waiting forever."
+ask "Chalice of Reversal"
+ask "Yes, I have."
+ask "Who?"
+ask "What happened?"
+until 600 SE04.Stage10Update == 1
+until 600 GetStage SE04 >= 10
+bye if open
+end
+
+# Wide-Eye (SEWideEyeREF, same house). At SE04 10 his greeting is "You've been speaking to Thadon." (INFO 0001E3FF, say
+# once) or "Yes? How may I assist you?" (INFO 0001E400). "Chalice of Reversal" (INFO 00013385, SE04 10 .. 49, 20 not done,
+# say once) adds "Felldew" and "Dunroot Burrow"; "Dunroot Burrow" (INFO 0001338B, same gates) sets 20 (ShowMap
+# XPDunrootBurrowMapMarker).
+case se04_wideeye
+run
+player.moveto SEWideEyeREF
+wait 120
+approach SEWideEyeREF
+talk SEWideEyeREF
+ask "Chalice of Reversal"
+ask "Dunroot Burrow"
+until 300 GetStage SE04 >= 20
+bye if open
+end
+
+# Felldew: SE04ElytraStartingRef (SE04FelldewElytraSPECIAL, "Elytra Hatchling", aggression 100) stands outside the Burrow
+# door and drops one SE04Felldew (SE04FelldewList, no chance of none). The player lands at the Dunroot Burrow map marker
+# (200 away), fights it, and loots it (RemoveAllItems stands in for looting). Eating comes next case (its timers run).
+case se04_elytra
+run
+player.moveto XPDunrootBurrowMapMarker
+wait 60
+defend
+until 3600 SE04ElytraStartingRef.GetDead == 1
+run
+SE04ElytraStartingRef.RemoveAllItems player
+until 300 player.GetItemCount SE04Felldew >= 1
+end
+
+# Eating Felldew (SE04FelldewScript, ScriptEffectStart) sets SE04 40 and SE04.FelldewState 1 (the Elytras go docile and
+# SE04BarrierScript opens the membrane within 500 of SE04ExBarrierRef, 22815 50456, on the way to the door). `equipitem`
+# stands in for eating. The player lands at SE04ElytraDoorGuardMark outside the membrane and walks the 500 to the door
+# (SEDunrootBurrowExDoorRef), which takes him into Burrow 01. Each next cell is entered at its door (the far side of the
+# loading door, as in mq05_sewer_plan): 01 -> 02 (00010D68) -> 03 (000169D1) -> 04 (0001695D) -> 05 (0001691E). Entering
+# XPDunrootBurrow05 with SE04 40 .. 49 sets 50 (SE04QuestScript). Three Felldew addicts (ACHR 0008EF7F, 0008EF80, 0008EF82,
+# "Chalice... Mine!") sit around the Chalice (SE04ChaliceRef, 000131C9); the player fights them (`defend`) and picks it up
+# (`take`). SE04ChaliceScript sets 60 when the player holds it (result: unlocks DunrootDoor05toExteriorREF, SEObelisks 35).
+case se04_burrow
+run
+player.moveto SE04ElytraDoorGuardMark
+wait 60
+run
+player.equipitem SE04Felldew
+until 300 GetStage SE04 >= 40
+until 300 SE04.FelldewState == 1
+run
+player.moveto SEDunrootBurrowExDoorRef
+wait 30
+activate SEDunrootBurrowExDoorRef
+until 900 player.GetInCell XPDunrootBurrow01 == 1
+run
+player.moveto 00010D68
+wait 60
+run
+player.moveto 000169D1
+wait 60
+run
+player.moveto 0001695D
+wait 60
+run
+player.moveto 0001691E
+wait 60
+until 300 GetStage SE04 >= 50
+defend
+until 3600 0008EF7F.GetDead == 1
+until 3600 0008EF80.GetDead == 1
+until 3600 0008EF82.GetDead == 1
+take 000131C9
+until 300 GetStage SE04 >= 60
+end
+
+# SE04 60 unlocked the tower's door to the outside (DunrootDoor05toExteriorREF, 0001691D). The player takes it and goes back
+# to Thadon (moveto stands in for the walk through New Sheoth). Thadon's greeting at SE04 60 is "The triumphant champion
+# returns!" (INFO 00013452, a goodbye): its result takes the Chalice and sets 200 (SE04TrophyRef enabled, SEObelisks 40,
+# SE04 stopped; SE06 5 only if SE05 is already 200, which is the other file's).
+case se04_return
+run
+player.moveto 0001691D
+wait 60
+activate 0001691D
+until 900 player.GetInCell XPDunrootBurrow05 == 0
+run
+player.moveto SEThadonRef
+wait 120
+approach SEThadonRef
+talk SEThadonRef
+until 300 GetStage SE04 >= 200
+until 300 player.GetItemCount SE04Chalice == 0
+bye if open
+end

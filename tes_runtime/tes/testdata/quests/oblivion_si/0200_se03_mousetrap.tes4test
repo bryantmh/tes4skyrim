@@ -1,0 +1,289 @@
+# Shivering Isles. SE03 "A Better Mousetrap" and SE03A "Baiting the Trap". The player has come through the Gates of
+# Madness (SE02 190) and stands in Sheogorath's palace (cell SENSCastleSheogorath).
+#
+# Path taken (SE03A branches in each of its three chambers): MANIA in all three. Chamber one Mania = the Giant Gnarl
+# and the spore gas (SE03A.ChamberOne 2), chamber two Mania = the key fall (ChamberTwo 2, Syndelius searches the keys),
+# chamber three Mania = Grommok's "ghost" (ChamberThree 2, GrommokInsane). Every Mania ending is scripted
+# (SE03GrommokScript timers, SE03ManiaGnarl.StartMeUp 3 -> 8), so no fight depends on a kill; Dementia (swarm of mini
+# Gnarls, hunger statues, zombies) is not drafted.
+#
+# SE03 "A Better Mousetrap": Sheogorath's chain "What do you want?" (INFO 00056049) -> "Changes?" (0005604A) ->
+# "Greymarch?" (00056052, result startQuest SE03) -> "What now?" (00056095) -> "Why Xedilian?" (0006770C, result SE02
+# 200 + SE03 8: Manual, SE03TuningFork, SE03QuestGateOpenTriggerREF enabled). SE03 stage 5 is only set by SE03's own
+# stage 0 quickstart script, so stage 8 satisfies the Manual's OnEquip window (5 <= stage < 10). Haskill (moved to the
+# palace by SEHaskillScript at the end of SE01) sets 10 with "Reactivated" (INFO 0008E94B). Entering Xedilian
+# (SE03Script: within 800 of SE03EntryMarker) sets 15; each Focus Crystal is an item added by SE03ObeliskStaffNN
+# (OnAdd player) when the player takes the staff off a Grummite Shaman (20/30/40, SE03FocusCrystalScript) and each
+# Judgment Nexus (SE03JudgmentNexusScript01..03) takes one (25/35/45). SE03ResonatorScript: activating the Resonator
+# with SE03TuningFork after 45 plays a 5 second timer, then SE03 200 (StartQuest SE03A, SE03A 5, Kiliban enabled).
+#
+# SE03A "Baiting the Trap": Kiliban force-greets inside control room one (5), "What should I do?" sets 10. The
+# adventurers (SEGrommokRef, SELewinRef, SESyndelRef, enabled at 10) walk in when the player crosses a chamber's trigger
+# box between its two buttons (12 / 18 / 47 when they stand in position), the player presses one button per chamber
+# (15 / 20 / 50, set by SE03AScript and SE03GrommokScript), steps on each teleporter pad (SE03TeleportationPad01 doors)
+# once the adventurers have left the chamber, and Kiliban's force-greet at 50 sets 55. In the reception chamber
+# "You spoke of earnings?" sets 60. Leaving it wakes the three Knights of Order (SE03KnightsTrigger); their deaths set
+# 70, and "What were those beings?" sets 200 (SetStage SE04shell 5, StopQuest SE03A, StartQuest SE03Fin): the last
+# stage this file reaches.
+# DRAFT 2026-11-17: not run yet.
+
+# Sheogorath's greeting "A new arrival! ..." (INFO 0001B6A6, SE02 190 <= stage < 200) offers "What do you want?".
+case se03_sheogorath
+run
+player.moveto SESheogorathRef
+wait 120
+approach SESheogorathRef
+talk SESheogorathRef
+ask "What do you want?"
+ask "Changes?"
+ask "Greymarch?"
+ask "What now?"
+ask "Why Xedilian?"
+until 300 GetStage SE03 >= 8
+until 300 GetStage SE02 >= 200
+expect player.GetItemCount SE03TuningFork >= 1
+bye if open
+end
+
+# Haskill stands in the palace (SE07AThadonMarker). His greeting at SE03 >= 8 "The Madgod has given you a task..."
+# (INFO 0006D17C); the topic "Reactivated" (INFO 0008E94B, say once) sets 10 and he points to Xedilian.
+case se03_haskill
+run
+player.moveto SEHaskillREF
+wait 120
+approach SEHaskillREF
+talk SEHaskillREF
+ask "Reactivated"
+until 300 GetStage SE03 >= 10
+bye if open
+end
+
+# The door into Xedilian (REFR 0001317F, RuinsHallDoorSmallA01, Shivering Isles exterior near XedilianMapMarker) leads
+# to XedilianExitREF in XPXedilian01; the player arrives about 200 from SE03EntryMarker: 15.
+# The entry hall's gate (0003B9BB) is opened by the button 0003B9CA ("RuinsButtonDementia02", the entry side), the next
+# gate (0003B9BC) by 0003B9FB; SE03QuestGateOpenTriggerREF (0007E0CC, enabled by SE03 8, 1186 south of the arrival point)
+# opens SE03NothingToSeeHereREF when the player walks through it, so the hall walk goes to SE03KilibanMainHallMarker
+# (0007F456) past the trigger. The rest of the long way to the crystals is a teleport.
+case se03_enter_xedilian
+run
+player.moveto 0001317F
+wait 120
+run
+player.moveto 0001317F
+wait 30
+activate 0001317F
+until 600 GetStage SE03 >= 15
+wait 60
+run
+player.moveto 0003B9CA
+wait 30
+activate 0003B9CA
+wait 300
+walk 0007F456
+wait 60
+run
+player.moveto 0003B9FB
+wait 30
+activate 0003B9FB
+wait 300
+end
+
+# Crystal one: the Grummite Shaman 00069707 (XPXedilian01, beside nexus one). The player kills it and takes its
+# staff (RemoveAllItems stands in for looting; the staff's OnAdd gives SE03FocusCrystal, SE03FocusCrystalScript sets 20).
+# Nexus one (00011EC6, SE03CrystalChamber01REF) takes the crystal: 25.
+case se03_crystal1
+run
+player.moveto 00069707
+wait 120
+defend
+until 3600 00069707.GetDead == 1
+run
+00069707.RemoveAllItems player
+until 300 GetStage SE03 >= 20
+expect player.GetItemCount SE03FocusCrystal >= 1
+run
+player.moveto 00011EC6
+wait 120
+activate 00011EC6
+until 300 GetStage SE03 >= 25
+end
+
+# Crystal two: the Shaman 000696E0, nexus two 00011EE3 (SE03CrystalChamber02REF): 30, 35.
+case se03_crystal2
+run
+player.moveto 000696E0
+wait 120
+defend
+until 3600 000696E0.GetDead == 1
+run
+000696E0.RemoveAllItems player
+until 300 GetStage SE03 >= 30
+expect player.GetItemCount SE03FocusCrystal >= 1
+run
+player.moveto 00011EE3
+wait 120
+activate 00011EE3
+until 300 GetStage SE03 >= 35
+end
+
+# Crystal three: the Shaman 0006972F in XPXedilian02 beside nexus three 00013CA2: 40, 45 ("the path to the Resonator
+# is now clear").
+case se03_crystal3
+run
+player.moveto 0006972F
+wait 120
+defend
+until 3600 0006972F.GetDead == 1
+run
+0006972F.RemoveAllItems player
+until 300 GetStage SE03 >= 40
+expect player.GetItemCount SE03FocusCrystal >= 1
+run
+player.moveto 00013CA2
+wait 120
+activate 00013CA2
+until 300 GetStage SE03 >= 45
+end
+
+# The Resonator (SE03ResonatorREF, 000774F9, XPXedilian02) is guarded by Grummites (SE03LLGrummiteList02Resonator and
+# a shaman without a crystal). The player lands 400 from it, fights, and activates it holding the Attenuator
+# (SE03TuningFork): 5 seconds later SE03 200, which starts SE03A and sets its stage 5.
+case se03_resonator
+run
+player.moveto 0007906F
+wait 120
+defend
+approach 000774F9
+expect player.GetItemCount SE03TuningFork >= 1
+activate 000774F9
+until 900 GetStage SE03 >= 200
+until 300 GetStage SE03A >= 5
+end
+
+# The Resonator opens SE03DoneGateRef (000774F5); the teleporter pad SE03TeleportToRoom01REF (000774FD, 1100 north) takes
+# the player to control room one (XPXedilian01), 140 from Kiliban (SEKilibanRef, enabled by SE03 200). SE03AScript then
+# force-greets with SE03A >= 5 and Kiliban within 300: "Finally, Lord Sheogorath has sent someone to assist me!"
+# (INFO 00018C6B) offers "Tell me about this place." (00018DF4) -> "Enough. How do I get out of here?" (00018DF5) ->
+# "What should I do?" (00018DF6, sets 10). A short chain: "Interesting, tell me more." and "Why do I have to deal with
+# this?" are other branches.
+case se03a_kiliban
+wait 300
+run
+player.moveto 000774FD
+wait 30
+activate 000774FD
+hear 1800 SEKilibanRef Finally, Lord Sheogorath
+ask "Tell me about this place."
+ask "Enough. How do I get out of here?"
+ask "What should I do?"
+until 300 GetStage SE03A >= 10
+bye if open
+end
+
+# Chamber one. The adventurers (enabled at 10) walk in once the player crosses SE03XedilianTriggerC1 (00072FEB, between
+# the buttons at x -3936: Dementia 4752, Mania 5072); the player walks in from the observation area marker
+# SE03Room01EnableREF (00050A8C) and through the box to a floor point past it. With all three in position (12) the
+# Mania button (SE03ManiaButton01ActiveREF 00014347, "You must wait until the victims are in position." before) starts
+# the Giant Gnarl; the adventurers flee it and OrcRoom1 sets 15.
+case se03a_chamber1
+walk 00050A8C
+wait 60
+walk -4050 4930 352
+until 3600 GetStage SE03A >= 12
+activate 00014347
+until 600 SE03A.SwitchOne >= 1
+until 9000 GetStage SE03A >= 15
+end
+
+# Chamber two. SE03AScript opens control room one's exit gate (SE03ControlRoom01ExitGateREF) when Grommok stands within
+# 200 of Chamber2GrommokStarts; the pad ControlRoom01Door02REF (00011EF3, beyond it) leads to control room two. The
+# player crosses SE03XedilianTriggerC2 (00073254, y 6044 between the buttons at x 2464 and 2800) from the north.
+# Stage 18 = adventurers in position; SE03ManiaButton02ActiveREF (000142C5) drops the keys; Syndelius and Grommok
+# search them (SE03GrommokScript RoomTwoTalkC chain) and OrcRoom2 sets 20.
+case se03a_chamber2
+run
+player.moveto 0007E965
+wait 60
+until 3600 SEGrommokRef.GetDistance Chamber2GrommokStarts <= 200
+run
+player.moveto 00011EF3
+wait 30
+activate 00011EF3
+wait 120
+walk 2651 6500 -672
+wait 30
+walk 2651 5800 -672
+until 3600 GetStage SE03A >= 18
+activate 000142C5
+until 600 SE03A.SwitchTwo >= 1
+until 9000 GetStage SE03A >= 20
+end
+
+# Chamber three. The exit gate of control room two opens when Grommok is within 200 of Chamber3GrommokStarts; the pad
+# ControlRoom02Door02REF (00011F0F) leads to control room three (XPXedilian02). The player crosses
+# SE03XedilianTriggerC3 (000749DE, x -754, buttons at y 4080 and 4416) from the west; Grommok's package end sets 47.
+# SE03ManiaButton03ActiveREF (00014360) sets GoGhosts: Grommok "dies" and speaks as SEGrommokGhostRef, then goes
+# insane (SE03A.GrommokMan 3) and SE03GrommokScript sets 50.
+case se03a_chamber3
+run
+player.moveto 0007E967
+wait 60
+until 3600 SEGrommokRef.GetDistance Chamber3GrommokStarts <= 200
+run
+player.moveto 00011F0F
+wait 30
+activate 00011F0F
+wait 120
+walk -1250 4250 -16
+wait 30
+walk -450 4250 -16
+until 3600 GetStage SE03A >= 47
+activate 00014360
+until 600 SE03A.SwitchThree >= 1
+until 9000 GetStage SE03A >= 50
+end
+
+# Kiliban force-greets (KiliMeetOne, SE03A >= 50, within 300): "You've made short work of the intruders. ..." (INFO
+# 00019858, no topics, result SetStage SE03A 55).
+case se03a_kiliban_done
+hear 1800 SEKilibanRef made short work of the intruders
+until 300 GetStage SE03A >= 55
+bye if open
+end
+
+# 55 opens SE03ControlRoom03ExitGateREF (Kiliban activates it) and he walks to the reception chamber. The player steps on
+# the last pad (SE03ControlRoom03Door02REF, 0001437C), arriving 420 from SE03KilibanFinalMarker; Kiliban comes within
+# 600 and force-greets (Kiligreet2, GetStage SE03A == 55): "As is the tradition, you are to be awarded a focus crystal
+# ..." (INFO 00019857) offers "You spoke of earnings?" (INFO 0007F3CF, a goodbye, sets 60: journal, recovery chest).
+case se03a_reception
+run
+player.moveto 0007E968
+wait 60
+run
+player.moveto 0001437C
+wait 30
+activate 0001437C
+hear 1800 SEKilibanRef focus crystal as a token
+ask "You spoke of earnings?"
+until 300 GetStage SE03A >= 60
+expect SE03A.Reward >= 1
+bye if open
+end
+
+# Leaving the reception chamber: SE03WaitingRoomExitTrigger (00014346) opens the gate, SE03KnightsTrigger (000807B7, 300
+# south of it) enables the three Knights of Order (SE03Knight01ListRef..03, 000807B3 / 000807B4 / 000807B5) at the
+# entry door and blocks it with crystals (XedilianExitREF locked at 50). The player fights them near the gate;
+# SE03AScript counts KnightCount to 3 and sets 70 (door unlocked), and Kiliban, still within 1000 of the player,
+# force-greets (KiliMeetTwo): "That was quite a battle. I hope you are uninjured." (INFO 000807B2) offers "What were
+# those beings?" (INFO 000807B9, a goodbye, sets 200).
+case se03a_knights
+walk -4312 10112 864
+wait 120
+walk -4252 9500 864
+defend
+until 9000 GetStage SE03A >= 70
+hear 1800 SEKilibanRef That was quite a battle
+ask "What were those beings?"
+until 300 GetStage SE03A >= 200
+bye if open
+end

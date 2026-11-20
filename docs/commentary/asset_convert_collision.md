@@ -530,6 +530,12 @@ inside the per-mesh worker.
 
 ### <a id="morroblivion-collision-is-copied-render"></a>Morroblivion round 4 — the collision triangle IS a render triangle
 
+The repair follows the MESH, not only the plugin: a Morroblivion mesh copied
+into another plugin's tree (the [hybrid mode](tes4_export_morrowind.md#hybrid-mode))
+is still Morroblivion's collision. `is_morroblivion_mesh` turns the gated repair
+on for any converting mesh byte-identical to the file at the same path in a
+converted Morroblivion plugin's tree.
+
 **Measured against the Morrowind authored `RootCollisionNode`**, which is the
 only ground truth for Morroblivion: 24 oracle-matched meshes, 12,882 collision
 triangles matched to an oracle face by exact vertex set (5,948 of them, 46%,
