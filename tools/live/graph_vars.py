@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.live import test_instance
 from tools.live.game_bridge import Bridge, BridgeError
 
 LOOKUP_BY_ID = 14617
@@ -236,8 +237,10 @@ def _sample(b: Bridge, m: Mem, fid: int, names, only, changes: bool,
 
 
 def main(argv=None) -> int:
+    """Parse arguments and print each actor's variables; the exit code."""
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('formids', nargs='+', help='actor reference FormIDs (hex)')
+    ap.add_argument('--instance', type=int, default=1, help='test instance slot (1 = the first)')
     ap.add_argument('--watch', type=int, default=1, help='snapshots per actor')
     ap.add_argument('--interval', type=float, default=1.0)
     ap.add_argument('--only', help='comma-separated variable names')
@@ -255,7 +258,8 @@ def main(argv=None) -> int:
     ids = [int(x, 16) for x in a.formids]
     last = {}
     t0 = time.time()
-    with Bridge() as b:
+    test_instance.use_instance(a.instance)
+    with Bridge(test_instance.PIPE) as b:
         m = Mem(b)
         for k in range(a.watch):
             for fid in ids:

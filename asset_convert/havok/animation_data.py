@@ -235,13 +235,17 @@ def motion_block_lines(manifest: dict, trans_tol: float = 0.5,
 
 
 def crc_triple_lines(anim_dir: str, stems) -> list:
-    """The animationsetdata preload list: count, then 3 hash lines per file."""
-    dir_hash = str(beth_anim_hash(anim_dir))
+    """The animationsetdata preload list of `stems` in `anim_dir`: count, then 3 hash lines per file."""
+    return crc_pair_lines((anim_dir, s) for s in stems)
+
+
+def crc_pair_lines(pairs) -> list:
+    """The animationsetdata preload list of (dir, stem) pairs: count, then 3 hash lines per file."""
     ext_hash = str(beth_anim_hash('hkx'))
-    stems = sorted({s.lower() for s in stems})
-    lines = [str(len(stems))]
-    for stem in stems:
-        lines += [dir_hash, str(beth_anim_hash(stem)), ext_hash]
+    pairs = sorted({(d.lower(), s.lower()) for d, s in pairs})
+    lines = [str(len(pairs))]
+    for anim_dir, stem in pairs:
+        lines += [str(beth_anim_hash(anim_dir)), str(beth_anim_hash(stem)), ext_hash]
     return lines
 
 
@@ -252,8 +256,8 @@ def setdata_block_lines(manifest: dict) -> list:
     lines.append(str(len(attacks)))
     for event, clip_name in attacks:
         lines += [event, '0', '1', clip_name]
-    lines += crc_triple_lines(manifest['anim_dir'],
-                              (c['stem'] for c in manifest['clips']))
+    own = [(manifest['anim_dir'], c['stem']) for c in manifest['clips']]
+    lines += crc_pair_lines(own + [tuple(p) for p in manifest.get('shared_anims', [])])
     return lines
 
 

@@ -30,6 +30,7 @@ from external.pynifly_hkx.anim_skyrim import (
     load_skyrim_animation)
 
 from asset_convert.havok.hkx_skeleton import BONE_RENAMES, ROOT_BONE_NAME
+from asset_convert.havok.hkx_xml import HkxPackfile, esc
 from asset_convert.havok.kf_decode import (BoneTrack, DecodedClip, decode_kf,
                                            split_root_motion)
 
@@ -218,21 +219,47 @@ def reference_pose_from_bones(bones) -> dict:
     return pose
 
 
-def build_animation_xml(anim: 'AnimationData', skeleton_root: str) -> str:
+def _annotation_tracks(anim: 'AnimationData', track_names=None) -> str:
+    """The annotationTracks body: every annotation on track 0, as vanilla files carry them.
+
+    Track names are empty (a plain clip binds by index) unless `track_names`
+    is given: a paired clip binds each actor's tracks BY NAME.
+    """
+    names = list(track_names or [''] * anim.num_tracks)
+    body = []
+    for i, name in enumerate(names):
+        anns = anim.annotations if i == 0 else []
+        inner = '\n'.join(
+            '\t\t<hkobject>\n'
+            f'\t\t\t<hkparam name="time">{a.time:.6f}</hkparam>\n'
+            f'\t\t\t<hkparam name="text">{esc(a.text)}</hkparam>\n'
+            '\t\t</hkobject>' for a in anns)
+        body.append(
+            f'<hkobject>\n\t<hkparam name="trackName">{esc(name)}</hkparam>\n'
+            f'\t<hkparam name="annotations" numelements="{len(anns)}">'
+            + (f'\n{inner}\n\t' if anns else '') + '</hkparam>\n</hkobject>')
+    return '\n'.join(body)
+
+
+def build_animation_xml(anim: 'AnimationData', skeleton_root: str,
+                        track_names=None) -> str:
     """Render the clip as hk_2010 packfile XML (vanilla walkforward layout).
 
-    The binary is produced by hkxcmd's real Havok serializer (`compile_hkx`)
-    — pynifly's hand-rolled binary writer produced files that crashed real
-    Havok deserializers (unaligned/idiosyncratic layout), so it is used only
-    for its spline COMPRESSOR here; layout is Havok's own.
+    `track_names` names every track (paired clips; see _annotation_tracks)
+    and adds the per-block track offsets a by-name sampler indexes into.
+
+    hkxcmd's Havok serializer (`compile_hkx`) writes the binary: pynifly's own
+    writer crashed real deserializers, so only its spline COMPRESSOR is used.
+    See: docs/commentary/asset_convert_creature.md#rideable-mounts
     """
-    from asset_convert.havok.hkx_xml import HkxPackfile, esc
     from external.pynifly_hkx.anim_fo4 import _compress_all_blocks
 
     if not anim.num_blocks:
         max_fpb = anim.max_frames_per_block or 256
         anim.num_blocks = max(1, (anim.num_frames + max_fpb - 1) // max_fpb)
-    blob, block_offsets = _compress_all_blocks(anim, rot_quant=1)
+    track_offsets = [] if track_names else None
+    blob, block_offsets = _compress_all_blocks(anim, rot_quant=1,
+                                               track_offsets=track_offsets)
 
     frame_dur = anim.frame_duration
     # vanilla single-block convention: blockDuration 8.5 / inverse 0.117647
@@ -255,27 +282,7 @@ def build_animation_xml(anim: 'AnimationData', skeleton_root: str) -> str:
     spline.param('numberOfTransformTracks', anim.num_tracks)
     spline.param('numberOfFloatTracks', 0)
     spline.param('extractedMotion', 'null')
-    # annotationTracks: all annotations on track 0, empty names (vanilla)
-    ann_body = []
-    for i in range(anim.num_tracks):
-        if i == 0 and anim.annotations:
-            inner = '\n'.join(
-                '<hkobject>\n'
-                f'\t<hkparam name="time">{a.time:.6f}</hkparam>\n'
-                f'\t<hkparam name="text">{esc(a.text)}</hkparam>\n'
-                '</hkobject>' for a in anim.annotations)
-            ann_body.append(
-                '<hkobject>\n\t<hkparam name="trackName"></hkparam>\n'
-                f'\t<hkparam name="annotations" '
-                f'numelements="{len(anim.annotations)}">\n'
-                + '\n'.join('\t\t' + ln for ln in inner.split('\n'))
-                + '\n\t</hkparam>\n</hkobject>')
-        else:
-            ann_body.append(
-                '<hkobject>\n\t<hkparam name="trackName"></hkparam>\n'
-                '\t<hkparam name="annotations" numelements="0"></hkparam>\n'
-                '</hkobject>')
-    spline.param_raw('annotationTracks', '\n'.join(ann_body),
+    spline.param_raw('annotationTracks', _annotation_tracks(anim, track_names),
                      numelements=anim.num_tracks)
     spline.param('numFrames', anim.num_frames)
     spline.param('numBlocks', anim.num_blocks)
@@ -286,7 +293,7 @@ def build_animation_xml(anim: 'AnimationData', skeleton_root: str) -> str:
     spline.param('frameDuration', f'{frame_dur:.6f}')
     spline.param_array('blockOffsets', block_offsets)
     spline.param_array('floatBlockOffsets', [len(blob) - 4] * anim.num_blocks)
-    spline.param_array('transformOffsets', [])
+    spline.param_array('transformOffsets', track_offsets or [])
     spline.param_array('floatOffsets', [])
     spline.param_array('data', list(blob), per_line=16)
 
@@ -512,31 +519,26 @@ def speed_bake_factor(rule, clip, motion, fps: float = 30.0) -> float:
 
 
 def timescale_clip(clip, motion, factor: float, fps: float = 30.0):
-    """Play `clip` `factor`x faster, IN PLACE, resampled onto the fps grid.
+    """Play `clip` `factor`x faster, IN PLACE (bakes Oblivion's attribute ground speed).
 
-    Used to bake Oblivion's attribute-driven ground speed into the shipped
-    animation file: TES4 moved a creature at the GMST Speed-attribute formula
-    regardless of its animation's root motion (the clips just slid), so a
-    faithful conversion must raise the clip's REAL speed — commanded MOVT
-    speed and animation root motion then agree by construction, exactly like
-    every vanilla creature (chaurus Forward_Run: anchor 350.267 = MOVT run =
-    clip natural speed at rate 1.0; Arcane University: "set movement-type
-    speeds and blend weights to the speed each animation was made for").
-
-    The compressed timeline is RESAMPLED onto the standard 1/fps frame grid
-    rather than shipped as denser frames: every vanilla Skyrim animation is
-    30 fps, and the first bake (2026-08-22) that merely halved the sample
-    spacing produced a 60 fps file (frameDuration 0.0167 under a 30 fps
-    block layout) — the lion's "limbs going every which way" while running.
-    Frame timing in the shipped file is now identical to a native clip's.
+    A factor at or below 1 leaves the clip as it is.
+    See: docs/commentary/asset_convert_creature.md#8-ground-speed-baked-not
     """
     if factor <= 1.0 + 1e-6:
         return clip, motion
+    return retime_clip(clip, motion, float(clip.times[-1]) / float(factor), fps)
+
+
+def retime_clip(clip, motion, duration: float, fps: float = 30.0):
+    """Stretch `clip` IN PLACE to last `duration`, resampled onto the 1/fps grid.
+
+    The duration snaps to whole frames, so frameDuration is exactly 1/fps as
+    in every vanilla file (a denser grid broke the lion's run).
+    See: docs/commentary/asset_convert_creature.md#8-ground-speed-baked-not
+    """
     src_times = np.asarray(clip.times, dtype=np.float64)
     src_dur = float(src_times[-1])
-    # snap the new duration onto the frame grid so frameDuration is EXACTLY
-    # 1/fps (the effective factor moves by < one frame)
-    n = max(2, int(round(src_dur / float(factor) * fps)) + 1)
+    n = max(2, int(round(duration * fps)) + 1)
     new_dur = (n - 1) / fps
     inv = new_dur / src_dur
     old_times = src_times * inv

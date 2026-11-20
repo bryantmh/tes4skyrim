@@ -3651,3 +3651,81 @@ source is a HELD IDLE rather than an authored ~1s dying animation, so the
 wolf's early absolute timing — 8 frames, enough for the engine to process the
 `AddRagdollToWorld` raised on state entry — is the right equivalent, in both
 the graph trigger and the animationdata block (`RAGDOLL_RELEASE_T`).
+
+## 11. Rideable mounts (2026-11-19)
+<a id="rideable-mounts"></a>
+
+**Code:** `asset_convert/havok/mount.py`, `asset_convert/havok/behavior_mount.py`,
+`tes5_import/record_types/world.py` (`_achr_links`), `tes5_import/record_types/creature.py`
+(`_crea_keyword_subs`), `tes5_import/actors/creature_races.py` (`creature_is_mount`). Plan and feasibility: [horse_rideability.md](../plans/horse_rideability.md);
+what Skyrim requires: [skyrim_mountable_actor.md](../reference/skyrim_mountable_actor.md).
+
+**The authored indicator.** A mount's skeleton has `ActorParent` (Oblivion's rider node),
+and its folder holds clips that animate a whole second biped under it. Oblivion's
+ridden gaits carry the seated rider too (`backward.kf` has the `Bip01` chain), so
+"has a rider" is not enough: the mount clip is the one whose rider root
+(`Bip01 NonAccum`) rises most, the dismount the one it drops most (horse: `idleanims/
+horsemount.kf` +61.7, `horsedismount.kf`). No filename is read.
+
+**Paired clips bind by NAME.** Vanilla `Paired_Mount.hkx` has 159 tracks, an empty
+`transformTrackToBoneIndices`, and track names on every annotation track: 102 human
+tracks (`PairedRoot`, `SaddleBone`, `NPC`, `NPC Root [Root]`…) and 57 `2_Horse*`.
+Both graphs' `BSSynchronizedClipGenerator` use `SyncAnimPrefix 2_`; the actor that
+starts the pair (the rider, via the `HorseEnter` IDLE on 0_Master) binds the plain
+tracks, the mount the `2_` ones. The rider graph (`actors/character/behaviors/
+horsebehavior.hkx`) is shared by every horse and plays vanilla's file from a fixed
+path, so the human half is always Skyrim's. The mount's file is vanilla's human
+tracks verbatim + vanilla's two static scene nodes (`2_Horse`, `2_`) + the Oblivion
+horse's own tracks as `2_<bone>`, stretched to vanilla's length (mount 1.4 → 1.667 s,
+dismount 1.867 → 2.133 s, 30 fps grid).
+
+**A mount preloads vanilla's shared paired clips.** Vanilla HorseProject's
+animationsetdata `FullCharacter.txt` list includes `meshes\actors\sharedkillmoves\
+human&horse\paired_mount` and `paired_dismount` (dir CRC 1343509563), so the file the
+rider plays is already resident whenever a horse is loaded. Without them (user, in game)
+the first mounts of a converted horse shook the horse and camera and aborted until one
+finally took, and mounting worked at once only after a vanilla horse had been spawned.
+`mount.shared_preload()` adds both to every mountable project's preload list
+(manifest `shared_anims`); in Oblivion only the horse project changes (1 of 44).
+
+**Mount layer of the graph.** Vanilla's horse graph has no "ridden" branch: its root
+`MountBehavior` machine holds the ordinary graph (RootState) plus `MountSynced` /
+`DismountSynced`, entered by `pa_HorseEnter` / `pa_HorseExit` (global wildcards),
+held by `bIsSynced` through a BSIsActiveModifier, left on `PairEnd`. The rider graph
+samples `Speed` into its own `HorseSpeedSampled`, so the mount's graph does not feed it.
+
+**SaddleBone.** The engine keeps `SaddleBone` in its global node-name table (beside
+`PerchFireNode`). It goes on `ActorParent`'s parent (`Bip02 Spine2`; vanilla's is on
+`HorseSpine2`), appended as the LAST hkx bone so no index moves, and inserted into the
+converted skeleton.nif. Position = the Oblivion rider's seat at the mount clip's end
+plus `SEAT_TO_SADDLE` (0, −5.2, +4.5): vanilla's SaddleBone (1.67, −0.98, 134.92)
+minus the vanilla rider root at Paired_Mount's last frame (1.7, 4.2, 130.4). Measured
+in game on a vanilla horse (Weynon stable, 1.6.1170): rider root 129.75 above the
+horse, 5.2 forward, which matches that end pose. The Oblivion seat lands at model
+z 126.6 (SaddleBone 131.1); the Oblivion back is 6.4 lower than vanilla's (114.7 vs
+121.1 at y=0).
+
+**Records.** TES4 ACHR `XHRS` (rider → horse) is TES5 ACHR `XHOR`, which vanilla uses on
+exactly its MQ101 riders (Tullius, Elenwen, Hadvar). The horse ACRE's authored `XOWN`
+is its rider (Claude Maric's horse is owned by Claude Maric); `convert_ACHR` dropped
+it before. Blast radius: Oblivion 35 riders, 90 owned creature refs (67 horses, 13
+sheep, 10 dogs); Nehrim 6 riders, 32 owned (16 horses, 10 sheep, 6 donkeys).
+
+**The mount keyword goes on the NPC_, not the RACE.** The engine's "Ride" activate text
+(1.6.1170 0x3BA1E0) asks 0x6C0C60, which requires the actor's runtime flag `+0x204` bit 1
+(IsAMount); 0x69A1A0 sets that flag from two `HasKeyword` vcalls (`vtbl+0x240`) on the
+actor against default objects, one being `Keyword - Horse` (HRSK = `ActorTypeHorse`
+00026110). With the keyword only on the race, the player's activate did nothing (tested
+in game). Vanilla carries it on all 32 horse NPC_ records (`PKID … KSIZ KWDA CNAM`), so
+`convert_CREA` writes it there for every CREA whose project is mountable.
+
+**A paired clip needs `transformOffsets`.** Ordinary vanilla clips leave it empty and are
+sampled whole; a name-bound paired clip is sampled track by track (1.6.1170 0xC32712 reads
+`[anim+0x78][block*tracks + track]`), and an empty array crashed the game the moment an
+NPC started mounting (access violation reading 0x8). Vanilla Paired_Mount has 159
+offsets starting at 636, its mask size; `build_animation_xml` emits them for clips with
+track names (the compressor records each track's start in its block).
+
+Mount Data in the DogRace DATA template is already vanilla's (−63.479, 0, 0 /
+−50, 0, 65 / 0, −300, 0), and must stay so: the rider plays vanilla's human half,
+which starts at `NPC` (−63.5, 0, 0).

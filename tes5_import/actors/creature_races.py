@@ -183,6 +183,8 @@ _KW_ANIMAL = 0x00013798
 _KW_UNDEAD = 0x00013796
 _KW_DAEDRA = 0x00013797
 _KW_CREATURE = 0x00013795
+#: ActorTypeHorse: the engine's `Keyword - Horse` default object (HRSK); all 32 vanilla horses carry it.
+KW_ACTOR_TYPE_HORSE = 0x00026110
 
 # TES4 creature folder → actor-type keyword set
 _FOLDER_KEYWORDS = {
@@ -569,6 +571,15 @@ def patch_creature_voices(writer) -> int:
             records[i] = blob[:off] + new + blob[off + size:]
             patched += 1
     return patched
+
+
+def creature_is_mount(fid_low24: int) -> bool:
+    """Whether a converted CREA's project authors mounting (its NPC_ gets ActorTypeHorse).
+
+    See: docs/commentary/asset_convert_creature.md#rideable-mounts
+    """
+    entry = _CREA_RACE_MAP.get(fid_low24)
+    return bool(entry and (_PROJECTS.get(entry[1]) or {}).get('mountable'))
 
 
 def get_creature_race(fid_low24: int):

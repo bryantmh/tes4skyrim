@@ -80,6 +80,9 @@ from asset_convert.havok.behavior_ragdoll import (
     live_tracking,
 )
 from asset_convert.havok.behavior_getup import getup_clip_meta, plan_getup
+from asset_convert.havok.behavior_mount import (MOUNT_EVENTS, MOUNT_VARIABLES,
+                                                mount_machine)
+from asset_convert.havok import mount as mount_clips
 from asset_convert.havok.creature_pipeline import foot_enum_map
 from asset_convert.havok.hkx_anim import (
     decode_clip,
@@ -92,7 +95,8 @@ from asset_convert.havok.hkx_anim import (
     write_clip_hkx,
 )
 from asset_convert.havok.hkx_ragdoll import ragdoll_info
-from asset_convert.havok.hkx_skeleton import generate_skeleton_hkx
+from asset_convert.havok.hkx_skeleton import (generate_skeleton_hkx,
+                                              load_skeleton_bones)
 from asset_convert.havok.behavior_nodes import F_GLOBAL, GraphBuilder
 from asset_convert.havok.behavior_root import behavior_graph, graph_data
 from asset_convert.havok.behavior_root import root_generator
@@ -244,69 +248,26 @@ def build_character_xml(name: str, anim_files: list, behavior_file: str,
     return pf.render(top)
 
 
-def build_behavior_xml(behavior_name: str, clips: dict,
-                       hit_times: dict = None,
-                       movement_types: list = None,
-                       speeds: dict = None,
-                       ragdoll: dict = None,
-                       sound_events: list = None,
-                       vocal_states: list = None,
-                       getup_plan: list = None) -> str:
-    """The generated v1 state machine (see module docstring).
-
-    hit_times: {state_name: [seconds]} — Oblivion 'Hit' text-key times for
-    attack clips, emitted as preHitFrame/HitFrame triggers (the engine's
-    attack-damage contract; without HitFrame an attack never deals damage).
-
-    sound_events: the FULLY-QUALIFIED `SoundPlay.<SNDR EditorID>` names this
-    creature's clips trigger. Every one must be declared in the graph's own
-    event table or the annotation resolves to no event and is dropped — an
-    animationdata trigger is dispatched by matching its text against this
-    table, NOT by parsing the payload at play time. Vanilla does exactly this:
-    chickenbehavior.hkx declares `SoundPlay.NPCChickenPeck` /
-    `SoundPlay.NPCChickenScratch`, wolfbehavior.hkx declares
-    `SoundPlay.NPCDogPantLPMSD` + `SoundStop.NPCDogPantLPMSD`, matching their
-    animationdata triggers verbatim. The bare `SoundPlay` entry those graphs
-    also carry is the inert leftover, not the mechanism.
-
-    vocal_states: [(state_name, enter_event, anim_stem)] single-play vocal
-    idle states (CSDT Idle/Aware slots), entered via the engine's idle
-    system (ActionIdle/ActionIdleWarn IDLE records) and returning through
-    returnToDefault. Each plays its OWN annotation-carrying copy of the
-    idle animation so the sound fires once per entry, never per loop.
-
-    movement_types: MOVT MNAM strings (movement_type_names()) declared as
-    `iState_<X>` INT32 variables — the engine's movement-type registration
-    contract; without them the actor cannot move at all.
-
-    speeds: {'walk': u/s, 'run': u/s, ...} clip root-motion speeds — anchor
-    weights for the MoveForward parametric walk/run blend (vanilla
-    ForwardWalkBlend: children weighted by natural clip speed, blend
-    parameter bound to SpeedSampled, flags=17 SYNC|PARAMETRIC).
-
-    ragdoll: hkx_ragdoll.ragdoll_info() dict — enables the Fully Ragdoll
-    death state (DeathAnimation/Ragdoll/RagdollInstant routing, a
-    structural clone of the vanilla dogbehavior root SM state 4). Oblivion
-    creatures have no death animations: death IS the ragdoll.
-    """
-    hit_times = hit_times or {}
-    movement_types = movement_types or []
-    speeds = speeds or {}
+def _graph_tables(clips, movement_types, vocal_states, sound_events,
+                  getup_plan, mount):
+    """(events, variables) of the graph; a mount's are appended after every other."""
     events = graph_events(clips, vocal_states, sound_events,
                           getup=bool(getup_plan))
-    cast_defs = cast_phase_defs(clips)
-    eid = {n: i for i, n in enumerate(events)}
-    if not clips['idle']:
-        raise ValueError('creature has no idle clip')
-
-    # variable table is fixed up-front so bindings can reference indices.
     variables = graph_variables(clips, movement_types)
-    has_swim_mt = any(mt.endswith('Swim') for mt in movement_types)
-    var_values = [30 if n == 'iState' else iv for n, _t, iv in variables]
-    gb = GraphBuilder(events, variables)
+    if mount:
+        events += MOUNT_EVENTS
+        variables += MOUNT_VARIABLES
+    return events, variables
 
-    default_sm, loco_sm, gait_eem = build_default(gb, clips, speeds)
 
+def _action_layer(gb, behavior_name, clips, hit_times, speeds, movement_types,
+                  vocal_states, default_sm):
+    """The `<behavior>Root` action machine and the expression modifiers it needs.
+
+    Returns (machine, [equip, cast, swim] modifiers); DefaultState holds
+    `default_sm` and every action returns to it on returnToDefault.
+    """
+    cast_defs = cast_phase_defs(clips)
     attack_ml = attack_modifier_list(gb)
     root = RootStates()
     add_interrupts(gb, root, clips, hit_times)
@@ -318,28 +279,55 @@ def build_behavior_xml(behavior_name: str, clips: dict,
     root.extend(*build_cast(gb, cast_defs, clips, hit_times, root.next_id))
     root.extend(*build_block(gb, clips, root.next_id))
     add_vocal_idles(gb, root, clips, hit_times, vocal_states)
-    equip_eem = equip_dispatch_modifier(gb, equip_dispatch)
-    root_states_inner = root.states
-    root_wilds = root.wilds
-    default_trans = root.default_trans
-
-    cast_eem = begin_cast_modifier(gb, cast_defs)
-    swim_eem = swim_state_modifier(gb, movement_types, has_swim_mt)
+    eems = [equip_dispatch_modifier(gb, equip_dispatch),
+            begin_cast_modifier(gb, cast_defs),
+            swim_state_modifier(gb, movement_types,
+                                any(mt.endswith('Swim') for mt in movement_types))]
     default_gen_ref = combat_idle_generator(gb, cast_defs, default_sm)
+    root.states.insert(0, gb.state(0, 'DefaultState', default_gen_ref,
+                                   transitions=root.default_trans or None,
+                                   root=True))
+    root.wilds.append((gb.eid['returnToDefault'], 0, F_GLOBAL))
+    wild = gb.trans_array(root.wilds, root=True)
+    return gb.state_machine(f'{behavior_name}Root', root.states, start_id=0,
+                            wildcard_ref=wild.ref), eems
 
-    default_state = gb.state(0, 'DefaultState', default_gen_ref,
-                           transitions=default_trans or None, root=True)
-    root_states_inner.insert(0, default_state)
 
-    root_wilds.append((eid['returnToDefault'], 0, F_GLOBAL))
-    wild = gb.trans_array(root_wilds, root=True)
+def build_behavior_xml(behavior_name: str, clips: dict,
+                       hit_times: dict = None,
+                       movement_types: list = None,
+                       speeds: dict = None,
+                       ragdoll: dict = None,
+                       sound_events: list = None,
+                       vocal_states: list = None,
+                       getup_plan: list = None,
+                       mount: bool = False) -> str:
+    """The generated v1 state machine (see module docstring).
 
-    sm = gb.state_machine(f'{behavior_name}Root', root_states_inner,
-                  start_id=0, wildcard_ref=wild.ref)
-
+    hit_times: {state: [s]} 'Hit' keys -> HitFrame triggers.  sound_events:
+    every `SoundPlay.<SNDR>` the clips fire (the graph must declare each).
+    vocal_states: [(state, event, stem)] Idle/Aware vocal states.
+    movement_types: MOVT MNAMs, declared `iState_<X>`.  speeds: gait anchors.
+    ragdoll: ragdoll_info() for the death state.  mount: add the mount layer.
+    See: docs/commentary/asset_convert_creature.md#5-key-technical-facts
+    """
+    hit_times = hit_times or {}
+    movement_types = movement_types or []
+    speeds = speeds or {}
+    if not clips['idle']:
+        raise ValueError('creature has no idle clip')
+    events, variables = _graph_tables(clips, movement_types, vocal_states,
+                                      sound_events, getup_plan, mount)
+    gb = GraphBuilder(events, variables)
+    default_sm, _loco_sm, gait_eem = build_default(gb, clips, speeds)
+    sm, eems = _action_layer(gb, behavior_name, clips, hit_times, speeds,
+                             movement_types, vocal_states, default_sm)
+    if mount:
+        sm = mount_machine(gb, sm)
+    var_values = [30 if n == 'iState' else iv for n, _t, iv in variables]
     gdata = graph_data(gb, events, variables, var_values)
     mod_gen = root_generator(gb, sm, live_tracking(gb, ragdoll),
-                             [equip_eem, cast_eem, swim_eem, gait_eem])
+                             eems + [gait_eem])
     root_states = [gb.root_state(0, 'Root', mod_gen.ref)]
     death, root_wild_ref = death_states(gb, ragdoll, clips, getup_plan)
     return behavior_graph(gb, behavior_name, root_states + death,
@@ -859,12 +847,14 @@ def clip_speeds(motions: dict, clips: dict) -> dict:
 
 def _write_project_files(layout: dict, proj_dir: str, cs: _ClipSet,
                          bones: list, speeds: dict, ragdoll,
-                         vocal_states: list, getup_plan: list) -> list:
+                         vocal_states: list, getup_plan: list,
+                         rideable: bool = False) -> list:
     """Compile the behavior, character and project hkx; returns the movement types.
 
     The graph declares every qualified sound event its clips trigger, since
     the engine dispatches annotations through that table by name.  A state
-    whose animation failed to compile never reaches the graph.
+    whose animation failed to compile never reaches the graph.  `rideable`
+    adds the mount layer.
     """
     clips = cs.clips
     behavior_name = behavior_graph_name(layout)
@@ -886,7 +876,8 @@ def _write_project_files(layout: dict, proj_dir: str, cs: _ClipSet,
                            vocal_states=[v for v in vocal_states
                                          if v[0] in surviving],
                            getup_plan=[g for g in getup_plan
-                                       if 'GetUp' + g['role'] in surviving]),
+                                       if 'GetUp' + g['role'] in surviving],
+                           mount=rideable),
         os.path.join(proj_dir, 'behaviors', behavior_name.lower() + '.hkx'))
     anim_files = list(dict.fromkeys(c['anim'] for c in cs.clip_meta))
     _write_and_compile(
@@ -942,6 +933,42 @@ def _manifest(name: str, namespace: str, layout: dict, cs: _ClipSet,
     }
 
 
+def _plan_mount(creature_dir: str, bones: list, fps: float):
+    """{'clips': {role: clip}, 'saddle': Bone} for a creature that authors mounting, else None."""
+    clips = mount_clips.find_mount_clips(creature_dir, bones, fps)
+    if not clips:
+        return None
+    return {'clips': clips, 'saddle': mount_clips.saddle_bone(bones, clips['enter'])}
+
+
+def _add_paired_clips(cs: '_ClipSet', mount: dict, bones: list,
+                      proj_dir: str) -> bool:
+    """Write both paired clips and register them; False (and a failure row) if one fails."""
+    rows = []
+    for role, clip in sorted(mount['clips'].items()):
+        stem = mount_clips.PAIRED_CLIPS[role][1]
+        try:
+            duration = mount_clips.write_paired_clip(
+                role, clip, bones,
+                os.path.join(proj_dir, 'animations', stem + '.hkx'))
+        except Exception as e:
+            cs.failures.append((stem + '.hkx', f'{type(e).__name__}: {e}'))
+            return False
+        rows.append(mount_clips.paired_clip_meta(role, duration))
+    cs.clip_meta += rows
+    return True
+
+
+def _saddle_entry(bones: list, mount) -> dict:
+    """The manifest's saddle node for the skeleton.nif, None without a mount."""
+    if not mount:
+        return None
+    saddle = mount['saddle']
+    return {'parent': bones[saddle.parent].name,
+            'translation': list(saddle.translation),
+            'quat_xyzw': list(saddle.quat_xyzw)}
+
+
 def _skeleton_nif(creature_dir: str) -> str:
     """The folder's `skeleton.nif`, in whatever case it is spelled there."""
     exact = os.path.join(creature_dir, 'skeleton.nif')
@@ -956,14 +983,11 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
                               namespace: str = '') -> dict:
     """Full project generation for one creature; returns and writes its manifest.
 
-    The manifest (`project_manifest.json`) is the contract consumed by
-    animation_data (singlefile registration) and tes5_import (RACE ATKE and
-    behavior-graph paths).  `namespace` is the owning plugin's tag (see
-    project_layout).  `sound_slots` {CSDT type: SOUN EditorID} become clip
-    SoundPlay triggers (_apply_sound_slots) or the Aware vocal state;
-    `sound_chances` carries the authored CSDC chances for the IDLE records.
-    `attr_speed` is the folder's max TES4 Speed attribute, baked into the
-    walk/run clips so commanded speed matches animation speed.
+    The manifest is the contract animation_data and tes5_import read.
+    `namespace`: the owning plugin's tag.  `sound_slots` {CSDT: SOUN EDID}
+    become clip triggers or the Aware vocal state; `sound_chances` are the
+    CSDC chances; `attr_speed` (max TES4 Speed) is baked into the gaits.  A
+    creature that authors mounting gets the mount layer (mount module).
     See: docs/commentary/asset_convert_creature.md#8-ground-speed-baked-not
     """
     layout = project_layout(name, namespace)
@@ -975,9 +999,12 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
         raise ValueError(f'creature has no idle clip: {creature_dir}; '
                          f'available clips: {available or "none"}')
     skeleton_nif = _skeleton_nif(creature_dir)
+    bones = load_skeleton_bones(skeleton_nif)
+    mount = _plan_mount(creature_dir, bones, fps)
     bones = generate_skeleton_hkx(
         skeleton_nif, os.path.join(proj_dir, 'character assets',
-                                   'skeleton.hkx'))
+                                   'skeleton.hkx'),
+        bones=bones + ([mount['saddle']] if mount else []))
     ragdoll = ragdoll_info(skeleton_nif, bones)
     cs = _ClipSet(clips, fps, sound_slots, attr_speed)
     cs.decode_states()
@@ -986,12 +1013,17 @@ def generate_creature_project(creature_dir: str, name: str, out_root: str,
         sound_slots, sound_chances, bool(ragdoll))
     getup_plan = cs.add_getup()
     cs.compile(bones, proj_dir)
+    rideable = bool(mount) and _add_paired_clips(cs, mount, bones, proj_dir)
     speeds = clip_speeds(cs.motions, clips)
     cs.register_blend_children(speeds)
     move_types = _write_project_files(layout, proj_dir, cs, bones, speeds,
-                                      ragdoll, vocal_states, getup_plan)
+                                      ragdoll, vocal_states, getup_plan,
+                                      rideable)
     manifest = _manifest(name, namespace, layout, cs, speeds, ragdoll,
                          vocal_events, move_types, bones)
+    manifest['mountable'] = rideable
+    manifest['shared_anims'] = mount_clips.shared_preload() if rideable else []
+    manifest['saddle_bone'] = _saddle_entry(bones, mount)
     with open(os.path.join(proj_dir, 'project_manifest.json'), 'w',
               encoding='utf-8') as f:
         json.dump(manifest, f)

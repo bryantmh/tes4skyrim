@@ -545,6 +545,14 @@ def _is_hkpackfile_xml(filepath: str) -> bool:
         return False
 
 
+def parse_skyrim_animation(raw: bytes) -> AnimationData:
+    """TESConversion: a binary HKX animation already in memory (LE or SE pointers)."""
+    anim = _parse_animation_hkx(raw) if raw[:4] == _HKX_MAGIC else None
+    if anim is None:
+        raise ValueError("No hkaSplineCompressedAnimation found in HKX bytes.")
+    return anim
+
+
 def load_skyrim_animation(filepath: str) -> AnimationData:
     """Load a Skyrim animation from a binary HKX or hkpackfile XML.
 

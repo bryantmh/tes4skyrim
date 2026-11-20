@@ -17,6 +17,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 from asset_convert.havok import hkx_behavior
+from asset_convert.havok.animation_data import setdata_block_lines
+from asset_convert.havok.mount import shared_preload
 from asset_convert.havok.kf_decode import (decode_kf, eval_bspline,
                                      split_root_motion, knots,
                                      basis_weights)
@@ -341,8 +343,8 @@ class TestPerPluginProjectNamespace:
         assert all(0 <= i < n_files for i in idx.values())
 
 
-def _stop_with_path(skeleton_nif, _out_hkx):
-    """Stand in for `generate_skeleton_hkx`: stop, naming the nif it was given."""
+def _stop_with_path(skeleton_nif, *_rest):
+    """Stand in for the first skeleton reader: stop, naming the nif it was given."""
     raise LookupError(skeleton_nif)
 
 
@@ -355,7 +357,7 @@ class TestProjectFilePaths:
         creature.mkdir()
         (creature / 'Skeleton.NIF').write_bytes(b'')
         monkeypatch.setattr(hkx_behavior, 'classify_clips', lambda folder: {'idle': 'idle.kf'})
-        monkeypatch.setattr(hkx_behavior, 'generate_skeleton_hkx', _stop_with_path)
+        monkeypatch.setattr(hkx_behavior, 'load_skeleton_bones', _stop_with_path)
         with pytest.raises(LookupError) as seen:
             hkx_behavior.generate_creature_project(
                 str(creature), 'Rat', str(tmp_path / 'out'))
@@ -1936,3 +1938,18 @@ class TestCreepLadder:
     def test_creep_speed_clip_stands_alone(self):
         from asset_convert.havok.behavior_clips import creep_ladder
         assert creep_ladder('SwimMove', 'swim.kf', 5.0) == [('SwimMove', 'swim.kf', 1.0, 5.0)]
+
+
+def _preload_triples(manifest):
+    """The (dir, file, ext) hash triples of an attack-less manifest's animationsetdata preload list."""
+    tail = setdata_block_lines(manifest)[6:]
+    return [tuple(tail[1 + 3 * i:4 + 3 * i]) for i in range(int(tail[0]))]
+
+
+def test_mount_preloads_vanilla_paired_clips():
+    """A mount preloads vanilla's shared Paired_Mount/Dismount, as vanilla HorseProject does."""
+    base = {'anim_dir': r'meshes\actors\x\animations', 'clips': [{'stem': 'idle'}]}
+    mount = _preload_triples({**base, 'shared_anims': shared_preload()})
+    assert ('1343509563', '2690022896', '7891816') in mount
+    assert ('1343509563', '957333247', '7891816') in mount
+    assert len(mount) == 3 and len(_preload_triples(base)) == 1

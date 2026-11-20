@@ -1,80 +1,72 @@
 # Rideable Horse Conversion: Oblivion CREA → Skyrim Mountable Actor
 
-**Status: PLAN, unimplemented.** Nothing reads mount data; `grep -rn "mount_data"`
-returns zero hits. What a mountable actor IS lives in
-[reference/skyrim_mountable_actor.md](../reference/skyrim_mountable_actor.md).
+**Status: PLAN, unimplemented; feasibility measured 2026-11-19.** What a mountable
+actor IS lives in [reference/skyrim_mountable_actor.md](../reference/skyrim_mountable_actor.md).
 
-Feasibility + implementation plan for making converted Oblivion horses behave like
-vanilla Skyrim horses (player can approach and mount them). This sits ON TOP of the
-existing creature pipeline (see [docs/commentary/asset_convert_creature.md](../commentary/asset_convert_creature.md)) —
-horses already convert through that path as ordinary quadrupeds (locomotion, combat,
-death). This doc covers only the DELTA needed for the ridden state.
+The converted horse already walks, fights and dies through the creature pipeline
+([asset_convert_creature.md](../commentary/asset_convert_creature.md)); this is only the
+delta for the ridden state.
 
----
+## 1. The approach: transplant Skyrim's human half onto the Oblivion horse
 
-## 3. Implementation plan
+Skyrim riding is two graphs in lockstep: the horse's own graph and the rider graph
+`actors/character/behaviors/horsebehavior.hkx`, which runs on the rider's skeleton.
+**The rider side is vanilla, shared by every horse, and must stay untouched.** It plays
+`..\SharedKillMoves\Human&Horse\Paired_Mount.hkx` / `Paired_Dismount.hkx` from a fixed
+path, so the human half of mount/dismount is always Skyrim's. Everything converted lives
+on the horse side:
 
-### Step 1 — Manifest: identify mount-capable creature folders
-Extend `tools/creature_inventory.py` (or the `creature_projects.json` contract) with a
-`is_mount: bool` flag, set for the `horse` folder (matched by clip inventory shape —
-check for paired/rider-adjacent clip absence rather than hardcoding the string "horse",
-since Nehrim/other plugins may ship differently-named horse-equivalents or additional
-mountable creatures — e.g. detect via a config whitelist keyed on skeleton bone census
-matching the vanilla horse, falling back to folder-name heuristic like the existing
-`_FOLDER_KEYWORDS` animal-tagging in `creature_races.py:107`).
+| Piece | Source | Work |
+|---|---|---|
+| Rider graph, 40 `horse_rider/*` clips | vanilla, already loaded by every character | none |
+| Horse-side paired clips | **new file per clip:** the vanilla human tracks copied verbatim + the Oblivion horse half from `creatures/horse/idleanims/horsemount.kf` / `horsedismount.kf` as the `2_`-prefixed tracks | resample 1.400 s → 1.667 s (mount), 1.867 s → 2.133 s (dismount) so both actors share one clock |
+| `SaddleBone` node | engine looks it up by name (global node-name table, beside `PerchFireNode`) | add to skeleton.nif + skeleton.hkx under `Bip02 Spine2`, the parent of Oblivion's own rider node `ActorParent` |
+| Horse graph | `hkx_behavior.py` quadruped template | wrap the root in vanilla's `MountBehavior` shape: `pa_HorseEnter`/`pa_HorseExit` (+`Swim` variants) → `BSSynchronizedClipGenerator`, `PairEnd` back to the root state |
+| Records | constants / authored data | RACE Mount Data; `ActorTypeHorse` (00026110) on the NPC_ (all 32 vanilla horses carry it) |
 
-### Step 2 — RACE Mount Data (creature_races.py)
-Add `mount_data` struct emission gated on `is_mount`, using the vanilla HorseRace
-constants (§2.1) as the only values we ship — Oblivion has no equivalent field to pull
-per-plugin values from, so this is intentionally a constant, not derived data (same
-category of exception as horse animations, §2.3).
+## 2. Measured facts behind it
 
-### Step 3 — Rider-side vanilla asset passthrough
-Add a `mount_assets` stage to `asset_convert/havok/creature_pipeline.py` (horse-only): pull
-vanilla `actors/character/behaviors/horsebehavior.hkx` +
-`animations/horse_rider/*.hkx` + `actors/horse/behaviors/horsebehavior.hkx` mount/
-dismount/ride-loop clips via `asset_convert/sources/skyrim_assets.py` (cache in
-`export/skyrim_assets/`, same contract as every other vanilla-asset pull in this
-project — never touch `references/` at runtime). No conversion needed — these are
-already SSE-loadable Havok/NIF.
+- Oblivion authored BOTH halves of mounting: `horsemount.kf` (1.4 s) and
+  `horsedismount.kf` (1.867 s) each animate 128 nodes: the horse's `Bip02` rig plus a full
+  `Bip01` human rider parented under `ActorParent`. The horse half ships nowhere today
+  (the converted `animations/` folder has no mount clip).
+- The rider starts 69 units to the side (`Bip01 NonAccum` X −69 at t=0); Skyrim's
+  default Mount Offset X is −63.48.
+- Rig sizes match: head 139.6 vs 138.4, front hoof y 43.7 vs 43.2. The Oblivion back
+  is lower: mesh top at the saddle (y≈0) 114.7 vs 121.1. The Oblivion rider ends seated
+  with `Bip01 NonAccum` at ActorParent + 71.6 → seat ≈126.6 model z, vs vanilla
+  `SaddleBone` 134.9. Place `SaddleBone` from that authored end pose, not from vanilla.
+- The vanilla horse graph has **no ridden branch**: ridden and riderless use the same
+  locomotion states. The rider graph mirrors it state for state (same event names,
+  same clip names, blends on `HorseSpeedSampled` / `TurnDeltaDamped`).
+- Vanilla horse and rider loops are cut to the same length (walk 1.100 s both).
+  Oblivion's walk is 0.967 s, so the rider's sway drifts out of phase with the stride.
+  The rider stays seated (`SaddleBone` rides on `Bip02 Spine2`); the drift is cosmetic.
+- Oblivion horses DO have jump clips (`jumpstart/jumploop/jumpland.kf`).
 
-### Step 4 — Horse behavior graph: extend the quadruped template
-In `asset_convert/havok/hkx_behavior.py`, add a `mount` branch to `build_behavior_xml` (only
-emitted when `is_mount`): a `Ridden` state entered/exited by whatever event names
-vanilla actually uses (dump `horsebehavior.hkx` via `hkxcmd convert -v:XML` FIRST —
-don't guess event names, same rule as every other behavior-graph fact in this project)
-wrapping the horse's own locomotion states but driven by the rider's input variables
-instead of AI `Speed`/`Direction`. Reuse every existing mechanism
-(`BSSpeedSamplerModifier`, `iState_*`/MOVT contract, nested SM topology rules from the
-2026-07-16 head-whipping fix) — the Ridden state is additive, not a replacement
-graph.
+## 3. Open risks (settle on the test instance)
 
-### Step 5 — Verification
-- Build an A/B ESP repointing the converted horse RACE at vanilla horse
-  behavior/animation assets, to isolate record-side correctness from graph correctness
-  (the per-layer bisection method used throughout creature_conversion.md;
-  `tools/creature_vanilla_ab.py` did this for canines and was removed 2026-08-25).
-- In-game: spawn a converted horse, `player.placeatme`, attempt mount via activate
-  prompt; verify camera offset, dismount, and that ordinary (non-ridden) locomotion/
-  combat/death — already working via the base creature pipeline — is unaffected.
-- Explicitly OUT of scope for v1 (document as known limitation, matching Oblivion's own
-  behavior): jump-over-obstacles, mounted combat, mounted fast-travel prompts tied to
-  Skyrim's stable/city-horse ownership system (Oblivion has no per-city owned-horse
-  concept — every converted horse is a plain CREA, so "buy a horse at the stable"
-  UX would need its own separate design pass, not covered here).
+1. **Who feeds the rider graph.** `HorseSpeedSampled` is an engine string; unknown whether
+   the engine copies it from the horse's graph or computes it. If it reads the horse
+   graph, ours must expose that variable (we already emit `BSSpeedSamplerModifier`).
+2. **Event names.** The rider reacts to `moveStart`/`moveStop`/`turnLeft`/`turnRight`/
+   `SprintStart`/`SprintStop`/`idleHeadshake`... If those reach the rider only when the
+   horse graph raises them, our graph must raise the same names; otherwise the rider
+   holds the idle pose while the horse moves.
+3. **Seat height mismatch during the paired clip.** The vanilla human half is rooted at
+   `PairedRoot → SaddleBone` of the vanilla horse; whether the engine aligns it to our
+   `SaddleBone` or to the horse root decides whether the rider climbs to the right
+   height or snaps ~8 units at `PairEnd`.
+4. `HorseSpine2` is also an engine string (no code xref found yet); check what reads it.
 
----
+## 4. Steps
 
-## 4. Open questions (resolve during implementation)
-
-1. Exact vanilla event names for mount/dismount/ridden-state transitions — must dump
-   `horsebehavior.hkx` XML rather than assume names by analogy to quadruped events.
-2. Whether the rider-side graph can be grafted onto the player's EXISTING behavior
-   graph as a sub-state (likely — vanilla does exactly this, since the player has only
-   one graph total) or needs separate handling in whatever governs the player actor's
-   graph in this pipeline (the project currently has no "player behavior" conversion
-   surface at all — this may be the first).
-3. Whether non-horse Oblivion creatures should ever be mount-flagged (e.g. Nehrim or
-   other plugins may add rideable variants) — the manifest-driven `is_mount` flag in
-   Step 1 should stay data-driven rather than hardcoded to unblock this later without
-   code changes.
+1. `SaddleBone` in skeleton.nif/.hkx for the creature whose CREA animations include an
+   authored mount clip (`idleanims/horsemount.kf`). That clip is the authored indicator of
+   mountability, not the folder name.
+2. Convert the horse half of the mount/dismount KFs and splice them with the vanilla human
+   tracks into horse-project paired clips (vanilla clips come through
+   `asset_convert/sources/skyrim_assets.py`, never `references/`).
+3. `MountBehavior` wrapper in the horse's generated graph.
+4. RACE Mount Data + `ActorTypeHorse` keyword.
+5. Headless test: `placeatme` a converted horse, activate, record mount / ride / dismount.

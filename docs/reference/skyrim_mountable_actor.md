@@ -71,25 +71,33 @@ stagger/death, `iState_*`/MOVT contract, `BSSpeedSamplerModifier`) PLUS:
   jump animations or jump mechanic at all; this can be scoped out of v1 (horse simply
   can't jump gates/fences, matching Oblivion's own riding behavior).
 
-The rider-side graph is new to this project in kind (nothing else generates a graph
-that runs on the PLAYER character), but structurally it's a strict subset: no combat,
-no death, no locomotion — just mount/dismount poses + a ride-loop blend synced to the
-horse's `Speed` variable.
+The rider-side graph is NOT a subset: it mirrors the horse graph state for state
+(locomotion, turns, sprint, jump, stagger, attack, idles), playing a same-named
+`horse_rider/*` clip for every horse clip (40 clips; walk 1.100 s on both sides), blended
+on `HorseSpeedSampled`/`TurnDeltaDamped`. The vanilla horse graph has no separate
+"ridden" branch: its root is a `MountBehavior` machine whose `pa_HorseEnter`/
+`pa_HorseExit` (+`Swim`) states play `..\SharedKillMoves\Human&Horse\Paired_Mount.hkx`/
+`Paired_Dismount.hkx` (1.667 s / 2.133 s; 102 human tracks + 57 `2_Horse*` tracks), with
+`PairEnd` returning to the ordinary locomotion root. The rider is pinned to a horse node
+named `SaddleBone` (child of `HorseSpine2`), a name the engine keeps in its global
+node-name table. The rider graph is shared by every horse, so it cannot be specialised
+per mount.
 
 ### 2.3 Rider animations (no Oblivion source — must be sourced from vanilla)
 
-Oblivion's mounted riding is a hardcoded engine hack: the player actor is disabled and
-its position is written directly (`SetPos`-equivalent) every frame relative to the
-horse bone, with the player camera simply following — **there is no player-mounted
-animation of any kind in TES4**, and Oblivion horses' own KF corpus has no
-paired-mount/dismount/ride-loop clips either (Oblivion horse KFs are ordinary
-forward/idle/turn walk cycles, structurally identical to every other quadruped —
-confirmed against the same `export/Oblivion.esm/meshes/creatures/horse/` inventory the
-existing creature pipeline already reads).
+**Correction (measured 2026-11-19):** Oblivion DOES author mounting.
+`creatures/horse/idleanims/horsemount.kf` (1.4 s) and `horsedismount.kf` (1.867 s), the
+IDLE records `CreaturesHorseIdleAnimsHorseMount`/`...HorseDismount`, each animate 128
+nodes: the horse's `Bip02` rig plus a full `Bip01` human rider parented under the
+horse's `ActorParent` node (child of `Bip02 Spine2`, the same parent as Skyrim's
+`SaddleBone`). The rider starts 69 units to the side and ends seated. Oblivion horses
+also ship jump clips (`jumpstart/jumploop/jumpland.kf`). What Oblivion lacks is a
+per-gait ride-loop for the rider.
 
-This means, unlike every other piece of the creature pipeline (which is a *faithful
-port* of Oblivion source data), **the mount/dismount/ride-loop animations have no TES4
-equivalent to convert.** Two options:
+So the mount/dismount horse half has an authored source; the rider half must be
+Skyrim's anyway, because the shared rider graph plays the vanilla paired files
+(plan: [horse_rideability.md](../plans/horse_rideability.md)). Two options for the
+ride-loop clips:
 - **(A) Reuse vanilla Skyrim's own horse + horse_rider clips verbatim** (already
   Havok-format, zero KF-decode/B-spline work, zero animation-conversion risk) — the
   pragmatic v1 path, matching how NIF/texture assets are already sourced from vanilla
@@ -110,7 +118,11 @@ no source data at all).
 
 - **NPC_**: `RNAM` → the horse's generated RACE (already how `convert_CREA` works);
   no special ACBS flags found on vanilla `WhiterunPlayerHorse` beyond ordinary NPC
-  flags (`0x00040018`) — nothing mount-specific here either.
+  flags (`0x00040018`). The NPC_ does carry keyword `ActorTypeHorse` (00026110; 32 vanilla
+  NPC_ records), the engine's `Keyword - Horse` (HRSK) default object. It is REQUIRED,
+  on the actor's base record: the engine's IsAMount flag comes from `HasKeyword` on the
+  actor, and a race keyword alone did not pass it (in-game test,
+  [asset_convert_creature.md](../commentary/asset_convert_creature.md#rideable-mounts)).
 - **AI package**: vanilla `PlayerHorseWaitInPaddock` (00109AB2) is an ordinary
   wander/wait-in-location package — dumped and confirmed there is NO special
   "mountable" package type. Mounting is purely a runtime `Actor.Mount()`/engine action,

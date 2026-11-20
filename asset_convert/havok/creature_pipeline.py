@@ -31,6 +31,7 @@ import re
 import shutil
 
 from asset_convert.havok.creature_sounds import sound_data_by_folder
+from asset_convert.havok.mount import add_saddle_node
 from asset_convert.havok.creature_split_morrowind import (source_dirs,
                                                           split_creatures)
 from asset_convert.havok.npc_anim_morrowind import convert_npc_anims
@@ -571,6 +572,22 @@ def _pick_creature_dirs(candidates, log) -> list:
     return dirs
 
 
+def _seat_saddle(out_meshes_dir: str, manifest: dict) -> None:
+    """Give a mount's converted skeleton.nif the SaddleBone its skeleton.hkx carries.
+
+    A failure is recorded in the manifest's nif_failures.
+    See: docs/commentary/asset_convert_creature.md#rideable-mounts
+    """
+    saddle = manifest.get('saddle_bone')
+    if not saddle:
+        return
+    skeleton = os.path.join(out_meshes_dir, manifest['dir'], 'character assets',
+                            'skeleton.nif')
+    if not add_saddle_node(skeleton, saddle):
+        manifest['nif_failures'].append(
+            ('skeleton.nif', f"no {saddle['parent']} node for SaddleBone"))
+
+
 def _convert_pool(dirs, export_dir, out_meshes_dir, workers, namespace,
                   log) -> tuple:
     """Convert every creature folder in a process pool; (manifests, errors) by name.
@@ -604,6 +621,7 @@ def _convert_pool(dirs, export_dir, out_meshes_dir, workers, namespace,
                 log(f'  [FAIL] {name}: {errors[name]}')
                 continue
             projects[name] = manifest
+            _seat_saddle(out_meshes_dir, manifest)
             n_fail = len(manifest['failures']) + len(manifest['nif_failures'])
             log(f'  [ok] {name}: {len(manifest["clips"])} clips, '
                 f'{len(manifest["bodies"])} body nifs'
@@ -638,6 +656,7 @@ def _project_summary(all_manifests) -> dict:
         'bones': m.get('bones', []),
         'ragdoll_bones': m.get('ragdoll_bones', []),
         'vocal_events': m.get('vocal_events', []),
+        'mountable': m.get('mountable', False),
     } for name, m in all_manifests.items()}
 
 

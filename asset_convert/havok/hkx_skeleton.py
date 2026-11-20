@@ -67,11 +67,14 @@ BONE_RENAMES.update(ATTACH_RENAMES)
 
 @dataclass
 class Bone:
+    """One hkaSkeleton bone; `source` is the authored NIF node name before BONE_RENAMES."""
+
     name: str
     parent: int
     translation: tuple
     quat_xyzw: tuple
     scale: float
+    source: str = ''
 
 
 def mat33_to_quat_xyzw(m) -> tuple:
@@ -165,6 +168,7 @@ def collect_bones(root_node) -> list:
                          float(node.translation.z)),
             quat_xyzw=mat33_to_quat_xyzw(node.rotation),
             scale=float(node.scale),
+            source=raw,
         ))
         for child in node.children:
             if isinstance(child, NifFormat.NiNode):
@@ -262,10 +266,14 @@ def build_skeleton_xml(bones: list, skeleton_nif_path: str = None) -> str:
 
 
 def generate_skeleton_hkx(skeleton_nif_path: str, out_hkx_path: str,
-                          keep_xml: bool = False) -> list:
+                          keep_xml: bool = False, bones=None) -> list:
     """skeleton.nif → skeleton.hkx (LE 32-bit, incl. ragdoll stage when the
-    nif has one). Returns the Bone list."""
-    bones = load_skeleton_bones(skeleton_nif_path)
+    nif has one). Returns the Bone list.
+
+    `bones` is the already-loaded list, extended past the NIF's own bones
+    only at the end so no authored index moves (a mount's saddle bone).
+    """
+    bones = bones if bones is not None else load_skeleton_bones(skeleton_nif_path)
     try:
         xml = build_skeleton_xml(bones, skeleton_nif_path=skeleton_nif_path)
     except Exception as e:

@@ -1084,6 +1084,41 @@ def convert_REFR(rec: dict) -> bytes:
     return pack_record('REFR', get_formid(rec, 'FormID'), tes3_refr_flags(flags), subs)
 
 
+def _achr_links(rec: dict) -> bytes:
+    """XLCN, XHOR, XESP and XOWN of a placed actor, in TES5 order.
+
+    XLCN (persistent refs only) lets a quest marker resolve onto an actor in
+    an interior.  XHOR is the rider's horse (TES4 XHRS); XOWN is the authored
+    owner, which on a horse is its rider.
+    See: docs/commentary/asset_convert_creature.md#rideable-mounts
+    """
+    subs = b''
+    if get_int(rec, 'RecordFlags') & REFR_PERSISTENT_FLAG:
+        ref_lctn = _reference_location(rec)
+        if ref_lctn:
+            subs += pack_formid_subrecord('XLCN', ref_lctn)
+    horse = get_formid(rec, 'XHRS.Horse')
+    if horse:
+        subs += pack_formid_subrecord('XHOR', horse)
+    xesp_ref = get_formid(rec, 'XESP.Reference')
+    if xesp_ref:
+        subs += pack_subrecord('XESP', struct.pack(
+            '<II', xesp_ref, get_int(rec, 'XESP.Flags')))
+    owner = get_formid(rec, 'XOWN.Owner')
+    if owner:
+        subs += pack_formid_subrecord('XOWN', owner)
+    return subs
+
+
+def _achr_data(rec: dict) -> bytes:
+    """The placed actor's DATA: position (actor placement height) and rotation."""
+    pz = actor_placement_z(get_float(rec, 'PosZ'))
+    return pack_subrecord('DATA', struct.pack(
+        '<ffffff', get_float(rec, 'PosX'), get_float(rec, 'PosY'), pz,
+        _safe_angle(get_float(rec, 'RotX')), _safe_angle(get_float(rec, 'RotY')),
+        _safe_angle(get_float(rec, 'RotZ'))))
+
+
 def convert_ACHR(rec: dict) -> bytes:
     """ACHR — placed NPC reference. TES4 ACRE also maps here.
 
@@ -1104,31 +1139,12 @@ def convert_ACHR(rec: dict) -> bytes:
     if name_fid:
         subs += pack_formid_subrecord('NAME', name_fid)
     subs += linked_ref_subrecord(rec)
-
-    # XLCN — Persistent Location (see convert_REFR). This is what lets a quest
-    # marker resolve onto a persistent actor placed inside an interior — without
-    # it the objective shows in the journal but no compass/map arrow appears.
-    if get_int(rec, 'RecordFlags') & REFR_PERSISTENT_FLAG:
-        ref_lctn = _reference_location(rec)
-        if ref_lctn:
-            subs += pack_formid_subrecord('XLCN', ref_lctn)
-
-    xesp_ref = get_formid(rec, 'XESP.Reference')
-    if xesp_ref:
-        xesp_flags = get_int(rec, 'XESP.Flags')
-        subs += pack_subrecord('XESP', struct.pack('<II', xesp_ref, xesp_flags))
+    subs += _achr_links(rec)
 
     scale = get_float(rec, 'XSCL.Scale')
     if scale and scale != 1.0:
         subs += pack_float_subrecord('XSCL', scale)
-
-    px = get_float(rec, 'PosX')
-    py = get_float(rec, 'PosY')
-    pz = actor_placement_z(get_float(rec, 'PosZ'))
-    rx = _safe_angle(get_float(rec, 'RotX'))
-    ry = _safe_angle(get_float(rec, 'RotY'))
-    rz = _safe_angle(get_float(rec, 'RotZ'))
-    subs += pack_subrecord('DATA', struct.pack('<ffffff', px, py, pz, rx, ry, rz))
+    subs += _achr_data(rec)
 
     flags = get_int(rec, 'RecordFlags')
     if starts_dead(get_str(rec, 'FormID')):

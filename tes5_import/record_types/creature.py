@@ -482,6 +482,30 @@ def _crea_outfit_subs(rec: dict, edid: str, outfit_fids: list, writer) -> bytes:
     return subs + pack_formid_subrecord('DPLT', DPLT_CREATURE_LIST)
 
 
+def _crea_keyword_subs(rec: dict) -> bytes:
+    """KSIZ/KWDA: ActorTypeHorse on a mount, where all 32 vanilla horse NPC_ carry it.
+
+    The engine marks an actor as a mount only from a keyword on the actor's
+    own base record.  Imported here: creature_races imports record_types,
+    which imports this module.
+    See: docs/commentary/asset_convert_creature.md#rideable-mounts
+    """
+    from ..actors.creature_races import KW_ACTOR_TYPE_HORSE, creature_is_mount
+    if not creature_is_mount(get_formid(rec, 'FormID') & 0x00FFFFFF):
+        return b''
+    return (pack_subrecord('KSIZ', struct.pack('<I', 1))
+            + pack_subrecord('KWDA', struct.pack('<I', KW_ACTOR_TYPE_HORSE)))
+
+
+def _crea_ai_subs(rec: dict) -> bytes:
+    """AIDT, the PKID list (authored packages, then the creature master), KSIZ/KWDA and CNAM."""
+    subs = pack_subrecord('AIDT', build_aidt(rec))
+    for pfid in npc_packages(authored_packages(rec)) + [PKID_CREATURE_MASTER]:
+        subs += pack_formid_subrecord('PKID', pfid)
+    subs += _crea_keyword_subs(rec)
+    return subs + pack_formid_subrecord('CNAM', _crea_class(rec))
+
+
 def convert_CREA(rec: dict, writer=None) -> bytes:
     """CREA → NPC_ (creatures become NPCs in TES5).
 
@@ -524,10 +548,7 @@ def convert_CREA(rec: dict, writer=None) -> bytes:
         carried + tome_items(get_formid(rec, 'FormID')),
         get_int(rec, 'ACBS.BarterGold') if crea_vendor_fid else 0)
 
-    subs += pack_subrecord('AIDT', build_aidt(rec))
-    for pfid in npc_packages(authored_packages(rec)) + [PKID_CREATURE_MASTER]:
-        subs += pack_formid_subrecord('PKID', pfid)
-    subs += pack_formid_subrecord('CNAM', _crea_class(rec))
+    subs += _crea_ai_subs(rec)
 
     if full:
         subs += pack_string_subrecord('FULL', full)

@@ -1510,10 +1510,13 @@ def _build_mask_bytes(track: TrackData, n_frames: int,
 
 
 def _compress_block(all_tracks: List[TrackData], block_start_frame: int,
-                    frames_in_block: int, rot_quant: int = _ROT_QUANT) -> bytes:
+                    frames_in_block: int, rot_quant: int = _ROT_QUANT,
+                    track_offsets: Optional[List[int]] = None) -> bytes:
     """Compress one block of animation data for all tracks.
 
-    Returns the compressed byte blob for this block.
+    Returns the compressed byte blob for this block.  TESConversion:
+    `track_offsets`, when given, receives each track's data start within the
+    block (Havok's transformOffsets, which a by-name paired clip needs).
     """
     num_tracks = len(all_tracks)
     out = bytearray()
@@ -1531,6 +1534,8 @@ def _compress_block(all_tracks: List[TrackData], block_start_frame: int,
 
     # 2. Per-track data
     for t_idx in range(num_tracks):
+        if track_offsets is not None:
+            track_offsets.append(len(out))
         track = all_tracks[t_idx]
         info = infos[t_idx]
         f0 = block_start_frame
@@ -1699,8 +1704,13 @@ def _compress_block(all_tracks: List[TrackData], block_start_frame: int,
     return bytes(out)
 
 
-def _compress_all_blocks(anim: AnimationData, rot_quant: int = _ROT_QUANT) -> Tuple[bytes, List[int]]:
-    """Compress all animation blocks. Returns (data_blob, block_offsets)."""
+def _compress_all_blocks(anim: AnimationData, rot_quant: int = _ROT_QUANT,
+                         track_offsets: Optional[List[int]] = None) -> Tuple[bytes, List[int]]:
+    """Compress all animation blocks. Returns (data_blob, block_offsets).
+
+    TESConversion: `track_offsets`, when given, receives every block's
+    per-track data offsets in block order (Havok's transformOffsets).
+    """
     max_fpb = anim.max_frames_per_block or 256
     num_blocks = anim.num_blocks or 1
     data = bytearray()
@@ -1723,7 +1733,8 @@ def _compress_all_blocks(anim: AnimationData, rot_quant: int = _ROT_QUANT) -> Tu
             block_tracks.append(bt)
 
         block_offsets.append(len(data))
-        block_data = _compress_block(block_tracks, 0, frames_in_block, rot_quant=rot_quant)
+        block_data = _compress_block(block_tracks, 0, frames_in_block, rot_quant=rot_quant,
+                                     track_offsets=track_offsets)
         data.extend(block_data)
 
     return bytes(data), block_offsets
