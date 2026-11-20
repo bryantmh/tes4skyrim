@@ -18,7 +18,7 @@ MAX_DOC_CHARS = 480
 
 #: A one- or two-line body gets ONE line of docstring, nothing more.
 TINY_BODY_LINES = 2
-TINY_DOC_CHARS = 80
+TINY_DOC_CHARS = 110
 
 #: A `#:` doc is ONE line: it labels a declaration, it does not argue.
 MAX_ATTR_DOC_CHARS = 120

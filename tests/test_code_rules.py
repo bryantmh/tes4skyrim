@@ -7,6 +7,7 @@ subprocess -- so the whole file runs in well under a second.
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -115,7 +116,8 @@ def test_long_body_does_not_buy_prose_budget():
 def test_short_body_keeps_the_tight_limit():
     """A one- or two-line body gets one line of docstring."""
     assert sites(_fn(200, 1), 'bloated-docstrings') == [4]
-    assert sites(_fn(60, 1), 'bloated-docstrings') == []
+    assert sites(_fn(111, 1), 'bloated-docstrings') == [4]
+    assert sites(_fn(110, 1), 'bloated-docstrings') == []
 
 
 def test_citation_line_is_not_counted_as_prose():
@@ -456,13 +458,18 @@ BAD_SRC = ('"""M."""\n\n\ndef f(x) -> int:\n    """D."""\n'
            '    x += 1  # bump\n    return x\n')
 
 
-def _hook(tool, tool_input):
-    """(exit code, stderr) for one PreToolUse payload."""
+def _hook_run(tool, tool_input, cwd=ROOT):
+    """The finished hook process for one PreToolUse payload sent from `cwd`."""
     hook = ROOT / '.claude' / 'hooks' / 'doc_rules_gate.py'
     payload = {'hook_event_name': 'PreToolUse', 'tool_name': tool,
-               'tool_input': tool_input}
-    got = subprocess.run([sys.executable, str(hook)], input=json.dumps(payload),
-                         capture_output=True, text=True, cwd=ROOT)
+               'tool_input': tool_input, 'cwd': str(cwd)}
+    return subprocess.run([sys.executable, str(hook)], input=json.dumps(payload),
+                          capture_output=True, text=True, cwd=ROOT)
+
+
+def _hook(tool, tool_input):
+    """(exit code, stderr) for one PreToolUse payload."""
+    got = _hook_run(tool, tool_input)
     return got.returncode, got.stderr
 
 
@@ -483,11 +490,15 @@ def test_the_candidate_is_never_written_over_the_real_file():
     assert target.read_bytes() == before
 
 
-def test_a_shell_command_must_name_the_wrapper():
-    """A bare command can write a `.py` that no gate ever sees."""
-    code, err = _hook('Bash', {'command': 'python - <<PY\npass\nPY'})
-    assert code == 2 and 'safe_run.py' in err
-    assert _hook('Bash', {'command': 'python tools/validate/safe_run.py ls'})[0] == 0
+def _rewritten(tool, command, cwd=ROOT):
+    """The command the hook substitutes for `command`, or None if it passes as is."""
+    got = _hook_run(tool, {'command': command, 'timeout': 5}, cwd)
+    assert got.returncode == 0, got.stderr
+    if not got.stdout:
+        return None
+    new = json.loads(got.stdout)['hookSpecificOutput']['updatedInput']
+    assert new['timeout'] == 5
+    return new['command']
 
 
 RUN = 'python tools/validate/safe_run.py'
@@ -535,21 +546,43 @@ CONTAINED = [
 
 def test_every_escape_is_refused():
     """Code after `&&`, in a subshell, `$(...)`, `<(...)` or a script block never saw the gate."""
-    sys.path.insert(0, str(ROOT / '.claude' / 'hooks'))
-    try:
-        import shell_route
-    finally:
-        sys.path.pop(0)
+    shell_route = _route()
     for command in ESCAPES:
         assert shell_route.escape(command), command
     for command in CONTAINED:
         assert shell_route.escape(command) is None, command
 
 
-def test_the_hook_names_why_a_chain_was_refused():
-    """The refusal says which piece escaped and how to wrap it."""
-    code, err = _hook('Bash', {'command': ESCAPES[1]})
-    assert code == 2 and '`cp a.py b.py` runs outside' in err and '-c' in err
+def _route():
+    """The `shell_route` module from the hooks folder."""
+    sys.path.insert(0, str(ROOT / '.claude' / 'hooks'))
+    try:
+        import shell_route
+    finally:
+        sys.path.pop(0)
+    return shell_route
+
+
+def test_an_escaping_bash_command_is_wrapped_not_refused():
+    """The hook hands back the same command inside `-c`, which then passes."""
+    for command in ESCAPES:
+        new = _rewritten('Bash', command)
+        assert new.startswith(RUN + ' -c '), new
+        assert shlex.split(new)[3] == command
+        assert _route().escape(new) is None, new
+    assert _rewritten('Bash', RUN + ' ls') is None
+
+
+def test_an_escaping_powershell_command_is_refused():
+    """A PowerShell rewrite would be opaque to auto mode's review, so it is refused."""
+    code, err = _hook('PowerShell', {'command': ESCAPES[1]})
+    assert code == 2 and '`cp a.py b.py` runs outside' in err
+
+
+def test_outside_the_repo_the_wrapper_path_is_absolute(tmp_path):
+    """A repo-relative wrapper path would not resolve from another directory."""
+    new = _rewritten('Bash', 'cp a b', cwd=tmp_path)
+    assert shlex.split(new)[1] == (ROOT / 'tools' / 'validate' / 'safe_run.py').as_posix()
 
 
 def _wrapped(*args, cwd=ROOT):

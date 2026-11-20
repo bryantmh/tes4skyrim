@@ -371,7 +371,10 @@ a real limit.
 statements. For those, the name and the one or two lines below it are the whole
 contract, and the required docstring came out as boilerplate like "The command
 line.". A tiny function that has a docstring is still held to
-`TINY_DOC_CHARS`.
+`TINY_DOC_CHARS` (110). It was 80, and 74% of its 156 hits were over by 30
+characters or less: half a sentence, trimmed at the cost of a round trip. At
+110, 40 of the 156 still fire, the ones that really are bloated
+([census](../audits/edit_gate_refusals.md#docstring-limits-split)).
 
 ### Splitting a legacy file: sparingly
 
@@ -648,11 +651,35 @@ Heredoc bodies are skipped as data. A redirect on the wrapper call itself is
 fine, since the shell truncates the file before the wrapper's first hash and the
 change is gated. Anything else goes inside `safe_run.py -c '...'`.
 
+#### A command outside the wrapper is wrapped, not refused
+
+When `escape()` finds a piece of a **Bash** command outside the wrapper, the
+hook does not exit 2. It returns the command rewritten as
+`python tools/validate/safe_run.py -c '<command>'` (quoted with `shlex.quote`)
+through the PreToolUse `updatedInput` field, and the call goes ahead. Refusing
+produced the same command one round trip later: 1,136 shell refusals in 84
+transcripts, 1.75% of all token spend
+([census](../audits/edit_gate_refusals.md#shell-refusals-become-rewrites)).
+Enforcement is unchanged, because `safe_run.py` still hashes, runs and gates.
+
+- The wrapper path is repo-relative when the call's `cwd` is the repo root, so
+  the rewrite matches the `Bash(python tools/validate/safe_run.py:*)` allow
+  rule and auto mode runs it at once. From elsewhere it is absolute.
+- A `cd` inside a rewritten command does not carry to the next call, the same
+  as inside a hand-written `-c`. The transcript shows the original command.
+
+**PowerShell is still refused.** `-c` would reach `cmd.exe` (no `SHELL` is
+set), and Windows PowerShell 5.1 drops inner double quotes from a native
+program's arguments, so only `-EncodedCommand <base64>` arrives intact. That
+was built and tried: auto mode will not judge a call a hook changed after its
+review and sends it back for a second pass, which costs the same round trip,
+and the second pass then sees only base64 it cannot read.
+
 **The routing rule lives in the HOOK, not in `permissions`.** Rules evaluate
 deny, then ask, then allow, and the first match wins — specificity never
 reorders them. So a `deny` cannot carry a whitelist exception: `deny: ["Bash"]`
 with `allow: ["Bash(python tools/validate/safe_run.py:*)"]` blocks the wrapper
 too, and so does `Bash(*)` or even `Bash(python *)`. A hook returning
 `permissionDecision: "allow"` does not lift a deny either. What does work is a
-hook **exit 2**, which is evaluated BEFORE the permission rules — so the hook
-blocks any command that does not name the wrapper, and no deny rule is needed.
+hook, which runs BEFORE the permission rules — so the hook rewrites any command
+that escapes the wrapper, and no deny rule is needed.

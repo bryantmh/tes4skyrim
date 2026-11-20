@@ -23,6 +23,7 @@ Exit 2 feeds stderr back to the agent as a blocking error.  Exit 0 is silent.
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -201,25 +202,37 @@ def gate_pending(path, text):
             pass
 
 
-def gate_bash(payload):
-    """Route every shell command through the wrapper, which gates its writes.
+def wrapped(command, cwd):
+    """The Bash `command` rewritten to run inside the wrapper's `-c`."""
+    here = os.path.normcase(os.path.realpath(cwd or os.curdir))
+    wrapper = WRAPPER if here == os.path.normcase(os.path.realpath(ROOT)) \
+        else shlex.quote(os.path.join(ROOT, WRAPPER).replace('\\', '/'))
+    return 'python %s -c %s' % (wrapper, shlex.quote(command))
 
-    A `deny` rule cannot carry a whitelist exception -- deny beats allow at
-    any specificity, and beats a hook's own `allow` decision too, so the
-    wrapper could never be reached that way.  Exit 2 is evaluated BEFORE the
-    permission rules, which makes this hook the only place the rule can live.
-    See: docs/reference/script_convert_architecture.md#what-the-gate-must-see
+
+def gate_bash(payload):
+    """Wrap a Bash command that escapes the wrapper; refuse such a PowerShell one.
+
+    Bash gets the PreToolUse `updatedInput`, and the wrapper still gates every
+    write. PowerShell is refused: its rewrite cannot be both quoted intact and
+    readable to auto mode's review.
+    See: docs/reference/script_convert_architecture.md#a-command-outside-the-wrapper-is-wrapped-not-refused
     """
-    command = ((payload.get('tool_input') or {}).get('command') or '').strip()
+    args = payload.get('tool_input') or {}
+    command = (args.get('command') or '').strip()
     why = shell_route.escape(command) if command else None
     if not why:
         return 0
+    if payload.get('tool_name') == 'Bash':
+        args = dict(args, command=wrapped(command, payload.get('cwd')))
+        json.dump({'hookSpecificOutput': {'hookEventName': 'PreToolUse',
+                                          'updatedInput': args}}, sys.stdout)
+        return 0
     sys.stderr.write(
         'Every part of a shell command runs through the wrapper, which gates '
-        'what it writes -- here %s.\n\n    python %s <program> [args...]\n'
-        '    python %s -c "<chain, pipe, loop or builtin>"\n\nOnly %s may run '
-        'outside it, alone or beside it.\n' % (why, WRAPPER, WRAPPER,
-                          ', '.join(sorted(shell_route.READ_ONLY))))
+        'what it writes -- here %s.\n\n    python %s <program> [args...]\n\n'
+        'Only %s may run outside it, alone or beside it.\n' % (
+            why, WRAPPER, ', '.join(sorted(shell_route.READ_ONLY))))
     return 2
 
 

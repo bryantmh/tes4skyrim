@@ -68,3 +68,54 @@ Shell refusals drop from 208 to 114, and no command that passed before is
 refused now. The instruction changes cannot be replayed; they address the
 refusals naming bloated-docstrings, missing-docstrings, private-imports and
 unsectioned-defs (137 rule mentions).
+
+# Token cost of the gate — 2026-11-19
+
+**Corpus:** the 84 transcripts kept for this project (main sessions and
+subagents), 49,080 API calls. Each refusal was charged its message, the
+rejected tool input (output thrown away) and the usage of the next API call,
+the retry. Tokens are weighted to input price: output 5x, cache write 1.25x,
+cache read 0.1x. Total: 1,851M input-equivalent tokens.
+
+| Kind | Refusals | Share of all spend |
+|---|---|---|
+| Shell command refused (`shell_route`) | 1,136 | 1.75% |
+| Edit/Write refused (`--gate-diff`) | 288 | 0.64% |
+| Doc links, turn end, other | 12 | 0.01% |
+
+Nearly all of it is the retry round trip, not the message or the lost edit.
+Of the Edit refusals, 74 (26%) caught real defects: 34 dead imports, 37 dead
+citations, 3 syntax errors. 178 (62%) named `bloated-docstrings`.
+
+### <a id="docstring-limits-split"></a>Docstring limits, split
+
+Distinct sites across every report in the corpus (refusals, `safe_run`,
+`--gate-file`), by the limit that applied:
+
+| Limit | Sites | Over by ≤10 | 11–30 | 31–100 | >100 |
+|---|---|---|---|---|---|
+| 80 (1–2 line body) | 156 | 63 | 53 | 16 | 24 |
+| 480 | 114 | 12 | 19 | 23 | 60 |
+
+The 480 limit catches real narration: over half its sites are more than 100
+over, many 700–2,000 characters. The 80 limit mostly charged half a sentence.
+`TINY_DOC_CHARS` is now 110, which clears 116 of its 156 sites.
+
+### <a id="shell-refusals-become-rewrites"></a>Shell refusals become rewrites
+
+A refused shell command always came back as the same command wrapped by hand,
+so for Bash the hook now returns that wrapped command through `updatedInput`
+and the call runs at once (support confirmed in Claude Code 2.1.327's hook
+schema: "Modified tool input (PreToolUse only)"). `safe_run.py` still gates
+every write, so nothing is less strict. PowerShell, 165 of the raw refusal
+markers (Bash: 1,929), is still refused; the reason is in
+[the architecture doc](../reference/script_convert_architecture.md#a-command-outside-the-wrapper-is-wrapped-not-refused). Still open: `safe_run` blames a command for
+any `.py` that changed while it ran, including another session's edit; this
+census hit one such false charge itself.
+
+**Replay under both changes** (same corpus, agents still told 80 in CLAUDE.md):
+refusals fall from 1,443 to 429 and their share of all spend from 2.41% to
+0.76%. Bash refusals go from 1,036 to 122; the 122 ran outside the repo root,
+where the rewrite's absolute path misses the allow rule and auto mode may
+bounce it once. Edit refusals go from 293 to 193: 100 named only a 1–2 line
+docstring of 81–110 chars. PowerShell (84) is unchanged.

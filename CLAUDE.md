@@ -25,10 +25,10 @@ caching, skipped record types, the export text format, and the directory layout.
 
 These protect things that are hard or impossible to get back.
 
-- 🛑 <a id="safe-run"></a>**Run every shell command through
-  `python tools/validate/safe_run.py <command>`** (chains, loops, `$(...)` and
-  other programs go inside `safe_run.py -c '<command>'`); the hook says what may
-  run bare. It gates the `.py` files the command wrote.
+- 🛑 <a id="safe-run"></a>**Every shell command runs inside
+  `python tools/validate/safe_run.py`**, which gates the `.py` files it wrote.
+  The hook wraps a Bash command for you; PowerShell must name it
+  (`safe_run.py <program> [args...]`).
 - 🛑 **Unlink every junction before removing a worktree.** Linking live
   `export/`/`output/` into a worktree is fine; `git worktree remove --force` and
   `rmtree` both follow junctions and delete the real tree, and both dirs are
