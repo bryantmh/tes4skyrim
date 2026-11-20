@@ -441,7 +441,8 @@ COMMAND_ROWS = {
     'setlevel': Cmd(note='SetLevel'),
     'setname': Cmd(note='{f}'),
     'setnoavoidance': Cmd(note='{f}'),
-    'setnorumors': Cmd(note='{f}'),
+    #: No Papyrus native: TESRuntime sets the actor's override through the engine's own SetNoRumors.
+    'setnorumors': Cmd('{ref}.SendModEvent("TES4SetNoRumors", "", {a0})', ACTOR),
     'setpackduration': Cmd(note='{f}'),
     #: SetPlayerInSEWorld: which realm's bounty the crime calls read and write.
     'setplayerinseworld': Cmd('TES4Polyfill.SetCrimeRealm(TES4CrimeFactions, {i0})', self_type=CRIME_REALMS),

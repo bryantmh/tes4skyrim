@@ -26,7 +26,7 @@ struct TestStep {
     enum class Kind {
         kRun, kWait, kExpect, kTalk, kAsk, kChoose, kBye, kButton, kActivate, kUntil, kPick, kClose,
         kTake, kConsole, kPersuade, kSleep, kWalk, kFollow, kDefend, kPunch, kRest, kSteer, kApproach,
-        kPace, kHear, kUnsaid, kSaid
+        kPace, kHear, kUnsaid, kSaid, kUnlisted
     };
     Kind kind = Kind::kRun;
     std::string text;   // the script, condition, reference or topic

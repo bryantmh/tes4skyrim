@@ -61,7 +61,8 @@ from ..record_types.common import (
     pack_uint8_subrecord,
     pack_uint32_subrecord,
 )
-from ..base.conditions import (FUNC_GET_GLOBAL_VALUE, FUNC_IS_IN_DIALOGUE_WITH_PLAYER, build_ctda,
+from ..base.conditions import (FUNC_GET_GLOBAL_VALUE, FUNC_GET_NO_RUMORS, FUNC_IS_IN_DIALOGUE_WITH_PLAYER,
+                               build_ctda,
                                convert_ctda_list_with_strings,
                                order_condition_groups)
 from ..base.tes5_reader import subrecords
@@ -326,10 +327,6 @@ _SKIP_EDIDS = frozenset({
     # Deliberately listed by name rather than by their contiguous FormID block
     # 0002410E..0002411C: CharGenEmperor (00024119) sits inside that range and
     # is a real main-quest conversation that must still convert.
-    #
-    # Rumors (INFOGENERAL) is NOT here on purpose -- it is the one Oblivion
-    # conversation channel Skyrim does have (subtype 2 RUMO, special-cased by
-    # the engine at 0x595454), so it converts as a normal topic.
     'SadGeneral', 'QuestionGeneral', 'FearGeneral', 'AngerReceive',
     'HappyReceive', 'SurpriseReceive', 'FollowupNegative', 'FollowupPositive',
     'AnswerNegative', 'AnswerPositive', 'AnswerStatus', 'NeutralReceive',
@@ -341,6 +338,9 @@ SERVICE_MENU_TOPICS = {
     0x0000010F: ('barter', 'What have you got for sale?'),
     0x00000113: ('training', 'I would like some training.'),
 }
+
+#: Engine-fixed raw DIAL FormID of Rumors (INFOGENERAL), which Oblivion hides from an actor flagged No Rumors.
+RUMORS_TOPIC = 0x000000D7
 
 
 def service_menu_entry(rec: dict) -> tuple:
@@ -361,8 +361,6 @@ def service_menu_kind(rec: dict) -> str:
 
 #: Type-1 topics that are NOT NPC-to-NPC chatter, so they survive the drop.
 CONV_KEEP_EDIDS = frozenset({
-    # Oblivion's one conversation channel Skyrim also has: subtype RUMO, a real
-    # player-selectable topic. Converts correctly already.
     'INFOGENERAL',
     # Engine bark channels that happen to carry DIAL Type 1 (see _EDID_SUBTYPE):
     # HELLO is the genuine ambient greeting, GOODBYE a real Skyrim subtype.
@@ -673,6 +671,16 @@ def in_dialogue_gate() -> bytes:
     See: docs/commentary/tes5_import_dialogue.md#problem-1-greeting-lines-are
     """
     return pack_subrecord('CTDA', build_ctda(FUNC_IS_IN_DIALOGUE_WITH_PLAYER, comp_value=1.0))
+
+
+def no_rumors_gate(dial_rec: dict) -> bytes:
+    """`GetNoRumors == 0` for each line of the engine's Rumors topic, else b''.
+
+    See: docs/commentary/tes5_import_dialogue.md#no-rumors
+    """
+    if int(get_str(dial_rec, 'FormID', '0'), 16) != RUMORS_TOPIC:
+        return b''
+    return pack_subrecord('CTDA', build_ctda(FUNC_GET_NO_RUMORS, comp_value=0.0))
 
 
 def _said_once_gate(rec: dict, reveal_props) -> bytes:

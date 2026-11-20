@@ -409,6 +409,19 @@ constexpr std::uint64_t kRefDelete = 56154;
 constexpr std::uint64_t kRefMoveTo = 56199;
 constexpr std::uint32_t kXMarker = 0x3B;
 
+// SetNoRumors (no_rumors.cpp), as the engine's own script command does it (1.6.1170 0x3585a0): when the value
+// equals the base's ACBS No Rumors bit (TESNPC +0x38, bit 0x2000), 11808 (0x164060) removes the reference's
+// ExtraHasNoRumors from its extra list at +0x70, else 11807 (0x163f70) sets it; then TESForm::AddChange (slot 10)
+// marks 0x80000000 so the save keeps it. GetNoRumors (0x661480) reads the extra first, else that bit.
+constexpr std::uint64_t kSetHasNoRumors = 11807;
+constexpr std::uint64_t kRemoveHasNoRumors = 11808;
+constexpr std::size_t kOffRefBaseForm = 0x40;
+constexpr std::size_t kOffRefExtraList = 0x70;
+constexpr std::size_t kOffActorBaseFlags = 0x38;
+constexpr std::uint32_t kActorBaseNoRumors = 0x2000;
+constexpr std::size_t kVtAddChange = 10;
+constexpr std::uint32_t kChangeNoRumors = 0x80000000;
+
 // The runtime whose class and birthsign menus a converted chargen asks for
 // (TES4_Chargen.Ask), and which exports `TESTestPick` for the runner.
 constexpr const char* kMorrowindRuntimeDll = "MorrowindRuntime.dll";

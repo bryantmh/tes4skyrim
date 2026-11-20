@@ -231,6 +231,7 @@ A case is a list of steps, run in file order:
 | `expect <condition>` | wraps it as `if ( cond ) set TestResult to 1 else ... 0`; -1 means the probe did not compile or run |
 | `talk <npc>` | activates the NPC as the player does, then waits up to 90 ticks for the conversation to open; a conversation already open with `npc` is taken as is, one left open with someone else gets its Goodbye first (MW backend; `approach` likewise) |
 | `ask <topic>` | clicks a topic the list shows; fails naming the listed topics when it is not there |
+| `unlisted <topic>` | a check, at once: the open conversation does not list the topic (whole text, any case); fails naming the listed topics. Baurus's `unlisted "Rumors"` (`0040_chargen_baurus`) guards the No Rumors flag |
 | `choose <n>` | answers pending choice `n`; fails naming the pending choices |
 | `bye` | clicks Goodbye; fails while a choice locks it |
 | `button <n>` | clicks button `n` of the open MessageBox once it has been up 2 ticks, then waits (up to 30 ticks) for that box to close, so the next `button` never clicks a box that is still closing. MorrowindRuntime's class quiz raises its next box at once; before the wait, one `button` answered two questions (2026-11-17) |

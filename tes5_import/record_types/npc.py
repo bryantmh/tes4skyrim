@@ -49,8 +49,8 @@ from .crime import IS_GUARD_FACTION, crime_faction, is_guard_class
 from .spell_tomes import tome_items
 from .npc_morrowind import TES5_RACE_BASE_HEALTH, is_morrowind_npc, tes3_pools
 
-#: TES4 NPC_ ACBS bits that mean the same thing in TES5, Female included.
-_NPC_COMPATIBLE_FLAGS = 0x4C9B
+#: TES4 NPC_ ACBS bits that mean the same thing in TES5, Female and No Rumors (0x2000, read by GetNoRumors) included.
+_NPC_COMPATIBLE_FLAGS = 0x6C9B
 
 #: TES4 NPC_ ACBS bit 7, PC Level Offset.
 _T4N_PC_LEVEL_OFFSET = 0x80

@@ -24,6 +24,8 @@
 # then what?". `hear` must not wait for "rats and goblins": E's own answer says that too (2i). His re-greet
 # (CGBaurusToPlayerB) came 2 ticks after the pick in 2o and not at all in 2p; a player then talks to him, and
 # GREETING offers the unspoken say-once 87 line -- `talk` passes at once if the re-greet already opened.
+# Baurus's base carries Oblivion's No Rumors flag (ACBS 0x2000), so his list never offers Rumors: every Rumors line is
+# gated on GetNoRumors == 0 (docs/commentary/tes5_import_dialogue.md#no-rumors).
 case baurus_speech
 run
 player.moveto CGMarkerJ2Baurus
@@ -46,6 +48,7 @@ talk BaurusRef
 hear 300 BaurusRef We've failed
 hear 600 BaurusRef where's the Amulet of Kings
 wait 30
+unlisted "Rumors"
 ask "The Emperor gave it to me."
 ask "I must take it to Jauffre."
 ask "There is another heir."

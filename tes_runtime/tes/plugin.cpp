@@ -16,6 +16,8 @@
 //     NiControllerManager (anim_playing.cpp, docs/commentary/tes_runtime_anim.md#is-anim-playing);
 //   * keeps a conversation a converted force greet opened while a line's choices are offered, as Oblivion hides Goodbye then
 //     (exit_hold.cpp, docs/commentary/tes_runtime_dialogue.md#no-exit-while-choices-are-offered);
+//   * sets a converted script's SetNoRumors on an actor, as the engine's own command does
+//     (no_rumors.cpp, docs/commentary/tes5_import_dialogue.md#no-rumors);
 //   * runs headless quest cases when the test harness asks for them
 //     (test_game.cpp, docs/commentary/headless_testing.md#tes4-quest-cases).
 
@@ -32,6 +34,7 @@
 #include "exit_hold.h"
 #include "journal_objectives.h"
 #include "log.h"
+#include "no_rumors.h"
 #include "paths.h"
 #include "skse_abi.h"
 #include "spin.h"
@@ -150,11 +153,13 @@ __declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface* skse) {
     const bool spin = g_engineResolved && InstallSpin(g_messaging);
     const bool anim = InstallAnimPlaying();
     g_exitHoldInstalled = InstallExitHold(g_messaging);
-    Log("hooks: jails %s, journal stage text %s, GameMode spin %s, IsAnimPlaying %s, choice hold %s",
+    const bool rumors = g_engineResolved && InstallNoRumors(g_messaging);
+    Log("hooks: jails %s, journal stage text %s, GameMode spin %s, IsAnimPlaying %s, choice hold %s, SetNoRumors %s",
         g_crimeInstalled ? "installed" : "NOT installed",
         g_journalInstalled ? "installed" : "NOT installed",
         spin ? "installed" : "NOT installed",
-        anim ? "installed" : "NOT installed", g_exitHoldInstalled ? "installed" : "NOT installed");
+        anim ? "installed" : "NOT installed", g_exitHoldInstalled ? "installed" : "NOT installed",
+        rumors ? "installed" : "NOT installed");
     return true;
 }
 

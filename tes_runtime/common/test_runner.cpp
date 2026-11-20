@@ -618,6 +618,22 @@ bool Asked(const TestStep& step) {
     return done;
 }
 
+// `unlisted`: the open conversation does not list the topic (its whole text, any case), as a player sees it.
+bool Unlisted(const TestStep& step) {
+    if (!Talking() || !g_game.topics) {
+        g_case.error = "unlisted: no conversation is open, or its topics are not readable";
+        return true;
+    }
+    const std::vector<std::string> listed = g_game.topics();
+    for (const std::string& text : listed) {
+        if (Lower(text) == Lower(step.text)) {
+            g_case.error = "topic '" + step.text + "' is listed: " + Joined(listed);
+            break;
+        }
+    }
+    return true;
+}
+
 // The conversation's steps: each first waits for a posted conversation to open.
 bool Conversed(const TestCase& test, const TestStep& step) {
     // A greeting posts its menu, which opens a frame or more later, and
@@ -625,6 +641,7 @@ bool Conversed(const TestCase& test, const TestStep& step) {
     if (!Talking() && (MenuStillOpening() || ++g_case.talkWait < kTalkWaitTicks)) return false;
     g_case.talkWait = 0;
     if (step.kind == Kind::kAsk) return Asked(step);
+    if (step.kind == Kind::kUnlisted) return Unlisted(step);
     if (step.kind == Kind::kPersuade && step.text.find(kUntilWord) != std::string::npos) {
         PersuadedUntil(test, step);
     } else {
@@ -1026,7 +1043,7 @@ void KeepFollowing() {
 
 bool IsAction(Kind kind) {
     return kind != Kind::kWait && kind != Kind::kExpect && kind != Kind::kUntil && kind != Kind::kHear &&
-           kind != Kind::kUnsaid && kind != Kind::kSaid;
+           kind != Kind::kUnsaid && kind != Kind::kSaid && kind != Kind::kUnlisted;
 }
 
 void Report(const TestCase& test) {
@@ -1180,7 +1197,7 @@ const std::vector<std::string>& TestStepNames() {
     static const std::vector<std::string> kNames = {
         "run",  "wait",  "expect", "talk", "ask",     "choose",   "bye",   "button",   "activate",
         "until", "pick", "close",  "take", "console", "persuade", "sleep", "walk",     "follow",
-        "defend", "punch", "rest", "steer", "approach", "pace", "hear", "unsaid", "said"};
+        "defend", "punch", "rest", "steer", "approach", "pace", "hear", "unsaid", "said", "unlisted"};
     return kNames;
 }
 

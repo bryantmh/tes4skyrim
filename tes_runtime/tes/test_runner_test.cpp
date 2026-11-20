@@ -56,11 +56,12 @@ void ParsesTheGrammar() {
         "coc ImperialPrison\n"
         "until 900 GetStage Tutorial >= 10\n"
         "ask \"The Emperor\"\n"
+        "unlisted \"Rumors\"\n"
         "end\n");
     const std::vector<TestCase> cases = ParseTestCases(in);
     Check(cases.size() == 1 && cases[0].name == "escape", "one case, named");
     const std::vector<TestStep>& steps = cases[0].steps;
-    Check(steps.size() == 5, "run, settle, until, ask, settle");
+    Check(steps.size() == 6, "run, settle, until, ask, settle, unlisted (a check: no settle)");
     Check(steps[0].kind == TestStep::Kind::kRun &&
               steps[0].text == "player.moveto CellDoorRef\ncoc ImperialPrison\n",
           "a run body takes every line up to the next step");
@@ -70,6 +71,7 @@ void ParsesTheGrammar() {
           "until keeps its ticks and condition");
     Check(steps[3].kind == TestStep::Kind::kAsk && steps[3].text == "The Emperor",
           "ask drops the quotes");
+    Check(steps[5].kind == TestStep::Kind::kUnlisted && steps[5].text == "Rumors", "unlisted drops the quotes");
 }
 
 // Ticks until the runner writes `count` result lines, or gives up.

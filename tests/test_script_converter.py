@@ -4675,6 +4675,11 @@ class TestMoveToBindsItsDestination:
         assert held == 'TES4Polyfill.SetRestrained(ghostRef, true, TES4Restrained)'
         assert converter.get_property_refs()['TES4Restrained'] == 'FormList'
 
+    def test_set_no_rumors_goes_to_tesruntime(self, converter):
+        """SetNoRumors has no Papyrus native; it becomes the mod event TESRuntime's no_rumors.cpp handles."""
+        out = conv_line(converter, 'FarwilRef.SetNoRumors 0', 'Quest')
+        assert out == 'FarwilRef.SendModEvent("TES4SetNoRumors", "", 0)'
+
     def test_player_target_is_not_a_property(self, converter):
         """`player` is a converter keyword, never a bound property."""
         out = conv_line(converter, 'Player.MoveTo Player', 'Quest')

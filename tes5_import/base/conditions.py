@@ -102,6 +102,8 @@ FUNC_IS_IN_INTERIOR = 300
 #: IsInDialogueWithPlayer(), run on the subject: 267 vanilla HELO lines test == 1 to play only when talked to.
 FUNC_IS_IN_DIALOGUE_WITH_PLAYER = 249
 FUNC_GET_IS_VOICE_TYPE = 426   # GetIsVoiceType(vtyp)  — TES5-only, no TES4 source
+#: GetNoRumors(), run on the subject: its per-actor SetNoRumors override, else the base's ACBS flag 0x2000.
+FUNC_GET_NO_RUMORS = 320
 FUNC_HAS_MAGIC_EFFECT = 214
 FUNC_HAS_MAGIC_EFFECT_KEYWORD = 699
 FUNC_GET_VAMPIRE = 40

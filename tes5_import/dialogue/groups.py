@@ -46,7 +46,7 @@ from .converter import (DIAL_TYPE_CONVERSATION, SERVICE_MENU_SCRIPTS,
     is_npc_to_npc_conversation, make_conversation_quest,
     make_generic_quest, register_conversation_chains,
     SCENE_TOPIC, classify_topic, collect_tclt_target_fids,
-    convert_DIAL, convert_INFO, in_dialogue_gate, make_dlbr, make_dlvw, service_menu_entry,
+    convert_DIAL, convert_INFO, in_dialogue_gate, make_dlbr, make_dlvw, no_rumors_gate, service_menu_entry,
     service_menu_kind,
     should_skip_dial, voice_file_prefix,
     GREET_TOPIC_BY_QUEST, EMPTY_DIAL_FIDS, lip_texts, startable_quests)
@@ -827,7 +827,7 @@ def _build_one_topic(dial_rec, info_by_dial, writer, offset,
     info_ctx = dict(
         chargen_fallback_fids=_chargen_fallback_box(writer),
         is_bark=is_bark, npc_to_vtyp=npc_to_vtyp,
-        service_gate_bytes=service_gate_bytes,
+        topic_gate_bytes=service_gate_bytes + no_rumors_gate(dial_rec),
         unlock_gate_bytes=_unlock_gate(dial_fid, unlock_plan, unlock_globals),
         shared_state_bytes=(_shared_state_gate(child_infos, offset)
                             if conversation else b''),
@@ -904,7 +904,7 @@ def _convert_topic_infos(child_infos, owner_qfid, ctx):
             injected = _build_injected_ctdas(
                 info_rec, ctx['is_bark'], ctx['npc_to_vtyp'],
                 ctx['topic_vtyps'], ctx['topic_npc_fids'],
-                ctx['service_gate_bytes'] + quest_gate_bytes + quest_cond_bytes
+                ctx['topic_gate_bytes'] + quest_gate_bytes + quest_cond_bytes
                 + bc_gate,
                 ctx['unlock_gate_bytes'], ctx['offset'], ctx['stats'],
                 sibling_factions=ctx.get('sibling_factions'),
@@ -1089,7 +1089,7 @@ def _bark_group_ctx(ctx, g, edid: str) -> dict:
     See: docs/commentary/tes5_import_dialogue.md#bark-group-context
     """
     group_ctx = dict(ctx, is_bark=True, topic_npc_fids=set(),
-                     service_gate_bytes=b'', unlock_gate_bytes=b'',
+                     topic_gate_bytes=b'', unlock_gate_bytes=b'',
                      bark_choice_gate_bytes=b'', service_kind='', edid=edid,
                      orig_quest_fid=None, sibling_factions=set(),
                      sibling_npcs=set())
