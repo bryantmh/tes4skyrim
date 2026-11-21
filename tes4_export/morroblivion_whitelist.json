@@ -1,0 +1,5042 @@
+[
+ {
+  "kind": "worn",
+  "vanilla": "bonemold_chuzei_helm",
+  "morroblivion": "Vvardenfellarmormod\\bonemold\\chuzei.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "bonemold_founders_helm",
+  "morroblivion": "Vvardenfellarmormod\\Bonemold\\RedoranMasterHelm.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "bonemold_helm",
+  "morroblivion": "Vvardenfellarmormod\\Bonemold\\cryohelm.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "cephalopod_helm",
+  "morroblivion": "Vvardenfellarmormod\\cephalopod\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "chitin helm",
+  "morroblivion": "Armor\\kdHBChitin\\helm.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "chitin_mask_helm",
+  "morroblivion": "Armor\\kdHBChitin\\chitinhelm01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "chitin_watchman_helm",
+  "morroblivion": "VvardenfellArmormod\\Redoranwatchman\\Watchmanorig.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "daedric_fountain_helm",
+  "morroblivion": "armor\\Daedric Lord\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "daedric_terrifying_helm",
+  "morroblivion": "Armor\\Daedric Lord\\helmet_terror.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "demon helm",
+  "morroblivion": "Vvardenfellarmormod\\Bonemold\\DustAdeptHelm.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "devil helm",
+  "morroblivion": "Vvardenfellarmormod\\Bonemold\\DustAdeptHelmBasic.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dragonscale_helm",
+  "morroblivion": "VvardenfellArmormod\\Dragonscale\\Dragonhelmet.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dreugh_helm",
+  "morroblivion": "VvardenfellArmormod\\dreugh\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dwemer_helm",
+  "morroblivion": "VvardenfellArmormod\\dwemer\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "ebony_closed_helm",
+  "morroblivion": "VvardenfellArmormod\\MW Ebony\\EbonySallet.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "fur_colovian_helm",
+  "morroblivion": "Armor\\Colovian\\colovian.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "icecap_unique",
+  "morroblivion": "Vvardenfellarmormod\\MWNordic\\Furhelm.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial helmet armor",
+  "morroblivion": "VvardenfellArmormod\\Morrowind Imperial Armor\\LegionHelm.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial_chain_coif_helm",
+  "morroblivion": "VvardenfellArmormod\\Chainmail\\Helm.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "indoril helmet",
+  "morroblivion": "armor\\Indoril\\helmet.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "morag_tong_helm",
+  "morroblivion": "VvardenfellArmormod\\Netch\\MoragTongHelm.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "netch_leather_helm",
+  "morroblivion": "VvardenfellArmormod\\Netch\\NetchHoodHelm.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "nordic_iron_helm",
+  "morroblivion": "Vvardenfellarmormod\\MWNordic\\NordicHelmopen.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "silver_helm",
+  "morroblivion": "VvardenfellArmormod\\MWsilverarmor\\BGElvenHelm2.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "storm helm",
+  "morroblivion": "Vvardenfellarmormod\\Bonemold\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "templar_helmet_armor",
+  "morroblivion": "Vvardenfellarmormod\\Morrowind Imperial Armor\\TemplarLegionHelm.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "trollbone_helm",
+  "morroblivion": "VvardenfellArmormod\\MWNordic\\trollbone helmet.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "bonedancer gauntlet",
+  "morroblivion": "Armor\\kdHBChitin\\m\\gauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "daedric_gauntlet_right",
+  "morroblivion": "armor\\Daedric Lord\\m\\gauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "gauntlet_fists_r_unique",
+  "morroblivion": "VvardenfellArmormod\\MWsilverarmor\\silvergauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "gauntlet_of_glory_right",
+  "morroblivion": "Vvardenfellarmormod\\Skaal\\gauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial right gauntlet",
+  "morroblivion": "VvardenfellArmormod\\Morrowind Imperial Armor\\gauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "netch_leather_gauntlet_right",
+  "morroblivion": "VvardenfellArmormod\\Netch\\Netchgauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "wraithguard",
+  "morroblivion": "Armor\\Dwarven\\M\\Wraithguard.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "bonemold_bracer_right",
+  "morroblivion": "VvardenfellArmormod\\bonemold\\m\\gauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "bonemold_greaves",
+  "morroblivion": "VvardenfellArmormod\\bonemold\\m\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "chitin greaves",
+  "morroblivion": "Armor\\kdHBChitin\\m\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "daedric_greaves",
+  "morroblivion": "armor\\Daedric Lord\\m\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dwemer_greaves",
+  "morroblivion": "VvardenfellArmormod\\dwemer\\m\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "ebony_greaves",
+  "morroblivion": "VvardenfellArmormod\\MW Ebony\\Greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial_chain_greaves",
+  "morroblivion": "VvardenfellArmormod\\Chainmail\\Greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial_greaves",
+  "morroblivion": "VvardenfellArmormod\\Morrowind Imperial Armor\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "netch_leather_greaves",
+  "morroblivion": "VvardenfellArmormod\\Netch\\Netchgreaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "templar_greaves",
+  "morroblivion": "VvardenfellArmormod\\Morrowind Imperial Armor\\templargreaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "bonemold_boots",
+  "morroblivion": "VvardenfellArmormod\\bonemold\\m\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "boots_apostle_unique",
+  "morroblivion": "Vvardenfellarmormod\\netchadamantium\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "chitin boots",
+  "morroblivion": "Armor\\kdHBChitin\\m\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "conoon_chodala_boots_unique",
+  "morroblivion": "VvardenfellArmormod\\Netch\\NetchBootm.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "daedric_boots",
+  "morroblivion": "armor\\Daedric Lord\\m\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dwemer_boots",
+  "morroblivion": "VvardenfellArmormod\\dwemer\\m\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "ebony_boots",
+  "morroblivion": "VvardenfellArmormod\\MW Ebony\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial boots",
+  "morroblivion": "VvardenfellArmormod\\Morrowind Imperial Armor\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "indoril boots",
+  "morroblivion": "armor\\Indoril\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "templar boots",
+  "morroblivion": "VvardenfellArmormod\\Morrowind Imperial Armor\\Templarboots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dwemer_shield",
+  "morroblivion": "VvardenfellArmormod\\dwemer\\shield.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "ebony_shield",
+  "morroblivion": "VvardenfellArmormod\\MW Ebony\\shield.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial shield",
+  "morroblivion": "Vvardenfellarmormod\\Morrowind Imperial Armor\\TowerSheild.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "iron_shield",
+  "morroblivion": "VvardenfellArmormod\\MW iron\\IronShield.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_01",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common00\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_01_e",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common01e\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_01_u",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common01u\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_02",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common10\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_03",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common03\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_03_b",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common03b\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_04",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common20\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_04_b",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common04\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_pants_01",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Expensive01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_pants_01_e",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Expensive01e\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_pants_01_u",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Expensive01u\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_pants_01_z",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Expensive01z\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "exquisite_pants_01",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Exquisite\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_pants_02",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Extravagant02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_skirt_01",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Common01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_skirt_02",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Common02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_skirt_03",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Common03\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_skirt_04",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Common04\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_skirt_04_c",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Common04c\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_skirt_05",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Common05\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_skirt_01",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Expensive01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_skirt_02",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Expensive02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_skirt_03",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Expensive03\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "exquisite_skirt_01",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Exquisite\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_skirt_01",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Extravagant01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_skirt_02",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Extravagant02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial skirt_clothing",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Imperial\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Maras_Skirt",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Mara\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "templar skirt obj",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Templar\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "therana's skirt",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Therana\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_01",
+  "morroblivion": "Morroblivion\\Clothes\\Shirts\\Common01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "exquisite_shirt_01",
+  "morroblivion": "Morroblivion\\Clothes\\Shirts\\Exquisite\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_shirt_01",
+  "morroblivion": "Morroblivion\\Clothes\\Shirts\\Extravagant01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_shirt_01_h",
+  "morroblivion": "Morroblivion\\Clothes\\Shirts\\Extravagant01h\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Adusamsi's_robe",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Expensive03\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_01",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_02",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_02_h",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common02h\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_02_hh",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common02hh\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_02_r",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common02r\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_02_rr",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common02rr\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_02_t",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common02t\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_02_tt",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common02tt\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_03",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common03\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_04",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common04\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_05",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common05\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_robe_01",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Expensive01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_robe_02",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Expensive02\\Male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_robe_02_a",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Expensive02a\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "exquisite_robe_01",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Exquisite01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_robe_01_a",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Extravagant01a\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_robe_01_b",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Extravagant01b\\Male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_robe_01_c",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Extravagant01c\\Male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_robe_01_h",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Extravagant01h\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_robe_01_r",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Extravagant01r\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Extravagant_Robe_01_Red",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Extravagant01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_robe_01_t",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Extravagant01t\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_robe_02",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Extravagant02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shoes_01",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Common01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shoes_02",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Common02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shoes_04",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Common04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shoes_05",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Common05.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "exquisite_shoes_01",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Upperclass\\Eqsquisite.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_shoes_02",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Upperclass\\Extravagant02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Shoes_of_Conviction",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Upperclass\\Expensive03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "chest of fire",
+  "morroblivion": "Armor\\kdHBChitin\\m\\cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "daedric_cuirass",
+  "morroblivion": "armor\\Daedric Lord\\m\\cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dragonbone_cuirass_unique",
+  "morroblivion": "VvardenfellArmormod\\Vvardenfell Legendary Armor\\dragonbonecuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dragonscale_cuirass",
+  "morroblivion": "VvardenfellArmormod\\Dragonscale\\dragonscalecuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dreugh_cuirass",
+  "morroblivion": "VvardenfellArmormod\\dreugh\\m\\cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dwemer_cuirass",
+  "morroblivion": "VvardenfellArmormod\\dwemer\\m\\cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "ebon_plate_cuirass_unique",
+  "morroblivion": "VvardenfellArmormod\\Vvardenfell Legendary Armor\\EbonyMail.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "ebony_cuirass",
+  "morroblivion": "VvardenfellArmormod\\MW Ebony\\Cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "fur_bearskin_cuirass",
+  "morroblivion": "VvardenfellArmormod\\MWNordic\\BearskinCuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial cuirass_armor",
+  "morroblivion": "VvardenfellArmormod\\Morrowind Imperial Armor\\cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial_chain_cuirass",
+  "morroblivion": "VvardenfellArmormod\\Chainmail\\cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "imperial_studded_cuirass",
+  "morroblivion": "VvardenfellArmormod\\Studded Leather\\Studded Leather Cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "indoril cuirass",
+  "morroblivion": "armor\\Indoril\\cuirassM.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "lords_cuirass_unique",
+  "morroblivion": "VvardenfellArmormod\\lordsmail\\lordsmail.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "merisan_cuirass",
+  "morroblivion": "VvardenfellArmormod\\Netch\\NetchCuirassLeather.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Mountain Spirit",
+  "morroblivion": "VvardenfellArmormod\\bonemold\\m\\cuirassspiked.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "netch_leather_boiled_cuirass",
+  "morroblivion": "VvardenfellArmormod\\Netch\\NetchCuirassBoiled.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "netch_leather_cuirass",
+  "morroblivion": "VvardenfellArmormod\\Netch\\NetchCuirassLeathernobp.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "newtscale_cuirass",
+  "morroblivion": "VvardenfellArmormod\\Newtscale\\cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "nordic_ringmail_cuirass",
+  "morroblivion": "VvardenfellArmormod\\MWNordic\\NordicRingmail.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "silver_cuirass",
+  "morroblivion": "VvardenfellArmormod\\MWsilverarmor\\Silvercuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "silver_dukesguard_cuirass",
+  "morroblivion": "VvardenfellArmormod\\MWsilverarmor\\Duke'scuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "trollbone_cuirass",
+  "morroblivion": "VvardenfellArmormod\\MWNordic\\trollbonefullshirt.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "a\\a_bear2_cuirass_gnd.nif",
+  "morroblivion": "vvardenfellarmormod/bear and wolf/snowcuirass_gnd.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "a\\a_bear_shield.nif",
+  "morroblivion": "vvardenfellarmormod/bear and wolf/bearshield.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "a\\a_dwemer_shield_battle.nif",
+  "morroblivion": "armor/morro/a/audwemerushieldubattle.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "a\\a_helm_colovian_w.nif",
+  "morroblivion": "armor/colovian/helmet white_gnd.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "a\\a_helsethguard_helm.nif",
+  "morroblivion": "armor/helseth/helsethhelmet_gnd.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "a\\a_ice_shield.nif",
+  "morroblivion": "vvardenfellarmormod/ice/shield.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "a\\a_icel_m_helmet.nif",
+  "morroblivion": "vvardenfellarmormod/ice/helmet_gnd.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "a\\a_nordicmail_m_helmet.nif",
+  "morroblivion": "vvardenfellarmormod/skaal/helmet_gnd.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "a\\a_wolf_shield.nif",
+  "morroblivion": "vvardenfellarmormod/bear and wolf/wolfshield.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "c\\c_m_pants_common2_gnd.nif",
+  "morroblivion": "morroblivion/clothes/pants/common02/gnd.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "c\\c_m_pants_mournhold_gnd.nif",
+  "morroblivion": "morroblivion/clothes/pants/mournhold/gnd.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "c\\c_shoes_common1_gnd.nif",
+  "morroblivion": "morroblivion/clothes/shoes/lowerclass/common06_gnd.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "d\\door_dwrv_main00.nif",
+  "morroblivion": "morro/d/doorudwrvumain00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_gnaar_mok.nif",
+  "morroblivion": "morro/f/actubannerugnaarumok.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_mushroom_05.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcmushroom05anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_mushroom_08.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcmushroom08anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_vine_01.nif",
+  "morroblivion": "morro/f/floraubcuvineu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_vine_02.nif",
+  "morroblivion": "morro/f/floraubcuvineu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_vine_03.nif",
+  "morroblivion": "morro/f/floraubcuvineu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_vine_04.nif",
+  "morroblivion": "morro/f/floraubcuvineu04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_vine_05.nif",
+  "morroblivion": "morro/f/floraubcuvineu05.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_vine_06.nif",
+  "morroblivion": "morro/f/floraubcuvineu06.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_vine_07.nif",
+  "morroblivion": "morro/f/floraubcuvineu07.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_comberry_01.nif",
+  "morroblivion": "morroblivion/flora/bushes/comberry01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_tree_wg_07.nif",
+  "morroblivion": "morro/f/florautreeuwgu07.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\food_kwama_egg_01.nif",
+  "morroblivion": "clutter/morro/f/foodukwamaueggu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\food_kwama_egg_02.nif",
+  "morroblivion": "clutter/morro/f/foodukwamaueggu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_ashpit_01.nif",
+  "morroblivion": "morro/f/furnuashpitu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_ashpit_02.nif",
+  "morroblivion": "morro/f/furnuashpitu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bone_01.nif",
+  "morroblivion": "clutter/morro/m/nbbigbone01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bone_rib_01.nif",
+  "morroblivion": "clutter/morro/m/nbrib01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bone_skull_01.nif",
+  "morroblivion": "clutter/morro/m/nbskull01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bone_stake00.nif",
+  "morroblivion": "clutter/morro/m/nbskullonastick01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_com_bookshelf_01.nif",
+  "morroblivion": "morro/f/furnucomubookshelfu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_com_cauldron_01.nif",
+  "morroblivion": "morro/f/furnucomucauldronu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_com_kegstand.nif",
+  "morroblivion": "morro/f/furnucomukegstand.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_com_planter.nif",
+  "morroblivion": "morro/f/furnucomuplanter.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_com_table_03.nif",
+  "morroblivion": "morro/f/furnucomutableu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_com_table_05.nif",
+  "morroblivion": "morro/f/furnucomutableu05.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_crate_lid_01.nif",
+  "morroblivion": "mip/container/crates/crate01lid.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_crate_open_01.nif",
+  "morroblivion": "mip/container/crates/crate01open.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_de_kegstand.nif",
+  "morroblivion": "morro/f/furnudeukegstand.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_beltdrive00.nif",
+  "morroblivion": "morro/f/furnudwrvubeltdrive00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_dynamo00.nif",
+  "morroblivion": "morro/f/furnudwrvudynamo00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_fitting00.nif",
+  "morroblivion": "morro/f/furnudwrvufitting00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_fitting10.nif",
+  "morroblivion": "morro/f/furnudwrvufitting10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_fitting20.nif",
+  "morroblivion": "morro/f/furnudwrvufitting20.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_fitting30.nif",
+  "morroblivion": "morro/f/furnudwrvufitting30.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_fitting40.nif",
+  "morroblivion": "morro/f/furnudwrvufitting40.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_fitting50.nif",
+  "morroblivion": "morro/f/furnudwrvufitting50.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_stool00.nif",
+  "morroblivion": "morro/f/furnudwrvustool00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_stool10.nif",
+  "morroblivion": "morro/f/furnudwrvustool10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_table00.nif",
+  "morroblivion": "morro/f/furnudwrvutable00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_well00.nif",
+  "morroblivion": "morro/f/furnudwrvuwell00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_kneeling_stool_01.nif",
+  "morroblivion": "morro/f/furnukneelingustoolu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_overhang_01.nif",
+  "morroblivion": "morro/f/furnuoverhangu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_overhang_03.nif",
+  "morroblivion": "morro/f/furnuoverhangu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_overhang_04.nif",
+  "morroblivion": "morro/f/furnuoverhangu04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_overhang_05.nif",
+  "morroblivion": "morro/f/furnuoverhangu05.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_overhang_07.nif",
+  "morroblivion": "morro/f/furnuoverhangu07.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_overhang_09.nif",
+  "morroblivion": "morro/f/furnuoverhangu09.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_overhang_18.nif",
+  "morroblivion": "morro/f/furnuoverhangu18.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_pathspear_01.nif",
+  "morroblivion": "morro/f/furnupathspearu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_pathspear_02.nif",
+  "morroblivion": "morro/f/furnupathspearu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_pathspear_03.nif",
+  "morroblivion": "morro/f/furnupathspearu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_pathspear_04.nif",
+  "morroblivion": "morro/f/furnupathspearu04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_planter_01.nif",
+  "morroblivion": "morro/f/furnuplanteru01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_planter_02.nif",
+  "morroblivion": "morro/f/furnuplanteru02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_planter_03.nif",
+  "morroblivion": "morro/f/furnuplanteru03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_planter_04.nif",
+  "morroblivion": "morro/f/furnuplanteru04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_redoran_shelf2_01.nif",
+  "morroblivion": "morro/f/furnuredoranushelf2u01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\terrain_cairn_al_01.nif",
+  "morroblivion": "morro/f/terrainucairnualu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\terrain_cairn_al_02.nif",
+  "morroblivion": "morro/f/terrainucairnualu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\terrain_cairn_al_03.nif",
+  "morroblivion": "morro/f/terrainucairnualu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_dwrv_hall4_00.nif",
+  "morroblivion": "morro/i/inudwrvuhall4u00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_dwrv_scope00.nif",
+  "morroblivion": "morro/i/inudwrvuscope00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_dwrv_scope10.nif",
+  "morroblivion": "morro/i/inudwrvuscope10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_dwrv_scope20.nif",
+  "morroblivion": "morro/i/inudwrvuscope20.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_dwrv_scope30.nif",
+  "morroblivion": "morro/i/inudwrvuscope30.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_dwrv_scope40.nif",
+  "morroblivion": "morro/i/inudwrvuscope40.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_dwrv_scope50.nif",
+  "morroblivion": "morro/i/inudwrvuscope50.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_hlaalu_hall_rail.nif",
+  "morroblivion": "morro/i/inuhlaaluuhallurail.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_lava_1024.nif",
+  "morroblivion": "morro/i/inulavau1024.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_lava_256.nif",
+  "morroblivion": "morro/i/inulavau256.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_lava_256a.nif",
+  "morroblivion": "morro/i/inulavau256.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_lava_512.nif",
+  "morroblivion": "morro/i/inulavau512.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_sewer_bcorr2_02.nif",
+  "morroblivion": "morro/i/inusewerubcorr2u02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_t_balconyscreen.nif",
+  "morroblivion": "morro/i/inutubalconyscreen.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_t_stairs_strt_256.nif",
+  "morroblivion": "morro/i/inutustairsustrtu256.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\furn_de_firepit_f_01.nif",
+  "morroblivion": "morroblivion/lights/dunmer/firepit_f.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_candle_06.nif",
+  "morroblivion": "morroblivion/lights/dunmer/candle_06.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_lamp_08.nif",
+  "morroblivion": "morroblivion/lights/dunmer/lamp_08.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_lamp_09.nif",
+  "morroblivion": "morroblivion/lights/dunmer/lamp_08.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_spear_skull00.nif",
+  "morroblivion": "morroblivion/lights/dungeons/spear_skull.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\bm_flamingeyeball.nif",
+  "morroblivion": "clutter/ingredients/grahleyeball.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\gold_001.nif",
+  "morroblivion": "clutter/morro/m/nbgold001.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\gold_005.nif",
+  "morroblivion": "clutter/morro/m/nbgold005.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\gold_100.nif",
+  "morroblivion": "clutter/morro/m/nbgold100.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_bowl_white_01.nif",
+  "morroblivion": "clutter/morro/m/nbbowlwhite01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_bucket_01.nif",
+  "morroblivion": "morroblivion/clutter/miscbucket01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_pillow_01.nif",
+  "morroblivion": "clutter/morro/m/nbpillow01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_pitcher_metal_01.nif",
+  "morroblivion": "clutter/morro/m/nbmetalpitcher001.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_silverware_spoon.nif",
+  "morroblivion": "morroblivion/clutter/silverware/misccomsilverwarespoon.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_goblet_03.nif",
+  "morroblivion": "clutter/morro/m/nbgoblet03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_goblet_04.nif",
+  "morroblivion": "clutter/morro/m/nbgoblet04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_artifact00.nif",
+  "morroblivion": "clutter/morro/m/nbdwemercylinder.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_artifact50.nif",
+  "morroblivion": "clutter/morro/m/nbdwemercoherer.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_artifact60.nif",
+  "morroblivion": "clutter/morro/m/nbdwemertube.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_coin00.nif",
+  "morroblivion": "clutter/morro/m/nbdwemercoin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_goblet00.nif",
+  "morroblivion": "clutter/morro/m/nbdwemergoblet00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_mug00.nif",
+  "morroblivion": "clutter/morro/m/nbdwemermug01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_flask_01.nif",
+  "morroblivion": "clutter/morro/m/nbflask01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_flask_02.nif",
+  "morroblivion": "clutter/morro/m/nbflask02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_flask_03.nif",
+  "morroblivion": "clutter/morro/m/nbflask03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_flask_04.nif",
+  "morroblivion": "clutter/morro/m/nbflask04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_inkwell.nif",
+  "morroblivion": "clutter/morro/m/nbinkwell.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_blue_01.nif",
+  "morroblivion": "clutter/morro/m/nbpotblue01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_redware_01.nif",
+  "morroblivion": "morroblivion/clutter/redware/miscupoturedwareu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_redware_02.nif",
+  "morroblivion": "morroblivion/clutter/redware/miscupoturedwareu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_redware_03.nif",
+  "morroblivion": "morroblivion/clutter/redware/miscupoturedwareu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_redware_04.nif",
+  "morroblivion": "morroblivion/clutter/redware/miscupoturedwareu04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_potion_bargain_01.nif",
+  "morroblivion": "morroblivion/clutter/potions/potionbargain.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_potion_cheap_01.nif",
+  "morroblivion": "morroblivion/clutter/potions/potioncheap.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_potion_exclusive_01.nif",
+  "morroblivion": "morroblivion/clutter/potions/potionexclusive.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_potion_fresh_01.nif",
+  "morroblivion": "morroblivion/clutter/potions/potionfresh.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_potion_quality_01.nif",
+  "morroblivion": "morroblivion/clutter/potions/potionquality.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_potion_standard_01.nif",
+  "morroblivion": "morroblivion/clutter/potions/potionstandard.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_redware_flask.nif",
+  "morroblivion": "morroblivion/clutter/redware/miscuredwareuflask.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_redware_vase.nif",
+  "morroblivion": "morroblivion/clutter/redware/miscuredwareuvase.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_rollingpin_01.nif",
+  "morroblivion": "clutter/morro/m/nbrollingpin01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_silverware_plate_02.nif",
+  "morroblivion": "morroblivion/clutter/silverware/miscsilverwareplate02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_spool_01.nif",
+  "morroblivion": "clutter/morro/m/nbspool01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_uni_pillow_02.nif",
+  "morroblivion": "clutter/morro/m/nbpillow02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_barrel_01.nif",
+  "morroblivion": "mip/container/barrels/mwbarrel01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_chest10.nif",
+  "morroblivion": "mip/container/chests/chest10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_chest11.nif",
+  "morroblivion": "mip/container/chests/chest11.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_chest_small_01.nif",
+  "morroblivion": "morro/o/containuchestusmallu01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_chest_small_02.nif",
+  "morroblivion": "morro/o/containuchestusmallu02.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_com_basket_01.nif",
+  "morroblivion": "mip/container/baskets/basket_01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_com_chest_01.nif",
+  "morroblivion": "mip/container/chests/common_chest01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_com_chest_02.nif",
+  "morroblivion": "mip/container/chests/common_chest02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_com_sack_01.nif",
+  "morroblivion": "mip/container/sacks/sack_01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_com_sack_02.nif",
+  "morroblivion": "mip/container/sacks/roundsack_03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_com_sack_03.nif",
+  "morroblivion": "mip/container/sacks/sack_02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_crate_01.nif",
+  "morroblivion": "mip/container/crates/crate01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_crate_02.nif",
+  "morroblivion": "mip/container/crates/crate02.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_de_crate_logo.nif",
+  "morroblivion": "mip/container/crates/crate01logo.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_dwrv_barrel00.nif",
+  "morroblivion": "morro/o/containudwrvubarrel00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_dwrv_barrel10.nif",
+  "morroblivion": "morro/o/containudwrvubarrel10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_egg_kwama00.nif",
+  "morroblivion": "morroblivion/flora/other/kwamaeggsack01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_urn_01.nif",
+  "morroblivion": "mip/container/urns/clay_urn01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_urn_04.nif",
+  "morroblivion": "mip/container/urns/clay_urn04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_gold_kanet_01.nif",
+  "morroblivion": "morroblivion/flora/flowers/goldkanet01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_broadsword_imperial.nif",
+  "morroblivion": "morroblivion/weapons/imperial/broadsword.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_broadsword_leafblade.nif",
+  "morroblivion": "morroblivion/weapons/steel/longsword.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_chitin_axe.nif",
+  "morroblivion": "morroblivion/weapons/chitin/axe.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_chitin_spear.nif",
+  "morroblivion": "morroblivion/weapons/chitin/spear.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_claymore.nif",
+  "morroblivion": "morroblivion/weapons/steel/claymore.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_claymore_crystal.nif",
+  "morroblivion": "morroblivion/weapons/glass/claymore.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dagger_chitin.nif",
+  "morroblivion": "morroblivion/weapons/chitin/dagger.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dagger_daedric.nif",
+  "morroblivion": "morroblivion/weapons/daedric/dagger.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dagger_dragon.nif",
+  "morroblivion": "morroblivion/weapons/steel/dagger.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dagger_glass.nif",
+  "morroblivion": "morroblivion/weapons/glass/dagger.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dai-katana_daedric.nif",
+  "morroblivion": "morroblivion/weapons/daedric/daikatana.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dwemer_battleaxe.nif",
+  "morroblivion": "morroblivion/weapons/dwemer/battleaxe.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dwemer_claymore.nif",
+  "morroblivion": "morroblivion/weapons/dwemer/claymore.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dwemer_shortsword.nif",
+  "morroblivion": "morroblivion/weapons/dwemer/shortsword.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dwemer_spear.nif",
+  "morroblivion": "morroblivion/weapons/dwemer/spear.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dwemer_warhammer.nif",
+  "morroblivion": "morroblivion/weapons/dwemer/warhammer.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_halberd_steel.nif",
+  "morroblivion": "morroblivion/weapons/steel/halberd.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_katana_daedric.nif",
+  "morroblivion": "morroblivion/weapons/daedric/katana.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_longbow.nif",
+  "morroblivion": "morroblivion/weapons/bows/longbow.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_longsword_crystal.nif",
+  "morroblivion": "morroblivion/weapons/glass/longsword.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_mace.nif",
+  "morroblivion": "morroblivion/weapons/steel/mace.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_saber.nif",
+  "morroblivion": "morroblivion/weapons/steel/saber.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_saber_iron.nif",
+  "morroblivion": "morroblivion/weapons/iron/saber.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_shortsword00.nif",
+  "morroblivion": "morroblivion/weapons/steel/shortsword.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_shortsword_chitin.nif",
+  "morroblivion": "morroblivion/weapons/chitin/shortsword.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_shortsword_ebony.nif",
+  "morroblivion": "morroblivion/weapons/ebony/shortsword.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_shortsword_imperial.nif",
+  "morroblivion": "morroblivion/weapons/imperial/shortsword.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_spear.nif",
+  "morroblivion": "morroblivion/weapons/steel/spear.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_steel_battleaxe.nif",
+  "morroblivion": "morroblivion/weapons/steel/battleaxe.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_tanto.nif",
+  "morroblivion": "morroblivion/weapons/steel/tanto.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_tanto_daedric.nif",
+  "morroblivion": "morroblivion/weapons/daedric/tanto.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_wakazashi_daedric.nif",
+  "morroblivion": "morroblivion/weapons/daedric/wakidzashi.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_waraxe_ebony.nif",
+  "morroblivion": "morroblivion/weapons/ebony/waraxe.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_waraxe_steel.nif",
+  "morroblivion": "morroblivion/weapons/steel/waraxe.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_warhammer.nif",
+  "morroblivion": "morroblivion/weapons/steel/warhammer.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_de_railing_01.nif",
+  "morroblivion": "morro/x/exudeurailingu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_de_railing_02.nif",
+  "morroblivion": "morro/x/exudeurailingu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_de_railing_03.nif",
+  "morroblivion": "morro/x/exudeurailingu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_de_railing_04.nif",
+  "morroblivion": "morro/x/exudeurailingu04.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_de_railing_05.nif",
+  "morroblivion": "morro/x/exudeurailingu05.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_de_railing_06.nif",
+  "morroblivion": "morro/x/exudeurailingu06.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_drystonewall_c_01.nif",
+  "morroblivion": "morro/x/exudrystonewallucu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_drystonewall_d_01.nif",
+  "morroblivion": "morro/x/exudrystonewalludu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_drystonewall_end_01.nif",
+  "morroblivion": "morro/x/exudrystonewalluendu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_drystonewall_s_01.nif",
+  "morroblivion": "morro/x/exudrystonewallusu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_dwrv_pipe00.nif",
+  "morroblivion": "morro/x/exudwrvupipe00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_dwrv_pipe10.nif",
+  "morroblivion": "morro/x/exudwrvupipe10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_dwrv_pipefitting00.nif",
+  "morroblivion": "morro/x/exudwrvupipefitting00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_dwrv_ruin10.nif",
+  "morroblivion": "morro/x/exudwrvuruin10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_dwrv_ruin20.nif",
+  "morroblivion": "morro/x/exudwrvuruin20.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_dwrv_ruin50.nif",
+  "morroblivion": "morro/x/exudwrvuruin50.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_dwrv_ruin60.nif",
+  "morroblivion": "morro/x/exudwrvuruin60.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_dwrv_ruin_tower00.nif",
+  "morroblivion": "morro/x/exudwrvuruinutower00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_dwrv_steamstack00.nif",
+  "morroblivion": "morro/x/exudwrvusteamstack00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_nord_doorrocks_01.nif",
+  "morroblivion": "morro/x/exunordudoorrocksu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_barracks_01.nif",
+  "morroblivion": "morro/x/exuredoranubarracksu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_building_01.nif",
+  "morroblivion": "morro/x/exuredoranubuildingu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_building_02.nif",
+  "morroblivion": "morro/x/exuredoranubuildingu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_building_03.nif",
+  "morroblivion": "morro/x/exuredoranubuildingu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_hut_01.nif",
+  "morroblivion": "morro/x/exuredoranuhutu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_hut_02.nif",
+  "morroblivion": "morro/x/exuredoranuhutu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_striderport_01.nif",
+  "morroblivion": "morro/x/exuredoranustriderportu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_tavern_01.nif",
+  "morroblivion": "morro/x/exuredoranutavernu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_tower_01.nif",
+  "morroblivion": "morro/x/exuredoranutoweru01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_window_01.nif",
+  "morroblivion": "morro/x/exuredoranuwindowu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_redoran_window_02.nif",
+  "morroblivion": "morro/x/exuredoranuwindowu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_vivec_waterfall_03.nif",
+  "morroblivion": "morro/x/exuvivecuwaterfallu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\furn_com_fence_01.nif",
+  "morroblivion": "morro/wa/wausignsupost01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\furn_com_fence_03.nif",
+  "morroblivion": "morro/wa/wausignsupost02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\terrain_lavapot.nif",
+  "morroblivion": "morro/x/terrainulavapot.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\terrain_lavapot_02.nif",
+  "morroblivion": "morro/x/terrainulavapotu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\terrain_lavapot_03.nif",
+  "morroblivion": "morro/x/terrainulavapotu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\terrain_ma_20.nif",
+  "morroblivion": "morro/x/terrainumau20.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\terrain_ma_30.nif",
+  "morroblivion": "morro/x/terrainumau30.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\terrain_volcano.nif",
+  "morroblivion": "morro/x/terrainuvolcano.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "adamantium_helm",
+  "morroblivion": "VvardenfellArmormod\\Adamantium\\helmet.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "bloodworm_helm_unique",
+  "morroblivion": "Armor\\HelmetBloodworm\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM Bear Helmet",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM Wolf Helmet",
+  "morroblivion": "Vvardenfellarmormod\\bear and wolf\\wolfhelmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_bear_helmet_snow",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\snowhelmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Ice_Helmet",
+  "morroblivion": "VvardenfellArmormod\\ice\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_NordicMail_Helmet",
+  "morroblivion": "VvardenfellArmormod\\Skaal\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "daedric_helm_clavicusvile",
+  "morroblivion": "Armor\\ClavicusVile\\Helmet.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "DarkBrotherhood Helm",
+  "morroblivion": "VvardenfellArmormod\\Darkbrotherhood\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "fur_colovian_helm_red",
+  "morroblivion": "Armor\\Colovian\\red.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "fur_colovian_helm_white",
+  "morroblivion": "Armor\\Colovian\\helmet white.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "helm_bearclaw_unique",
+  "morroblivion": "Armor\\helmetoreynbeardaw\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Helsethguard_Helmet",
+  "morroblivion": "armor\\Helseth\\HelsethHelmet.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Indoril_Almalexia_helmet",
+  "morroblivion": "Vvardenfellarmormod\\High Indoril\\helmet.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "iron_helmet",
+  "morroblivion": "Armor\\Iron\\M\\Helmet.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "orcish_helm",
+  "morroblivion": "Armor\\Orcish\\Helmet.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "steel_helm",
+  "morroblivion": "Armor\\Steel\\M\\Helmet.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "steel_helm_ancient",
+  "morroblivion": "VvardenfellArmormod\\MW Steel\\helmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM bear right gauntlet",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\beargauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM wolf right gauntlet",
+  "morroblivion": "Armor\\morro\\a\\AUWolf2USkin7.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_bear_right_gauntlet_snow",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\snowbeargauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Ice_gauntletR",
+  "morroblivion": "VvardenfellArmormod\\ice\\m\\gauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_wolf_right_gauntlet_snow",
+  "morroblivion": "Armor\\morro\\a\\AUWolfUSkin7.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "DarkBrotherhood gauntlet_R",
+  "morroblivion": "Armor\\morro\\a\\AUDarkBrotherhoodUskin7.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Helsethguard_gauntlet_right",
+  "morroblivion": "armor\\Helseth\\HelsethGauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "indoril right gauntlet",
+  "morroblivion": "armor\\Indoril\\gauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Indoril_Almalexia_gauntlet_R",
+  "morroblivion": "Vvardenfellarmormod\\High Indoril\\gauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "iron_gauntlet_right",
+  "morroblivion": "Armor\\Iron\\M\\Gauntlets.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "steel_gauntlet_right",
+  "morroblivion": "Armor\\Steel\\M\\Gauntlets.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "steel_gauntlet_right_ancient",
+  "morroblivion": "VvardenfellArmormod\\MW Steel\\gauntlets.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "adamantium_greaves",
+  "morroblivion": "VvardenfellArmormod\\Adamantium\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM bear greaves",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_bear_greaves_snow",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\snowgreaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Ice_greaves",
+  "morroblivion": "VvardenfellArmormod\\ice\\m\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_NordicMail_greaves",
+  "morroblivion": "VvardenfellArmormod\\Skaal\\greavesskaal.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "DarkBrotherhood greaves",
+  "morroblivion": "Armor\\morro\\a\\AUDarkBrotherhoodUGreavUG4.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Helsethguard_greaves",
+  "morroblivion": "armor\\Helseth\\HelsethGreavesM.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Indoril_Almalexia_Greaves",
+  "morroblivion": "armor\\Indoril\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "iron_greaves",
+  "morroblivion": "Armor\\Iron\\M\\Greaves.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "orcish_greaves",
+  "morroblivion": "Armor\\Orcish\\M\\Greaves.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "steel_greaves",
+  "morroblivion": "Armor\\Steel\\M\\Greaves.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "steel_greaves_ancient",
+  "morroblivion": "VvardenfellArmormod\\MW Steel\\greaves.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "adamantium boots",
+  "morroblivion": "VvardenfellArmormod\\Adamantium\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM bear boots",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\bearboots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_bear_boots_snow",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\snowbearboots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Ice_Boots",
+  "morroblivion": "VvardenfellArmormod\\ice\\m\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_NordicMail_Boots",
+  "morroblivion": "VvardenfellArmormod\\Skaal\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "DarkBrotherhood Boots",
+  "morroblivion": "Armor\\morro\\a\\AUDarkBrotherhoodUBootUF5.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "heavy_leather_boots",
+  "morroblivion": "Armor\\Thief\\M\\Boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Helsethguard_boots",
+  "morroblivion": "armor\\Helseth\\HelsethBoots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Indoril_Almalexia_boots",
+  "morroblivion": "Vvardenfellarmormod\\High Indoril\\GreavesnBoots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "iron boots",
+  "morroblivion": "Armor\\Iron\\M\\Boots.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "orcish_boots",
+  "morroblivion": "Armor\\Orcish\\M\\Boots.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "steel_boots",
+  "morroblivion": "Armor\\Steel\\M\\Boots.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "steel_boots_ancient",
+  "morroblivion": "VvardenfellArmormod\\MW Steel\\boots.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM bear shield",
+  "morroblivion": "Vvardenfellarmormod\\bear and wolf\\Bearshield.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM wolf shield",
+  "morroblivion": "Vvardenfellarmormod\\bear and wolf\\WolfShield.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Ice_Shield",
+  "morroblivion": "Vvardenfellarmormod\\ice\\shield.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "daedric_towershield",
+  "morroblivion": "Armor\\morro\\a\\TowerShieldUDaedric.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dragonscale_towershield",
+  "morroblivion": "VvardenfellArmormod\\Dragonscale\\shield.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "dwemer_shield_battle_unique",
+  "morroblivion": "Armor\\morro\\a\\AUdwemerUshieldUbattle.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "glass_towershield",
+  "morroblivion": "Armor\\morro\\a\\towershieldUglass.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Indoril_Almalexia_shield",
+  "morroblivion": "vvardenfellarmormod\\high indoril\\shield.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "iron_towershield",
+  "morroblivion": "Vvardenfellarmormod\\MW iron\\TowerShield.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Nordic01_pants",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Nordic01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Nordic02_pants",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Nordic02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Wool01_pants",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Wool01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Wool02_pants",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Wool02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Caius_pants",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common03c\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_01_a",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common01a\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_01_z",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common01z\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_05",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common05\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_06",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_pants_07",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Common02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_pants_01_a",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Expensive01a\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_pants_02",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Expensive02\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Expensive_pants_Mournhold",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Mournhold\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_pants_01",
+  "morroblivion": "Morroblivion\\Clothes\\Pants\\Extravagant01\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_skirt_06",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Common06\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_skirt_07",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Common07\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_skirt_Mournhold",
+  "morroblivion": "Morroblivion\\Clothes\\Skirts\\Mournhold\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Nordic01_shirt",
+  "morroblivion": "Clothes\\morro\\c\\CUcommonUNordic012.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Wool01_shirt",
+  "morroblivion": "Clothes\\morro\\c\\CUcommonUWool01USkin2.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Wool02_shirt",
+  "morroblivion": "Clothes\\morro\\c\\CUcommonUWool02USkin2.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_01_z",
+  "morroblivion": "Clothes\\MiddleClass\\MCShirtSneaky\\M\\Shirt.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_02",
+  "morroblivion": "Clothes\\LowerClass\\04\\M\\Shirt.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_02_h",
+  "morroblivion": "Clothes\\morro\\c\\CUMUShirtUCommonU2UhUC2.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_02_r",
+  "morroblivion": "Clothes\\morro\\c\\CUMUShirtUCommonU2UrUC2.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_02_t",
+  "morroblivion": "Clothes\\morro\\c\\CUMUShirtUCommonU2UtUC2.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_03",
+  "morroblivion": "Clothes\\MiddleClass\\MCShirtShopkeeper\\M\\Shirt.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_03_b",
+  "morroblivion": "Clothes\\LowerClass\\10\\M\\shirt.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_05",
+  "morroblivion": "Clothes\\morro\\c\\CUMUShirtUCommonU5UC2.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shirt_gondolier",
+  "morroblivion": "Clothes\\MiddleClass\\MCShirtSuspenders\\M\\Shirt.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Expensive_shirt_Mournhold",
+  "morroblivion": "Clothes\\morro\\c\\CUMUMournholdUSkin2.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_05_a",
+  "morroblivion": "Clothes\\morro\\c\\CUMURobeUcommonU05a4.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_05_c",
+  "morroblivion": "Clothes\\Monk\\M\\Shirt.NIF",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_EOT",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\White\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_robe_unique",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Common03black\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "robe_lich_unique",
+  "morroblivion": "Morroblivion\\Clothes\\Robes\\Lich\\male.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "robe_lich_unique_x",
+  "morroblivion": "Clothes\\morro\\c\\CUMURobeULiche4.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Nordic01_shoes",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Nordic01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Nordic02_shoes",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Nordic02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Wool01_shoes",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Wool01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Wool02_shoes",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Wool02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shoes_03",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Common03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shoes_06",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Common06.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "common_shoes_07",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Lowerclass\\Common07.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_shoes_01",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Upperclass\\Expensive01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "expensive_shoes_02",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Upperclass\\Expensive02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Expensive_shoes_Mournhold",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Upperclass\\Mournhold.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "extravagant_shoes_01",
+  "morroblivion": "Morroblivion\\Clothes\\Shoes\\Upperclass\\Extravagant01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "adamantium_cuirass",
+  "morroblivion": "VvardenfellArmormod\\Adamantium\\upperbody.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM bear cuirass",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\bearcuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM wolf cuirass",
+  "morroblivion": "Armor\\morro\\a\\AUWolf2USkin1.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_bear_cuirass_snow",
+  "morroblivion": "VvardenfellArmormod\\bear and wolf\\snowbearcuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_Ice_cuirass",
+  "morroblivion": "VvardenfellArmormod\\ice\\m\\cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "BM_wolf_cuirass_snow",
+  "morroblivion": "Armor\\morro\\a\\AUWolfUSkin1.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "cuirass_savior_unique",
+  "morroblivion": "Armor\\saviorshide\\m\\cuirass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "DarkBrotherhood Cuirass",
+  "morroblivion": "Armor\\morro\\a\\AUDarkBrotherhoodUskin1.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "fur_cuirass",
+  "morroblivion": "Armor\\Fur\\M\\Cuirass.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "glass_cuirass",
+  "morroblivion": "Armor\\Glass\\M\\Cuirass.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Helsethguard_cuirass",
+  "morroblivion": "armor\\Helseth\\HelsethCuirassM.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "Indoril_Almalexia_Cuirass",
+  "morroblivion": "Vvardenfellarmormod\\High Indoril\\curiass.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "iron_cuirass",
+  "morroblivion": "Armor\\Iron\\M\\Cuirass.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "orcish_cuirass",
+  "morroblivion": "Armor\\Orcish\\M\\Cuirass.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "worn",
+  "vanilla": "steel_cuirass",
+  "morroblivion": "Armor\\Steel\\M\\Cuirass.NIF",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_ald_velothi.nif",
+  "morroblivion": "morro/f/actubannerualduvelothi.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_hla_oad.nif",
+  "morroblivion": "morro/f/actubanneruhlauoad.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_khull.nif",
+  "morroblivion": "morro/f/actubannerukhull.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_sadrith_mora.nif",
+  "morroblivion": "morro/f/actubannerusadrithumora.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_tel_aruhn.nif",
+  "morroblivion": "morro/f/actubanneruteluaruhn.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_tel_branora.nif",
+  "morroblivion": "morro/f/actubannerutelubranora.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_tel_fyr.nif",
+  "morroblivion": "morro/f/actubannerutelufyr.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_tel_mora.nif",
+  "morroblivion": "morro/f/actubannerutelumora.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_tel_vos.nif",
+  "morroblivion": "morro/f/actubanneruteluvos.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\act_banner_vos.nif",
+  "morroblivion": "morro/f/actubanneruvos.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_fern_01.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcfern01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_mushroom_02.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcmushroom02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_mushroom_03.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcmushroom03anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_mushroom_06.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcmushroom06anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_mushroom_07.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcmushroom07anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_podplant_01.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcpodplant01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_podplant_02.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcpodplant02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_podplant_03.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcpodplant03anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_shelffungus_01.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcshelffungus01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_shelffungus_02.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcshelffungus02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_shelffungus_03.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcshelffungus03anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_bc_shelffungus_04.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcshelffungus04anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_corkbulb_01.nif",
+  "morroblivion": "morroblivion/flora/bushes/corkbulb01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_heather_01.nif",
+  "morroblivion": "morroblivion/flora/flowers/heather01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_muckspunge_01.nif",
+  "morroblivion": "morroblivion/flora/muckspunge/muckspunge01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_muckspunge_02.nif",
+  "morroblivion": "morroblivion/flora/muckspunge/muckspunge02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_muckspunge_03.nif",
+  "morroblivion": "morroblivion/flora/muckspunge/muckspunge03anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_muckspunge_04.nif",
+  "morroblivion": "morroblivion/flora/muckspunge/muckspunge04anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_muckspunge_05.nif",
+  "morroblivion": "morroblivion/flora/muckspunge/muckspunge05anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_muckspunge_06.nif",
+  "morroblivion": "morroblivion/flora/muckspunge/muckspunge06anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_rm_scathecraw_01.nif",
+  "morroblivion": "morroblivion/flora/bushes/scathecraw01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\flora_rm_scathecraw_02.nif",
+  "morroblivion": "morroblivion/flora/bushes/scathecraw02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_dagoth_01.nif",
+  "morroblivion": "morro/f/furnubannerudagothu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_hlaalu_01.nif",
+  "morroblivion": "morro/f/furnubanneruhlaaluu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_tavern_01.nif",
+  "morroblivion": "morro/f/furnubannerutavernu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_tavern_in.nif",
+  "morroblivion": "morro/f/furnubannerutavernuin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_temple_01.nif",
+  "morroblivion": "morro/f/furnubannerutempleu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_temple_01_in.nif",
+  "morroblivion": "morro/f/furnubannerutempleu01uin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_temple_02.nif",
+  "morroblivion": "morro/f/furnubannerutempleu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_temple_02_in.nif",
+  "morroblivion": "morro/f/furnubannerutempleu02uin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_temple_03.nif",
+  "morroblivion": "morro/f/furnubannerutempleu03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_banner_temple_03_in.nif",
+  "morroblivion": "morro/f/furnubannerutempleu03uin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_alchemy_01.nif",
+  "morroblivion": "morro/f/furnubannerdualchemyu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_alchemy_in.nif",
+  "morroblivion": "morro/f/furnubannerdualchemyuin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_clothing_01.nif",
+  "morroblivion": "morro/f/furnubannerduclothingu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_clothing_in.nif",
+  "morroblivion": "morro/f/furnubannerduclothinguin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_danger_01.nif",
+  "morroblivion": "morro/f/furnubannerdudangeru01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_goods_01.nif",
+  "morroblivion": "morro/f/furnubannerdugoodsu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_goods_in.nif",
+  "morroblivion": "morro/f/furnubannerdugoodsuin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_wa_shop_01.nif",
+  "morroblivion": "morro/f/furnubannerduwaushopu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_wa_shop_in.nif",
+  "morroblivion": "morro/f/furnubannerduwaushopuin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_bannerd_welcome_01.nif",
+  "morroblivion": "morro/f/furnubannerduwelcomeu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_de_banner_book_01.nif",
+  "morroblivion": "morro/f/furnudeubannerubooku01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_de_banner_book_in.nif",
+  "morroblivion": "morro/f/furnudeubannerubookuin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_de_banner_pawn_01.nif",
+  "morroblivion": "morro/f/furnudeubannerupawnu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_de_banner_telvani_01.nif",
+  "morroblivion": "morro/f/furnudeubannerutelvaniu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_de_banner_telvani_in.nif",
+  "morroblivion": "morro/f/furnudeubannerutelvaniuin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_de_bellows_01.nif",
+  "morroblivion": "clutter/morro/f/nbbellows01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_imp_flag_01.nif",
+  "morroblivion": "morro/f/furnuimpuflagu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_redoran_flag_01.nif",
+  "morroblivion": "morro/f/furnuredoranuflagu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_redoran_flag_in.nif",
+  "morroblivion": "morro/f/furnuredoranuflaguin.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\ex_mh_streetlamp_01.nif",
+  "morroblivion": "morroblivion/lights/tribunal/mh_streetlamp_01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_6th_brazier.nif",
+  "morroblivion": "morroblivion/lights/6thhouse/brazier.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_candle_02.nif",
+  "morroblivion": "morroblivion/lights/common/candle_02.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_candle_04.nif",
+  "morroblivion": "morroblivion/lights/common/candle_04.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_candle_05.nif",
+  "morroblivion": "morroblivion/lights/common/candle_05.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_candle_06.nif",
+  "morroblivion": "morroblivion/lights/common/candle_06.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_candle_11.nif",
+  "morroblivion": "morroblivion/lights/common/candle_04.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_candle_12.nif",
+  "morroblivion": "morroblivion/lights/common/candle_12.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_candle_13.nif",
+  "morroblivion": "morroblivion/lights/common/candle_06.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_chandelier_02.nif",
+  "morroblivion": "morroblivion/lights/morroblivionchandilier01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_chandelier_04.nif",
+  "morroblivion": "morroblivion/lights/morroblivionchandilier01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_chandelier_05.nif",
+  "morroblivion": "morroblivion/lights/morroblivionchandilier01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_chandelier_05_l.nif",
+  "morroblivion": "morroblivion/lights/morroblivionchandilier01l.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_sconce_01.nif",
+  "morroblivion": "morroblivion/lights/common/sconce_01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_com_sconce_02.nif",
+  "morroblivion": "morroblivion/lights/common/sconce_02.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_dae_brazier00.nif",
+  "morroblivion": "morroblivion/lights/daedric/brazier00.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_dae_censer.nif",
+  "morroblivion": "morroblivion/lights/daedric/censer00.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_candle_11.nif",
+  "morroblivion": "morroblivion/lights/dunmer/candle_11.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_candle_12.nif",
+  "morroblivion": "morroblivion/lights/dunmer/candle_12.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_candle_13.nif",
+  "morroblivion": "morroblivion/lights/dunmer/candle_13.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_candle_14.nif",
+  "morroblivion": "morroblivion/lights/dunmer/candle_14.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_candle_17.nif",
+  "morroblivion": "morroblivion/lights/dunmer/candle_17.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_candle_24.nif",
+  "morroblivion": "morroblivion/lights/dunmer/candle_17.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_de_lamp_07.nif",
+  "morroblivion": "morroblivion/lights/dunmer/lamp_02.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_logpile.nif",
+  "morroblivion": "morroblivion/lights/dungeons/logpile_10a.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_torch_01.nif",
+  "morroblivion": "morroblivion/lights/dungeons/tikitorch.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "l\\light_velothi_brazier.nif",
+  "morroblivion": "morroblivion/lights/velothi/velothi_brazier.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\app_m_calcinator_01.nif",
+  "morroblivion": "clutter/magesguild/morro/m/appumucalcinatoru01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\apparatus_a_retort_01.nif",
+  "morroblivion": "clutter/magesguild/morro/m/apparatusuauretortu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\apparatus_a_spipe_01.nif",
+  "morroblivion": "morroblivion/clutter/apparatus/skoomapipe.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\apparatus_g_alembic_01.nif",
+  "morroblivion": "clutter/magesguild/morro/m/apparatusugualembicu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\apparatus_g_retort_01.nif",
+  "morroblivion": "clutter/magesguild/morro/m/apparatusuguretortu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\apparatus_j_alembic_01.nif",
+  "morroblivion": "clutter/magesguild/morro/m/apparatusujualembicu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\apparatus_m_retort_01.nif",
+  "morroblivion": "clutter/magesguild/morro/m/apparatusumuretortu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\gold_010.nif",
+  "morroblivion": "clutter/morro/m/nbgold010.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_argonianhead_01.nif",
+  "morroblivion": "clutter/morro/m/miscuargonianheadu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_beaker_01.nif",
+  "morroblivion": "clutter/morro/m/nbbeaker01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_bowl_bugdesign_01.nif",
+  "morroblivion": "clutter/morro/m/nbbugbowl01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_bowl_glass_peach_01.nif",
+  "morroblivion": "clutter/morro/m/nbglassbowlpeach01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_bowl_glass_yellow_01.nif",
+  "morroblivion": "clutter/morro/m/nbglassbowlyellow.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_bowl_orange_green_01.nif",
+  "morroblivion": "clutter/morro/m/nbbowlgreen01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_bottle_01.nif",
+  "morroblivion": "morroblivion/clutter/bottles/commonbottle01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_bottle_09.nif",
+  "morroblivion": "morroblivion/clutter/bottles/commonbottle09.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_bottle_13.nif",
+  "morroblivion": "morroblivion/clutter/bottles/commonbottle13.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_bucket_metal.nif",
+  "morroblivion": "morroblivion/clutter/common/metal/miscucomubucketumetal.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_iron_ladle.nif",
+  "morroblivion": "clutter/morro/m/nbironladle.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_metal_goblet_01.nif",
+  "morroblivion": "morroblivion/clutter/common/metal/miscucomumetalugobletu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_metal_goblet_02.nif",
+  "morroblivion": "morroblivion/clutter/common/metal/miscucomumetalugobletu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_silverware_fork.nif",
+  "morroblivion": "morroblivion/clutter/silverware/misccomsilverwarefork.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_silverware_knife.nif",
+  "morroblivion": "morroblivion/clutter/silverware/misccomsilverwareknife.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_com_tankard_01.nif",
+  "morroblivion": "clutter/morro/m/nbtankard01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_bowl_01.nif",
+  "morroblivion": "clutter/morro/m/nbdebowl01a.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_drum_02.nif",
+  "morroblivion": "clutter/morro/m/miscudeudrumu02.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_artifact10.nif",
+  "morroblivion": "clutter/morro/m/miscudwrvuartifact10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_artifact20.nif",
+  "morroblivion": "clutter/morro/m/miscudwrvuartifact20.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_artifact30.nif",
+  "morroblivion": "clutter/morro/m/miscudwrvuartifact30.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_bowl00.nif",
+  "morroblivion": "clutter/morro/m/nbdwemerbowl.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_goblet10.nif",
+  "morroblivion": "clutter/morro/m/nbdwemergoblet10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_dwrv_pitcher00.nif",
+  "morroblivion": "clutter/morro/m/nbdwemerpitcher01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_glass_green_01.nif",
+  "morroblivion": "clutter/morro/m/nbglassgreen.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_glass_yellow_01.nif",
+  "morroblivion": "clutter/morro/m/nbglassyellow.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_kwamaegg_gold_01.nif",
+  "morroblivion": "clutter/morro/m/nbkwamaegggold01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_lw_bowl.nif",
+  "morroblivion": "morroblivion/clutter/limeware/misculwubowl.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_lw_cup.nif",
+  "morroblivion": "morroblivion/clutter/limeware/misculwucup.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_mortarpestle_g_01.nif",
+  "morroblivion": "clutter/magesguild/morro/m/miscumortarpestleugu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_mortarpestle_m_01.nif",
+  "morroblivion": "clutter/magesguild/morro/m/miscumortarpestleumu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_blue_02.nif",
+  "morroblivion": "clutter/morro/m/nbpotblue02.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_glass_peach_01.nif",
+  "morroblivion": "clutter/morro/m/nbpotpeach01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_glass_peach_02.nif",
+  "morroblivion": "clutter/morro/m/nbpotpeach02.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_green_01.nif",
+  "morroblivion": "clutter/morro/m/nbpotgreen.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_pot_mottled_01.nif",
+  "morroblivion": "clutter/morro/m/nbpotmottled01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_silverware_bowl.nif",
+  "morroblivion": "morroblivion/clutter/silverware/miscsilverwarebowl.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_silverware_cup.nif",
+  "morroblivion": "morroblivion/clutter/silverware/miscsilverwarecup.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_silverware_pitcher.nif",
+  "morroblivion": "morroblivion/clutter/silverware/miscsilverwarepitcher.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_silverware_plate_03.nif",
+  "morroblivion": "morroblivion/clutter/silverware/miscsilverwareplate03.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_skull10.nif",
+  "morroblivion": "clutter/morro/m/miscuskull10.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\text_folio_01.nif",
+  "morroblivion": "morroblivion/clutter/books/paudcuboneu01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\text_folio_03.nif",
+  "morroblivion": "morroblivion/clutter/books/paudcuga.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\text_octavo_01.nif",
+  "morroblivion": "morroblivion/clutter/books/paudcuadifu02.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\text_octavo_02.nif",
+  "morroblivion": "morroblivion/clutter/books/paudcumotu03.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\text_octavo_open_03.nif",
+  "morroblivion": "morroblivion/clutter/books/paudcuclopen.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\text_octavo_open_04.nif",
+  "morroblivion": "morroblivion/clutter/books/paudcuen.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\text_quarto_03.nif",
+  "morroblivion": "morroblivion/clutter/books/paudcutll.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\text_quarto_04.nif",
+  "morroblivion": "morroblivion/clutter/books/paudcunfaf.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\text_quarto_open_03.nif",
+  "morroblivion": "morroblivion/clutter/books/paudcutbodadopen.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_bc_bungler's_bane.nif",
+  "morroblivion": "clutter/morro/n/ingredubcubunglerasubane.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_bc_coda_flower.nif",
+  "morroblivion": "clutter/morro/n/ingredubcucodauflower.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_bc_hypha_facia.nif",
+  "morroblivion": "clutter/morro/n/ingredubcuhyphaufacia.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_coprinus_01.nif",
+  "morroblivion": "clutter/morro/n/ingreducoprinusu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_corprus_weeping_01.nif",
+  "morroblivion": "clutter/morro/n/ingreducorprusuweepingu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_hound_meat_01.nif",
+  "morroblivion": "clutter/morro/n/ingreduhoundumeatu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_muck_01.nif",
+  "morroblivion": "clutter/morro/n/ingredumucku01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_rat_meat_01.nif",
+  "morroblivion": "clutter/morro/n/ingreduratumeatu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_raw_adam.nif",
+  "morroblivion": "clutter/morro/n/ingredurawuadam.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_resin_01.nif",
+  "morroblivion": "clutter/morro/n/ingreduresinu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_russula_01.nif",
+  "morroblivion": "clutter/morro/n/ingredurussulau01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_scrib_jelly_01.nif",
+  "morroblivion": "clutter/morro/n/ingreduscribujellyu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_scuttle_01.nif",
+  "morroblivion": "clutter/morro/n/ingreduscuttleu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_shalk_resin_01.nif",
+  "morroblivion": "clutter/morro/n/ingredushalkuresinu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_vampire_dust_01.nif",
+  "morroblivion": "clutter/morro/n/ingreduvampireudustu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_cavern_spore00.nif",
+  "morroblivion": "morroblivion/flora/other/cavernspore01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_trama_shrub_01.nif",
+  "morroblivion": "morroblivion/flora/trama/tramashrub01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_trama_shrub_02.nif",
+  "morroblivion": "morroblivion/flora/trama/tramashrub02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_trama_shrub_03.nif",
+  "morroblivion": "morroblivion/flora/trama/tramashrub03anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_trama_shrub_04.nif",
+  "morroblivion": "morroblivion/flora/trama/tramashrub04anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_trama_shrub_05.nif",
+  "morroblivion": "morroblivion/flora/trama/tramashrub05anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_trama_shrub_06.nif",
+  "morroblivion": "morroblivion/flora/trama/tramashrub06anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_tramaroot_01.nif",
+  "morroblivion": "morroblivion/flora/trama/tramaroot01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_tramaroot_02.nif",
+  "morroblivion": "morroblivion/flora/trama/tramaroot02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_tramaroot_03.nif",
+  "morroblivion": "morroblivion/flora/trama/tramaroot03anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_tramaroot_04.nif",
+  "morroblivion": "morroblivion/flora/trama/tramaroot04anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_tramaroot_05.nif",
+  "morroblivion": "morroblivion/flora/trama/tramaroot05anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\contain_tramaroot_06.nif",
+  "morroblivion": "morroblivion/flora/trama/tramaroot06anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_ash_yam_01.nif",
+  "morroblivion": "morroblivion/flora/plants/ashyam01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_ash_yam_02.nif",
+  "morroblivion": "morroblivion/flora/plants/ashyam02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_bc_podplant_04.nif",
+  "morroblivion": "morroblivion/flora/bittercoast/bcpodplant04anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_black_anther_01.nif",
+  "morroblivion": "morroblivion/flora/flowers/blackanther01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_black_anther_02.nif",
+  "morroblivion": "morroblivion/flora/flowers/blackanther02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_black_lichen_01.nif",
+  "morroblivion": "morroblivion/flora/lichen/blacklichen01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_black_lichen_02.nif",
+  "morroblivion": "morroblivion/flora/lichen/blacklichen02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_chokeweed_01.nif",
+  "morroblivion": "morroblivion/flora/bushes/chokeweed01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_fire_fern_01.nif",
+  "morroblivion": "morroblivion/flora/flowers/firefern01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_fire_fern_02.nif",
+  "morroblivion": "morroblivion/flora/flowers/firefern02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_fire_fern_03.nif",
+  "morroblivion": "morroblivion/flora/flowers/firefern03anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_gold_kanet_02.nif",
+  "morroblivion": "morroblivion/flora/flowers/goldkanet02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_green_lichen_01.nif",
+  "morroblivion": "morroblivion/flora/lichen/greenlichen01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_green_lichen_02.nif",
+  "morroblivion": "morroblivion/flora/lichen/greenlichen02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_kreshweed_01.nif",
+  "morroblivion": "morroblivion/flora/plants/kreshweed01anim.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_kreshweed_02.nif",
+  "morroblivion": "morroblivion/flora/plants/kreshweed02anim.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_kreshweed_03.nif",
+  "morroblivion": "morroblivion/flora/plants/kreshweed03anim.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_marshmerrow_01.nif",
+  "morroblivion": "morroblivion/flora/plants/marshmerrow01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_marshmerrow_02.nif",
+  "morroblivion": "morroblivion/flora/plants/marshmerrow02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_marshmerrow_03.nif",
+  "morroblivion": "morroblivion/flora/plants/marshmerrow03anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_red_lichen_01.nif",
+  "morroblivion": "morroblivion/flora/lichen/redlichen01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_red_lichen_02.nif",
+  "morroblivion": "morroblivion/flora/lichen/redlichen02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_roobrush_01.nif",
+  "morroblivion": "morroblivion/flora/bushes/roobrush01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_saltrice_01.nif",
+  "morroblivion": "morroblivion/flora/plants/saltrice01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_saltrice_02.nif",
+  "morroblivion": "morroblivion/flora/plants/saltrice02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_stoneflower_01.nif",
+  "morroblivion": "morroblivion/flora/flowers/stoneflower01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_stoneflower_02.nif",
+  "morroblivion": "morroblivion/flora/flowers/stoneflower02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_willow_flower_01.nif",
+  "morroblivion": "morroblivion/flora/flowers/willowflower01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_willow_flower_02.nif",
+  "morroblivion": "morroblivion/flora/flowers/willowflower02anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "r\\bonelord.nif",
+  "morroblivion": "morroblivion/creatures/undead/bonelord/skeleton.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_blade_crescent.nif",
+  "morroblivion": "morroblivion/weapons/artifacts/crescentblade.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_claymore_umbra.nif",
+  "morroblivion": "morroblivion/weapons/artifacts/umbra.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_keening.nif",
+  "morroblivion": "morroblivion/weapons/artifacts/kagrenackeening.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_daikatana.nif",
+  "morroblivion": "morroblivion/weapons/steel/daikatana.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dwemer_halberd.nif",
+  "morroblivion": "morroblivion/weapons/dwemer/halberd.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dwemer_waraxe.nif",
+  "morroblivion": "morroblivion/weapons/dwemer/waraxe.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_huntsman_spear.nif",
+  "morroblivion": "morroblivion/weapons/huntsman/spear.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_mace_ebony.nif",
+  "morroblivion": "morroblivion/weapons/ebony/mace.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_mace_iron.nif",
+  "morroblivion": "morroblivion/weapons/iron/mace.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_orcish_battleaxe.nif",
+  "morroblivion": "morroblivion/weapons/orcish/battleaxe.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_shortsword_daedric.nif",
+  "morroblivion": "morroblivion/weapons/daedric/shortsword.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_steel_star .nif",
+  "morroblivion": "morroblivion/weapons/silver/star.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_waraxe_glass.nif",
+  "morroblivion": "morroblivion/weapons/glass/waraxe.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_wooden_staff.nif",
+  "morroblivion": "morroblivion/weapons/staffs/wooden.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_gg_pylon_01.nif",
+  "morroblivion": "morroblivion/architecture/ghostgate/pylon01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "x\\ex_gg_pylon_02.nif",
+  "morroblivion": "morroblivion/architecture/ghostgate/pylon02.nif",
+  "decision": "deny",
+  "note": ""
+ }
+]

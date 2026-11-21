@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pytest
 
-from tes4_export.morroblivion import (MorroblivionModels, _fix_placements,
+from tes4_export.morroblivion import (MorroblivionModels, fix_placements,
                                       archive_path)
 from tes4_export.morroblivion_axis import (
     AXIS_PITCH_DEG, AXIS_PITCH_UNSURE, ROTX_ADD_DEG, SUBSTITUTION_BLACKLIST,
@@ -39,7 +39,7 @@ def test_tables_resolve_in_any_spelling():
 def test_rock_rotx_is_added_to_and_yaw_kept():
     """Morroblivion flipped its rocks by adding to RotX alone; so do we."""
     lines = ['NAME=' + BASE, 'RotX=0.25', 'RotY=0.0', 'RotZ=1.2']
-    assert _fix_placements({'REFR': [('1', lines)]}, MODELS, {}) == 1
+    assert fix_placements({'REFR': [('1', lines)]}, MODELS, {}) == 1
     assert _rot(lines) == pytest.approx((0.25 + math.pi, 0.0, 1.2))
 
 
@@ -63,7 +63,7 @@ def test_yawed_fire_stands_upright():
     See: docs/audits/morroblivion_mesh_axis_rotation.md#pitch-must-compose
     """
     lines = ['NAME=' + BASE, 'RotX=0.0', 'RotY=-0.0', 'RotZ=1.2000000476837158']
-    assert _fix_placements({'REFR': [('1', lines)]}, {'2c0134': FIRE}, {}) == 1
+    assert fix_placements({'REFR': [('1', lines)]}, {'2c0134': FIRE}, {}) == 1
     up = rot_matrix(*_rot(lines)) @ np.array([0.0, 1.0, 0.0])
     assert up[2] == pytest.approx(1.0)
 
@@ -71,14 +71,14 @@ def test_yawed_fire_stands_upright():
 def test_ref_without_all_three_angles_is_not_pitched():
     """A composed pitch needs the whole rotation; a partial one is left alone."""
     lines = ['NAME=' + BASE, 'RotX=0.0']
-    assert _fix_placements({'REFR': [('1', lines)]}, {'2c0134': FIRE}, {}) == 0
+    assert fix_placements({'REFR': [('1', lines)]}, {'2c0134': FIRE}, {}) == 0
     assert lines == ['NAME=' + BASE, 'RotX=0.0']
 
 
 def test_unknown_base_is_a_no_op():
     """A ref whose base is in no master index keeps its placement."""
     lines = ['NAME=00FFFFFF', 'PosZ=5.0', 'RotX=0.0']
-    assert _fix_placements({'REFR': [('1', lines)]}, MODELS, {}) == 0
+    assert fix_placements({'REFR': [('1', lines)]}, MODELS, {}) == 0
     assert 'PosZ=5.0' in lines and 'RotX=0.0' in lines
 
 
@@ -86,7 +86,7 @@ def test_actor_placements_are_corrected_too():
     """ACHR and ACRE carry the same keys as REFR."""
     out = {'ACHR': [('1', ['NAME=' + BASE, 'RotX=0.0'])],
            'ACRE': [('2', ['NAME=' + BASE, 'RotX=0.0'])]}
-    assert _fix_placements(out, MODELS, {}) == 2
+    assert fix_placements(out, MODELS, {}) == 2
 
 
 def test_z_reseat_keys_on_the_base_not_the_mesh():
@@ -100,7 +100,7 @@ def test_z_reseat_applies_to_posz():
     """A re-seated base's refs move in Z, and nothing else changes."""
     lines = ['NAME=012C0155', 'PosX=1.0', 'PosZ=100.0', 'RotX=0.0']
     out = {'REFR': [('1', lines)]}
-    assert _fix_placements(out, {}, {'2c0155': '0barrelU01Udrinks'}) == 1
+    assert fix_placements(out, {}, {'2c0155': '0barrelU01Udrinks'}) == 1
     posz = float(next(l for l in lines if l.startswith('PosZ='))[5:])
     assert posz == pytest.approx(103.0)
     assert 'PosX=1.0' in lines and 'RotX=0.0' in lines

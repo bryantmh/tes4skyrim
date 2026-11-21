@@ -234,10 +234,16 @@ install's `output/`, so the new zips never appeared where they looked. A folder
 outside the install is still saved in full.
 
 **Per-run overrides** change a setting for one run without saving it
-(`convert_cli.apply_config_overrides`): `--morrowind-source vanilla|morroblivion`
+(`convert_cli.apply_config_overrides`): `--morrowind-source vanilla|morroblivion|hybrid`
 picks the Morrowind export mode, so an agent can build Arktwend in authored mode
 and Tamriel Rebuilt in Morroblivion mode back to back without touching the
 saved setting; `--no-engine-branches` forces the Python SpeedTree generator.
+
+**A hybrid furniture plugin** `<root> - Morroblivion Furniture.esp` exists per
+masterless Morrowind-format root. A `--morrowind-source hybrid` run appends the
+one for every root its plugins reach and runs only its Export and Import steps;
+it is also a `-f` target of its own
+([hybrid-furniture](../commentary/tes4_export_morrowind.md#hybrid-furniture)).
 
 **The Morroblivion compatibility patch** is a normal `-f` target once
 `--build-morrowind-patch "<Morrowind>/Data Files"` has registered its source:

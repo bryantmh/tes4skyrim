@@ -1144,8 +1144,16 @@ def keep_failed_log(name: str) -> None:
             shutil.copyfile(other, os.path.join(PROFILE, 'failed_' + os.path.basename(other)))
 
 
+def launch_hd() -> None:
+    """Launches at RECORD_SIZE on the High preset; `stop` puts the Low preset back."""
+    write_prefs(INSTANCE, 'High.ini', RECORD_SIZE)
+    launch(prefs=RECORD_SIZE, skyrim=RECORD_SKYRIM_INI)
+
+
 def stop() -> None:
-    """Terminates the test instance; never any process outside the instance folder."""
+    """Terminates the test instance, never a process outside its folder, and restores the Low preset."""
+    write_prefs(INSTANCE, 'Low.ini')
+    write_skyrim_ini(INSTANCE)
     pid = running_pid()
     if not pid:
         print('not running')
@@ -1219,7 +1227,9 @@ def parse_args():
     _launched_parsers(sub)
     c = sub.add_parser('close', help="post the engine's close message to a menu")
     c.add_argument('menu', help='registered menu name, e.g. MessageBoxMenu')
-    for name in ('launch', 'status', 'menus', 'stop'):
+    sub.add_parser('launch').add_argument('--hd', action='store_true',
+                                          help='High preset at the 1440p recording size, for proof screenshots')
+    for name in ('status', 'menus', 'stop'):
         sub.add_parser(name)
     return parser.parse_args()
 
@@ -1244,7 +1254,8 @@ def main() -> int:
 
 def run(args) -> int:
     """Runs the parsed subcommand; its exit code."""
-    actions = {'build': lambda: build(args.steam_exe, args.plugin, args.mod, args.skse_plugin), 'launch': launch,
+    actions = {'build': lambda: build(args.steam_exe, args.plugin, args.mod, args.skse_plugin),
+               'launch': lambda: launch_hd() if args.hd else launch(),
                'shot': lambda: shot(args.out or os.path.join(PROFILE, 'shot.png')), 'menus': menus, 'stop': stop,
                'close': lambda: close_named(args.menu),
                'speed': lambda: speed(args.cell, args.settle, args.console, args.seconds)}

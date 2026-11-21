@@ -24,7 +24,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from asset_convert.nif.shaders import base_texture_path
-from asset_convert.nif.sse_nif import read_nif
+from asset_convert.nif.sse_nif import NifFormat, read_nif
 
 BACKGROUND = (24, 26, 30)
 UNTEXTURED = (np.array([196.0, 196.0, 204.0]), np.array([120.0, 72.0, 40.0]),
@@ -47,6 +47,13 @@ def node_transform(node) -> np.ndarray:
     t = node.translation
     m[:3, 3] = (t.x, t.y, t.z)
     return m
+
+
+def is_drawn(node) -> bool:
+    """False for a hidden node, a RootCollisionNode, or a shadow shape: none shows in game."""
+    if getattr(node, 'flags', 0) & 1 or isinstance(node, NifFormat.RootCollisionNode):
+        return False
+    return b'shadow' not in bytes(getattr(node, 'name', b'') or b'').lower()
 
 
 def shape_texture(shape) -> str:
@@ -75,20 +82,37 @@ def _shape_arrays(data, m: np.ndarray):
 
 
 def _skin_bind(shape, world: dict):
-    """World transform of a skinned shape's vertices: first bone's world @ its skin transform."""
+    """World transform of a skinned shape's vertices: bone world @ skin transform, or None.
+
+    None also when the bones disagree, i.e. the file's skeleton is not in bind pose.
+    """
     skin = getattr(shape, 'skin_instance', None)
     if skin is None or skin.data is None or not skin.num_bones:
         return None
-    bone_world = world.get(id(skin.bones[0]))
-    if bone_world is None:
+    binds = [world[id(b)] @ node_transform(d.skin_transform)
+             for b, d in zip(skin.bones, skin.data.bone_list) if id(b) in world]
+    if not binds or max(np.abs(b - binds[0]).max() for b in binds) > 0.5:
         return None
-    return bone_world @ node_transform(skin.data.bone_list[0].skin_transform)
+    return binds[0]
+
+
+def alpha_cut(shape) -> int:
+    """Texel alpha below which the shape is cut: 128 if it alpha-tests (bit 9), 1 if it only blends, else 0."""
+    props = list(getattr(shape, 'properties', None) or [])
+    props.append(getattr(shape, 'alpha_property', None))
+    flags = [p.flags for p in props if isinstance(p, NifFormat.NiAlphaProperty)]
+    if any(f & 0x200 for f in flags):
+        return 128
+    return 1 if any(f & 1 for f in flags) else 0
 
 
 def collect_shapes(nif_data, rgb=UNTEXTURED[0]) -> list:
-    """[(verts, tris, uvs or None, texture name, untextured rgb)] per shape, in world space.
+    """[(verts, tris, uvs or None, texture name, untextured rgb, cut)] per drawn shape, in world space.
+
+    `cut` is `alpha_cut`: only when nonzero does the texture's alpha cut pixels away.
 
     A skinned shape is placed through its first bone, not its own node chain.
+    Subtrees `is_drawn` rejects are skipped.
     """
     world, geoms = {}, []
 
@@ -100,7 +124,7 @@ def collect_shapes(nif_data, rgb=UNTEXTURED[0]) -> list:
         if d is not None and getattr(d, 'num_vertices', 0) and hasattr(d, 'get_triangles'):
             geoms.append((node, d, m))
         for child in getattr(node, 'children', None) or []:
-            if child is not None:
+            if child is not None and is_drawn(child):
                 walk(child, m)
 
     for root in nif_data.roots:
@@ -110,32 +134,44 @@ def collect_shapes(nif_data, rgb=UNTEXTURED[0]) -> list:
         bind = _skin_bind(node, world)
         verts, tris, uvs = _shape_arrays(d, m if bind is None else bind)
         if len(tris):
-            shapes.append((verts, tris, uvs, shape_texture(node), rgb))
+            shapes.append((verts, tris, uvs, shape_texture(node), rgb, alpha_cut(node)))
     return shapes
 
 
+def _texture_keys(rel: str) -> tuple:
+    """(path key, stem key) of a texture path: lowercase, no extension, path relative to `textures`."""
+    rel = os.path.splitext(rel.replace('\\', '/').lower())[0].lstrip('/')
+    rel = rel[len('textures/'):] if rel.startswith('textures/') else rel
+    return rel, rel.rsplit('/', 1)[-1]
+
+
 def index_textures(roots) -> None:
-    """Fill TEXTURES with stem -> path for every image under `roots`."""
+    """Fill TEXTURES with relative path and stem -> file for every image under `roots`."""
     for root in roots:
         for dirpath, _dirs, files in os.walk(root):
             for name in files:
-                stem, ext = os.path.splitext(name)
-                if ext.lower() in ('.dds', '.tga', '.bmp', '.png'):
-                    TEXTURES.setdefault(stem.lower(), os.path.join(dirpath, name))
+                if os.path.splitext(name)[1].lower() in ('.dds', '.tga', '.bmp', '.png'):
+                    full = os.path.join(dirpath, name)
+                    path_key, stem = _texture_keys(os.path.relpath(full, root))
+                    TEXTURES.setdefault(path_key, full)
+                    TEXTURES.setdefault(stem, full)
 
 
 @lru_cache(maxsize=256)
-def load_texture(name: str):
-    """RGBA float array of the texture `name` resolves to, or None."""
-    stem = os.path.splitext(name.replace('\\', '/').rsplit('/', 1)[-1])[0].lower()
-    path = TEXTURES.get(stem)
+def load_texture(name: str, opaque: bool = False):
+    """RGBA float array of the texture `name` names (path first, else stem), alpha 255 if `opaque`; or None."""
+    path_key, stem = _texture_keys(name)
+    path = TEXTURES.get(path_key) or TEXTURES.get(stem)
     if not path:
         return None
     try:
         with Image.open(path) as img:
-            return np.asarray(img.convert('RGBA'), np.float32)
+            tex = np.array(img.convert('RGBA'), np.float32)
     except (OSError, ValueError):
         return None
+    if opaque:
+        tex[..., 3] = 255.0
+    return tex
 
 
 def view_rotation(yaw_deg: float, pitch_deg: float) -> np.ndarray:
@@ -180,8 +216,8 @@ def _texels(tex: np.ndarray, uv: np.ndarray, w) -> np.ndarray:
     return tex[ty, tx]
 
 
-def raster_triangle(color, zbuf, p, z, shade, tex=None, uv=None, rgb=UNTEXTURED[0]) -> None:
-    """Draw one screen triangle into `color`/`zbuf` in `rgb`, or alpha-tested `tex`."""
+def raster_triangle(color, zbuf, p, z, shade, tex=None, uv=None, rgb=UNTEXTURED[0], cut=128) -> None:
+    """Draw one screen triangle into `color`/`zbuf` in `rgb`, or `tex` without texels under alpha `cut`."""
     size = zbuf.shape[0]
     x0, y0 = np.maximum(np.floor(p.min(axis=0)).astype(int), 0)
     x1, y1 = np.minimum(np.ceil(p.max(axis=0)).astype(int), size - 1)
@@ -197,7 +233,7 @@ def raster_triangle(color, zbuf, p, z, shade, tex=None, uv=None, rgb=UNTEXTURED[
         return
     if tex is not None:
         texel = _texels(tex, uv, tuple(c[hit] for c in w))
-        keep = texel[:, 3] >= 128
+        keep = texel[:, 3] >= cut
         hit[hit] = keep
         rgb = texel[keep, :3]
     sub_z[hit] = depth[hit]
@@ -206,26 +242,29 @@ def raster_triangle(color, zbuf, p, z, shade, tex=None, uv=None, rgb=UNTEXTURED[
 
 def render(shapes, size: int = 300, yaw_deg: float = 180.0,
            pitch_deg: float = 10.0) -> Image.Image:
-    """Z-buffered render of `collect_shapes` output from one orbit angle."""
+    """Z-buffered render of `collect_shapes` output from one orbit angle; a flat model is seen from above."""
     color = np.empty((size, size, 3), np.float32)
     color[:] = BACKGROUND
     if not shapes:
         return Image.fromarray(color.astype(np.uint8))
+    span = np.ptp(np.vstack([s[0] for s in shapes]), axis=0)
+    if span[2] < 0.2 * max(span[0], span[1]):
+        pitch_deg = 70.0
     zbuf = np.full((size, size), np.inf)
     rot = view_rotation(yaw_deg, pitch_deg)
     cams = [s[0] @ rot.T for s in shapes]
     every = np.vstack(cams)
     ctr = (every.min(axis=0) + every.max(axis=0)) / 2
     scale = size * 0.46 / (np.abs(every - ctr).max() or 1.0)
-    for (verts, tris, uvs, tex_name, rgb), cam in zip(shapes, cams):
+    for (verts, tris, uvs, tex_name, rgb, cut), cam in zip(shapes, cams):
         cam = cam - ctr
         screen = np.stack([cam[:, 0] * scale + size / 2,
                            -cam[:, 2] * scale + size / 2], axis=1)
-        tex = load_texture(tex_name) if uvs is not None and tex_name else None
+        tex = load_texture(tex_name, not cut) if uvs is not None and tex_name else None
         shades = face_shades(verts, tris)
         for tri, shade in zip(tris, shades):
             raster_triangle(color, zbuf, screen[tri], cam[tri, 1], shade,
-                            tex, None if tex is None else uvs[tri], rgb)
+                            tex, None if tex is None else uvs[tri], rgb, cut)
     return Image.fromarray(color.clip(0, 255).astype(np.uint8))
 
 

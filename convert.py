@@ -66,6 +66,9 @@ from output_layout import (BODY_SLOTS_PATCH, configured_output, finished_dir,
                            write_mod_zip)
 from papyrus_compile import phase_compile
 from tes4_export.tes3_reader import is_tes3
+from tes4_export.export_morrowind import MORROWIND_SOURCE_KEY, SOURCE_HYBRID
+from tes4_export.morroblivion_furniture import (FURNITURE_STEPS, furniture_targets,
+                                                is_furniture, run_furniture_export)
 from tes4_export.morrowind_patch import (
     PATCH_NAME, register_source as register_patch_source, run_patch_export,
     stage_pair_scripts)
@@ -439,8 +442,11 @@ def _plugins_to_convert(args, config: dict, tes4_data: str,
             raise SystemExit(
                 f'ERROR: "{name}" is a mod, not a plugin. Convert its '
                 f'plugin(s) instead: -f {" ".join(shipped)}')
-    return topological_order(
+    order = topological_order(
         files, lambda name: resolve_plugin_path(name, tes4_data, export_dir))
+    if config.get(MORROWIND_SOURCE_KEY) == SOURCE_HYBRID:
+        order += furniture_targets(order, tes4_data, export_dir)
+    return [n for n in order if not is_furniture(n)] + [n for n in order if is_furniture(n)]
 
 
 def phase_export(file_name: str, tes4_data: str, export_dir: str,
@@ -451,6 +457,8 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
 
     if file_name == PATCH_NAME:
         return run_patch_export(export_dir)
+    if is_furniture(file_name):
+        return run_furniture_export(export_dir, file_name)
     out_dir = str(record_dir(export_dir, file_name))
 
     # Find the source file -- the Oblivion Data directory, or an imported mod's
@@ -1188,6 +1196,8 @@ def _run_steps(steps, order, run) -> tuple:
             continue
         print("=" * 54 + f"\n  {title}\n" + "=" * 54)
         for fn in targets:
+            if is_furniture(fn) and step not in FURNITURE_STEPS:
+                continue
             ok = bool(runners[step](fn))
             success = success and ok
             if not (step == 'meshes' and run.args.mesh_subdirs):

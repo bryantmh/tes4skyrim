@@ -22,13 +22,15 @@ from core.gui import runner
 from core.chargen_source import CHARGEN_SOURCE_KEY, candidates, chosen_source
 from core.gui.config import REPO_ROOT
 from core.gui.menubar_behavior import enable_tips
-from tes4_export.export_morrowind import MORROWIND_SOURCE_KEY, SOURCE_MORROBLIVION, SOURCE_VANILLA, morroblivion_exports
+from tes4_export.export_morrowind import (MORROWIND_SOURCE_KEY, SOURCE_HYBRID, SOURCE_MORROBLIVION, SOURCE_VANILLA,
+                                          morroblivion_exports)
 from tes4_export.morrowind_patch import PATCH_NAME, PATCH_SOURCES, patch_exists, source_dir, source_paths
 
 #: Source set -> its menu label, in menu order.
 _LABELS = (
     (SOURCE_VANILLA, "Vanilla  (Morrowind + Tribunal + Bloodmoon)"),
     (SOURCE_MORROBLIVION, "Morroblivion + patch"),
+    (SOURCE_HYBRID, "Vanilla + Morroblivion meshes"),
 )
 
 #: Title of every dialog the patch build raises.
@@ -39,6 +41,13 @@ MORROBLIVION_TIP = (
     f"Convert Morrowind plugins against Morroblivion and {PATCH_NAME}. "
     "Builds the patch if it is missing (convert Morrowind_ob.esm first); "
     "asks whether to rebuild it if it exists")
+
+
+#: Menu tip on the hybrid entry.
+HYBRID_TIP = (
+    "Convert vanilla Morrowind and its mods as authored, swapping in only the "
+    "Morroblivion meshes the reviewed whitelist approves, its furniture, and its "
+    "proven higher-resolution textures. Convert Morrowind_ob.esm first")
 
 
 def source_default(cfg: dict) -> str:
@@ -81,6 +90,9 @@ def add_source_menu(app, settings_menu, menu_opts: dict, cfg: dict,
                          value=SOURCE_MORROBLIVION, variable=var,
                          command=_pick_morroblivion)
     menu.entry_tips[menu.index("end")] = MORROBLIVION_TIP
+    menu.add_radiobutton(label=dict(_LABELS)[SOURCE_HYBRID],
+                         value=SOURCE_HYBRID, variable=var, command=_save)
+    menu.entry_tips[menu.index("end")] = HYBRID_TIP
     settings_menu.add_cascade(label="Morrowind source", menu=menu)
     return var
 

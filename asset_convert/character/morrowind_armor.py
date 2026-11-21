@@ -40,6 +40,7 @@ from asset_convert.nif.nif_flags import NIF_FLAGS
 from asset_convert.nif.sse_nif import read_nif
 from asset_convert.sources import base_plugins
 from asset_convert.sources.morrowind_assets import resolve_mesh
+from tes4_export.morrowind_armor import WORN_DIR
 
 #: Body-part slot -> the skeleton node Morrowind hangs it on (OpenMW npcanimation.cpp sPartList).
 PART_ATTACH_NODES = {
@@ -644,13 +645,18 @@ def assemble(skel: RestSkeleton, parts, roots, out_name: str,
     return data
 
 
+def _assembled(model: str) -> bool:
+    """Whether a worn model is one this assembler writes: under WORN_DIR, not a swapped-in mesh."""
+    return model.replace(chr(92) * 2, chr(92)).lower().startswith(WORN_DIR + chr(92))
+
+
 def _worn_specs(rec_dir):
     """(worn model, [(slot, part mesh)], female) for every wearable the export lists."""
     for name in _WEARABLE_FILES:
         for rec in iter_records(Path(rec_dir) / name):
             count = int(rec.get('MorrowindPartCount', '0') or 0)
             male_out = rec.get('Male.BipedModel.MODL', '')
-            if not count or not male_out:
+            if not count or not _assembled(male_out):
                 continue
             parts = [(int(rec[f'MorrowindPart[{i}].Slot']),
                       rec.get(f'MorrowindPart[{i}].Male', ''),
@@ -658,7 +664,7 @@ def _worn_specs(rec_dir):
                      for i in range(count)]
             yield male_out, [(s, m or f) for s, m, f in parts], False
             female_out = rec.get('Female.BipedModel.MODL', '')
-            if female_out:
+            if _assembled(female_out):
                 yield female_out, [(s, f or m) for s, m, f in parts], True
 
 

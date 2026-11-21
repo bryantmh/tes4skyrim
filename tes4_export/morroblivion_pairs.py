@@ -68,7 +68,7 @@ def find_pairs(esms, index, export_dir: str, morroblivion, gaps) -> list:
     items = _pair_items(export_dir, morroblivion)
     pairs = []
     for key, left in sorted(lefts.items()):
-        twins = [rights[(key[0], rid)] for rid in _right_ids(key[1])
+        twins = [rights[(key[0], rid)] for rid in right_ids(key[1])
                  if (key[0], rid) in rights]
         if key not in gaps or len(twins) != 1:
             continue
@@ -253,7 +253,7 @@ def _placements(path):
             yield cell, ref, (owner, ref.ref_num & 0xFFFFFF)
 
 
-def _right_ids(left_id: str) -> set:
+def right_ids(left_id: str) -> set:
     """The ids a left piece's right twin may carry: one side word of `left_id` swapped."""
     lid = left_id.lower()
     out = {lid[:m.start()] + 'right' + lid[m.end():] for m in re.finditer('left', lid)}

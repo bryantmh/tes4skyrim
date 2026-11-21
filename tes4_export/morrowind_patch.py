@@ -92,8 +92,8 @@ _DERIVED_BASE = 0x00200000
 _DERIVED_SPAN = 0x00D00000
 
 
-def patch_formid(key, own_index: int = 0) -> str:
-    """The FormID of one gap fill, hashed from its (type, id) authored key.
+def patch_formid(key, own_index: int = 0, site: str = PATCH_SITE) -> str:
+    """The FormID of one gap fill, hashed from its (type, id) authored key within `site`.
 
     Keyed on authored data alone, so an id survives a rebuild and a plugin
     exported against an earlier patch still resolves. The type is part of the
@@ -102,7 +102,7 @@ def patch_formid(key, own_index: int = 0) -> str:
     See: docs/commentary/tes4_export_morrowind.md#per-type-id-namespaces
     """
     signature, record_id = key
-    payload = ('%s\x00%s\x00%s' % (PATCH_SITE, signature,
+    payload = ('%s\x00%s\x00%s' % (site, signature,
                                    record_id.lower())).encode('utf-8')
     offset = int.from_bytes(hashlib.md5(payload).digest()[:4], 'little')
     return '%08X' % ((own_index << 24)

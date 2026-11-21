@@ -11,6 +11,7 @@ nothing written to the player's install, INIs, saves or logs.
 python -m tools.live.test_instance build      # once, and after any rebuild (see below)
 python -m tools.live.test_instance launch
 python -m tools.live.test_instance smoke      # coc, no pausing menu, time runs, screenshot
+python -m tools.live.test_instance launch --hd  # High preset at 2560x1440 for proof shots; `stop` restores Low
 python -m tools.live.test_instance menus | shot | status | close <Menu> | stop
 ```
 
