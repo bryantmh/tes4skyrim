@@ -2,11 +2,11 @@
 
 Morroblivion renamed every texture '_' -> 'u' and repainted many at up to 16x
 the resolution, so a Tamriel Rebuilt wall beside a Morroblivion one renders at
-a fraction of its texel density. The compatibility patch's Export step proves
-which twins are interchangeable and writes them as `MAP_NAME` in its record
-dir (`tes4_export/morroblivion_texture_map.py`); every plugin whose master
-chain reaches that map swaps those textures wherever a mesh names them.
-Authored-mode Morrowind never has the patch as a master, so it never swaps.
+a fraction of its texel density. `prove_map`
+(`tes4_export/morroblivion_texture_map.py`) proves which twins are
+interchangeable and writes the one map to `map_dir`; every plugin whose master
+chain reaches the patch, and every hybrid-mode export, swaps those textures
+wherever a mesh names them.
 
 See: docs/commentary/asset_convert_texture.md#morroblivion-texture-substitution
 """
@@ -15,15 +15,28 @@ import os
 
 from asset_convert.nif.tex_paths import path_bytes, texture_rel_path
 from asset_convert.texture.texture_prune import read_manifest, write_manifest
-from core.plugin_masters import export_root, master_chain, master_export_dir
+from asset_convert.sources.morrowind_assets import CACHE_DIR
+from core.plugin_masters import export_root, master_chain
 
-#: The map's file name in the record dir of the plugin that proved it.
+#: The map's file name, in `map_dir`.
 MAP_NAME = 'morroblivion_textures.txt'
+
+#: The compatibility patch: Morroblivion mode's master, whose dependents use the map.
+PATCH_NAME = 'Morrowind-Morroblivion-Compatibility.esp'
+
+#: Marks a hybrid-mode export: the files it copied, in its record dir.
+HYBRID_MANIFEST = 'morroblivion_hybrid_assets.txt'
+
+#: A hybrid plugin's texture keys it ships its own copy of, which never swap.
+KEEP_NAME = 'morroblivion_textures_keep.txt'
 
 #: Carries the active map's folder into spawned workers and child processes.
 MAP_ENV = 'TESCONV_MORROBLIVION_TEXTURES'
 
-#: The map last read in this process, and the folder it was read from.
+#: Carries the active plugin's record dir, whose KEEP_NAME list the map skips.
+KEEP_ENV = 'TESCONV_MORROBLIVION_KEEP'
+
+#: The map last read in this process, and the folders it was read from.
 _LOADED = {'folder': None, 'table': {}}
 
 
@@ -39,30 +52,39 @@ def read_map(record_dir) -> dict:
     return {row[0]: row[1] for row in rows if len(row) == 2}
 
 
+def map_dir(root) -> str:
+    """The one folder holding the map: the export root's shared Morrowind asset cache."""
+    return os.path.join(str(root), CACHE_DIR)
+
+
 def map_folder(record_dir) -> str:
-    """The record dir whose map this plugin inherits: its own, else a master's; ''."""
+    """`map_dir` when this plugin uses the map (a hybrid export, the patch, or one of its dependents); ''."""
     root = export_root(record_dir)
-    folders = [str(record_dir)] + [master_export_dir(root, name)
-                                   for name in master_chain(record_dir)]
-    return next((f for f in folders
-                 if os.path.isfile(os.path.join(f, MAP_NAME))), '')
+    names = {n.lower() for n in master_chain(record_dir)} | {os.path.basename(os.path.normpath(str(record_dir))).lower()}
+    uses = PATCH_NAME.lower() in names or os.path.isfile(os.path.join(record_dir, HYBRID_MANIFEST))
+    folder = map_dir(root)
+    return folder if uses and os.path.isfile(os.path.join(folder, MAP_NAME)) else ''
 
 
 def activate(record_dir) -> str:
     """Arm this plugin's map here and in every process spawned from here on."""
     folder = map_folder(record_dir)
-    if folder:
-        os.environ[MAP_ENV] = folder
-    else:
-        os.environ.pop(MAP_ENV, None)
+    for name, value in ((MAP_ENV, folder), (KEEP_ENV, str(record_dir) if folder else '')):
+        if value:
+            os.environ[name] = value
+        else:
+            os.environ.pop(name, None)
     return folder
 
 
 def _table() -> dict:
-    """The active map, read once per process per folder."""
-    folder = os.environ.get(MAP_ENV, '')
-    if _LOADED['folder'] != folder:
-        _LOADED.update(folder=folder, table=read_map(folder) if folder else {})
+    """The active map less the plugin's kept textures, read once per process per folder."""
+    folders = (os.environ.get(MAP_ENV, ''), os.environ.get(KEEP_ENV, ''))
+    if _LOADED['folder'] != folders:
+        table = read_map(folders[0]) if folders[0] else {}
+        for key in read_manifest(folders[1], KEEP_NAME) if folders[1] else ():
+            table.pop(key, None)
+        _LOADED.update(folder=folders, table=table)
     return _LOADED['table']
 
 

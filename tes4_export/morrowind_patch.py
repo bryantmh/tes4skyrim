@@ -37,6 +37,7 @@ from asset_convert.sources.bsa_extract_morrowind import (is_morrowind_bsa,
 from asset_convert.sources.source_registry import (add_directory, asset_root,
                                                    directory_for)
 from core.plugin_masters import masters_from_export_header
+from asset_convert.nif.morroblivion_textures import MAP_NAME, PATCH_NAME
 from output_layout import plugin_out_root, record_dir
 from tes5_import.base.text_reader import parse_export_file
 
@@ -47,7 +48,7 @@ from .morroblivion_magic import restored_magic, start_scripts
 from .morroblivion_pair_scripts import pair_scripts, swap_lines
 from .morroblivion_pairs import (find_pairs, holder_overrides, left_half,
                                  restored_placements, right_half, split_pairs)
-from .morroblivion_texture_map import export_texture_map, twin_meshes
+from .morroblivion_texture_map import prove_map
 from .morrowind_armor import body_models_from
 from .morrowind_ids import BASE_TYPES, IdIndex, load_index
 from .record_types.morrowind import as_dds, tes4_signature
@@ -59,9 +60,6 @@ _EDID_SEP = re.compile(r'[_u]')
 
 #: Derivation site for a gap fill; fixed so ids never move between builds.
 PATCH_SITE = 'mwpatch'
-
-#: The generated patch plugin, a master of every Morroblivion-mode conversion.
-PATCH_NAME = 'Morrowind-Morroblivion-Compatibility.esp'
 
 #: The vanilla ESMs the patch is built from, in load order.
 PATCH_SOURCES = ('Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm')
@@ -388,11 +386,9 @@ def export_patch(data_dir: str, export_dir: str, morroblivion_exports,
         return {'ok': True, 'records': 0, 'assets': 0,
                 'seconds': time.time() - start}
 
-    twins = twin_meshes(export_dir, morroblivion_exports, esms[0], index)
-    assets, meshes = _extract_assets(gaps.values(), esms, data_dir,
-                                     export_dir, progress, twins)
-    export_texture_map(meshes, twins, export_dir, morroblivion_exports,
-                       patch_dir(export_dir), progress)
+    assets = _extract_assets(gaps.values(), esms, data_dir, export_dir, progress)
+    prove_map(export_dir, morroblivion_exports, esms[0], index, progress)
+    (Path(patch_dir(export_dir)) / MAP_NAME).unlink(missing_ok=True)
     assets += _copy_gap_sounds(gaps.values(), data_dir, export_dir, progress)
     pairs = _split_pairs(esms, index, export_dir, morroblivion_exports, gaps,
                          progress)
@@ -684,40 +680,34 @@ def orphan_meshes(sources, data_dir: str) -> set:
 
 
 def _extract_assets(records, sources, data_dir: str, export_dir: str,
-                    progress, twins=()) -> tuple:
-    """(files written, {twins key: vanilla bytes}) after extracting the patch's assets.
+                    progress) -> int:
+    """How many files extracting the patch's assets wrote.
 
     The meshes the gap records name, the ownerless vanilla meshes, and EVERY
     texture: third-party content names vanilla textures from meshes and records
-    that are not gap records. All in ONE pass per archive, `twins` bytes
-    included: `iter_bsa` holds the whole BSA (Morrowind.bsa is ~800 MB) in
-    memory, so walking it twice ran out of it.
+    that are not gap records. All in ONE pass per archive: `iter_bsa` holds the
+    whole BSA (Morrowind.bsa is ~800 MB) in memory, so walking it twice ran out
+    of it.
     See: docs/commentary/tes4_export_morrowind.md#morroblivion-gap-patch
     """
     asset_dir = asset_root(export_dir, PATCH_NAME)
     wanted = gap_assets(records) | orphan_meshes(sources, data_dir)
     progress(f'  {len(wanted)} meshes wanted; extracting those and all textures')
-    written, meshes = 0, {}
+    written = 0
     for name in PATCH_ARCHIVES:
         path = os.path.join(data_dir, name)
         if os.path.isfile(path) and is_morrowind_bsa(path):
-            written += _extract_one(path, wanted, asset_dir, twins, meshes)
+            written += _extract_one(path, wanted, asset_dir)
     progress(f'  Extracted {written} files')
-    return written, meshes
+    return written
 
 
-def _extract_one(bsa_path: str, wanted: set, asset_dir, twins=(),
-                 meshes=None) -> int:
-    """Write every entry of one BSA `wanted` names OR that is a texture.
-
-    The first archive's bytes of each mesh in `twins` are also kept in `meshes`.
-    """
+def _extract_one(bsa_path: str, wanted: set, asset_dir) -> int:
+    """Write every entry of one BSA `wanted` names OR that is a texture."""
     prefix = 'textures' + chr(92)
     written = 0
     for name, data in iter_bsa(bsa_path):
         key = name.replace('/', chr(92)).strip().lower()
-        if key in twins and meshes is not None:
-            meshes.setdefault(key, data)
         if key not in wanted and not key.startswith(prefix):
             continue
         dest = asset_dir / key

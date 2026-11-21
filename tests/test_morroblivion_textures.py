@@ -1,8 +1,8 @@
-"""Morroblivion texture substitution: the patch's map reaches every downstream mesh.
+"""Morroblivion texture substitution: the one map reaches every downstream mesh.
 
-The compatibility patch's Export step proves which vanilla textures Morroblivion's
-twin can replace and writes that map beside its records. A plugin swaps only when
-its own export or a master's carries a map, and the choice has to survive the
+`prove_map` proves which vanilla textures Morroblivion's twin can replace and
+writes the one map to `map_dir`. A plugin swaps only when it is the patch, masters
+it, or was exported in hybrid mode, and the choice has to survive the
 spawned mesh workers, which inherit the environment and nothing else.
 See: docs/commentary/asset_convert_texture.md#morroblivion-texture-substitution
 """
@@ -39,9 +39,10 @@ def tree(tmp_path):
     """An export tree: Morroblivion, the patch with a map, and three consumers."""
     _plugin(tmp_path, 'Oblivion.esm')
     _plugin(tmp_path, 'Morrowind_ob.esm', ['Oblivion.esm'])
-    mbt.write_map(_plugin(tmp_path, PATCH, ['Oblivion.esm', 'Morrowind_ob.esm']),
-                  {'tx_hlaalu_wall2_01': TWIN})
+    _plugin(tmp_path, PATCH, ['Oblivion.esm', 'Morrowind_ob.esm'])
+    mbt.write_map(mbt.map_dir(tmp_path), {'tx_hlaalu_wall2_01': TWIN})
     return {
+        'map': mbt.map_dir(tmp_path),
         'patch': tmp_path / PATCH,
         'tamriel': _plugin(tmp_path, 'Tamriel_Data.esm',
                            ['Morrowind_ob.esm', PATCH]),
@@ -76,12 +77,12 @@ class TestWhoGetsTheMap:
     """Only a plugin downstream of the patch swaps."""
 
     def test_a_dependent_inherits_the_patch_map(self, tree):
-        """Tamriel Data masters the patch, so it reads the patch's map."""
-        assert mbt.map_folder(tree['tamriel']) == str(tree['patch'])
+        """Tamriel Data masters the patch, so it reads the one map."""
+        assert mbt.map_folder(tree['tamriel']) == tree['map']
 
     def test_the_patch_uses_its_own(self, tree):
         """The patch's own vanilla meshes wear the twins too."""
-        assert mbt.map_folder(tree['patch']) == str(tree['patch'])
+        assert mbt.map_folder(tree['patch']) == tree['map']
 
     def test_authored_morrowind_never_swaps(self, tree):
         """Authored mode keeps vanilla art; Morroblivion's is not its own."""

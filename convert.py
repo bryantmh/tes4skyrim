@@ -62,13 +62,11 @@ SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
 
 from output_layout import (BODY_SLOTS_PATCH, configured_output, finished_dir,
-                           plugin_out_root, record_dir, tree_members,
+                           paths, plugin_out_root, record_dir, tree_members,
                            write_mod_zip)
 from papyrus_compile import phase_compile
 from tes4_export.tes3_reader import is_tes3
-from tes4_export.export_morrowind import MORROWIND_SOURCE_KEY, SOURCE_HYBRID
-from tes4_export.morroblivion_furniture import (FURNITURE_STEPS, furniture_targets,
-                                                is_furniture, run_furniture_export)
+from tes4_export.morroblivion_companion import export_companion
 from tes4_export.morrowind_patch import (
     PATCH_NAME, register_source as register_patch_source, run_patch_export,
     stage_pair_scripts)
@@ -104,6 +102,7 @@ create_pool_job()
 from source_paths import (get_paths, is_asset_only,
                           load_config, resolve_plugin_path)
 from asset_convert.sources import source_registry
+from asset_convert.sources.source_registry import companion_name
 from asset_convert import video
 from convert_cli import (SCOPED_STEPS, apply_config_overrides, build_parser,
                          selected_steps, unscoped_steps)
@@ -442,11 +441,8 @@ def _plugins_to_convert(args, config: dict, tes4_data: str,
             raise SystemExit(
                 f'ERROR: "{name}" is a mod, not a plugin. Convert its '
                 f'plugin(s) instead: -f {" ".join(shipped)}')
-    order = topological_order(
+    return topological_order(
         files, lambda name: resolve_plugin_path(name, tes4_data, export_dir))
-    if config.get(MORROWIND_SOURCE_KEY) == SOURCE_HYBRID:
-        order += furniture_targets(order, tes4_data, export_dir)
-    return [n for n in order if not is_furniture(n)] + [n for n in order if is_furniture(n)]
 
 
 def phase_export(file_name: str, tes4_data: str, export_dir: str,
@@ -457,8 +453,6 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
 
     if file_name == PATCH_NAME:
         return run_patch_export(export_dir)
-    if is_furniture(file_name):
-        return run_furniture_export(export_dir, file_name)
     out_dir = str(record_dir(export_dir, file_name))
 
     # Find the source file -- the Oblivion Data directory, or an imported mod's
@@ -470,7 +464,7 @@ def phase_export(file_name: str, tes4_data: str, export_dir: str,
 
     if is_tes3(source):
         from tes4_export.export_morrowind import run_export
-        return run_export(file_name, source, export_dir, config)
+        return run_export(file_name, source, export_dir, config) and export_companion(export_dir, file_name)
 
     print(f"[{file_name}] Exporting...")
     t0 = time.time()
@@ -788,6 +782,26 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
         print(f"[{file_name}] ERROR: {e}")
         return False
 
+    return errors == 0 and _import_companion(file_name, export_dir, out_root)
+
+
+def _import_companion(file_name: str, export_dir: str, out_root: str) -> bool:
+    """Import `file_name`'s hybrid companion beside it, or delete a stale converted one.
+
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-companion
+    """
+    from tes5_import.companion_import import import_companion
+    from tes5_import.overrides.master_index import MissingMasterOutputError
+    companion = paths(companion_name(file_name), export_dir, out_root)
+    if not (companion.records / '_HEADER.txt').is_file():
+        companion.esm.unlink(missing_ok=True)
+        return True
+    print(f"[{companion.plugin}] Importing...")
+    try:
+        errors = import_companion(str(companion.records), str(companion.esm), out_root)
+    except MissingMasterOutputError as e:
+        print(f"[{companion.plugin}] ERROR: {e}")
+        return False
     return errors == 0
 
 # ===========================================================================
@@ -1196,8 +1210,6 @@ def _run_steps(steps, order, run) -> tuple:
             continue
         print("=" * 54 + f"\n  {title}\n" + "=" * 54)
         for fn in targets:
-            if is_furniture(fn) and step not in FURNITURE_STEPS:
-                continue
             ok = bool(runners[step](fn))
             success = success and ok
             if not (step == 'meshes' and run.args.mesh_subdirs):

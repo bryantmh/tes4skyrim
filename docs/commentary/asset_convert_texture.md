@@ -1143,8 +1143,8 @@ deployment cut off by the old behavior has to be re-linked once. Guarded by
 
 ## <a id="morroblivion-texture-substitution"></a>Morroblivion texture substitution
 
-**Code:** `tes4_export/morroblivion_texture_map.py` (proves the map, in the
-compatibility patch's Export step); `asset_convert/nif/morroblivion_textures.py`
+**Code:** `tes4_export/morroblivion_texture_map.py` (`prove_map`, called by the
+compatibility patch's Export step or a hybrid export); `asset_convert/nif/morroblivion_textures.py`
 (reads it); `_fill_texture_slots` in `asset_convert/nif/geometry_shader.py`
 (swaps).
 
@@ -1165,15 +1165,34 @@ names that texture -- including Tamriel Data and Tamriel Rebuilt, whose own
 `tr_` meshes have no Morroblivion counterpart to compare. A first version keyed
 the map on the mesh and so swapped on none of their meshes.
 
-The map is built by the patch, not committed: the patch's Export step already
-walks every entry of the vanilla BSAs once, so it keeps the bytes of each
-paired vanilla mesh in that same pass and needs no authored-mode
-`export/Morrowind.esm`, which a Morroblivion-mode user never has. It is written
-as `morroblivion_textures.txt` beside the patch's records, one
+### <a id="one-map"></a>One map, proven by whichever mode needs it
+
+There is one map and one prover, `prove_map`. It is not committed: it is
+written as `morroblivion_textures.txt` in the export root's shared Morrowind
+asset cache (`export/morrowind_assets/`, `map_dir`), one
 `<vanilla texture>\t<Morroblivion texture>` per line (`write_manifest`'s
-format). Where several Morroblivion copies of a twin ship, the largest wins.
-A twin no Morroblivion file backs is dropped: some Morroblivion meshes name
-textures its archives never shipped.
+format). The compatibility patch's Export step rebuilds it every time; a
+hybrid export builds it when it is missing or older than the Morroblivion
+export (`map_is_current`). Neither mode needs the other: hybrid never requires
+the patch. Both read only Morrowind.esm (for the record pairing), the
+Morroblivion export, and the vanilla BSAs. Where several Morroblivion copies
+of a twin ship, the largest wins. A twin no Morroblivion file backs is
+dropped: some Morroblivion meshes name textures its archives never shipped.
+
+The vanilla meshes are read ARCHIVED (`find_archived_mesh`), never loose. An
+earlier hybrid prover read them loose-first: on this install the Morrowind
+Data Files holds loose mesh replacers, and that proof found 1,114 twins
+against the archived proof's 1,593 (500 missing, 21 extra), so Hlaalu walls
+kept `tx_hlaalu_wall2_03` and `tx_hlaalu_topedge_02`. The archived proof
+reproduces the patch's earlier in-pass map exactly.
+
+A plugin uses the map when its master chain reaches the patch (Morroblivion
+mode), when it is the patch, or when it was exported in hybrid mode
+(`morroblivion_hybrid_assets.txt` in its record dir); `map_folder` decides. A
+hybrid plugin's `morroblivion_textures_keep.txt` lists the keys it ships its
+own differing copy of, which `_table` drops. Land textures do not use the map:
+hybrid mode matches them by name
+([tes4_export_morrowind.md](tes4_export_morrowind.md#hybrid-ground)).
 
 The patch still ships every vanilla texture (see
 [tes4_export_morrowind.md](tes4_export_morrowind.md#morroblivion-gap-patch)).

@@ -59,6 +59,9 @@ SOURCE_SUBDIR = '_source'
 #: Carries the selected Data folder into every phase process and pool worker.
 SELECTED_DIR_ENV = 'TESCONV_SOURCE_DIR'
 
+#: Ends a hybrid plugin's companion, after its owner's stem; it lives in its owner's folders.
+COMPANION_SUFFIX = ' - Morroblivion Hybrid.esp'
+
 
 # ---------------------------------------------------------------------------
 #  Reading, upgrading and writing the registry file
@@ -527,11 +530,32 @@ def asset_root_name(export_dir, plugin: str) -> str:
     can build their own root from it -- the two must agree, and they only do
     that reliably if the name is computed once.
     """
+    owner = companion_owner(export_dir, plugin)
+    if owner:
+        return asset_root_name(export_dir, owner)
     entry = get(export_dir, plugin)
     if not entry:
         return variant_folder(export_dir, plugin) or plugin
     label = _sanitize_folder(entry.get('group_label') or '')
     return label or plugin
+
+
+def companion_name(plugin: str) -> str:
+    """The hybrid companion plugin of `plugin`."""
+    return os.path.splitext(plugin)[0] + COMPANION_SUFFIX
+
+
+def is_companion(plugin: str) -> bool:
+    """Whether `plugin` is a hybrid companion, which owns nothing in its owner's shared folders."""
+    return plugin.endswith(COMPANION_SUFFIX)
+
+
+def companion_owner(export_dir, plugin: str) -> str:
+    """The plugin hybrid companion `plugin` belongs to (its exported .esm, else .esp); '' for any other plugin."""
+    if not is_companion(plugin):
+        return ''
+    names = [plugin[:-len(COMPANION_SUFFIX)] + ext for ext in ('.esm', '.esp')]
+    return next((n for n in names if (record_dir(export_dir, n) / '_HEADER.txt').is_file()), names[0])
 
 
 def asset_root(export_dir, plugin: str) -> Path:
@@ -559,7 +583,8 @@ def record_dir(export_dir, plugin: str) -> Path:
     every later stage to report "No export directory" and skip.
     """
     root = asset_root(export_dir, plugin)
-    return root / plugin if _ships_multiple_plugins(export_dir, plugin) else root
+    nested = companion_owner(export_dir, plugin) or _ships_multiple_plugins(export_dir, plugin)
+    return root / plugin if nested else root
 
 
 def _ships_multiple_plugins(export_dir, plugin: str) -> bool:

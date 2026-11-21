@@ -1,6 +1,13 @@
 [
  {
   "kind": "worn",
+  "vanilla": "bonemold_armun-an_helm",
+  "morroblivion": "Vvardenfellarmormod\\bonemold\\ArmunAnHelmet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "worn",
   "vanilla": "bonemold_chuzei_helm",
   "morroblivion": "Vvardenfellarmormod\\bonemold\\chuzei.nif",
   "decision": "approve",
@@ -1109,8 +1116,8 @@
   "kind": "world",
   "vanilla": "d\\door_dwrv_main00.nif",
   "morroblivion": "morro/d/doorudwrvumain00.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1193,8 +1200,8 @@
   "kind": "world",
   "vanilla": "f\\flora_tree_wg_07.nif",
   "morroblivion": "morro/f/florautreeuwgu07.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1249,8 +1256,8 @@
   "kind": "world",
   "vanilla": "f\\furn_bone_stake00.nif",
   "morroblivion": "clutter/morro/m/nbskullonastick01.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1326,8 +1333,8 @@
   "kind": "world",
   "vanilla": "f\\furn_dwrv_dynamo00.nif",
   "morroblivion": "morro/f/furnudwrvudynamo00.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1375,15 +1382,15 @@
   "kind": "world",
   "vanilla": "f\\furn_dwrv_stool00.nif",
   "morroblivion": "morro/f/furnudwrvustool00.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
   "vanilla": "f\\furn_dwrv_stool10.nif",
   "morroblivion": "morro/f/furnudwrvustool10.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1417,15 +1424,15 @@
   "kind": "world",
   "vanilla": "f\\furn_overhang_03.nif",
   "morroblivion": "morro/f/furnuoverhangu03.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
   "vanilla": "f\\furn_overhang_04.nif",
   "morroblivion": "morro/f/furnuoverhangu04.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "hovers over the ground in game"
  },
  {
   "kind": "world",
@@ -1438,8 +1445,8 @@
   "kind": "world",
   "vanilla": "f\\furn_overhang_07.nif",
   "morroblivion": "morro/f/furnuoverhangu07.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1529,8 +1536,8 @@
   "kind": "world",
   "vanilla": "f\\terrain_cairn_al_02.nif",
   "morroblivion": "morro/f/terrainucairnualu02.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1550,8 +1557,8 @@
   "kind": "world",
   "vanilla": "i\\in_dwrv_scope00.nif",
   "morroblivion": "morro/i/inudwrvuscope00.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1571,8 +1578,8 @@
   "kind": "world",
   "vanilla": "i\\in_dwrv_scope30.nif",
   "morroblivion": "morro/i/inudwrvuscope30.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1585,8 +1592,8 @@
   "kind": "world",
   "vanilla": "i\\in_dwrv_scope50.nif",
   "morroblivion": "morro/i/inudwrvuscope50.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1599,29 +1606,29 @@
   "kind": "world",
   "vanilla": "i\\in_lava_1024.nif",
   "morroblivion": "morro/i/inulavau1024.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
   "vanilla": "i\\in_lava_256.nif",
   "morroblivion": "morro/i/inulavau256.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
   "vanilla": "i\\in_lava_256a.nif",
   "morroblivion": "morro/i/inulavau256.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
   "vanilla": "i\\in_lava_512.nif",
   "morroblivion": "morro/i/inulavau512.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1732,8 +1739,8 @@
   "kind": "world",
   "vanilla": "m\\misc_com_pitcher_metal_01.nif",
   "morroblivion": "clutter/morro/m/nbmetalpitcher001.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -1949,8 +1956,8 @@
   "kind": "world",
   "vanilla": "m\\misc_uni_pillow_02.nif",
   "morroblivion": "clutter/morro/m/nbpillow02.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -2012,22 +2019,22 @@
   "kind": "world",
   "vanilla": "o\\contain_com_sack_01.nif",
   "morroblivion": "mip/container/sacks/sack_01.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
   "vanilla": "o\\contain_com_sack_02.nif",
   "morroblivion": "mip/container/sacks/roundsack_03.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
   "vanilla": "o\\contain_com_sack_03.nif",
   "morroblivion": "mip/container/sacks/sack_02.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -2082,8 +2089,8 @@
   "kind": "world",
   "vanilla": "o\\contain_urn_04.nif",
   "morroblivion": "mip/container/urns/clay_urn04.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -2306,8 +2313,8 @@
   "kind": "world",
   "vanilla": "w\\w_tanto_daedric.nif",
   "morroblivion": "morroblivion/weapons/daedric/tanto.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -2425,8 +2432,8 @@
   "kind": "world",
   "vanilla": "x\\ex_dwrv_pipefitting00.nif",
   "morroblivion": "morro/x/exudwrvupipefitting00.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -2446,15 +2453,15 @@
   "kind": "world",
   "vanilla": "x\\ex_dwrv_ruin50.nif",
   "morroblivion": "morro/x/exudwrvuruin50.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
   "vanilla": "x\\ex_dwrv_ruin60.nif",
   "morroblivion": "morro/x/exudwrvuruin60.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -2495,8 +2502,8 @@
   "kind": "world",
   "vanilla": "x\\ex_redoran_building_02.nif",
   "morroblivion": "morro/x/exuredoranubuildingu02.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -2558,8 +2565,8 @@
   "kind": "world",
   "vanilla": "x\\ex_vivec_waterfall_03.nif",
   "morroblivion": "morro/x/exuvivecuwaterfallu03.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -2600,15 +2607,15 @@
   "kind": "world",
   "vanilla": "x\\terrain_ma_20.nif",
   "morroblivion": "morro/x/terrainumau20.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
   "vanilla": "x\\terrain_ma_30.nif",
   "morroblivion": "morro/x/terrainumau30.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -3867,8 +3874,8 @@
   "kind": "world",
   "vanilla": "f\\furn_de_banner_book_01.nif",
   "morroblivion": "morro/f/furnudeubannerubooku01.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -4133,8 +4140,8 @@
   "kind": "world",
   "vanilla": "m\\apparatus_a_spipe_01.nif",
   "morroblivion": "morroblivion/clutter/apparatus/skoomapipe.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -4147,8 +4154,8 @@
   "kind": "world",
   "vanilla": "m\\apparatus_g_retort_01.nif",
   "morroblivion": "clutter/magesguild/morro/m/apparatusuguretortu01.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -4175,8 +4182,8 @@
   "kind": "world",
   "vanilla": "m\\misc_argonianhead_01.nif",
   "morroblivion": "clutter/morro/m/miscuargonianheadu01.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -4308,8 +4315,8 @@
   "kind": "world",
   "vanilla": "m\\misc_dwrv_artifact20.nif",
   "morroblivion": "clutter/morro/m/miscudwrvuartifact20.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -4329,8 +4336,8 @@
   "kind": "world",
   "vanilla": "m\\misc_dwrv_goblet10.nif",
   "morroblivion": "clutter/morro/m/nbdwemergoblet10.nif",
-  "decision": "approve",
-  "note": ""
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
  },
  {
   "kind": "world",
@@ -5037,6 +5044,209 @@
   "vanilla": "x\\ex_gg_pylon_02.nif",
   "morroblivion": "morroblivion/architecture/ghostgate/pylon02.nif",
   "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\furn_dwrv_steam_00.nif",
+  "morroblivion": "morro/f/furnudwrvusteam00.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "f\\terrain_bc_scum_01.nif",
+  "morroblivion": "morroblivion/environment/bittercoast/bcscum01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_lava_1024_01.nif",
+  "morroblivion": "morro/i/inulavau1024.nif",
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
+ },
+ {
+  "kind": "world",
+  "vanilla": "i\\in_lava_oval.nif",
+  "morroblivion": "morro/i/inulavau1024.nif",
+  "decision": "deny",
+  "note": "placement differs from Morroblivion (hybrid_placement_check)"
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_bellows10.nif",
+  "morroblivion": "clutter/morro/m/nbbellows10.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_basket_01.nif",
+  "morroblivion": "clutter/morro/m/nbdebasket01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_goblet_01.nif",
+  "morroblivion": "clutter/morro/m/nbgoblet01.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_goblet_02.nif",
+  "morroblivion": "clutter/morro/m/nbgoblet02.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_goblet_05.nif",
+  "morroblivion": "clutter/morro/m/nbgoblet05.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_goblet_06.nif",
+  "morroblivion": "clutter/morro/m/nbgoblet06.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_goblet_07.nif",
+  "morroblivion": "clutter/morro/m/nbgoblet07.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_goblet_08.nif",
+  "morroblivion": "clutter/morro/m/nbgoblet08.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "m\\misc_de_goblet_09.nif",
+  "morroblivion": "clutter/morro/m/nbgoblet09.nif",
+  "decision": "deny",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "n\\ingred_comberry_01.nif",
+  "morroblivion": "clutter/morro/n/ingreducomberryu01.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "o\\flora_hackle-lo_01.nif",
+  "morroblivion": "morroblivion/flora/bushes/hacklelo01anim.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_claymore_chrys.nif",
+  "morroblivion": "morroblivion/weapons/artifacts/chrysamere.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_claymore_iceblade.nif",
+  "morroblivion": "morroblivion/weapons/artifacts/icebladeofmonarch.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_dagger_fang.nif",
+  "morroblivion": "morroblivion/weapons/artifacts/fangofhaynekhtnamet.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_mehrunesrazor.nif",
+  "morroblivion": "morroblivion/weapons/artifacts/mehrunesrazor.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_spear_mercy.nif",
+  "morroblivion": "morroblivion/weapons/artifacts/spearofbittermercy.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_staff_magnus.nif",
+  "morroblivion": "morroblivion/weapons/staffs/magnus.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_art_sunder.nif",
+  "morroblivion": "morroblivion/weapons/artifacts/kagrenacsunder.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_chitin_club.nif",
+  "morroblivion": "morroblivion/weapons/chitin/club.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dart_daedric.nif",
+  "morroblivion": "morroblivion/weapons/chitin/dagger.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_dwemer_mace.nif",
+  "morroblivion": "morroblivion/weapons/dwemer/mace.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_n_claymore.nif",
+  "morroblivion": "morroblivion/weapons/steel/claymore.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_n_katana.nif",
+  "morroblivion": "morroblivion/weapons/steel/katana.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_spikedclub.nif",
+  "morroblivion": "morroblivion/weapons/steel/club.nif",
+  "decision": "approve",
+  "note": ""
+ },
+ {
+  "kind": "world",
+  "vanilla": "w\\w_wakizashi.nif",
+  "morroblivion": "morroblivion/weapons/steel/wakizashi.nif",
+  "decision": "approve",
   "note": ""
  }
 ]

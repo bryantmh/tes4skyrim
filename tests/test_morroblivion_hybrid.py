@@ -1,11 +1,13 @@
-"""Hybrid source mode: whitelist reading, world swaps, the assembler guard, and the furniture plugin's overrides."""
+"""Hybrid source mode: whitelist reading, world swaps, the assembler guard, the one texture map, land twins, and the companion plugin."""
 
 import json
 from types import SimpleNamespace
 
 from asset_convert.character.morrowind_armor import _assembled
-from tes4_export import morroblivion_furniture as furniture
-from tes4_export.morroblivion_hybrid import _swap_world, load_whitelist
+from asset_convert.nif import morroblivion_textures as mbt
+from asset_convert.sources import source_registry
+from tes4_export import morroblivion_companion as companion
+from tes4_export.morroblivion_hybrid import _swap_world, ground_index, load_whitelist, match_ground, with_maps
 
 
 def _rows(tmp_path, rows):
@@ -53,36 +55,83 @@ def _export(folder, header, files):
         (folder / f'{sig}.txt').write_text(text, encoding='utf-8')
 
 
-def test_furniture_family_is_the_roots_hybrid_dependents(tmp_path):
-    """A root's family: itself, then hybrid exports whose masters are all in it; others are left out."""
-    def plugin(path, masters, hybrid=True):
-        """One export folder with `masters`, marked hybrid or not."""
-        path.mkdir(parents=True)
-        (path / '_HEADER.txt').write_text(''.join(f'Master[{i}]={m}\n' for i, m in enumerate(masters)),
-                                          encoding='utf-8')
-        if hybrid:
-            (path / furniture.MANIFEST_NAME).write_text('', encoding='utf-8')
-    plugin(tmp_path / 'Root.esm', [])
-    plugin(tmp_path / 'Mod' / 'Child.esp', ['Root.esm'])
-    plugin(tmp_path / 'Grand.esp', ['Root.esm', 'Child.esp'])
-    plugin(tmp_path / 'Other.esp', ['Elsewhere.esm'])
-    plugin(tmp_path / 'Plain.esp', ['Root.esm'], hybrid=False)
-    names = [n for n, _p in furniture.family(str(tmp_path), 'Root.esm')]
-    assert names == ['Root.esm', 'Child.esp', 'Grand.esp']
-    assert furniture.furniture_name('Root.esm') == 'Root - Morroblivion Furniture.esp'
-    assert furniture.is_furniture('Root - Morroblivion Furniture.esp')
+def test_companion_lives_in_its_owners_folders(tmp_path):
+    """The companion's records nest in its owner's export folder, which also names its output folder."""
+    _export(tmp_path / 'Morrowind.esm', 'Source=TES3\n', {})
+    name = source_registry.companion_name('Morrowind.esm')
+    assert name == 'Morrowind - Morroblivion Hybrid.esp'
+    assert source_registry.companion_owner(str(tmp_path), name) == 'Morrowind.esm'
+    assert source_registry.record_dir(str(tmp_path), name) == tmp_path / 'Morrowind.esm' / name
+    assert source_registry.asset_root_name(str(tmp_path), name) == 'Morrowind.esm'
+    assert source_registry.companion_owner(str(tmp_path), 'Morrowind.esm') == ''
+    assert source_registry.is_companion(name) and not source_registry.is_companion('Morrowind.esm')
 
 
-def test_furniture_overrides_rekey_each_master(tmp_path):
-    """Bloodmoon's own id (01 in its file) is 02 in [Morrowind, Tribunal, Bloodmoon]; deleted refs stay."""
-    mw, bm = tmp_path / 'mw', tmp_path / 'bm'
-    _export(mw, 'Source=TES3\n', {'REFR': [
-        {'Signature': 'REFR', 'FormID': '00000010', 'NAME': '00000001', 'ParentCELL': '00000100', 'RecordFlags': '0'},
-        {'Signature': 'REFR', 'FormID': '00000011', 'NAME': '00000001', 'ParentCELL': '00000100', 'RecordFlags': '32'}]})
-    _export(bm, 'Master[0]=Morrowind.esm\nSource=TES3\n', {'REFR': [
-        {'Signature': 'REFR', 'FormID': '01000020', 'NAME': '00000001', 'ParentCELL': '01000200', 'RecordFlags': '0'}]})
-    masters = [('Morrowind.esm', str(mw)), ('Bloodmoon.esm', str(bm))]
-    names = ['Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm']
-    refs = dict(furniture.placements(masters, names, {'00000001': ('03ABCDEF', [])}))
-    assert sorted(refs) == ['00000010', '02000020']
-    assert 'NAME=03ABCDEF' in refs['02000020'] and 'ParentCELL=02000200' in refs['02000020']
+def test_companion_reuses_master_furniture_and_restates_edits(tmp_path):
+    """A master's base keeps its companion's FURN, re-keyed; an own base gets a new one; edits of overridden refs stay."""
+    mw, comp, bm = tmp_path / 'mw', tmp_path / 'mwc', tmp_path / 'bm'
+    _export(mw, 'Source=TES3\n', {'STAT': [{'FormID': '00000001', 'EditorID': 'bed', 'Model.MODL': 'f/bed.nif'}]})
+    _export(comp, 'Master[0]=Morrowind.esm\n', {
+        'FURN': [{'FormID': '01ABCDEF', 'EditorID': 'bed'}],
+        'REFR': [{'FormID': '00000010', 'NAME': '01ABCDEF', 'RecordFlags': '0'}]})
+    _export(bm, 'Master[0]=Morrowind.esm\nMaster[1]=Tribunal.esm\n', {
+        'STAT': [{'FormID': '02000002', 'EditorID': 'stool', 'Model.MODL': 'f/stool.nif'}],
+        'REFR': [{'FormID': '00000010', 'NAME': '00000001', 'RecordFlags': '32'},
+                 {'FormID': '02000020', 'NAME': '00000001', 'RecordFlags': '0'},
+                 {'FormID': '02000021', 'NAME': '02000002', 'RecordFlags': '0'},
+                 {'FormID': '02000022', 'NAME': '02000002', 'RecordFlags': '32'}]})
+    (bm / 'meshes' / 'f').mkdir(parents=True)
+    (bm / 'meshes' / 'f' / 'stool.nif').write_bytes(b'..BSFurnitureMarker..')
+    layout = {'names': ['Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm', 'Morrowind - Morroblivion Hybrid.esp'],
+              'masters': [('Morrowind.esm', str(mw))], 'own': ('Bloodmoon.esm', str(bm)),
+              'companions': [('Morrowind - Morroblivion Hybrid.esp', str(comp))]}
+    bases, furn = companion.furniture(layout, {'f\\stool.nif': '5'})
+    assert bases['00000001'] == '03ABCDEF' and bases['02000002'].startswith('04')
+    assert [f for f, _l in furn] == [bases['02000002']] and 'MNAM.Flags=5' in furn[0][1]
+    refs = dict(companion.placements(layout, bases))
+    assert sorted(refs) == ['00000010', '02000020', '02000021']
+    assert 'RecordFlags=32' in refs['00000010'] and 'NAME=03ABCDEF' in refs['02000020']
+
+
+def test_land_texture_takes_its_twin_and_grass(tmp_path):
+    """Tx_sand_01 takes TxUsandU01 from the twin listing grass; the companion's LTEX carries that grass."""
+    _export(tmp_path / 'Morrowind_ob.esm', 'Master[0]=Oblivion.esm\n', {
+        'LTEX': [{'FormID': '01000001', 'EditorID': 'bare', 'ICON': 'morro/TxUsandU01.dds'},
+                 {'FormID': '01000002', 'EditorID': 'grassy', 'ICON': 'morro/TxUsandU01.dds',
+                  'GrassCount': '1', 'Grass[0]': '01000009'}],
+        'GRAS': [{'FormID': '01000009', 'EditorID': 'mwG1', 'Model.MODL': 'Morroblivion/Grass/G1.nif'}]})
+    ground = ground_index(str(tmp_path), ['Morrowind_ob.esm'])
+    hybrid = SimpleNamespace(vanilla=True, named=set())
+    out = {'LTEX': [('00000005', ['EditorID=Sand', 'ICON=textures\\\\Tx_sand_01.dds']),
+                    ('00000006', ['EditorID=Lava', 'ICON=textures\\\\tx_lavacrust00.dds'])]}
+    assert match_ground(out, hybrid, ground) == (1, with_maps('landscape\\morro\\txusandu01.dds'))
+    assert out['LTEX'][0][1][1] == 'ICON=morro/TxUsandU01.dds' and out['LTEX'][1][1][1].endswith('lavacrust00.dds')
+    assert hybrid.named == {'morroblivion\\grass\\g1.nif'}
+    own = tmp_path / 'Morrowind.esm'
+    _export(own, 'Source=TES3\n', {'LTEX': [{'FormID': '00000005', 'EditorID': 'Sand', 'ICON': 'morro/TxUsandU01.dds'}]})
+    layout = {'names': ['Morrowind.esm'], 'own': ('Morrowind.esm', str(own)), 'companions': []}
+    grasses, lands = companion.grass(layout, ground)
+    assert len(grasses) == 1 and grasses[0][0].startswith('01') and 'EditorID=mwG1' in grasses[0][1]
+    assert lands == [('00000005', lands[0][1])] and lands[0][1][-2:] == ['GrassCount=1', f'Grass[0]={grasses[0][0]}']
+
+
+def test_hybrid_plugin_reads_the_one_map_less_its_kept_textures(tmp_path, monkeypatch):
+    """A hybrid export needs no patch: it uses the one map, minus the keys it keeps."""
+    own = tmp_path / 'Arktwend.esm'
+    _export(own, 'Source=TES3\n', {})
+    mbt.write_map(mbt.map_dir(tmp_path), {'tx_a': 'textures\\morro\\txua.dds', 'tx_b': 'textures\\morro\\txub.dds'})
+    (own / mbt.HYBRID_MANIFEST).write_text('', encoding='utf-8')
+    (own / mbt.KEEP_NAME).write_text('tx_b\n', encoding='utf-8')
+    monkeypatch.delenv(mbt.MAP_ENV, raising=False)
+    monkeypatch.delenv(mbt.KEEP_ENV, raising=False)
+    assert mbt.activate(own) == mbt.map_dir(tmp_path)
+    assert mbt.substitute(b'textures\\tx_a.dds') and mbt.substitute(b'textures\\tx_b.dds') is None
+    (own / mbt.HYBRID_MANIFEST).unlink()
+    assert mbt.map_folder(own) == ''
+
+
+
+
+def test_a_twin_ships_with_its_normal_and_glow_maps():
+    """A swapped diffuse without its _n map renders flat: every twin carries both maps."""
+    assert with_maps('morro/x/txua.dds') == {'morro/x/txua.dds', 'morro/x/txua_n.dds', 'morro/x/txua_g.dds'}

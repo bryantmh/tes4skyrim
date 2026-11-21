@@ -32,6 +32,9 @@ PINS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 #: Every section of a pin file, each `{cell key: [row, ...]}`.
 PARTS = ('cuts', 'frozen', 'voids', 'links', 'nodes')
 
+#: Endings of a folder named for a plugin, whose pin file is that plugin's own.
+PLUGIN_EXTS = ('.esm', '.esp', '.esl')
+
 #: Floats per `frozen` / `voids` row: three corners of (x, y, z).
 TRI_WIDTH = 9
 
@@ -129,10 +132,12 @@ def _section(plugin, part, key):
 def use_plugin(plugin, folder):
     """Read `plugin`'s pins this import, renaming a file keyed by its export `folder`.
 
+    A folder named as a plugin is that plugin's own key (a hybrid companion
+    shares its owner's folder), so its file is never taken.
     See: docs/commentary/tes5_import_navmesh.md#pins-key-on-the-plugin
     """
     set_navmesh_plugin(plugin)
-    if not folder or folder == plugin:
+    if not folder or folder == plugin or folder.lower().endswith(PLUGIN_EXTS):
         return
     for where in filter(None, (PINS, user_dir())):
         old, new = pins_path(folder, where), pins_path(plugin, where)

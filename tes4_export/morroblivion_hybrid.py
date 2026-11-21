@@ -21,18 +21,19 @@ from pathlib import Path
 from asset_convert.character.hand_pairs import split_models
 from asset_convert.character.morrowind_coverage import SIDED_SLOTS
 from asset_convert.character.skyrim_overrides import SBP_59_RIGHT_HAND
-from asset_convert.nif.morroblivion_textures import MAP_NAME, write_map
+from asset_convert.nif.morroblivion_textures import HYBRID_MANIFEST, KEEP_NAME, map_dir, read_map, texture_key
 from asset_convert.nif.sse_nif import NifFormat, read_nif
 from asset_convert.nif.tex_paths import as_dds, texture_rel_path
 from asset_convert.sources import source_registry
-from asset_convert.sources.morrowind_assets import find_archived_file, find_vanilla_mesh, source_meshes
+from asset_convert.sources.morrowind_assets import find_archived_file, source_meshes
+from asset_convert.texture.texture_prune import write_manifest
 from output_layout import asset_root, assets_for, record_dir
 from tes5_import.base.text_reader import parse_export_file
 
 from .morroblivion import MorroblivionModels, archive_path, body_parts, fix_placements
 from .morroblivion_origin import OriginShifts
 from .morroblivion_pairs import right_ids
-from .morroblivion_texture_map import MESH_PREFIX, build_map, paired_meshes
+from .morroblivion_texture_map import MESH_PREFIX, map_is_current, prove_map
 from .morrowind_ids import encode_editor_id
 from .morrowind_patch import patch_masters, supplied_index
 from .record_types.common import escape_value
@@ -42,7 +43,10 @@ from .tes3_reader import get_subrecord
 WHITELIST = Path(__file__).with_name('morroblivion_whitelist.json')
 
 #: The copied files of the last hybrid export, in the plugin's record dir.
-MANIFEST_NAME = 'morroblivion_hybrid_assets.txt'
+MANIFEST_NAME = HYBRID_MANIFEST
+
+#: The vanilla master the texture map pairs meshes through.
+VANILLA_ESM = 'Morrowind.esm'
 
 #: The plugins whose own records are vanilla Morrowind's.
 VANILLA_PLUGINS = ('morrowind.esm', 'tribunal.esm', 'bloodmoon.esm')
@@ -292,6 +296,11 @@ def _master_bases(folder: str):
             yield from parse_export_file(os.path.join(folder, name))
 
 
+def with_maps(rel: str) -> set:
+    """A diffuse `.dds` path with its normal and glow maps beside it; a copy skips any not shipped."""
+    return {rel, rel[:-4] + '_n.dds', rel[:-4] + '_g.dds'}
+
+
 def _nif_textures(path: Path) -> set:
     """Every texture a NIF names, as `textures`-relative .dds paths, with their normal and glow maps."""
     out = set()
@@ -303,35 +312,93 @@ def _nif_textures(path: Path) -> set:
             names.extend(t for t in block.textures if t)
         for name in names:
             rel = as_dds(texture_rel_path(bytes(name).decode('latin-1'))).lower()
-            out.update({rel, rel[:-4] + '_n.dds', rel[:-4] + '_g.dds'})
+            out |= with_maps(rel)
     return out
 
 
-def prove_texture_map(hybrid: HybridModels, exports, inherited: bool, progress=print) -> set:
-    """Write the plugin's Morroblivion texture map unless `inherited`; the twin textures it names.
+def map_twins(hybrid: HybridModels) -> set:
+    """The twin textures the one map names, less any the plugin keeps; writes the kept keys.
 
-    Outside the vanilla ESMs a texture the plugin ships itself keeps its own
-    file, since only vanilla's is proven to share Morroblivion's twin.
+    There is one map (`prove_map`). Outside the vanilla ESMs a
+    texture the plugin ships itself keeps its own file, since only vanilla's is
+    proven to share Morroblivion's twin.
     See: docs/commentary/asset_convert_texture.md#morroblivion-texture-substitution
     """
-    if inherited:
-        return set()
-    twins = paired_meshes(hybrid.models, hybrid.mesh_roots(), hybrid.index)
-    meshes = {}
-    for key in twins:
-        found = find_vanilla_mesh(hybrid.export_root, key[len(MESH_PREFIX):])
-        if found is not None:
-            meshes[key] = found.read_bytes()
-    table = build_map(meshes, {k: twins[k] for k in meshes}, hybrid.export_root, exports, progress)
-    if not hybrid.vanilla:
-        table = {k: v for k, v in table.items() if not _ships_own_texture(hybrid, k)}
-    write_map(record_dir(hybrid.export_root, hybrid.plugin), table)
-    return {v[len('textures' + chr(92)):] for v in table.values()}
+    table = read_map(map_dir(hybrid.export_root))
+    kept = set() if hybrid.vanilla else {k for k in table if _ships_own_texture(hybrid, k)}
+    folder = record_dir(hybrid.export_root, hybrid.plugin)
+    (folder / KEEP_NAME).unlink(missing_ok=True)
+    if kept:
+        write_manifest(folder, kept, KEEP_NAME)
+    return {m for k, v in table.items() if k not in kept for m in with_maps(v[len('textures' + chr(92)):])}
+
+
+def ground_index(export_root: str, exports) -> dict:
+    """{Morroblivion land texture stem: (its LTEX, {GRAS FormID: GRAS} of its export)}.
+
+    Where one texture backs several LTEX records, the one listing the most grass wins.
+    """
+    out = {}
+    for name in exports:
+        folder = record_dir(export_root, name)
+        grasses = {r.get('FormID'): r for r in parse_export_file(os.path.join(folder, 'GRAS.txt'))}
+        for rec in parse_export_file(os.path.join(folder, 'LTEX.txt')):
+            stem = icon_stem(rec.get('ICON', ''))
+            held = out.get(stem)
+            if stem and (held is None or _grass_count(rec) > _grass_count(held[0])):
+                out[stem] = (rec, grasses)
+    return out
+
+
+def icon_stem(icon: str) -> str:
+    """A land texture's file stem, lower case."""
+    return os.path.splitext(archive_path(icon).rsplit(chr(92), 1)[-1])[0]
+
+
+def _grass_count(rec: dict) -> int:
+    """How many grasses an LTEX lists."""
+    return int(rec.get('GrassCount') or 0)
+
+
+def twin_ground(icon: str, ground: dict):
+    """Morroblivion's (LTEX, grasses) for vanilla land texture `icon`, by its renamed twin stem; None."""
+    return ground.get(icon_stem(icon).replace('_', 'u'))
+
+
+def match_ground(out: dict, hybrid: HybridModels, ground: dict) -> tuple:
+    """Give each LTEX in `out` Morroblivion's twin texture; (count, textures-relative files to copy).
+
+    Each matched texture's grass models join the copied meshes.
+    """
+    count, textures = 0, set()
+    for _form_id, lines in out.get('LTEX', ()):
+        fields = dict(l.partition('=')[::2] for l in lines)
+        icon = fields.get('ICON', '').replace('\\\\', '\\')
+        twin = twin_ground(icon, ground)
+        if twin is None or (not hybrid.vanilla and _ships_own_texture(hybrid, texture_key(icon))):
+            continue
+        ltex, grasses = twin
+        _set_line(lines, 'ICON', ltex['ICON'])
+        rel = 'landscape' + chr(92) + archive_path(ltex['ICON'])
+        textures |= with_maps(rel)
+        hybrid.named |= {archive_path(grasses[g]['Model.MODL']) for g in grass_ids(ltex) if g in grasses}
+        count += 1
+    return count, textures
+
+
+def grass_ids(ltex: dict) -> list:
+    """The GRAS FormIDs an LTEX lists, in order."""
+    return [ltex[f'Grass[{i}]'] for i in range(_grass_count(ltex)) if ltex.get(f'Grass[{i}]')]
+
+
+def vanilla_esm(export_root: str) -> str:
+    """The installed Morrowind.esm, whose records pair vanilla meshes with Morroblivion's."""
+    return os.path.join(source_registry.directory_for(export_root, VANILLA_ESM) or '', VANILLA_ESM)
 
 
 def apply_hybrid(out: dict, records, ctx, plugin: str, source_path: str, masters,
                  exports, progress=print) -> None:
-    """Swap the approved models in `out`, correct their placements, and copy what they need.
+    """Swap the approved models and land textures in `out`, correct placements, and copy what they need.
 
     `masters` are the plugin's (name, export dir) pairs; `exports` the
     converted Morroblivion plugins the replacements come from.
@@ -342,12 +409,14 @@ def apply_hybrid(out: dict, records, ctx, plugin: str, source_path: str, masters
     ctx.origin_shifts = origin_shifts(hybrid, master_meshes)
     counts = remap_models(out, records, ctx, hybrid)
     corrected = correct_placements(out, [path for _name, path in masters], hybrid)
-    inherited = any((Path(path) / MAP_NAME).is_file() for _name, path in masters)
-    twins = prove_texture_map(hybrid, exports, inherited, progress)
-    meshes, textures = copy_assets(hybrid, master_meshes, twins, progress)
+    lands, land_textures = match_ground(out, hybrid, ground_index(root, exports))
+    if not map_is_current(root, exports):
+        prove_map(root, exports, vanilla_esm(root), hybrid.index, progress)
+    twins = map_twins(hybrid)
+    meshes, textures = copy_assets(hybrid, master_meshes, twins | land_textures, progress)
     progress(f"  Morroblivion (hybrid): {counts['world']} world and {counts['worn']} worn "
-             f"models swapped, {corrected} ref corrections; copied {meshes} meshes, "
-             f'{textures} textures' + ('' if inherited else f', {len(twins)} texture twins'))
+             f"models swapped, {lands} land textures, {corrected} ref corrections; copied "
+             f'{meshes} meshes, {textures} textures, {len(twins)} map texture files with their normal and glow maps')
 
 
 def _ships_own_texture(hybrid: HybridModels, key: str) -> bool:
@@ -413,7 +482,7 @@ def write_manifest(export_root: str, plugin: str, copied: list) -> None:
 
 
 def remove_copies(export_root: str, plugin: str) -> int:
-    """Delete the files an earlier hybrid export copied, and its texture map; how many were removed."""
+    """Delete the files an earlier hybrid export copied, and its kept-texture list; how many were removed."""
     folder = record_dir(export_root, plugin)
     path = folder / MANIFEST_NAME
     removed = 0
@@ -424,5 +493,5 @@ def remove_copies(export_root: str, plugin: str) -> int:
                 (root / rel).unlink()
                 removed += 1
         path.unlink()
-    (folder / MAP_NAME).unlink(missing_ok=True)
+    (folder / KEEP_NAME).unlink(missing_ok=True)
     return removed

@@ -95,6 +95,15 @@ def test_pins_keyed_by_the_mod_folder_move_to_the_plugin(tmp_path, monkeypatch):
     assert pins.load('Mod.esm')['frozen'] == {'Cell': []}
 
 
+def test_a_plugin_named_folder_keeps_its_own_pins(tmp_path, monkeypatch):
+    """A companion sharing Morrowind.esm's folder never takes Morrowind.esm's pin file."""
+    _store(tmp_path, monkeypatch)
+    monkeypatch.delenv(NAVMESH_PLUGIN_ENV_VAR, raising=False)
+    (tmp_path / 'Morrowind.esm.json').write_text('{"frozen": {"Cell": []}}')
+    pins.use_plugin('Morrowind - Morroblivion Hybrid.esp', 'Morrowind.esm')
+    assert sorted(os.listdir(tmp_path)) == ['Morrowind.esm.json']
+
+
 # ---------------------------------------------------------------------------
 # Applying a cut
 # ---------------------------------------------------------------------------

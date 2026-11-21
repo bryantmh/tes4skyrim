@@ -1,12 +1,13 @@
 """The Morroblivion texture map: which vanilla textures Morroblivion's twin can replace.
 
-Built by the compatibility patch's Export step. Every vanilla mesh Morroblivion
+Proven once, by whichever needs it first: the compatibility patch's Export
+step, or a hybrid export that finds it missing or stale. Every vanilla mesh Morroblivion
 replaced through its records is paired with that replacement; where a vanilla
 shape and a Morroblivion shape are the same geometry with the same UVs, and the
 Morroblivion shape wears the vanilla texture's renamed twin ('_' -> 'u'), that
 twin is proven to fit the vanilla UVs and goes in the map. Converted meshes of
-every plugin downstream of the patch then wear the twin
-(`asset_convert/nif/morroblivion_textures.py`).
+every plugin downstream of the patch, and of every hybrid export, then wear the
+twin (`asset_convert/nif/morroblivion_textures.py`).
 
 See: docs/commentary/asset_convert_texture.md#morroblivion-texture-substitution
 """
@@ -19,10 +20,11 @@ from pathlib import Path
 import numpy as np
 
 from asset_convert.nif.flipbook import read_dds_header
-from asset_convert.nif.morroblivion_textures import texture_key, write_map
+from asset_convert.nif.morroblivion_textures import MAP_NAME, map_dir, texture_key, write_map
 from asset_convert.nif.sse_nif import NifFormat, read_nif
 from asset_convert.nif.tex_paths import as_dds, texture_rel_path
-from asset_convert.sources.source_registry import asset_root
+from asset_convert.sources.morrowind_assets import find_archived_mesh
+from asset_convert.sources.source_registry import asset_root, record_dir
 from core.process_job import join_pool_job
 from core.worker_budget import worker_count
 
@@ -182,22 +184,40 @@ def build_map(meshes: dict, twins: dict, export_dir: str, morroblivion,
               progress=print) -> dict:
     """{vanilla texture key: Morroblivion path} proven over every paired mesh.
 
-    `meshes` holds the vanilla bytes of each key in `twins`, read during the
-    patch's single archive pass.
+    `meshes` holds the archived vanilla bytes of each key in `twins`.
     """
     jobs = [(meshes[key], str(twins[key])) for key in sorted(meshes)]
     found, unreadable = _prove_all(jobs)
     roots = [asset_root(export_dir, name) for name in morroblivion]
     table = {key: _choose(texs, roots) for key, texs in found.items()}
     table = {key: path for key, path in table.items() if path}
-    progress(f'  {len(table)} vanilla textures proven to fit Morroblivion\'s '
+    progress(f"  {len(table)} vanilla textures proven to fit Morroblivion's "
              f'twin over {len(jobs)} paired meshes ({unreadable} unreadable)')
     return table
 
 
-def export_texture_map(meshes: dict, twins: dict, export_dir: str,
-                       morroblivion, record_dir, progress=print) -> int:
-    """Prove and write the map into `record_dir`; return its entry count."""
-    table = build_map(meshes, twins, export_dir, morroblivion, progress)
-    write_map(record_dir, table)
+def prove_map(export_dir: str, morroblivion, vanilla_esm: str, index, progress=print) -> int:
+    """Prove the one map from the ARCHIVED vanilla meshes and write it to `map_dir`; its entry count.
+
+    Never a loose mesh: a user's replacer must not change the proof.
+    See: docs/commentary/asset_convert_texture.md#one-map
+    """
+    twins = twin_meshes(export_dir, morroblivion, vanilla_esm, index)
+    meshes = {}
+    for key in twins:
+        found = find_archived_mesh(export_dir, key[len(MESH_PREFIX):])
+        if found is not None:
+            meshes[key] = found.read_bytes()
+    table = build_map(meshes, {k: twins[k] for k in meshes}, export_dir, morroblivion, progress)
+    write_map(map_dir(export_dir), table)
     return len(table)
+
+
+def map_is_current(export_dir: str, morroblivion) -> bool:
+    """Whether the stored map is newer than every Morroblivion export it was proven from."""
+    path = Path(map_dir(export_dir)) / MAP_NAME
+    if not path.is_file():
+        return False
+    built = path.stat().st_mtime
+    headers = [record_dir(export_dir, name) / '_HEADER.txt' for name in morroblivion]
+    return all(not h.is_file() or h.stat().st_mtime <= built for h in headers)

@@ -239,11 +239,10 @@ picks the Morrowind export mode, so an agent can build Arktwend in authored mode
 and Tamriel Rebuilt in Morroblivion mode back to back without touching the
 saved setting; `--no-engine-branches` forces the Python SpeedTree generator.
 
-**A hybrid furniture plugin** `<root> - Morroblivion Furniture.esp` exists per
-masterless Morrowind-format root. A `--morrowind-source hybrid` run appends the
-one for every root its plugins reach and runs only its Export and Import steps;
-it is also a `-f` target of its own
-([hybrid-furniture](../commentary/tes4_export_morrowind.md#hybrid-furniture)).
+**A hybrid companion plugin** `<plugin> - Morroblivion Hybrid.esp` (furniture
+and grass) is written by each hybrid plugin's own Export and Import steps, into
+that plugin's own export and output folders; it is never a `-f` target
+([hybrid-companion](../commentary/tes4_export_morrowind.md#hybrid-companion)).
 
 **The Morroblivion compatibility patch** is a normal `-f` target once
 `--build-morrowind-patch "<Morrowind>/Data Files"` has registered its source:

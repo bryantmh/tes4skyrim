@@ -24,7 +24,7 @@ _REGION_NOISE = re.compile(r'[^a-z0-9]')
 
 #: Non-alphanumeric -> the letter Morroblivion substitutes for it.
 _ESCAPES = {
-    '_': 'U', ' ': 'S', ',': 'V', "'": 'A', ':': 'X', '-': 'D',
+    '_': 'U', ' ': 'S', ',': 'V', "'": 'A', ':': 'X', '-': 'T',
     '.': 'P', '(': 'B', ')': 'C', '!': 'E', '/': 'F',
 }
 

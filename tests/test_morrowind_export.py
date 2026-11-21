@@ -43,6 +43,7 @@ def test_editor_id_escape():
     assert encode_editor_id('Tel Mora') == '0TelSMora'
     assert encode_editor_id("Balur's Farmhouse") == '0BalurAsSFarmhouse'
     assert encode_editor_id('Tel Aruhn, Bildren') == '0TelSAruhnVSBildren'
+    assert encode_editor_id('bonemold_armun-an_helm') == '0bonemoldUarmunTanUhelm'
 
 
 def test_id_index_is_case_insensitive():
