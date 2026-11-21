@@ -204,6 +204,43 @@ def _flatten_grass_root(data):
     return changed
 
 
+def _plain_name(node):
+    """A node's name without its padding."""
+    return bytes(node.name).rstrip(b'\x00')
+
+
+def _controllers_back_on_root(data):
+    """Put the controllers `move_root_controller` moved back on a grass root.
+
+    That rule leaves the geometry under an inner node, and the flattening
+    keeps a node that carries a controller. The node is the one it added,
+    `<root> Anim`, or on a turned root the wrapper's node: the root's only
+    child, named like the root. Returns True if any went back.
+    See: docs/commentary/asset_convert_nif.md#root-transform-controller
+    """
+    from asset_convert.nif.nif_passes import ROOT_MOVER_SUFFIX
+    root = _grass_root(data)
+    kids = [n for n in (root.children if root is not None else ()) if n is not None]
+    names = {_plain_name(root) + ROOT_MOVER_SUFFIX} if kids else set()
+    if len(kids) == 1:
+        names.add(_plain_name(root))
+    movers = [n for n in kids
+              if type(n).__name__ == 'NiNode' and n.controller is not None
+              and _plain_name(n) in names]
+    for node in movers:
+        chain, node.controller = node.controller, None
+        last = root.controller
+        while last is not None and last.next_controller is not None:
+            last = last.next_controller
+        if last is None:
+            root.controller = chain
+        else:
+            last.next_controller = chain
+        while chain is not None:
+            chain.target, chain = root, chain.next_controller
+    return bool(movers)
+
+
 def _bake_shape_transforms(data):
     """Bake every root-level shape's own transform into its vertices.
 
@@ -263,7 +300,8 @@ def apply_grass_profile(nif_path):
     with open(nif_path, 'rb') as f:
         data.read(f)
 
-    changed = _flatten_grass_root(data)
+    changed = _controllers_back_on_root(data)
+    changed = _flatten_grass_root(data) or changed
     changed = _bake_shape_transforms(data) or changed
     changed = _strip_collision(data) or changed
     changed = add_wind_weights(data, NifFormat) or changed
