@@ -184,20 +184,24 @@ void GlideNextTick(void* ref, const Goal& goal) {
 }
 
 // 🛑 TranslateTo leaves a static's or an activator's collision where it was,
-// so a chain no script fed last tick is set once, with the natives, where it
-// ended: Arktwend's raised harbor gate pole still blocked the road. Only a
+// so a chain no script fed for two ticks is set once, with the natives, where
+// it ended: Arktwend's raised harbor gate pole still blocked the road. Only a
 // reference its FormID still names, and loaded: the pointer of one that left
 // the world is stale.
+// 🛑 Two, not one: the natives fade the 3D, and a loop's reset tick may feed
+// nothing (SignRotate's SetAngle back to an angle it already holds).
+// See: docs/commentary/morrowind_runtime.md#move-and-rotate-are-rates
 void SettleGlides() {
     const std::size_t tick = TicksRun();
     for (auto it = g_goals.begin(); it != g_goals.end();) {
-        if (it->second.tick + 1 >= tick) {
+        if (it->second.tick + 2 >= tick) {
             ++it;
             continue;
         }
         const Goal& goal = it->second;
         void* ref = RefByRuntimeId(goal.formId);
         if (ref == it->first && Has3D(ref)) {
+            LogVerbose("move: %08X glide settled (tick %zu, last fed %zu)", goal.formId, tick, goal.tick);
             SetRefPosition(PapyrusVm(), ref, goal.at[0], goal.at[1], goal.at[2]);
             SetRefAngle(PapyrusVm(), ref, goal.angle[0], goal.angle[1], goal.angle[2]);
         }

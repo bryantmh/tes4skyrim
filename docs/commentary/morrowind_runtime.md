@@ -2677,6 +2677,17 @@ tick or this one) become that glide's goal instead. Scripts close a
 +2/−4/+2 degrees and then runs `SetAngle, y, GetStartingAngle, y` — and the
 native there faded the sign out and back in once per loop. Confirmed in-game.
 
+A chain that ends is set once more with the natives so collision follows
+(`SettleGlides`), and that set fades the 3D too. It waits until **two** ticks
+pass unfed, not one: when a sign's swings net to zero, the reset `SetAngle`
+asks for the angle the chain already holds and is skipped, so that tick feeds
+nothing. With a one-tick wait every sign faded once per cycle again
+(headless, Balmora, 1,500 ticks: 391 settles across 11 `SignRotate` signs,
+39 on the Mages' Guild sign; with two ticks, 1 in all, a sign once just
+after it loaded). Arktwend's harbor gate pole still settles where its rise
+ends, and the player walks through it. The settle log line is
+`move: <id> glide settled` under `TESRUNTIME_VERBOSE`.
+
 ### <a id="ai-packages-are-real-packages"></a>The AI commands are real Skyrim packages
 
 **Code:** `tes5_import/dialogue/ai_packages_morrowind.py`,
