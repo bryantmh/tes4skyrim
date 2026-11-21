@@ -450,15 +450,22 @@ def quest_restart(conv, tree, extends: str, name: str) -> list:
                                                      '      Return False',
                                                      '    EndIf']
     out += ['    TES4Start(akQuest)', '  EndIf'] + _settling(conv, script)
-    return out + ['EndFunction'] + (_SETTLE_PAIR if conv.xref.fragment_stages_of(script) else [])
+    return out + ['EndFunction'] + (_settle_pair(conv.sc.gsp_realtime) if conv.xref.fragment_stages_of(script) else [])
 
 
-#: A quest script's record of the stage fragment it has asked for and not yet seen finish.
-_SETTLE_PAIR = ['', 'Int TES4_settling = -1', 'Float TES4_settlingAt', '',
-                'Function TES4StagePending(Int aiStage)', '  TES4_settling = aiStage',
-                '  TES4_settlingAt = Utility.GetCurrentRealTime()', 'EndFunction', '',
-                'Function TES4StageRan(Int aiStage)', '  If TES4_settling == aiStage', '    TES4_settling = -1',
-                '  EndIf', 'EndFunction']
+def _settle_pair(clocked: bool) -> list:
+    """A quest script's record of the stage fragment it has asked for and not yet seen finish.
+
+    With `clocked` (the poll counts real seconds), the fragment's end restarts the count: TES4 ran
+    a stage's result inside the frame, so a timer the fragment sets loses none of its time.
+    See: docs/commentary/script_convert.md#a-stage-fragment-runs-before-its-poll
+    """
+    restart = ['    TES4_LastTick = Utility.GetCurrentRealTime()'] if clocked else []
+    return (['', 'Int TES4_settling = -1', 'Float TES4_settlingAt', '',
+             'Function TES4StagePending(Int aiStage)', '  TES4_settling = aiStage',
+             '  TES4_settlingAt = Utility.GetCurrentRealTime()', 'EndFunction', '',
+             'Function TES4StageRan(Int aiStage)', '  If TES4_settling == aiStage', '    TES4_settling = -1']
+            + restart + ['  EndIf', 'EndFunction'])
 
 
 def _settling(conv, script: str) -> list:
@@ -881,7 +888,8 @@ def poll(conv, tree, extends: str) -> list:
     sc.poll_return_prefix = ''
     sc.glide_secs = ''
     out = _walk_guard(sc, out)
-    out, body, done = _pass_guard(out, body, passes, _pass_waits(conv, tree, extends))
+    out, body, done = _pass_guard(out, body, passes, _pass_waits(conv, tree, extends),
+                                  _arm(conv, interval, load_gated, '    '))
     arm = done + _arm(conv, interval, load_gated)
     if not passes:
         return out + body + ([] if _ends_in_return(body) else arm) + ['EndEvent', '']
@@ -908,21 +916,21 @@ def _pass_waits(conv, tree, extends: str) -> list:
     return waits
 
 
-def _pass_guard(head: list, body: list, passes: bool, waits: list) -> tuple:
+def _pass_guard(head: list, body: list, passes: bool, waits: list, rearm: list) -> tuple:
     """(head, body, end) of a poll whose insurance pass waits out a pass still running.
 
     A pass parked in a latent call or behind a busy script let the insurance
     arm start more passes on top of it; each one queued behind the same call.
     It also skips while any of `waits` holds (another script's run of writes
-    into it, its own stage fragment), so it never reads half of one.
+    into it, its own stage fragment), so it never reads half of one; such a
+    skip runs `rearm` (the poll's own interval), as nothing else re-arms it.
     See: docs/commentary/script_convert.md#poll-pile-up
     """
     clear = f'{_PASS_VAR} = 0.0'
     running = f'{_PASS_VAR} > 0.0 && TES4_passNow >= {_PASS_VAR} && TES4_passNow - {_PASS_VAR} < {_PASS_STALE_SECS}'
-    head = [f'Float {_PASS_VAR} = 0.0'] + head + [
-        '  Float TES4_passNow = Utility.GetCurrentRealTime()',
-        f'  If {" || ".join(waits + [f"({running})"])}',
-        '    Return', '  EndIf', f'  {_PASS_VAR} = TES4_passNow']
+    wait = [f'  If {" || ".join(waits)}'] + rearm + ['    Return', '  EndIf'] if waits else []
+    head = [f'Float {_PASS_VAR} = 0.0'] + head + ['  Float TES4_passNow = Utility.GetCurrentRealTime()'] + wait + [
+        f'  If {running}', '    Return', '  EndIf', f'  {_PASS_VAR} = TES4_passNow']
     if not passes:
         body = [_before_returns(line, [clear]) for line in body]
     return head, body, [f'  {clear}']

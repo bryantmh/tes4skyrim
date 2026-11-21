@@ -4879,6 +4879,31 @@ The importer renames Oblivion's `Tamriel` worldspace to `TES4Tamriel`
 Arktwend is a Morrowind-engine game, so the TES3 exporter gives it the same
 synthesized `WrldMorrowind` as Morrowind itself; when Arktwend (or a master of
 it) is in the plugin chain, the importer writes `WrldArktwend` instead so the two
+**A skipped pass re-arms the poll's own interval** (`_pass_guard`'s `rearm`; the
+same for a skip on another script's held writes). It used to return with only the
+5 s insurance arm set, so the poll slept 5 s. Measured at real speed on
+CharacterGen stage 16 (2026-11-20, `chargen_emperor_in_cell`, Papyrus trace): the
+fragment says the Emperor's 3.06 s "You ... I've seen you ..." and sets
+`convTimer` to its length; the pass at the stage skipped, the next came 5.0 s
+later and counted 0.1 s (a gap over 2 s is clamped), then the timer ran its whole
+3.06 s again, so "Let me see your face..." began 8.0 s after the line did (5 s of
+silence). With the re-arm the next pass comes 0.03-0.06 s after the fragment ends,
+and the greeting began 3.04-3.09 s after the line, 3 runs of 3. A skip because
+the previous pass is still running keeps the plain return: that pass re-arms
+when it ends ([poll pile-up](#poll-pile-up)).
+
+**The fragment's end restarts the poll's count of real seconds** (`_settle_pair`,
+when the poll counts `getSecondsPassed`). A pass charges the time since the
+previous pass, so a timer the fragment set between two passes also lost the time
+before it was set: the stage-16 trace showed a pass 0.07 s after the timer was set
+charging 0.224 s. The greeting then cut the end of the Emperor's line. TES4 ran a
+stage's result inside the frame, so the fragment's own time counts for no timer
+(one set before the stage runs at most that much longer). Measured at true real
+time (no `--fast`: `iFPSClamp=0`, vsync on), the greeting's start after "You ...
+I've seen you ..." (3.07 s audio): before 2.72, 3.31, 2.83, 3.14, 3.30 s (cut 2 of
+5); after 3.59-3.94 s (0 of 5). Under `--fast` the same case read 2.67-3.59 s
+either way: see [timing under the governor](headless_testing.md#quiet).
+
 never share an EditorID. Its persistent cell (`<worldspace>Persistent`) follows,
 and its display name becomes "Arktwend" in place of the exporter's hardcoded
 "Morrowind" (which also names its Location, `TES4ArktwendLocation`). Morrowind,

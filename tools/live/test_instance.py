@@ -90,10 +90,10 @@ DATA_FILES = ('Skyrim.esm', 'Update.esm', 'Dawnguard.esm', 'HearthFires.esm',
 SKYRIM_INI = (('General', 'bAlwaysActive', '1'), ('General', 'sIntroSequence', ''),
               ('Bethesda.net', 'bEnablePlatform', '0'), ('Bethesda.net', 'bAutoSkipMainMenuLogin', '1'),
               ('Camera', 'fAutoVanityModeDelay', '1000000'))
-#: Over the Low preset: a small hidden window; silence (volume 0 keeps sound-timed lines real).
+#: Low preset + a small hidden window; FULL volume (sandbox mutes): docs/commentary/headless_testing.md#sandbox-mute
 PREFS_INI = (('Display', 'bFull Screen', '0'), ('Display', 'bBorderless', '1'),
              ('Display', 'iSize W', '640'), ('Display', 'iSize H', '360'),
-             ('AudioMenu', 'fAudioMasterVolume', '0.0000'), ('General', 'bUpsellOwned', '1'))
+             ('AudioMenu', 'fAudioMasterVolume', '1.0000'), ('General', 'bUpsellOwned', '1'))
 #: The window size of a recorded run (`--record`), width then height.
 RECORD_SIZE = (('Display', 'iSize W', '2560'), ('Display', 'iSize H', '1440'))
 #: Skyrim.ini lines of a recorded run: field of view 90 (the user's choice; the game's own is ~65).

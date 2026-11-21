@@ -43,3 +43,32 @@ def test_the_stage_fragment_ends_by_clearing_its_mark():
     _name, src = quest_fragment_psc(rec, 'MQX', _graph(), frags, {})
     body = src.split('Fragment_Stage_0065_Item_0()')[1].split('EndFunction')[0]
     assert body.strip().split('\n')[-1].strip() == '((Self as Quest) as TES4_MQXScript).TES4StageRan(65)'
+
+
+def test_a_pass_skipped_for_the_fragment_rearms_at_the_poll_interval():
+    """The skip re-arms the poll's own interval; only the 5 s insurance arm left the line's timer to start late.
+
+    See: docs/commentary/script_convert.md#a-stage-fragment-runs-before-its-poll
+    """
+    psc = ScriptConverter(_graph()).convert_standalone('MQXScript', QUEST_SCRIPT, 'Quest', 'MQXScript')
+    lines = [line.strip() for line in psc.split('\n')]
+    skip = next(i for i, line in enumerate(lines) if 'TES4_settling >= 0' in line)
+    end = lines.index('EndEvent', skip)
+    interval = next(line for line in reversed(lines[:end]) if line.startswith('RegisterForSingleUpdate('))
+    assert interval != 'RegisterForSingleUpdate(5.0)'
+    assert lines[skip + 1:skip + 3] == [interval, 'Return']
+    running = next(i for i, line in enumerate(lines) if line.startswith('If TES4_PassAt > 0.0'))
+    assert lines[running + 1] == 'Return'
+
+
+def test_a_finished_fragment_restarts_the_polls_seconds():
+    """A poll counting real seconds restarts its count when the stage fragment ends; one without a count does not.
+
+    See: docs/commentary/script_convert.md#a-stage-fragment-runs-before-its-poll
+    """
+    timed = QUEST_SCRIPT.replace('begin gamemode\n', 'begin gamemode\nset timer to timer - getsecondspassed\n')
+    clocked = ScriptConverter(_graph()).convert_standalone('MQXScript', timed, 'Quest', 'MQXScript')
+    plain = ScriptConverter(_graph()).convert_standalone('MQXScript', QUEST_SCRIPT, 'Quest', 'MQXScript')
+    ran = clocked.split('Function TES4StageRan')[1].split('EndFunction')[0]
+    assert 'TES4_LastTick = Utility.GetCurrentRealTime()' in ran
+    assert 'TES4_LastTick' not in plain.split('Function TES4StageRan')[1].split('EndFunction')[0]
