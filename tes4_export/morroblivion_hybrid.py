@@ -31,6 +31,7 @@ from output_layout import asset_root, assets_for, record_dir
 from tes5_import.base.text_reader import parse_export_file
 
 from .morroblivion import MorroblivionModels, archive_path, body_parts, fix_placements
+from .morroblivion_ground import GROUND_NAME, MorroblivionGround, icon_stem, match_ground, twin_stem, write_pairs
 from .morroblivion_origin import OriginShifts
 from .morroblivion_pairs import right_ids
 from .morroblivion_texture_map import MESH_PREFIX, map_is_current, prove_map
@@ -333,62 +334,25 @@ def map_twins(hybrid: HybridModels) -> set:
     return {m for k, v in table.items() if k not in kept for m in with_maps(v[len('textures' + chr(92)):])}
 
 
-def ground_index(export_root: str, exports) -> dict:
-    """{Morroblivion land texture stem: (its LTEX, {GRAS FormID: GRAS} of its export)}.
+def swap_ground(out: dict, hybrid: HybridModels, ground: MorroblivionGround, pairs: dict) -> tuple:
+    """Give each LTEX Morroblivion's copy of its texture; (count, textures-relative files to copy).
 
-    Where one texture backs several LTEX records, the one listing the most grass wins.
-    """
-    out = {}
-    for name in exports:
-        folder = record_dir(export_root, name)
-        grasses = {r.get('FormID'): r for r in parse_export_file(os.path.join(folder, 'GRAS.txt'))}
-        for rec in parse_export_file(os.path.join(folder, 'LTEX.txt')):
-            stem = icon_stem(rec.get('ICON', ''))
-            held = out.get(stem)
-            if stem and (held is None or _grass_count(rec) > _grass_count(held[0])):
-                out[stem] = (rec, grasses)
-    return out
-
-
-def icon_stem(icon: str) -> str:
-    """A land texture's file stem, lower case."""
-    return os.path.splitext(archive_path(icon).rsplit(chr(92), 1)[-1])[0]
-
-
-def _grass_count(rec: dict) -> int:
-    """How many grasses an LTEX lists."""
-    return int(rec.get('GrassCount') or 0)
-
-
-def twin_ground(icon: str, ground: dict):
-    """Morroblivion's (LTEX, grasses) for vanilla land texture `icon`, by its renamed twin stem; None."""
-    return ground.get(icon_stem(icon).replace('_', 'u'))
-
-
-def match_ground(out: dict, hybrid: HybridModels, ground: dict) -> tuple:
-    """Give each LTEX in `out` Morroblivion's twin texture; (count, textures-relative files to copy).
-
-    Each matched texture's grass models join the copied meshes.
+    A texture the plugin ships itself keeps it and loses its pair. Each
+    paired texture's grass models join the copied meshes.
     """
     count, textures = 0, set()
-    for _form_id, lines in out.get('LTEX', ()):
-        fields = dict(l.partition('=')[::2] for l in lines)
-        icon = fields.get('ICON', '').replace('\\\\', '\\')
-        twin = twin_ground(icon, ground)
-        if twin is None or (not hybrid.vanilla and _ships_own_texture(hybrid, texture_key(icon))):
+    for form_id, lines in out.get('LTEX', ()):
+        icon = dict(l.partition('=')[::2] for l in lines).get('ICON', '').replace(chr(92) * 2, chr(92))
+        twins = ground.by_stem.get(twin_stem(icon)) or ground.by_stem.get(icon_stem(icon))
+        if not twins or (not hybrid.vanilla and _ships_own_texture(hybrid, texture_key(icon))):
+            pairs.pop(form_id, None)
             continue
-        ltex, grasses = twin
-        _set_line(lines, 'ICON', ltex['ICON'])
-        rel = 'landscape' + chr(92) + archive_path(ltex['ICON'])
-        textures |= with_maps(rel)
-        hybrid.named |= {archive_path(grasses[g]['Model.MODL']) for g in grass_ids(ltex) if g in grasses}
+        new_icon = ground.ltex[twins[0]]['ICON']
+        _set_line(lines, 'ICON', new_icon)
+        textures |= with_maps('landscape' + chr(92) + archive_path(new_icon))
+        hybrid.named |= {archive_path(g['Model.MODL']) for g in ground.grasses(pairs.get(form_id, ''))}
         count += 1
     return count, textures
-
-
-def grass_ids(ltex: dict) -> list:
-    """The GRAS FormIDs an LTEX lists, in order."""
-    return [ltex[f'Grass[{i}]'] for i in range(_grass_count(ltex)) if ltex.get(f'Grass[{i}]')]
 
 
 def vanilla_esm(export_root: str) -> str:
@@ -409,7 +373,10 @@ def apply_hybrid(out: dict, records, ctx, plugin: str, source_path: str, masters
     ctx.origin_shifts = origin_shifts(hybrid, master_meshes)
     counts = remap_models(out, records, ctx, hybrid)
     corrected = correct_placements(out, [path for _name, path in masters], hybrid)
-    lands, land_textures = match_ground(out, hybrid, ground_index(root, exports))
+    ground = MorroblivionGround(root, exports)
+    pairs = match_ground(out, ctx, ground, hybrid.vanilla)
+    lands, land_textures = swap_ground(out, hybrid, ground, pairs)
+    write_pairs(record_dir(root, plugin), out, pairs)
     if not map_is_current(root, exports):
         prove_map(root, exports, vanilla_esm(root), hybrid.index, progress)
     twins = map_twins(hybrid)
@@ -461,7 +428,7 @@ def copy_assets(hybrid: HybridModels, master_roots, twins=(), log=print) -> tupl
         found = None if find_under(master_textures, rel) else find_under(tex_roots, rel)
         if found:
             _copy(found, hybrid.dest / 'textures', rel, copied)
-    write_manifest(hybrid.export_root, hybrid.plugin, copied)
+    write_copies(hybrid.export_root, hybrid.plugin, copied)
     return meshes, len(copied) - meshes
 
 
@@ -474,7 +441,7 @@ def _copy(source: Path, root: Path, rel: str, copied: list) -> None:
     copied.append(target.relative_to(root.parent).as_posix())
 
 
-def write_manifest(export_root: str, plugin: str, copied: list) -> None:
+def write_copies(export_root: str, plugin: str, copied: list) -> None:
     """Record the files this export copied, beside the plugin's records."""
     path = record_dir(export_root, plugin) / MANIFEST_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -494,4 +461,5 @@ def remove_copies(export_root: str, plugin: str) -> int:
                 removed += 1
         path.unlink()
     (folder / KEEP_NAME).unlink(missing_ok=True)
+    (folder / GROUND_NAME).unlink(missing_ok=True)
     return removed

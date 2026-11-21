@@ -15,7 +15,9 @@ import pytest
 
 from asset_convert.nif import morroblivion_textures as mbt
 from asset_convert.nif.tex_paths import rewrite_tex_path
-from tes4_export.morroblivion_texture_map import pair_set, proven_twins
+from asset_convert.nif.geometry_shader import _twin_alpha
+from asset_convert.nif.sse_nif import NifFormat
+from tes4_export.morroblivion_texture_map import pair_set, proven_twins, shared_cutoff
 
 #: The patch whose export carries the map.
 PATCH = 'Morrowind-Morroblivion-Compatibility.esp'
@@ -168,7 +170,7 @@ MORRO_WALL = 'export/Morrowind_ob.esm/meshes/morro/x/exuhlaaluuwallu01.nif'
                     reason='needs the Morrowind and Morroblivion exports')
 def test_the_hlaalu_wall_proves_all_four_twins():
     """Morroblivion reordered this mesh's shapes yet kept every UV: four proofs."""
-    twins = dict(proven_twins(VANILLA_WALL, MORRO_WALL))
+    twins = {key: tex for key, tex, _cutoff in proven_twins(VANILLA_WALL, MORRO_WALL)}
     assert sorted(twins) == ['tx_hlaalu_topedge_02', 'tx_hlaalu_wall2_01',
                              'tx_hlaalu_wall2_02', 'tx_hlaalu_wall2_03']
 
@@ -196,3 +198,82 @@ class TestPairSet:
         verts = np.array([[-111.2258, 50.1503, 0.3925]])
         uv = np.array([[0.0, 0.5343]])
         assert pair_set(verts, uv) == pair_set(verts + 1e-4, uv)
+
+
+#: Bitter Coast tree 02 and Morroblivion's record-paired replacement of it, when exported.
+VANILLA_TREE = 'export/Morrowind.esm/meshes/f/flora_bc_tree_02.nif'
+MORRO_TREE = 'export/Morrowind_ob.esm/meshes/morro/f/floraubcutreeu02.nif'
+
+
+@pytest.mark.skipif(not (os.path.isfile(VANILLA_TREE)
+                         and os.path.isfile(MORRO_TREE)),
+                    reason='needs the Morrowind and Morroblivion exports')
+def test_the_bitter_coast_leaves_carry_morroblivions_alpha_test():
+    """The leaf twin's faint alpha is cut at 32 by Morroblivion's own shape."""
+    cutoffs = {cut for key, _tex, cut in proven_twins(VANILLA_TREE, MORRO_TREE)
+               if key == 'tx_bc_leaves_02'}
+    assert cutoffs == {(0x1200, 32)}
+
+
+class TestTwinAlpha:
+    """The alpha test Morroblivion authored with a twin follows the swap."""
+
+    @pytest.fixture
+    def armed(self, tree):
+        """The Tamriel map armed, its twin cut at 32 by Morroblivion."""
+        mbt.write_alpha(tree['map'], {'tx_hlaalu_wall2_01': (0x1200, 32)})
+        mbt.activate(tree['tamriel'])
+        return tree
+
+    @staticmethod
+    def _alpha(flags, threshold=0):
+        """A NiAlphaProperty with these flags and threshold."""
+        prop = NifFormat.NiAlphaProperty()
+        prop.flags = flags
+        prop.threshold = threshold
+        return prop
+
+    def test_the_list_round_trips(self, tmp_path):
+        """Every cutoff written comes back unchanged."""
+        alpha = {'tx_a': (0x1200, 32), 'f\\tx_b': (0x1AEC, 192)}
+        mbt.write_alpha(tmp_path, alpha)
+        assert mbt.read_alpha(tmp_path) == alpha
+
+    def test_a_blend_only_shape_gains_the_test(self, armed):
+        """Vanilla's blend keeps; Morroblivion's test and threshold join it."""
+        out = _twin_alpha(self._alpha(0x00ED), b'tx_hlaalu_wall2_01.tga', None)
+        assert (int(out.flags), int(out.threshold)) == (0x12ED, 32)
+
+    def test_an_opaque_shape_stays_opaque(self, armed):
+        """No authored alpha means opaque, whatever the twin's other shapes do."""
+        assert _twin_alpha(None, b'tx_hlaalu_wall2_01.tga', None) is None
+
+    def test_an_authored_test_is_kept(self, armed):
+        """A shape that already alpha-tests keeps its own threshold."""
+        own = self._alpha(0x12EC, 100)
+        assert _twin_alpha(own, b'tx_hlaalu_wall2_01.tga', None) is own
+
+    def test_an_unswapped_texture_keeps_its_setting(self, armed):
+        """Only a swapped twin brings Morroblivion's test."""
+        own = self._alpha(0x00ED)
+        assert _twin_alpha(own, b'tx_not_in_the_map.tga', None) is own
+
+
+class TestSharedCutoff:
+    """One cutoff per texture, only where every paired shape tests alike."""
+
+    def test_agreement_is_kept(self):
+        """Every shape cuts at 32: 32."""
+        assert shared_cutoff({(0x1200, 32)}) == (0x1200, 32)
+
+    def test_an_untested_shape_vetoes(self):
+        """Morroblivion itself blends this twin somewhere: no test."""
+        assert shared_cutoff({(0x1200, 32), None}) is None
+
+    def test_differing_thresholds_take_the_lowest(self):
+        """The cut every shape makes."""
+        assert shared_cutoff({(0x1200, 32), (0x1200, 64)}) == (0x1200, 32)
+
+    def test_a_differing_test_vetoes(self):
+        """No one authored test to copy."""
+        assert shared_cutoff({(0x1200, 32), (0x1600, 32)}) is None

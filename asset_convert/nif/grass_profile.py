@@ -53,6 +53,8 @@ import sys
 from pathlib import Path
 
 from asset_convert.game_paths import win_join
+from asset_convert.sources.source_registry import companion_name, record_dir
+from core.plugin_masters import export_root
 from asset_convert.nif.grass_profile_morrowind import add_wind_weights
 
 
@@ -113,7 +115,16 @@ def load_grass_model_paths(export_dir, _seen=None):
             continue
         paths |= load_grass_model_paths(base, _seen)
     paths |= _own_grass_model_paths(export_dir)
+    paths |= _own_grass_model_paths(companion_dir(export_dir))
     return paths
+
+
+def companion_dir(export_dir) -> Path:
+    """The record dir of the hybrid companion whose grass meshes ship in `export_dir`'s plugin's tree.
+
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-companion
+    """
+    return record_dir(export_root(export_dir), companion_name(Path(export_dir).name))
 
 
 def _own_grass_model_paths(export_dir):
@@ -334,7 +345,20 @@ def _apply_shader_profile(data):
             changed = _apply_lighting_shader(block) or changed
         elif isinstance(block, NifFormat.NiAlphaProperty):
             changed = _apply_alpha_profile(block) or changed
+        elif isinstance(block, NifFormat.BSShaderTextureSet):
+            changed = _clear_normal_slot(block) or changed
     return changed
+
+
+def _clear_normal_slot(block):
+    """Leave the normal slot empty, as most vanilla grass does: a shipped flat normal renders the blades black.
+
+    See: docs/commentary/asset_convert_terrain.md#grass-normal-slot
+    """
+    if len(block.textures) < 2 or not block.textures[1]:
+        return False
+    block.textures[1] = b''
+    return True
 
 
 def _grass_source(rel, output_meshes_root, master_meshes_roots):

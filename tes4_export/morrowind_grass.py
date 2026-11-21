@@ -91,7 +91,7 @@ def is_grass_model(model: str) -> bool:
         GRASS_MODEL_PREFIX)
 
 
-def _record_blocks(path: str):
+def record_blocks(path: str):
     """Each record in an export dump as a dict of its scalar fields.
 
     Bulk vertex arrays are skipped by prefix rather than parsed: they are ~97%
@@ -114,10 +114,10 @@ def _record_blocks(path: str):
                 fields[key] = value
 
 
-def _cell_grids(export_dir: str) -> dict:
+def cell_grids(export_dir: str) -> dict:
     """Exterior cell FormID -> its (X, Y) grid, from one export's CELL dump."""
     out = {}
-    for rec in _record_blocks(os.path.join(export_dir, 'CELL.txt')):
+    for rec in record_blocks(os.path.join(export_dir, 'CELL.txt')):
         x, y = rec.get('XCLC.X'), rec.get('XCLC.Y')
         if x is not None and y is not None and rec.get('FormID'):
             out[rec['FormID'].upper()] = (int(x), int(y))
@@ -211,13 +211,13 @@ def land_texture_grid(export_dir: str, grids: dict, owners: list,
     """TES4 cell grid -> ([dominant texture per quadrant], [{texture: planted share}]).
 
     Reads one export's LAND dump, already split into Oblivion cells, so no
-    VTEX de-swizzling is needed. `grids` is that export's `_cell_grids`.
+    VTEX de-swizzling is needed. `grids` is that export's `cell_grids`.
     Textures are keyed by `_texture_key`, naming the file the binding has to
     override; one no bindable file owns becomes ''.
     See: docs/commentary/tes4_export_morrowind.md#groundcover-as-grass
     """
     out = {}
-    for rec in _record_blocks(os.path.join(export_dir, 'LAND.txt')):
+    for rec in record_blocks(os.path.join(export_dir, 'LAND.txt')):
         grid = grids.get(rec.get('ParentCELL', '').upper())
         if grid is None:
             continue
@@ -240,7 +240,7 @@ def master_ltex_records(master_dirs) -> dict:
     """
     out = {}
     for path, remap in master_dirs:
-        for rec in _record_blocks(os.path.join(path, 'LTEX.txt')):
+        for rec in record_blocks(os.path.join(path, 'LTEX.txt')):
             fid = remap_form_id(rec.get('FormID', ''), remap)
             if fid:
                 out.setdefault(fid.upper(), rec)
@@ -260,7 +260,7 @@ def _owner_ltex_fields(export_root: str, keys) -> dict:
     for owner in sorted({key.split('|')[0] for key in keys}):
         path = str(record_dir(export_root, owner))
         own = '%02X' % len(masters_from_export_header(path))
-        for rec in _record_blocks(os.path.join(path, 'LTEX.txt')):
+        for rec in record_blocks(os.path.join(path, 'LTEX.txt')):
             fid = rec.get('FormID', '').upper()
             key = '%s|%s' % (owner, fid[2:])
             if fid.startswith(own) and key in keys:
@@ -472,7 +472,7 @@ def master_grass_models(master_dirs) -> dict:
     """Master STAT FormID, re-keyed into this plugin -> its escaped grass model."""
     out = {}
     for path, remap in master_dirs:
-        for rec in _record_blocks(os.path.join(path, 'STAT.txt')):
+        for rec in record_blocks(os.path.join(path, 'STAT.txt')):
             model = rec.get('Model.MODL', '')
             fid = remap_form_id(rec.get('FormID', ''), remap)
             if fid and is_grass_model(model):
@@ -544,7 +544,7 @@ def _overlapping_land(path: str, needed: set, names: dict,
 
     `names` maps a bindable file's normalized record folder to its name.
     """
-    grids = _cell_grids(path)
+    grids = cell_grids(path)
     if needed.isdisjoint(grids.values()):
         return {}
     owners = masters_from_export_header(path) + [names.get(_norm(path), '')]

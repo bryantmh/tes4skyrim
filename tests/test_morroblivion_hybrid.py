@@ -5,9 +5,11 @@ from types import SimpleNamespace
 
 from asset_convert.character.morrowind_armor import _assembled
 from asset_convert.nif import morroblivion_textures as mbt
+from asset_convert.nif.grass_profile import load_grass_model_paths
 from asset_convert.sources import source_registry
 from tes4_export import morroblivion_companion as companion
-from tes4_export.morroblivion_hybrid import _swap_world, ground_index, load_whitelist, match_ground, with_maps
+from tes4_export.morroblivion_ground import MorroblivionGround, match_ground, write_pairs
+from tes4_export.morroblivion_hybrid import _swap_world, load_whitelist, swap_ground, with_maps
 
 
 def _rows(tmp_path, rows):
@@ -93,26 +95,60 @@ def test_companion_reuses_master_furniture_and_restates_edits(tmp_path):
     assert 'RecordFlags=32' in refs['00000010'] and 'NAME=03ABCDEF' in refs['02000020']
 
 
-def test_land_texture_takes_its_twin_and_grass(tmp_path):
-    """Tx_sand_01 takes TxUsandU01 from the twin listing grass; the companion's LTEX carries that grass."""
+def _morroblivion_ground(tmp_path):
+    """Morroblivion: one texture as a bare and a grassy record, a NoGrass texture, and land painting both."""
     _export(tmp_path / 'Morrowind_ob.esm', 'Master[0]=Oblivion.esm\n', {
         'LTEX': [{'FormID': '01000001', 'EditorID': 'bare', 'ICON': 'morro/TxUsandU01.dds'},
                  {'FormID': '01000002', 'EditorID': 'grassy', 'ICON': 'morro/TxUsandU01.dds',
-                  'GrassCount': '1', 'Grass[0]': '01000009'}],
-        'GRAS': [{'FormID': '01000009', 'EditorID': 'mwG1', 'Model.MODL': 'Morroblivion/Grass/G1.nif'}]})
-    ground = ground_index(str(tmp_path), ['Morrowind_ob.esm'])
+                  'GrassCount': '1', 'Grass[0]': '01000009'},
+                 {'FormID': '01000003', 'EditorID': 'mwNoGrass', 'ICON': 'morro/TxUdirt.dds'}],
+        'GRAS': [{'FormID': '01000009', 'EditorID': 'mwG1', 'Model.MODL': 'Morroblivion/Grass/G1.nif'}],
+        'WRLD': [{'FormID': '01000100', 'EditorID': 'WrldMorrowind'}],
+        'CELL': [{'FormID': '01000200', 'XCLC.X': '0', 'XCLC.Y': '0'}],
+        'LAND': [{'FormID': '01000300', 'ParentWRLD': '01000100', 'ParentCELL': '01000200', 'LayerCount': '2',
+                  'Layer[0].Type': 'BASE', 'Layer[0].BTXT.Texture': '01000002', 'Layer[0].BTXT.Quadrant': '0',
+                  'Layer[1].Type': 'ALPHA', 'Layer[1].ATXT.Texture': '01000003', 'Layer[1].ATXT.Quadrant': '0',
+                  'Layer[1].ATXT.Layer': '0', 'Layer[1].VTXTCount': '1', 'Layer[1].VT[0].Pos': '0',
+                  'Layer[1].VT[0].Opacity': '1.0'}]})
+    return MorroblivionGround(str(tmp_path), ['Morrowind_ob.esm'])
+
+
+def _sand_ctx(tmp_path):
+    """Our Sand texture, and an export context minting one id."""
+    out = {'LTEX': [('00000005', ['EditorID=Sand', 'ICON=textures\\\\Tx_sand_01.dds'])]}
+    return out, SimpleNamespace(export_root=str(tmp_path), derive=lambda key: '00ABCDEF', master_names=[])
+
+
+def test_vanilla_land_takes_morroblivions_paint_and_its_pairs_grass(tmp_path):
+    """Sand pairs with the record painted on its vertices; the land takes Morroblivion's layers; grass follows the pair."""
+    ground = _morroblivion_ground(tmp_path)
+    out, ctx = _sand_ctx(tmp_path)
+    out['CELL'] = [('00000300', ['XCLC.X=0', 'XCLC.Y=0'])]
+    out['LAND'] = [('00000400', ['DATA.Flags=29', 'LayerCount=1', 'Layer[0].Type=BASE',
+                                 'Layer[0].BTXT.Texture=00000005', 'Layer[0].BTXT.Quadrant=0', 'ParentCELL=00000300'])]
+    pairs = match_ground(out, ctx, ground, True)
+    assert pairs == {'00000005': 'Morrowind_ob.esm|01000002', '00ABCDEF': 'Morrowind_ob.esm|01000003'}
+    land = out['LAND'][0][1]
+    assert 'Layer[0].BTXT.Texture=00000005' in land and 'Layer[1].ATXT.Texture=00ABCDEF' in land
+    assert land[-1] == 'ParentCELL=00000300' and 'EditorID=mwNoGrass' in out['LTEX'][1][1]
     hybrid = SimpleNamespace(vanilla=True, named=set())
-    out = {'LTEX': [('00000005', ['EditorID=Sand', 'ICON=textures\\\\Tx_sand_01.dds']),
-                    ('00000006', ['EditorID=Lava', 'ICON=textures\\\\tx_lavacrust00.dds'])]}
-    assert match_ground(out, hybrid, ground) == (1, with_maps('landscape\\morro\\txusandu01.dds'))
-    assert out['LTEX'][0][1][1] == 'ICON=morro/TxUsandU01.dds' and out['LTEX'][1][1][1].endswith('lavacrust00.dds')
-    assert hybrid.named == {'morroblivion\\grass\\g1.nif'}
+    assert swap_ground(out, hybrid, ground, pairs)[0] == 2
+    assert out['LTEX'][0][1][1] == 'ICON=morro/TxUsandU01.dds' and hybrid.named == {'morroblivion\\grass\\g1.nif'}
     own = tmp_path / 'Morrowind.esm'
-    _export(own, 'Source=TES3\n', {'LTEX': [{'FormID': '00000005', 'EditorID': 'Sand', 'ICON': 'morro/TxUsandU01.dds'}]})
+    _export(own, 'Source=TES3\n', {'LTEX': [{'FormID': '00000005', 'EditorID': 'Sand', 'ICON': 'morro/TxUsandU01.dds'},
+                                            {'FormID': '00ABCDEF', 'EditorID': 'mwNoGrass', 'ICON': 'morro/TxUdirt.dds'}]})
+    write_pairs(own, out, pairs)
     layout = {'names': ['Morrowind.esm'], 'own': ('Morrowind.esm', str(own)), 'companions': []}
     grasses, lands = companion.grass(layout, ground)
     assert len(grasses) == 1 and grasses[0][0].startswith('01') and 'EditorID=mwG1' in grasses[0][1]
     assert lands == [('00000005', lands[0][1])] and lands[0][1][-2:] == ['GrassCount=1', f'Grass[0]={grasses[0][0]}']
+
+
+def test_an_unpainted_texture_on_a_doubled_stem_has_no_pair(tmp_path):
+    """With no painted land and two Morroblivion records on its texture, nothing authored picks one."""
+    ground = _morroblivion_ground(tmp_path)
+    out, ctx = _sand_ctx(tmp_path)
+    assert match_ground(out, ctx, ground, False) == {}
 
 
 def test_hybrid_plugin_reads_the_one_map_less_its_kept_textures(tmp_path, monkeypatch):
@@ -135,3 +171,11 @@ def test_hybrid_plugin_reads_the_one_map_less_its_kept_textures(tmp_path, monkey
 def test_a_twin_ships_with_its_normal_and_glow_maps():
     """A swapped diffuse without its _n map renders flat: every twin carries both maps."""
     assert with_maps('morro/x/txua.dds') == {'morro/x/txua.dds', 'morro/x/txua_n.dds', 'morro/x/txua_g.dds'}
+
+
+def test_the_owners_grass_pass_places_its_companions_grass(tmp_path):
+    """The companion's grass meshes ship in its owner's tree, so the owner's grass pass must place them."""
+    _export(tmp_path / 'Morrowind.esm', 'Source=TES3\n', {})
+    _export(tmp_path / 'Morrowind.esm' / 'Morrowind - Morroblivion Hybrid.esp', 'Master[0]=Morrowind.esm\n',
+            {'GRAS': [{'FormID': '01000009', 'Model.MODL': 'Morroblivion/Grass/G1.nif'}]})
+    assert load_grass_model_paths(str(tmp_path / 'Morrowind.esm')) == {'morroblivion/grass/g1.nif'}

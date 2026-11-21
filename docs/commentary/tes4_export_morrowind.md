@@ -780,9 +780,29 @@ mesh swaps by default.
   renamed stem names a Morroblivion LTEX takes that record's ICON, and the
   texture with its `_n` map ships under `textures\landscape\`. The mesh map
   never reaches land: an LTEX is not a mesh, so `substitute` never sees it.
-  Where one texture backs several Morroblivion LTEX records, the one listing
-  the most grass is the twin. Morrowind matches 106 of its 107 (all but
-  `tx_lavacrust00`); 25 of the twins list grass.
+  Morrowind matches 106 of its 107 (all but `tx_lavacrust00`); 25 of the
+  twins list grass.
+  **Morroblivion repainted the landmass, so a vanilla plugin's LAND takes
+  Morroblivion's layers verbatim** wherever Morroblivion has land on the same
+  grid of its `WrldMorrowind` (`morroblivion_ground.py`). Only textures
+  change; heights and normals stay Morrowind's. Seyda Neen showed why: in
+  Morrowind's own land moss is the dominant texture of every quadrant, so it
+  became the BASE layer and, by the planting rule in
+  [groundcover-density](#groundcover-density) (full density wherever a
+  texture shows; base = 1 - sum of alphas), grew grass on 62% of cell
+  (-3,-18)'s vertices. Morroblivion paints dirt or mud as base there and
+  moss over it: 30%. Its towns also use Oblivion's `...NoGrass` textures.
+  A Morroblivion texture with no own LTEX takes a master's paired one, else
+  a new LTEX keyed by Morroblivion's EditorID.
+  **Grass follows the Morroblivion record painted on the same vertices**, not
+  the texture file: Morroblivion has two records on some files (West Gash
+  `mwWGScrubPlainTex` lists 6 grasses, `mwComScrubPlainTex` none). Each own
+  LTEX pairs with the same-file record most often dominant on the vertices
+  where it is dominant in the vanilla land; else the pair Morrowind.esm
+  recorded for its same EditorID; else the file's only record. A texture
+  with none of these gets no grass. Pairs go to
+  `morroblivion_ground.txt` beside the records, where the companion reads
+  them.
 - The worn-armor assembler writes only models under `armor\morrowind\`, so a
   swapped worn model is never overwritten by the vanilla assembly.
 

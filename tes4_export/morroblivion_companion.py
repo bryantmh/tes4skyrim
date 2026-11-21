@@ -23,8 +23,8 @@ from tes5_import.base.text_reader import parse_export_file
 
 from .export_morrowind import morroblivion_exports, write_export, write_header
 from .morroblivion import archive_path
-from .morroblivion_hybrid import (FURNITURE_MARKER, MANIFEST_NAME, find_under, grass_ids,
-                                  ground_index, icon_stem)
+from .morroblivion_ground import MorroblivionGround, read_pairs
+from .morroblivion_hybrid import FURNITURE_MARKER, MANIFEST_NAME, find_under
 from .morrowind_ids import remap_form_id
 from .morrowind_patch import patch_formid
 from .record_types.common import escape_value
@@ -176,18 +176,15 @@ def placements(layout: dict, bases: dict) -> list:
     return out
 
 
-def grass(layout: dict, ground: dict) -> tuple:
-    """([(GRAS FormID, lines)] new here, [(LTEX FormID, lines)] carrying its twin's grass)."""
+def grass(layout: dict, ground: MorroblivionGround) -> tuple:
+    """([(GRAS FormID, lines)] new here, [(LTEX FormID, lines)] carrying its Morroblivion pair's grass)."""
     names, own_index = layout['names'], len(layout['names'])
     known = _by_editor_id(layout['companions'], names, 'GRAS')
+    pairs = read_pairs(layout['own'][1])
     added, lands = {}, []
     for rec in _records([layout['own']], names, ('LTEX',)):
-        twin = ground.get(icon_stem(rec.get('ICON', '')))
         ids = []
-        for gid in grass_ids(twin[0]) if twin and rec.get('FormID') else ():
-            gras = twin[1].get(gid)
-            if gras is None:
-                continue
+        for gras in ground.grasses(pairs.get(rec.get('EditorID', '').lower(), '')) if rec.get('FormID') else ():
             edid = gras['EditorID'].lower()
             if edid not in known:
                 known[edid] = patch_formid(('GRAS', edid), own_index, GRASS_SITE)
@@ -215,7 +212,7 @@ def export_companion(export_dir: str, plugin: str, progress=print) -> bool:
     layout = {'names': names, 'masters': entries[:at], 'own': entries[at], 'companions': entries[at + 1:]}
     bases, furn = furniture(layout, _morroblivion_flags(export_dir))
     refs = placements(layout, bases)
-    grasses, lands = grass(layout, ground_index(export_dir, morroblivion_exports(export_dir)))
+    grasses, lands = grass(layout, MorroblivionGround(export_dir, morroblivion_exports(export_dir)))
     counts = write_export({'FURN': furn, 'REFR': refs, 'GRAS': grasses, 'LTEX': lands}, str(folder))
     write_header(str(folder), names, sum(counts.values()), f'{plugin} furniture and grass for Morroblivion', 0)
     progress(f'[{companion_name(plugin)}] {len(furn)} furniture, {len(refs)} placements, {len(grasses)} grasses '

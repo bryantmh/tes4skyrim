@@ -25,7 +25,7 @@ from asset_convert.nif.shaders import (ALPHA_BLEND_ENABLED, ALPHA_DST_ONE,
                                        collect_shader_inputs, collect_uv_ctrls,
                                        has_spec_mask, plan_flipbook_atlas,
                                        resolve_texture, resolve_normal_for)
-from asset_convert.nif.morroblivion_textures import substitute
+from asset_convert.nif.morroblivion_textures import ALPHA_TEST_ENABLE, substitute, twin_cutoff
 from asset_convert.nif.nif_flags import NIF_FLAGS
 from asset_convert.nif.tex_paths import (path_bytes, path_text,
                                          rewrite_tex_path)
@@ -558,12 +558,29 @@ def _record_overlay(tex_set, tex_apply_mode, stats, norm_tex_ref):
         stats.setdefault('overlay_diffuses', set()).add(key)
 
 
+def _twin_alpha(alpha_prop, diffuse_path, stats):
+    """A blend-only `alpha_prop` given the alpha test Morroblivion authored with this diffuse's twin.
+
+    See: docs/commentary/asset_convert_texture.md#twin-alpha-cutoff
+    """
+    cutoff = twin_cutoff(diffuse_path)
+    if cutoff is None or alpha_prop is None or int(alpha_prop.flags) & ALPHA_TEST_ENABLE:
+        return alpha_prop
+    bits, threshold = cutoff
+    tested = NifFormat.NiAlphaProperty()
+    tested.flags = int(alpha_prop.flags) | bits
+    tested.threshold = threshold
+    if stats is not None:
+        stats['mw_twin_alpha_test'] = stats.get('mw_twin_alpha_test', 0) + 1
+    return tested
+
+
 def _carry_alpha(ts, tex_set, si, stats):
     """Carry the Oblivion NiAlphaProperty across, unless HILIGHT2 drops it.
 
     See: docs/commentary/asset_convert_shader.md#hilight2-alpha-dropped
     """
-    alpha_prop = si.alpha_prop
+    alpha_prop = _twin_alpha(si.alpha_prop, si.diffuse_path, stats)
     if alpha_prop is None:
         return
     if si.tex_apply_mode == APPLY_HILIGHT2 and (int(alpha_prop.flags) & 0x0001):

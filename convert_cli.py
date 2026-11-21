@@ -28,7 +28,7 @@ STEP_FLAGS = (
 )
 
 #: Steps the default run (no `--*-only`) leaves out.
-NOT_DEFAULT = frozenset({'pack_zip'})
+NOT_DEFAULT = frozenset({'lod', 'pack_zip'})
 
 #: What `--build-morrowind-patch` runs over the patch: the steps it has content for.
 PATCH_STEPS = ('export', 'meshes', 'creatures', 'import', 'sounds', 'scripts')

@@ -20,7 +20,8 @@ from pathlib import Path
 import numpy as np
 
 from asset_convert.nif.flipbook import read_dds_header
-from asset_convert.nif.morroblivion_textures import MAP_NAME, map_dir, texture_key, write_map
+from asset_convert.nif.morroblivion_textures import (ALPHA_NAME, ALPHA_TEST_BITS, ALPHA_TEST_ENABLE, MAP_NAME,
+                                                     map_dir, texture_key, write_alpha, write_map)
 from asset_convert.nif.sse_nif import NifFormat, read_nif
 from asset_convert.nif.tex_paths import as_dds, texture_rel_path
 from asset_convert.sources.morrowind_assets import find_archived_mesh
@@ -39,7 +40,6 @@ UV_QUANT = 4
 #: Archive folder every vanilla mesh key starts with.
 MESH_PREFIX = 'meshes\\'
 
-
 def _base_texture(block) -> str:
     """The authored base texture path of a geometry block, or ''."""
     for prop in list(getattr(block, 'properties', ()) or ()):
@@ -48,6 +48,14 @@ def _base_texture(block) -> str:
             if src is not None and src.file_name:
                 return src.file_name.decode('latin-1')
     return ''
+
+
+def _alpha_cutoff(block):
+    """The block's alpha test as (test flag bits, threshold), or None when it does not test."""
+    for prop in list(getattr(block, 'properties', ()) or ()):
+        if isinstance(prop, NifFormat.NiAlphaProperty) and int(prop.flags) & ALPHA_TEST_ENABLE:
+            return int(prop.flags) & ALPHA_TEST_BITS, int(prop.threshold)
+    return None
 
 
 def pair_set(verts, uv) -> Counter:
@@ -60,7 +68,7 @@ def pair_set(verts, uv) -> Counter:
 
 
 def shape_signatures(source) -> list:
-    """[(authored texture, pair set)] for every textured shape with UVs.
+    """[(authored texture, pair set, alpha cutoff)] for every textured shape with UVs.
 
     `source` is NIF bytes or a path.
     """
@@ -77,7 +85,7 @@ def shape_signatures(source) -> list:
         uv = np.array([[v.u, v.v] for v in uvs[0]], dtype=np.float64)
         verts = np.array([[v.x, v.y, v.z] for v in geom.vertices],
                          dtype=np.float64)
-        out.append((tex, pair_set(verts, uv)))
+        out.append((tex, pair_set(verts, uv), _alpha_cutoff(block)))
     return out
 
 
@@ -87,17 +95,17 @@ def _file_name(key: str) -> str:
 
 
 def proven_twins(vanilla, morroblivion) -> list:
-    """[(vanilla texture key, Morroblivion texture)] for shapes the two share exactly."""
-    theirs = [(_file_name(texture_key(tex)), tex, pairs)
-              for tex, pairs in shape_signatures(morroblivion)]
+    """[(vanilla texture key, Morroblivion texture, its shape's alpha cutoff)] for shapes the two share exactly."""
+    theirs = [(_file_name(texture_key(tex)), tex, pairs, cutoff)
+              for tex, pairs, cutoff in shape_signatures(morroblivion)]
     out = []
-    for tex, pairs in shape_signatures(vanilla):
+    for tex, pairs, _cutoff in shape_signatures(vanilla):
         key = texture_key(tex)
         want = _file_name(key).replace('_', 'u')
-        match = next((m_tex for name, m_tex, m_pairs in theirs
+        match = next(((m_tex, cutoff) for name, m_tex, m_pairs, cutoff in theirs
                       if name == want and m_pairs == pairs), None)
         if match is not None:
-            out.append((key, match))
+            out.append((key, *match))
     return out
 
 
@@ -167,33 +175,47 @@ def _choose(candidates: set, roots) -> str:
 
 
 def _prove_all(jobs) -> tuple:
-    """({vanilla texture key: {Morroblivion textures}}, unreadable count) over `jobs`."""
-    found, unreadable = {}, 0
+    """({vanilla texture key: {Morroblivion textures}}, {key: {alpha cutoffs}}, unreadable count) over `jobs`."""
+    found, cutoffs, unreadable = {}, {}, 0
     if not jobs:
-        return found, unreadable
+        return found, cutoffs, unreadable
     with mp.Pool(processes=min(worker_count(), len(jobs)),
                  initializer=_worker_init) as pool:
         for ok, pairs in pool.imap_unordered(_proven_twins_task, jobs, 16):
             unreadable += not ok
-            for key, tex in pairs:
+            for key, tex, cutoff in pairs:
                 found.setdefault(key, set()).add(tex)
-    return found, unreadable
+                cutoffs.setdefault(key, set()).add(cutoff)
+    return found, cutoffs, unreadable
+
+
+def shared_cutoff(cutoffs: set):
+    """Every paired shape's common alpha test at its lowest threshold, else None.
+
+    See: docs/commentary/asset_convert_texture.md#twin-alpha-cutoff
+    """
+    if None in cutoffs or len({bits for bits, _thr in cutoffs}) != 1:
+        return None
+    return min(cutoffs, key=lambda cutoff: cutoff[1])
 
 
 def build_map(meshes: dict, twins: dict, export_dir: str, morroblivion,
-              progress=print) -> dict:
-    """{vanilla texture key: Morroblivion path} proven over every paired mesh.
+              progress=print) -> tuple:
+    """({vanilla texture key: Morroblivion path}, {key: alpha cutoff}) proven over every paired mesh.
 
     `meshes` holds the archived vanilla bytes of each key in `twins`.
     """
     jobs = [(meshes[key], str(twins[key])) for key in sorted(meshes)]
-    found, unreadable = _prove_all(jobs)
+    found, cutoffs, unreadable = _prove_all(jobs)
     roots = [asset_root(export_dir, name) for name in morroblivion]
     table = {key: _choose(texs, roots) for key, texs in found.items()}
     table = {key: path for key, path in table.items() if path}
+    alpha = {key: shared_cutoff(cutoffs[key]) for key in table}
+    alpha = {key: cutoff for key, cutoff in alpha.items() if cutoff}
     progress(f"  {len(table)} vanilla textures proven to fit Morroblivion's "
-             f'twin over {len(jobs)} paired meshes ({unreadable} unreadable)')
-    return table
+             f'twin over {len(jobs)} paired meshes ({unreadable} unreadable); '
+             f'{len(alpha)} carry its alpha test')
+    return table, alpha
 
 
 def prove_map(export_dir: str, morroblivion, vanilla_esm: str, index, progress=print) -> int:
@@ -208,15 +230,16 @@ def prove_map(export_dir: str, morroblivion, vanilla_esm: str, index, progress=p
         found = find_archived_mesh(export_dir, key[len(MESH_PREFIX):])
         if found is not None:
             meshes[key] = found.read_bytes()
-    table = build_map(meshes, {k: twins[k] for k in meshes}, export_dir, morroblivion, progress)
+    table, alpha = build_map(meshes, {k: twins[k] for k in meshes}, export_dir, morroblivion, progress)
     write_map(map_dir(export_dir), table)
+    write_alpha(map_dir(export_dir), alpha)
     return len(table)
 
 
 def map_is_current(export_dir: str, morroblivion) -> bool:
-    """Whether the stored map is newer than every Morroblivion export it was proven from."""
+    """Whether the stored map and its alpha list are newer than every Morroblivion export they were proven from."""
     path = Path(map_dir(export_dir)) / MAP_NAME
-    if not path.is_file():
+    if not path.is_file() or not (path.parent / ALPHA_NAME).is_file():
         return False
     built = path.stat().st_mtime
     headers = [record_dir(export_dir, name) / '_HEADER.txt' for name in morroblivion]

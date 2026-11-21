@@ -21,6 +21,15 @@ from core.plugin_masters import export_root, master_chain
 #: The map's file name, in `map_dir`.
 MAP_NAME = 'morroblivion_textures.txt'
 
+#: NiAlphaProperty flags bit 9: alpha testing on.
+ALPHA_TEST_ENABLE = 0x0200
+
+#: NiAlphaProperty flags bits 9-12: alpha-test enable and its comparison function.
+ALPHA_TEST_BITS = 0x1E00
+
+#: The alpha tests Morroblivion authored on its twins' shapes, in `map_dir`.
+ALPHA_NAME = 'morroblivion_texture_alpha.txt'
+
 #: The compatibility patch: Morroblivion mode's master, whose dependents use the map.
 PATCH_NAME = 'Morrowind-Morroblivion-Compatibility.esp'
 
@@ -36,8 +45,8 @@ MAP_ENV = 'TESCONV_MORROBLIVION_TEXTURES'
 #: Carries the active plugin's record dir, whose KEEP_NAME list the map skips.
 KEEP_ENV = 'TESCONV_MORROBLIVION_KEEP'
 
-#: The map last read in this process, and the folders it was read from.
-_LOADED = {'folder': None, 'table': {}}
+#: The map and alpha list last read in this process, and the folders they were read from.
+_LOADED = {'folder': None, 'table': {}, 'alpha': {}}
 
 
 def write_map(record_dir, table: dict):
@@ -50,6 +59,18 @@ def read_map(record_dir) -> dict:
     """The map written into `record_dir`, or {} when there is none."""
     rows = (line.split('\t', 1) for line in read_manifest(record_dir, MAP_NAME))
     return {row[0]: row[1] for row in rows if len(row) == 2}
+
+
+def write_alpha(folder, alpha: dict):
+    """Write {vanilla texture stem: (alpha-test flag bits, threshold)} beside the map."""
+    lines = {f'{stem}\t{bits}\t{threshold}' for stem, (bits, threshold) in alpha.items()}
+    return write_manifest(folder, lines, ALPHA_NAME)
+
+
+def read_alpha(folder) -> dict:
+    """The alpha list written into `folder`, or {} when there is none."""
+    rows = (line.split('\t') for line in read_manifest(folder, ALPHA_NAME))
+    return {row[0]: (int(row[1]), int(row[2])) for row in rows if len(row) == 3}
 
 
 def map_dir(root) -> str:
@@ -84,7 +105,9 @@ def _table() -> dict:
         table = read_map(folders[0]) if folders[0] else {}
         for key in read_manifest(folders[1], KEEP_NAME) if folders[1] else ():
             table.pop(key, None)
-        _LOADED.update(folder=folders, table=table)
+        alpha = read_alpha(folders[0]) if folders[0] else {}
+        _LOADED.update(folder=folders, table=table,
+                       alpha={key: cut for key, cut in alpha.items() if key in table})
     return _LOADED['table']
 
 
@@ -100,3 +123,12 @@ def substitute(authored_tex):
     """Morroblivion's path for a vanilla diffuse the active map clears, or None."""
     twin = _table().get(texture_key(authored_tex)) if authored_tex else None
     return None if twin is None else path_bytes(twin)
+
+
+def twin_cutoff(authored_tex):
+    """(alpha-test flag bits, threshold) Morroblivion authored with this texture's twin, or None.
+
+    See: docs/commentary/asset_convert_texture.md#twin-alpha-cutoff
+    """
+    _table()
+    return _LOADED['alpha'].get(texture_key(authored_tex)) if authored_tex else None

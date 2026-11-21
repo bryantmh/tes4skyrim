@@ -252,10 +252,10 @@ def master_chain(name: str, export_root: Path, known: list[str]) -> set[str]:
 def converted_plugins(out_root: Path) -> list[str]:
     """Every plugin with a converted ESM in `out_root`, in name order.
 
-    Two folder shapes both count. A plugin converted on its own lives in a
-    folder named after it (`output/Oblivion.esm/Oblivion.esm`). Plugins
-    imported together from one mod archive share a folder named after the MOD,
-    and are found by their `<name>.manifest.json`.
+    A plugin converted on its own lives in a folder named after it
+    (`output/Oblivion.esm/Oblivion.esm`); plugins beside it (a hybrid
+    companion) and plugins sharing a mod's folder are found by their
+    `<name>.manifest.json`.
 
     Either way the plugin file itself must be present — output/ also collects
     the `Finished Mods` folder, this step's own merged folder, and whatever
@@ -269,12 +269,6 @@ def converted_plugins(out_root: Path) -> list[str]:
             continue
         if (p / p.name).is_file():
             names.append(p.name)
-            continue
-        # A GROUP folder is named for the mod, not for any one plugin, so the
-        # `<folder>/<folder>` test above cannot see the plugins inside it.
-        # Every converted plugin writes `<name>.manifest.json` beside itself,
-        # which is what distinguishes a real plugin from a stray .esp copied
-        # into the tree.
         for man in sorted(p.glob('*.manifest.json')):
             plugin = man.name[:-len('.manifest.json')]
             if (p / plugin).is_file():

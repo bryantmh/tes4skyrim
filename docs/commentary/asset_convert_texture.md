@@ -1199,6 +1199,39 @@ The patch still ships every vanilla texture (see
 The map rewrites only mesh diffuse slots; records (landscape textures,
 inventory icons) and the other slots still name the vanilla files.
 
+### <a id="twin-alpha-cutoff"></a>A twin brings Morroblivion's alpha test with it
+
+A twin's alpha channel is authored for the alpha setting Morroblivion put on
+its own shape, not for the vanilla one. Morrowind's Bitter Coast leaves
+(`tx_bc_leaves_02`, `flora_bc_tree_0*`) only blend (flags `0x00ED`, threshold
+0), which works on vanilla's hard-edged alpha. Morroblivion's twin
+`txubculeavesu02.dds` leaves 4.1% of its texels at alpha 1-31 in the "empty"
+part of the card, and Morroblivion's `floraubcutreeu02.nif` cuts them with an
+alpha test (`0x12ED`, threshold 32). Swapping the texture but keeping the
+vanilla setting drew those texels as a dark haze over every leaf card in hybrid
+mode.
+
+So `prove_map` records, beside the map, the alpha test of the Morroblivion
+shapes that proved each twin (`morroblivion_texture_alpha.txt`:
+`<vanilla texture>\t<test flag bits 9-12>\t<threshold>`), and `_twin_alpha` in
+`geometry_shader.py` applies it wherever the swap happens, to a shape that only
+blends: it gains the test bits and threshold. A shape that already tests keeps
+its own, and a shape with no NiAlphaProperty stays opaque, because no alpha is
+the authored "opaque" (a first version gave such shapes Morroblivion's whole
+property and turned 32 opaque shapes translucent: `tx_de_tapestry_06` tests on
+the tapestry that proved it, yet Morroblivion's own `cushionround01.nif` wears
+it with no alpha at all; the mine scrib's body began to blend).
+
+`shared_cutoff` records a test only when every paired Morroblivion shape
+applies the same one (test bits), at the lowest threshold (the cut all of them
+make). Measured over the 1,597 proven twins: 1,437 never test, 148 agree on
+one test (103 at threshold 32), 5 agree on the test but not the threshold
+(`tx_ashl_a_banner` 32/64, `tx_bc_moss_01` 0/32) and take the lowest, and 7
+are tested on some shapes and not others (`tx_bm_ice_05`, `tx_dwrv_lens00`,
+...) and keep the vanilla setting. Hybrid Morrowind.esm: 1,184 blend-only
+shapes in 259 meshes gain the test (1,078 at threshold 32, 105 at 0, one at
+132); no shape without alpha changes.
+
 ### <a id="pairing-meshes-through-records"></a>Pairing meshes through their records
 
 A vanilla mesh's Morroblivion counterpart is the model of the Morroblivion
