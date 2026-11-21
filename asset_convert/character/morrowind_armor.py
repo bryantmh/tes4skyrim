@@ -17,6 +17,7 @@ See: docs/commentary/asset_convert_armor.md#morrowind-pose-cache
 
 import io
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,7 @@ from pyffi.formats.nif import NifFormat
 from asset_convert import paths
 from asset_convert.character.body_wrap import field_path
 from asset_convert.character.morrowind_arm_fit import rotation_between, stretch_along
+from asset_convert.character.morrowind_weights import bone_share, limb_centre, skin_reference
 from asset_convert.character.prn_skin import (rigid_skin_data,
                                               rigid_skin_instance)
 from asset_convert.character.skin_retarget import (
@@ -83,6 +85,18 @@ _MIRROR_X = np.diag([-1.0, 1.0, 1.0, 1.0])
 
 #: Leg slots (ankle, knee, upper leg) whose rigid parts take the twist-and-shift correction; arms looked worse.
 _CORRECTED_SLOTS = (17, 18, 19, 20, 21, 22)
+
+#: Arm slots (forearm, upper arm) whose pauldron parts are centred on the Skyrim arm.
+_CENTRED_SLOTS = (11, 12, 13, 14)
+
+#: Clavicle slots: their parts keep Morrowind's turn and hang from the shoulder joint, not the Skyrim clavicle line.
+_SHOULDER_SLOTS = (23, 24)
+
+#: Pauldron side -> the Morrowind reference skin slots (chest, forearm, upper arm) a part may lie inside.
+REFERENCE_SLOTS = {'R': (3, 11, 13), 'L': (3, 12, 14)}
+
+#: Record files that carry pauldrons, and the MorrowindWearableType values that are one.
+_PAULDRON_FILE, _PAULDRON_TYPES = 'ARMO.txt', ('2', '3')
 
 
 def shape_vertices(shape) -> np.ndarray:
@@ -301,6 +315,7 @@ class RestSkeleton:
         data = read_nif(str(path))
         old_root = data.roots[0]
         self.skyrim, self.bind, self.female, self._corrections = skyrim, bind or {}, female, None
+        self._centrings = None
         self.world, self.parent, self.child, self.attach = {}, {}, {}, {}
         for node in old_root.tree():
             if isinstance(node, NifFormat.NiNode) \
@@ -374,12 +389,49 @@ class RestSkeleton:
         """The Skyrim rest position of the bone a Morrowind bone is renamed onto."""
         return self.skyrim[OBLIVION_TO_SKYRIM_BONE_MAP[bone]][3, :3]
 
+    def place(self, slot: int, bone: str, offsets: np.ndarray) -> tuple:
+        """(offsets from the Skyrim pivot, turn) of `offsets` from the Morrowind pivot of `slot`'s `bone`.
+
+        A part is turned onto the Skyrim bone and stretched along it; a
+        _SHOULDER_SLOTS part keeps its turn and its offset from the shoulder
+        joint, since the Skyrim clavicle runs back from the sternum.
+        See: docs/commentary/asset_convert_armor.md#morrowind-pauldron-fit
+        """
+        segment = self._segment(bone)
+        if slot in _SHOULDER_SLOTS and segment is not None:
+            return offsets - segment[0] + segment[1], np.eye(3)
+        turn = self.direction_delta(bone)
+        return self.stretch(bone, offsets @ turn), turn
+
     def _placed(self, slot: int, points: np.ndarray) -> np.ndarray:
-        """Bind-rest points on `slot`'s bone placed as its rigid parts are: turned, stretched, at the Skyrim pivot."""
+        """Bind-rest points on `slot`'s bone placed as its rigid parts are (`place`), at the Skyrim pivot."""
         bone = self.attach[PART_ATTACH_NODES[slot]][0]
         carry = np.linalg.inv(self.rest_world(bone)) @ self.world[bone]
         base = points @ carry[:3, :3] + carry[3, :3] - self.world[bone][3, :3]
-        return self.stretch(bone, base @ self.direction_delta(bone)) + self.pivot(bone)
+        return self.place(slot, bone, base)[0] + self.pivot(bone)
+
+    def reference_skin(self, slots) -> np.ndarray:
+        """Morrowind reference skin triangles (n, 3, 3) of `slots`, placed and centred as their parts are."""
+        field = self._field()
+        if field is None:
+            return np.zeros((0, 3, 3))
+        labels, src, tris = field
+        out = [np.zeros((0, 3, 3))]
+        for slot in slots:
+            faces = tris[(labels[tris] == slot).all(axis=1)]
+            if len(faces) and PART_ATTACH_NODES[slot] in self.attach:
+                out.append(self._placed(slot, src[faces].reshape(-1, 3)).reshape(-1, 3, 3) + self.centring(slot))
+        return np.vstack(out)
+
+    def _field(self):
+        """(slot labels, Morrowind reference skin, triangles) of the wrap field; None without one."""
+        path = field_path(self.female, True)
+        if not path.exists():
+            return None
+        with np.load(path, allow_pickle=False) as z:
+            if 'mw_slot' not in z:
+                return None
+            return z['mw_slot'], z['src'].astype(np.float64), z['tris']
 
     def _fit_corrections(self) -> dict:
         """{INDX slot: 4x4} twisting and shifting each placed reference part onto its fitted Skyrim place.
@@ -412,6 +464,42 @@ class RestSkeleton:
                 out[twin] = _MIRROR_X @ out[slot] @ _MIRROR_X
         return out
 
+    def centring(self, slot: int) -> np.ndarray:
+        """Shift centring a placed part of `slot` on the Skyrim arm (`_centre_shift`); else zero."""
+        if self._centrings is None:
+            self._centrings = self._fit_centrings()
+        return self._centrings.get(slot, np.zeros(3))
+
+    def _fit_centrings(self) -> dict:
+        """{INDX slot: shift} for _CENTRED_SLOTS from the Morrowind reference skin and the Skyrim one."""
+        field = self._field()
+        if field is None:
+            return {}
+        skin, out = skin_reference(self.female, 0, keep=bool), {}
+        for slot in _CENTRED_SLOTS:
+            node = PART_ATTACH_NODES[slot]
+            if node in self.attach and (field[0] == slot).any():
+                out[slot] = self._centre_shift(slot, field, skin)
+        return out
+
+    def _centre_shift(self, slot: int, field, skin) -> np.ndarray:
+        """Skyrim arm centre minus the placed Morrowind arm centre over the same stretch, across the bone."""
+        labels, src, tris = field
+        bone = self.attach[PART_ATTACH_NODES[slot]][0]
+        pivot, axis = self.pivot(bone), self._segment(bone)[1]
+        faces = tris[(labels[tris] == slot).all(axis=1)]
+        placed = self._placed(slot, src[faces].reshape(-1, 3)).reshape(-1, 3, 3)
+        name = OBLIVION_TO_SKYRIM_BONE_MAP[bone]
+        sky = limb_centre(skin, (pivot, pivot + axis), bone_share(skin, name), placed.reshape(-1, 3))
+        unit = axis / np.linalg.norm(axis)
+        lo, hi = np.percentile((placed.reshape(-1, 3) - pivot) @ unit, [5, 95])
+        centres = placed.mean(axis=1)
+        along = (centres - pivot) @ unit
+        keep = (along >= lo) & (along <= hi)
+        area = 0.5 * np.linalg.norm(np.cross(placed[:, 1] - placed[:, 0], placed[:, 2] - placed[:, 0]), axis=1)[keep]
+        mw = (centres[keep] * area[:, None]).sum(axis=0) / area.sum()
+        return (sky - mw) - ((sky - mw) @ unit) * unit
+
     def correction(self, slot: int) -> np.ndarray:
         """4x4 moving a placed rigid part of `slot` across its bone; else identity."""
         if self._corrections is None:
@@ -443,16 +531,17 @@ def _adopt_rigid(shape, part, bone, skel, root, flat) -> None:
     """Skin a rigid part onto a flat bone node as upright offsets from the pivot.
 
     The stored vertices are what `add_prn_skin` leaves for an Oblivion helmet:
-    the bone pivot's position with the world's orientation, turned so the part
-    hangs along the Skyrim bone's rest direction, then twisted and shifted
-    across it by the slot's `correction`. `part` is (slot, part root, frame).
+    the bone pivot's position with the world's orientation, placed on the Skyrim
+    bone (`RestSkeleton.place`), then twisted and shifted
+    across it by the slot's `correction`, plus `shift`. `part` is (slot, part
+    root, frame, shift).
     See: docs/commentary/asset_convert_armor.md#morrowind-armor-assembly
     """
-    slot, part_root, frame = part
+    slot, part_root, frame, shift = part
     full = _full_transform(shape, part_root) @ frame
-    turn = skel.direction_delta(bone)
-    verts = skel.stretch(bone, (shape_vertices(shape) @ full[:3, :3] + full[3, :3]
-                                - skel.world[bone][3, :3]) @ turn)
+    verts, turn = skel.place(slot, bone, shape_vertices(shape) @ full[:3, :3] + full[3, :3]
+                             - skel.world[bone][3, :3])
+    verts = verts + shift
     fix = skel.correction(slot)
     if not np.array_equal(fix, np.eye(4)):
         pivot = skel.pivot(bone)
@@ -589,11 +678,11 @@ def _adopt_shape(shape, part, place) -> list:
     the attach node (OpenMW `CopyRigVisitor`); a file with no skin hangs
     whole on the node. `part` is (slot, attach node, part root, frame, rig),
     `rig` judged before any shape is adopted; `place` is (skeleton, worn
-    root, shared bones, flat Prn bones, rigid_world).
+    root, shared bones, flat Prn bones, rigid_world, centred: a pauldron's parts centred).
     See: docs/commentary/asset_convert_armor.md#morrowind-armor-assembly
     """
     slot, node_name, part_root, frame, rig = part
-    skel, root, bones, flat, rigid_world = place
+    skel, root, bones, flat, rigid_world = place[:5]
     bone = skel.attach[node_name][0]
     if slot == _SHIELD_SLOT:
         _adopt_shield(shape, part_root, frame, skel, root)
@@ -604,16 +693,18 @@ def _adopt_shape(shape, part, place) -> list:
         return _adopt_skinned(shape, part_root, skel, root, bones)
     if rigid_world:
         return _adopt_rigid_world(shape, part_root, frame, bone, skel, place)
-    _adopt_rigid(shape, (slot, part_root, frame), bone, skel, root, flat)
+    shift = skel.centring(slot) if place[5] else np.zeros(3)
+    _adopt_rigid(shape, (slot, part_root, frame, shift), bone, skel, root, flat)
     return [flat[bone]]
 
 
 def assemble(skel: RestSkeleton, parts, roots, out_name: str,
-             rigid_world: bool = False) -> NifFormat.Data:
+             rigid_world: bool = False, centred: bool = False) -> NifFormat.Data:
     """One worn NIF from `parts`, each (slot, mesh path relative to a root).
 
     `rigid_world` binds rigid parts to their real bones at the rest pose
-    instead of as Prn pieces, keeping the bone tree.
+    instead of as Prn pieces, keeping the bone tree. `centred` (pauldrons)
+    centres arm parts on the Skyrim arm.
     """
     loaded = []
     for slot, rel in parts:
@@ -633,7 +724,7 @@ def assemble(skel: RestSkeleton, parts, roots, out_name: str,
     if not skinned:
         root.num_children = 0
         root.children.update_size()
-    place, used = (skel, root, bones, {}, rigid_world), []
+    place, used = (skel, root, bones, {}, rigid_world, centred), []
     for slot, node_name, part_root in loaded:
         part = (slot, node_name, part_root,
                 _attach_frame(part_root, node_name, skel.attach[node_name][1]),
@@ -651,7 +742,7 @@ def _assembled(model: str) -> bool:
 
 
 def _worn_specs(rec_dir):
-    """(worn model, [(slot, part mesh)], female) for every wearable the export lists."""
+    """(worn model, [(slot, part mesh)], female, pauldron) for every wearable the export lists."""
     for name in _WEARABLE_FILES:
         for rec in iter_records(Path(rec_dir) / name):
             count = int(rec.get('MorrowindPartCount', '0') or 0)
@@ -662,10 +753,11 @@ def _worn_specs(rec_dir):
                       rec.get(f'MorrowindPart[{i}].Male', ''),
                       rec.get(f'MorrowindPart[{i}].Female', ''))
                      for i in range(count)]
-            yield male_out, [(s, m or f) for s, m, f in parts], False
+            pauldron = name == _PAULDRON_FILE and rec.get('MorrowindWearableType', '').strip() in _PAULDRON_TYPES
+            yield male_out, [(s, m or f) for s, m, f in parts], False, pauldron
             female_out = rec.get('Female.BipedModel.MODL', '')
             if _assembled(female_out):
-                yield female_out, [(s, f or m) for s, m, f in parts], True
+                yield female_out, [(s, f or m) for s, m, f in parts], True, pauldron
 
 
 def rest_skeleton(nif, female: bool) -> RestSkeleton:
@@ -674,7 +766,19 @@ def rest_skeleton(nif, female: bool) -> RestSkeleton:
                         load_skeleton(SKEL_MORROWIND[female]), female)
 
 
-def _skeletons(roots) -> dict:
+@lru_cache(maxsize=1)
+def _vanilla_skeletons() -> dict:
+    """`_skeletons` from the vanilla Morrowind install alone, built once per process."""
+    return rest_skeletons([])
+
+
+def reference_arm(female: bool, side: str) -> np.ndarray:
+    """Morrowind reference skin a `side` pauldron's parts may lie inside (`RestSkeleton.reference_skin`)."""
+    skel = _vanilla_skeletons().get(female)
+    return np.zeros((0, 3, 3)) if skel is None else skel.reference_skin(REFERENCE_SLOTS[side])
+
+
+def rest_skeletons(roots) -> dict:
     """{female: RestSkeleton} for both genders; the female file falls back to the male."""
     male = resolve_mesh(roots, SKELETON_NIFS[False], paths.EXPORT)
     if male is None:
@@ -695,16 +799,16 @@ def assemble_armor(rec_dir, meshes_root, log=print) -> int:
         return 0
     roots = [Path(meshes_root)] + [Path(d) / 'meshes'
                                    for d in base_plugins.export_dirs(rec_dir)]
-    skeletons = _skeletons(roots)
+    skeletons = rest_skeletons(roots)
     if not skeletons:
         log(f'  Morrowind armor: {SKELETON_NIFS[False]} not found; '
             f'{len(specs)} worn meshes skipped')
         return 0
     written, failed = 0, 0
-    for out_rel, parts, female in specs:
+    for out_rel, parts, female, pauldron in specs:
         stem = os.path.splitext(os.path.basename(out_rel.replace(chr(92), '/')))[0]
         try:
-            data = assemble(skeletons[female], parts, roots, stem)
+            data = assemble(skeletons[female], parts, roots, stem, centred=pauldron)
         except (OSError, ValueError, KeyError) as exc:
             failed += 1
             log(f'  [skip] {out_rel}: {exc}')

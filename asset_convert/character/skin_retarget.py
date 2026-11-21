@@ -1072,10 +1072,13 @@ def _morrowind_arm_fit():
     return morrowind_arm_fit
 
 
-def _reweight_morrowind_arms(skinned_geoms, skel_root, sk_skel, female, weight) -> None:
-    """Phase B2, morrowind_weights; imported late as it imports this module."""
+def _reweight_morrowind_arms(skinned_geoms, skel_root, sk_skel, rig, body_part) -> None:
+    """Phase B2, morrowind_weights and morrowind_pauldron; `rig` is (female, weight). Imported late:
+    both import this module."""
     from asset_convert.character.morrowind_weights import reweight_arms
-    reweight_arms(skinned_geoms, skel_root, sk_skel, female, weight)
+    from asset_convert.character.morrowind_pauldron import fit_pauldron
+    reweight_arms(skinned_geoms, skel_root, sk_skel, *rig)
+    fit_pauldron(skinned_geoms, skel_root, sk_skel, rig, body_part)
 
 
 def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None,
@@ -1119,6 +1122,6 @@ def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None
                                        load_animation_deltas(ob_skel))
     _place_bones(skinned_geoms, bone_nodes, skel_root, sk_skel, src_map)
     if morrowind:
-        _reweight_morrowind_arms(skinned_geoms, skel_root, sk_skel, female, weight)
+        _reweight_morrowind_arms(skinned_geoms, skel_root, sk_skel, (female, weight), authored_body_part)
     return _rebind(skinned_geoms, skel_root, (sk_skel, src_map), prn_out,
                    (authored_body_part, authored_allowed))

@@ -16,7 +16,7 @@ import os
 import numpy as np
 from scipy.spatial import cKDTree
 
-from asset_convert.character.body_slots import (piece_ids, right_triangles, set_children,
+from asset_convert.character.body_slots import (UNIT_ATTRS, piece_ids, right_triangles, set_children,
                                                 skin_weights, vertex_arrays, write_geometry)
 from asset_convert.character.head_gear import strip_gnd_skin
 from asset_convert.character.skin_replacement import is_body_skin_geometry
@@ -39,8 +39,6 @@ _UV_MATCH = 1e-3
 #: Texels a piece must share with the worn left hand before its fit names a hand.
 _MIN_SHARED_UVS = 8
 
-#: Per-vertex unit vectors a bake rotates with the positions.
-_UNIT_ATTRS = ('normals', 'tangents', 'bitangents')
 
 
 def write_ground_halves(ground: str, worn: str, targets) -> bool:
@@ -185,7 +183,7 @@ def _root_arrays(shape, arrays: dict, root) -> dict:
     """`arrays` carried from `shape`'s frame into `root`'s."""
     verts, transform = geom_world(shape, root)
     out = dict(arrays, verts=verts)
-    for attr in _UNIT_ATTRS:
+    for attr in UNIT_ATTRS:
         if attr in out:
             turned = out[attr] @ transform[:3, :3]
             out[attr] = turned / np.maximum(np.linalg.norm(turned, axis=1, keepdims=True), 1e-12)
@@ -207,7 +205,7 @@ def _finish(data, kept: list, turn: bool):
     identity.set_identity()
     for shape, arrays, tris in kept:
         moved = dict(arrays, verts=arrays['verts'] @ rotation.T + shift)
-        for attr in _UNIT_ATTRS:
+        for attr in UNIT_ATTRS:
             if attr in moved:
                 moved[attr] = moved[attr] @ rotation.T
         write_geometry(shape, moved, tris)

@@ -60,6 +60,7 @@ from pathlib import Path
 
 import numpy as np
 from asset_convert import paths
+from asset_convert.character.mesh_rays import ray_hits
 
 try:
     from scipy.spatial import cKDTree
@@ -643,42 +644,14 @@ _RACE_PACKS = {
 def _visible_exterior(v_local, tris):
     """Vert mask: radially visible from outside the head (exterior surface).
 
-    The OB head carries INTERIOR geometry — the mouth bag and inner
-    structures — whose nearest-point correspondence forms +-3-unit dipoles
-    (the bag maps forward onto the lips, the inner column backward onto the
-    skull).  A face-covering mask sampling near them tore 4.9-unit edge
-    strain.  A vertex counts as exterior when the ray from well outside the
-    head toward it (radially from the head-local origin) reaches it without
-    first crossing the mesh; interior verts leave the field domain and get
-    their dv in-filled from the exterior field.
+    The OB head carries INTERIOR geometry (the mouth bag, inner structures)
+    whose nearest-point correspondence forms +-3-unit dipoles that tore 4.9-unit
+    edge strain. A vertex is exterior when the ray toward it from 25 units out
+    along its head-local radius reaches it without crossing the mesh; interior
+    verts get their dv in-filled from the exterior field.
     """
-    n = len(v_local)
-    r = np.linalg.norm(v_local, axis=1)
-    d = v_local / np.maximum(r, 1e-6)[:, None]
-    start = v_local + d * 25.0                    # well outside the head
-    dirs = -d                                     # toward the vertex
-    a = v_local[tris[:, 0]]
-    e1 = v_local[tris[:, 1]] - a
-    e2 = v_local[tris[:, 2]] - a
-    vis = np.ones(n, dtype=bool)
-    for i0 in range(0, n, 128):                   # chunked Moller-Trumbore
-        s = slice(i0, min(i0 + 128, n))
-        D = dirs[s][:, None, :]
-        pv = np.cross(np.broadcast_to(D, (s.stop - s.start,) + e2.shape),
-                      e2[None, :, :])
-        det = np.einsum('ti,pti->pt', e1, pv)
-        ok = np.abs(det) > 1e-12
-        inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
-        tv = start[s][:, None, :] - a[None, :, :]
-        u = np.einsum('pti,pti->pt', tv, pv) * inv
-        qv = np.cross(tv, e1[None, :, :])
-        vv = np.einsum('pti,pti->pt', np.broadcast_to(D, qv.shape), qv) * inv
-        t = np.einsum('ti,pti->pt', e2, qv) * inv
-        reach = 25.0 - 0.05                       # distance to the vertex
-        hit = (ok & (u >= -1e-6) & (vv >= -1e-6) & (u + vv <= 1 + 1e-6)
-               & (t > 1e-4) & (t < reach))
-        vis[s] = ~hit.any(axis=1)
-    return vis
+    out = v_local / np.maximum(np.linalg.norm(v_local, axis=1), 1e-6)[:, None]
+    return ~ray_hits(v_local + out * 25.0, -out, v_local[tris], 1e-4, 25.0 - 0.05).any(axis=1)
 
 
 def _ear_mask(sk_v, box_key, o_sk):

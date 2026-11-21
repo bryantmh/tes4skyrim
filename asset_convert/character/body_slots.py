@@ -58,7 +58,7 @@ _BONES_PER_VERTEX = 4
 _BONES_PER_PARTITION = 18
 
 #: Per-vertex unit vectors, renormalized after a cut interpolates them.
-_UNIT_ATTRS = ('normals', 'tangents', 'bitangents')
+UNIT_ATTRS = ('normals', 'tangents', 'bitangents')
 
 
 class SlotShape(NamedTuple):
@@ -82,11 +82,13 @@ def _vectors(items, fields) -> np.ndarray:
 
 
 def vertex_arrays(shape) -> dict:
-    """The per-vertex arrays of a shape, shape-local: 'verts', 'uvs' and those of `_UNIT_ATTRS` and 'colors' it has."""
+    """The per-vertex arrays of a shape, shape-local: 'verts' and the 'uvs', `UNIT_ATTRS` and 'colors' it has."""
     d = shape.data
     n = d.num_vertices
-    out = {'verts': _vectors(d.vertices, 'xyz'), 'uvs': _vectors(d.uv_sets[0], 'uv')}
-    for attr in _UNIT_ATTRS:
+    out = {'verts': _vectors(d.vertices, 'xyz')}
+    if len(d.uv_sets):
+        out['uvs'] = _vectors(d.uv_sets[0], 'uv')
+    for attr in UNIT_ATTRS:
         if len(getattr(d, attr, ())) == n and (attr != 'normals' or d.has_normals):
             out[attr] = _vectors(getattr(d, attr), 'xyz')
     if d.has_vertex_colors:
@@ -183,7 +185,7 @@ def _waist_cuts(stem: str) -> tuple:
 def _apply_cut(ss: SlotShape, c) -> SlotShape:
     """`ss` with the cut's crossing vertices added and its lower side made lower body."""
     arrays = {k: c.lerp(v) for k, v in ss.arrays.items()}
-    for attr in _UNIT_ATTRS:
+    for attr in UNIT_ATTRS:
         if attr in arrays:
             arrays[attr] /= np.maximum(np.linalg.norm(arrays[attr], axis=1, keepdims=True), 1e-12)
     w = arrays['weights']
@@ -275,9 +277,10 @@ def _write_arrays(d, arrays: dict, used) -> None:
     """Fill a shape's NiTriShapeData with the `used` rows of `arrays`."""
     d.num_vertices = len(used)
     _set_vectors(d.vertices, arrays['verts'][used], 'xyz')
-    d.uv_sets.update_size()
-    _set_vectors(d.uv_sets[0], arrays['uvs'][used], 'uv')
-    for attr in _UNIT_ATTRS:
+    if 'uvs' in arrays:
+        d.uv_sets.update_size()
+        _set_vectors(d.uv_sets[0], arrays['uvs'][used], 'uv')
+    for attr in UNIT_ATTRS:
         if attr in arrays:
             _set_vectors(getattr(d, attr), arrays[attr][used], 'xyz')
     if 'colors' in arrays:

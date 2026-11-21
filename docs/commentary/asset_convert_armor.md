@@ -805,6 +805,102 @@ middle and ring: 14/14/12 vertices) plus one smoothing pass looked worse
 than the plain closest-point weights. The glove itself sits 0.2-0.6 units
 off the Skyrim hand, so the fit is not what mangles the fingers.
 
+## <a id="morrowind-pauldron-fit"></a>Morrowind pauldrons are pushed out evenly and skinned like the shoulder
+
+**Code:** `asset_convert/character/morrowind_pauldron.py`, called from
+`retarget_skin_to_skyrim` after the arm reweight, only for a mesh authored
+for slot 57/58 (a pauldron record's sided slot, `morrowind_coverage.SIDED_SLOTS`);
+the placement half is `RestSkeleton.place` and `centring` in `morrowind_armor.py`.
+
+A Morrowind pauldron is two or three rigid parts: clavicle (INDX 23/24),
+upper arm (13/14) and, on iron, steel, glass and ebony, an elbow plate
+(forearm, 11/12). The assembler hangs each on its one bone as a Prn piece.
+Measured on all 34 Morrowind pauldron meshes against the Skyrim male body:
+17.8% of their vertices sat inside the skin at rest, as deep as 5.1 units.
+The Skyrim arm is not a scaled Morrowind arm: it is thicker overall
+(thickness ratio 1.13 upper arm, 1.16 forearm) and far thicker at the biceps
+and elbow, where a part needs 1.5-2.2x its radius to clear.
+
+The fit keeps each part's shape and never follows the skin's bumps:
+
+- **Shoulder parts hang from the shoulder joint.** The Skyrim clavicle bone
+  starts at the sternum (Y = +2.5) and runs back to the shoulder (Y = -5.2),
+  about 34 degrees off sideways; Morrowind's runs nearly straight out. Turning
+  a clavicle part onto the Skyrim bone (as every other part is) swung it 27
+  degrees toward the back and 12 up. A `_SHOULDER_SLOTS` part keeps its
+  Morrowind turn and its offset from the shoulder joint instead.
+- **Arm parts are centred** on the Skyrim arm (`centring`: the Skyrim arm's
+  centre minus the placed Morrowind arm's, across the bone; 1.7 units on the
+  upper arm, 1.8 on the forearm). A grid search over further sideways shifts
+  found no better centre.
+- **Push.** Each bone's parts move straight out from the arm's centre line by
+  one smooth field, `a(t) + b(t) cos(angle) + c(t) sin(angle)` with `a, b, c`
+  quadratic along the bone: the least such field (linear program) that leaves
+  every visible face `PAULDRON_MARGIN` clear of the skin weighted to that bone.
+  - Visible means not covered by armor within `COVER_REACH` further out (a
+    plate's inner wall, a sleeve under the shoulder plate) and not inside the
+    placed Morrowind reference arm (`reference_arm`): elbow-plate caps sit 0.9
+    units from the bone, inside any arm, by design.
+  - Faces the bone passes through are inside the limb and ignored.
+- **Layers.** Parts keep the order they were authored in. Bones are pushed
+  innermost first (most faces under another bone's part). A face under a
+  bone's part already placed caps the push at its gap less `LAYER_GAP`; a
+  face under a later bone's part obliges that part to move out at least as
+  far. Without it, ebony's upper-arm plate (pushed 3.4 units on average)
+  came out through its shoulder plate, which sat only 1.4 units above it,
+  and a cap alone left no field that also cleared the skin.
+- **Each part fits its own arm.** Some records list parts for both arms
+  under one sided slot (Arktwend's `0tatessrightspauldron`,
+  `0jarkschulterplatterechts` carry left upper-arm parts); the side, skin,
+  Morrowind reference and weights come from each part's own bone.
+- **Skinned parts.** A pauldron part that is a skinned rig (Arktwend's Dark
+  Brotherhood upper arm, 3.4 units deep in the arm unfitted) joins the same
+  push and keeps its own weights.
+- **Weights.** Each rigid piece's vertex takes the weights at its closest
+  point on the Skyrim skin (`morrowind_weights.blended_weights`), smoothed
+  `WEIGHT_PASSES` (16) times over the parts' welded mesh, keeping 4 influences.
+
+Measured on six right pauldrons (chitin, iron, bonemold Gah-Julan, steel,
+Indoril, Imperial): skin vertices poking through (armor within 3 units under
+them, none within 12 above), rest / arm out 50 / out 80 / forward 60:
+
+| Fit | Poke | Note |
+|---|---|---|
+| none (centred only) | 407 / 360 / 356 / 411 | |
+| uniform scale 1.2 | 254 / 213 / 217 / 301 | |
+| uniform scale 1.35 | 182 / 138 / 166 / 246 | |
+| uniform scale, least clearing all faces | 54 at rest | every bone hit the 2x cap; the plates also grew past the elbow |
+| smooth radial factor field | 81 / 91 / 74 / 108 | mean factor 1.6-1.9x: faces near the bone need huge factors |
+| smooth push, shortfalls allowed (<2%) | 89 / 113 / 107 / 107 | skin showed through the iron sleeve |
+| smooth push, every visible face | 71 / 66 / 67 / 92 | an upper-arm plate came out through its shoulder plate |
+| **the same, parts kept in their layers** | **75 / 67 / 69 / 90** | shipped |
+
+Over all 34 Morrowind pauldrons, vertices inside the skin fell from 17.8% to
+4.4% at rest and from 20.3% to 5.2% posed; what stays inside is linings and
+caps hidden by design. What pokes through is mostly the armpit and the elbow crease, under the parts'
+open ends. In z-buffered renders (`tools/nif/nif_render.py`) no skin shows
+through the plates at rest; the upper-arm plates are visibly larger.
+
+Earlier designs, dropped: pushing every vertex along its own skin normal
+(tore pieces where neighbours' nearest skin was arm on one side and torso on
+the other); a dominant-neighbour vertex push (form-fitted the parts and,
+measured at vertices only, left skin poking through the faces); posed pushes
+(ran away to 8-25 units); a membrane or least-squares surface (a tube cannot
+inflate under vector Laplacian smoothing).
+
+Smoothing the weights trades bending against clipping. Over the right pauldrons:
+
+| Passes | Posed inside | Edge strain p95 |
+|---|---|---|
+| 0 | 0.8% | 29% |
+| 4 | 1.5% | 24% |
+| 16 | 2.0% | 18% |
+| 64 | 3.5% | 14% |
+| 256 | 4.7% | 8% |
+
+For scale, the same poses stretch the Skyrim body's own shoulder skin
+55-85% and the vanilla steel cuirass's shoulder fur 61-90%.
+
 ## <a id="morrowind-arm-segments"></a>Morrowind sleeves sit on Skyrim's arm segments
 
 **Code:** `asset_convert/character/morrowind_arm_fit.py`, called from
@@ -1029,6 +1125,18 @@ Arktwend 2 worn models, vanilla 0.
 - **_0/_1 weight variants (2026-07-11)**: `convert_nif` writes `<name>_0.nif`/`<name>_1.nif` for every biped wearable (any non-`_gnd` mesh the wearable plan names — see the folder-vs-plugin note below). **The _1 file is NEVER a second independent conversion** — the engine lerps the pair per-vertex, so the pair must be topology-identical; a reconversion clips the body splice differently and mid-slider values vertex-explode (observed in game). Instead `body_wrap.morph_converted_to_weight1` post-morphs the finished _0 mesh with the fitted `dst1 - dst0` body morph (built from the REFERENCE Skyrim bodies — the modified output bodies have bugs and are never used for weights); spliced fill lies on the _0 surface so it gets the exact body morph, rigid PRN blocks are untouched. tes5_import ARMA enables the weight slider + `<name>_1.nif` path ONLY for gear covering TES4 biped bits 2-5 (upper/lower body, hand, foot) — vanilla helmets (IronHelmetAA) and shields (IronShieldAA) have the slider DISABLED and a plain path, and slider-on shields misbehaved in game.
 - **What counts as worn gear is the PLUGIN's call, not the folder's (2026-08-08)**: `_convert_nif` used to decide with `'armor' in src_path or 'clothes' in src_path`. That holds for vanilla Oblivion, which files every wearable under `meshes\armor` or `meshes\clothes`, but it is a guess about a naming convention. Nehrim files 88 worn meshes under its own folders (`eyren/`, `spinat/`, `nehrim/`, `skeletonk/`, `dwemertechnology/`, `ttbeards/`, `mr_siika/`, `suedland_set/`) and every one of them was converted as a **world object**: BSFadeNode root instead of NiNode, plain NiSkinInstance instead of BSDismemberSkinInstance, no retarget onto the Skyrim skeleton — and, because the same substring gated the variant writer, no `_0`/`_1` pair, so 52 of the 61 unresolvable ARMA paths were simply never written and the engine drew nothing (guards with a head and hands but no torso). The authored answer is the plugin's own biped model references: `wearable_plan` now sets a `WORN` bit on every path an ARMO/CLOT names as a biped model, and `wearable_plan.is_worn` answers the question. The folder test survives only as the fallback for meshes no record references. Verified byte-identical output for `armor/` and `clothes/` controls (mesh conversion is **not reproducible across processes** unless `PYTHONHASHSEED` is fixed — set/dict iteration order leaks into the written bytes, so any A/B of NIF output must pin it). The remaining 9 misses are dead references: those meshes exist in no Nehrim BSA and no loose file, i.e. they were broken in the original game too.
 - **🔴 Body-skin identity comes from the BONES, not the texture name (2026-08-09)**: Oblivion bakes the wearer's skin into a wearable; the converter strips it and splices Skyrim body geometry back, choosing which body NIF by a keyword in the texture path (`_SKIN_TEX_TO_BODY_NIF`). That is the author's *label*, not what the geometry *is*. Nehrim ships 18 wearables whose torso skin carries a foot or hand texture — the Silverlight cuirass (`Foot:Body`, 3321 verts, weighted to Spine/Spine1/Spine2/Clavicle/Neck/Pelvis, textured `characters\imperial\female\footfemale.dds`) and the entire female Eyren set (four battledresses at 3321 verts plus four greaves). The keyword picked `femalefeet_0.nif`, which contains no torso, so the stripped chest was never spliced back: the armour renders as plates with see-through gaps and the actor looks half-invisible rather than naked. `collect_skin_info` now overrides a hands/feet classification when the skin instance is weighted to **spine, clavicle or neck**. Those three are deliberately the only test — a gauntlet legitimately reaches the forearm and a boot the calf, so including those bones produced 9 false positives on correctly-named vanilla gauntlets; spine/clavicle/neck produced zero. Survey any plugin with `python tools/body_skin_audit.py [plugin] [--all]`. **Diagnostic trap:** the symptom reads as a texture or alpha problem — the source NIF genuinely does have `NiAlphaProperty flags=0x00ed blend=True` on several shapes — so it invites an alpha investigation. Compare the source's shape list against the converted one first; a missing body shape is instantly visible and the alpha is a red herring.
+- <a id="blended-clearance"></a>**The clearance query (`blended_clearance`)** blends the
+  signed distance and normal of the nearest body triangles, so the result is smooth
+  enough to push vertices along. It is solved in chunks of `_WRAP_CHUNK` points: one
+  solve expands to ~10 (P,K,3) intermediates, ~1.15 GB for a 200k-vertex mesh times
+  the mesh-stage pool, which froze the machine (2026-08-25). A member that is None in
+  every chunk (reliability, when no `tri_rel` is given) stays None: concatenating it
+  raised inside `deform_geoms_wrap`, which fell back to plain FK, so every mesh past
+  one chunk silently lost the wrap (the mythic dawn robe's hands sat 84.6 units off).
+  Reliability is a vote of the near triangles only (within `d_best + 2`): hand and foot
+  triangles (reliability 0) abstain rather than veto, so a cuff half over the forearm
+  keeps the forearm's reliability, but a boot shaft hugging the abstaining foot does
+  not inherit it from calf triangles 8+ units away; a vertex with no voter gets 0.
 - **Cross-block solve is mandatory**: `deform_geoms_wrap` concatenates ALL non-PRN blocks into ONE weld/correction/diffusion system. Per-block solving gave coincident seam verts across blocks (cuirass/pauldron boundary) different corrections — visible seam splits. `weld_groups` is true distance welding (KDTree pairs + union-find), not grid rounding (rounding-boundary twins split).
 - **Head gear (hair, Prn helmets, AND skinned helmets/hoods) is fitted by `asset_convert/character/head_fit.py`'s scalp displacement field (v3, 2026-08-24, after two in-game round trips)**: rigid head gear's verts are **bone-local (face-space)** while the wrap field lives in world space, so a field query for them lands on nothing. The v1 fit oversized every mesh in game — its affine carrier was measured from a WORLD-frame ICP fit and claimed sx 1.18 / sz 1.24; the x was ICP stretching the earless OB head over the SK EARS, the z conflated bone placement with head size. **Measured in head-LOCAL frames the two human skulls are the SAME width (OB x ±5.59, SK ±5.51 male / ±5.58 female earless) with local scalp deltas of only mean 0.96 / max 2.8** (crown ~2 DOWN, occiput/nape ~2-3.4 further back). Vanilla SK head parts (hair01.nif etc.) are stored head-bone-local, same convention as our output. NEVER fit a carrier in world frames.
   - **The v3 mechanism — one smooth scalp-to-scalp displacement field, sampled per vertex.** At BUILD (`build_arrays`, run by `python -m asset_convert.character.body_wrap_build`): for every OB head vertex, where its matching SK skin point is. Init = NEAREST POINT from the identity carrier; then FIELD_CYCLES of graph smoothing + reprojection ALONG THE OB VERTEX NORMALS (`_project_ray` — nearest-point reprojection exits sideways from inside the SK nape bulge; normal rays reach it and cannot drift laterally). The final step is a projection, so **every field target lies exactly ON the SK skin**. At RUNTIME (`fit_head_gear`/`field_deltas`): each vertex samples the field at its closest scalp point (Gaussian blend that widens with standoff — exact on the skin, smooth far off), so by construction: a vertex ON the skin lands ON the new skin (hairline edges exactly at the skin line), a vertex N units off stays exactly N off (helmets keep authored standoff), and everything over one scalp region moves identically (headbands/eye-coverings never stretch; the only deformation is the real anatomy gradient). Verts >4 units off (ponytails, domes) take their deltas by graph DIFFUSION from the near verts — per-vertex re-sampling at range measured 19% edge stretch on the lengthened style01 tail; diffusion restores 0%. Sweep over all 57 hairs x genders + every PRN helmet (164 meshes): flush err mean 0.05-0.08 / p95 <=0.25, |dlen| p99 <=1.0 human.

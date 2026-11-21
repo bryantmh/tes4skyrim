@@ -46,14 +46,15 @@ def _sk_name(name: str) -> str:
     return OBLIVION_TO_SKYRIM_BONE_MAP.get(name, name)
 
 
-def _reference(female: bool, weight: int):
-    """(corners (tris, 3, 3), corner arm weights (tris, 3, bones), bone names) of the Skyrim arm skin, or None.
+def skin_reference(female: bool, weight: int, keep=_is_arm):
+    """(corners (tris, 3, 3), corner weights (tris, 3, bones), bone names) of the Skyrim body and hands, or None.
 
-    Only triangles whose three corners all weigh on an arm bone are kept.
+    Only bones `keep` accepts are columns, and only triangles whose three
+    corners all weigh on one of them are kept.
     """
     sex = 'female' if female else 'male'
     shapes = [ss for part in ('body', 'hands') for ss in slot_shapes(f'{sex}{part}_{weight}.nif')]
-    names = sorted({n for ss in shapes for n in ss.bones if _is_arm(n)})
+    names = sorted({n for ss in shapes for n in ss.bones if keep(n)})
     if not names:
         return None
     column = {n: i for i, n in enumerate(names)}
@@ -81,7 +82,7 @@ def _skin_weights(block) -> np.ndarray:
     return w
 
 
-def _bone_node(sk_name: str, nodes: dict, place):
+def bone_node(sk_name: str, nodes: dict, place):
     """The tree's node renamed onto `sk_name`, created at its Skyrim rest frame when absent."""
     skel_root, sk_skel = place
     name = _SOURCE_NAME.get(sk_name, sk_name)
@@ -96,7 +97,7 @@ def _bone_node(sk_name: str, nodes: dict, place):
     return node
 
 
-def _add_bones(skin, new_nodes: list) -> None:
+def add_bones(skin, new_nodes: list) -> None:
     """Append bone nodes to a skin instance and empty entries to its skin data."""
     first = skin.num_bones
     skin.num_bones = skin.data.num_bones = first + len(new_nodes)
@@ -106,7 +107,7 @@ def _add_bones(skin, new_nodes: list) -> None:
         skin.bones[first + i] = node
 
 
-def _pruned(w: np.ndarray) -> np.ndarray:
+def pruned(w: np.ndarray) -> np.ndarray:
     """Weights cut to the strongest `_MAX_INFLUENCES` per vertex and renormalized."""
     if w.shape[1] > _MAX_INFLUENCES:
         w[w < -np.sort(-w, axis=1)[:, [_MAX_INFLUENCES - 1]]] = 0.0
@@ -124,8 +125,8 @@ def _barycentric(p, a, b, c) -> np.ndarray:
     return np.clip(np.stack([1.0 - v - w, v, w], axis=1), 0.0, 1.0)
 
 
-def _blended(verts, ref, tree) -> np.ndarray:
-    """Per vertex, the arm weights at its closest point on the reference skin."""
+def blended_weights(verts, ref, tree) -> np.ndarray:
+    """Per vertex, the `skin_reference` weights at its closest point on that skin."""
     corners, corner_w = ref[0], ref[1]
     cand = tree.query(verts, k=min(_CANDIDATES, len(corners)))[1].reshape(len(verts), -1)
     tri = corners[cand]
@@ -149,18 +150,18 @@ def _reweight(block, ref, tree, nodes: dict, place) -> bool:
     if not len(hit):
         return False
     verts = np.array([[v.x, v.y, v.z] for v in block.data.vertices])[hit]
-    moved = _blended(verts, ref, tree)
+    moved = blended_weights(verts, ref, tree)
     column = {_sk_name(n): i for i, n in enumerate(names)}
     used = [(n, col) for n, col in zip(ref[2], moved.T) if col.any()]
-    added = [_bone_node(n, nodes, place) for n, _col in used if n not in column]
+    added = [bone_node(n, nodes, place) for n, _col in used if n not in column]
     for k, node in enumerate(added):
         column[_sk_name(get_block_name(node))] = len(names) + k
-    _add_bones(skin, added)
+    add_bones(skin, added)
     out = np.hstack([w, np.zeros((len(w), len(added)))])
     out[np.ix_(hit, arm)] = 0.0
     for name, col in used:
         out[hit, column[name]] += share[hit] * col
-    write_weights(skin.data, _pruned(out))
+    write_weights(skin.data, pruned(out))
     return True
 
 
@@ -172,10 +173,33 @@ def reweight_arms(skinned_geoms, skel_root, sk_skel: dict, female: bool, weight:
     and the piece lacks are added at their Skyrim rest frame.
     See: docs/commentary/asset_convert_armor.md#morrowind-hand-weights
     """
-    ref = _reference(female, weight)
+    ref = skin_reference(female, weight)
     if ref is None:
         return 0
     tree = cKDTree(ref[0].mean(axis=1))
     nodes = {get_block_name(n): n for n in skel_root.tree() if isinstance(n, NifFormat.NiNode)}
     return sum(_reweight(block, ref, tree, nodes, (skel_root, sk_skel))
                for block, is_prn, _bone in skinned_geoms if not is_prn)
+
+
+def bone_share(arm, name: str) -> np.ndarray:
+    """Per skin triangle, its mean weight on bone `name` and that bone's twists."""
+    corners, corner_w, names = arm
+    base, side = name.split()[2].lower(), name.split()[1]
+    own = np.array([f' {side} ' in n and base in n.lower() for n in names])
+    return corner_w[..., own].sum(axis=2).mean(axis=1)
+
+
+def limb_centre(arm, segment, share, points) -> np.ndarray:
+    """The centre of the Skyrim arm at `points`: the area-weighted centre of the skin mostly on the
+    bone (`share` per triangle) across the stretch of `segment` the points span."""
+    corners = arm[0]
+    centres = corners.mean(axis=1)
+    axis = (segment[1] - segment[0]) / np.linalg.norm(segment[1] - segment[0])
+    lo, hi = np.percentile((points - segment[0]) @ axis, [5, 95])
+    along = (centres - segment[0]) @ axis
+    ring = (share > 0.5) & (along >= lo) & (along <= hi)
+    area = 0.5 * np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1)
+    if not ring.any():
+        return segment[0] + axis * 0.5 * (lo + hi)
+    return (centres[ring] * area[ring, None]).sum(axis=0) / area[ring].sum()

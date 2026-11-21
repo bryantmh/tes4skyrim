@@ -24,6 +24,21 @@ MW_EXPORT = Path('export/Morrowind.esm')
 SEAM_ROBE = Path('armor/morrowind/m/0commonurobeu05.nif')
 
 
+def _plan_wearing(tmp_path, plugin_dir: Path, editor_id: str, model: Path) -> dict:
+    """The wearable plan of `editor_id`'s CLOT record alone, wearing the assembled `model`.
+
+    Hybrid mode may swap the robe's worn model for Morroblivion's; these tests
+    fit the assembled mesh, so the record is replayed with that model.
+    """
+    marker = '---RECORD_BEGIN---'
+    body = (plugin_dir / 'CLOT.txt').read_text(encoding='utf-8', errors='replace')
+    rec = next(r for r in body.split(marker) if f'\nEditorID={editor_id}\n' in r)
+    lines = [ln for ln in rec.splitlines() if not ln.startswith(('Male.BipedModel', 'Female.BipedModel'))]
+    lines.insert(1, 'Male.BipedModel.MODL=' + str(model).replace('/', chr(92)))
+    (tmp_path / 'CLOT.txt').write_text(marker + '\n'.join(lines) + '\n', encoding='utf-8')
+    return wearable_plan.build_plan(tmp_path)
+
+
 def _sleeve(data):
     """(skeleton-space vertices, shape block) of the robe's sleeve shape."""
     block, root = next((b, r) for b, r in iter_skinned_geoms(data) if block_name(b) == SLEEVE)
@@ -79,9 +94,9 @@ def test_robe_sleeve_keeps_its_radius_around_the_skyrim_upper_arm(tmp_path):
     names, w = _weights(block)
     pure = np.flatnonzero(w[:, names.index('Bip01 R UpperArm')] > 0.999)
     keep = pure[cKDTree(_off_arm_points(source)).query(bind[pure])[0] > 3.0 * SEAM_SIGMA]
-    plan = wearable_plan.build_plan(EXPORT / 'Arktwend_English.esm')
+    plan = _plan_wearing(tmp_path, EXPORT / 'Arktwend_English.esm', 'common_robe_02', ROBE)
     convert_nif(str(src), str(tmp_path / ROBE.name), src_meshes_dir=str(EXPORT / 'meshes'), wearable_plan=plan)
-    out = _sleeve(read_nif(str(tmp_path / '0commonurobeu02_0.nif')))[0]
+    out = _sleeve(read_nif(str(tmp_path / f'{ROBE.stem}_0.nif')))[0]
     assert len(keep) >= 10
     mw, sk = load_skeleton(SKEL_MORROWIND[False]), load_skeleton(SKEL_SKYRIM_MALE)
     deltas = load_animation_deltas(mw)
@@ -102,10 +117,10 @@ def test_seam_welded_across_shapes_stays_closed(tmp_path):
     """The robe's sleeve shape and its torso shape share their shoulder vertices; the fit keeps them together."""
     src = MW_EXPORT / 'meshes' / SEAM_ROBE
     source = _shape_points(read_nif(str(src)))
-    plan = wearable_plan.build_plan(MW_EXPORT)
+    plan = _plan_wearing(tmp_path, MW_EXPORT, 'common_robe_05', SEAM_ROBE)
     convert_nif(str(src), str(tmp_path / SEAM_ROBE.name), src_meshes_dir=str(MW_EXPORT / 'meshes'),
                 wearable_plan=plan)
-    out = _shape_points(read_nif(str(tmp_path / '0commonurobeu05_0.nif')))
+    out = _shape_points(read_nif(str(tmp_path / f'{SEAM_ROBE.stem}_0.nif')))
     gaps = []
     for i, a in enumerate(source):
         for j in range(i + 1, len(source)):
