@@ -243,6 +243,7 @@ constexpr std::uint64_t kNpcActivate = 24715;
 // the plain item types share. An object script sits on a BOOK, a WEAP or an
 // ACTI as often as on an actor, so each is swapped separately -- and so is each
 // plain item type, since each has its OWN vtable (a ring is an ARMO here).
+// TESFurniture too: a hybrid companion places a scripted bed or bench as one.
 // See: docs/plans/morrowind_object_scripts.md#activate-is-per-type
 struct ActivateTarget {
     const char* name;
@@ -260,6 +261,7 @@ constexpr ActivateTarget kActivateTargets[] = {
     {"AlchemyItem", 186204, 17670},     {"TESAmmo", 189195, 17670},
     {"IngredientItem", 186407, 17670},  {"TESKey", 189342, 17670},
     {"TESSoulGem", 189850, 17670},      {"ScrollItem", 186591, 17670},
+    {"TESFurniture", 189309, 17420},
 };
 
 // ContainerMenu's open(ref, mode) (0x8fbff0 on 1.6.1170), which TESNPC::Activate

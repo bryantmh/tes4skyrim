@@ -211,3 +211,17 @@ def test_a_master_link_into_a_cell_we_rewrote_is_dropped():
     assert len(to_ours) == 1, 'exactly one link, the freshly matched seam'
     assert to_ours[0][2] != 7, 'the stale triangle index must not survive'
     assert 0x00000AAA in {lk[1] for lk in ours.links}, 'and it is reciprocal'
+
+
+def test_seam_pairing_is_the_same_whichever_cell_is_first():
+    """Arktwend X0Y5 / X0Y6: the pinned edge links to its nearer candidate from either side.
+
+    See: docs/commentary/tes5_import_navmesh.md#seam-pairing-is-the-same-from-both-sides
+    """
+    south = [(2, 0, 2300.1, 1226.4, 41.9), (3, 1, 2389.35, 1240.65, 47.35)]
+    north = [(499, 0, 2346.75, 1244.0, 83.05), (502, 2, 2498.1, 1268.65, 68.3)]
+
+    forward = {(a[0], b[0]) for a, b in edge_links.match_seam(south, north)}
+    backward = {(b[0], a[0]) for a, b in edge_links.match_seam(north, south)}
+
+    assert forward == backward == {(3, 499)}

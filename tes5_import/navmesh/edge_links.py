@@ -250,37 +250,32 @@ def _shared(ea, eb):
     return min(ea[2] + ea[4], eb[2] + eb[4]) - max(ea[2] - ea[4], eb[2] - eb[4])
 
 
-def match_seam(edges_a, edges_b):
-    """Greedy nearest-neighbour pairing of border edges across one seam.
+def _can_pair(ea, eb) -> bool:
+    """Whether two border edges across a seam cover the same stretch of it at one height."""
+    near = abs(ea[2] - eb[2]) <= SEAM_TOLERANCE or _shared(ea, eb) >= SEAM_TOLERANCE
+    return near and abs(ea[3] - eb[3]) <= SEAM_Z_TOLERANCE
 
-    Two edges pair when their midpoints lie within SEAM_TOLERANCE or they share at
-    least that much of the seam, as edges split differently by the two meshes do.
-    Deterministic: both sides are sorted once up front and each edge on side B
-    is consumed at most once, so the pairing depends only on geometry — never on
-    dict or iteration order (the ESM must stay byte-reproducible).
+
+def match_seam(edges_a, edges_b):
+    """Pair border edges across one seam, nearest midpoints first; each edge pairs once.
+
+    Two edges can pair when their midpoints lie within SEAM_TOLERANCE or they
+    share at least that much of the seam, as edges split differently by the two
+    meshes do. The closest candidates pair first whichever side is `edges_a`,
+    so an import and an in-place patch link a seam alike. Both sides are sorted
+    up front, so the pairing depends only on geometry (byte-reproducible ESM).
+    See: docs/commentary/tes5_import_navmesh.md#seam-pairing-is-the-same-from-both-sides
     """
     a_sorted = sorted(edges_a, key=_seam_sort_key)
     b_sorted = sorted(edges_b, key=_seam_sort_key)
-    pairs = []
-    used_b = set()
-    for ea in a_sorted:
-        best = None
-        best_d = None
-        for j, eb in enumerate(b_sorted):
-            if j in used_b:
-                continue
-            d_along = abs(ea[2] - eb[2])
-            if d_along > SEAM_TOLERANCE and _shared(ea, eb) < SEAM_TOLERANCE:
-                continue
-            if abs(ea[3] - eb[3]) > SEAM_Z_TOLERANCE:
-                continue
-            if best_d is None or d_along < best_d:
-                best_d = d_along
-                best = j
-        if best is not None:
-            used_b.add(best)
-            pairs.append((ea, b_sorted[best]))
-    return pairs
+    nearest = sorted((abs(ea[2] - eb[2]), i, j) for i, ea in enumerate(a_sorted)
+                     for j, eb in enumerate(b_sorted) if _can_pair(ea, eb))
+    partner, used_b = {}, set()
+    for _d, i, j in nearest:
+        if i not in partner and j not in used_b:
+            partner[i] = j
+            used_b.add(j)
+    return [(a_sorted[i], b_sorted[partner[i]]) for i in sorted(partner)]
 
 
 # Neighbour offsets: only the four orthogonal cells share a seam.

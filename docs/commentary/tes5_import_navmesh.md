@@ -3035,6 +3035,22 @@ their along-seam length: **Skyrim.esm 2 / 190,573 (both under 2u); Nehrim
 157 / 39,038 in 145 meshes, 10-24u**. After requiring along > across: Nehrim
 0 / 38,852, Oblivion 0 / 208,548. Confirmed in game.
 
+<a id="seam-pairing-is-the-same-from-both-sides"></a>**Seam pairing is the
+same from both sides** (`edge_links.match_seam`). The pairing used to walk
+side A's edges in order and give each the nearest free edge of side B, so an
+early A edge could take the B edge a later, closer A edge belonged to, and the
+result depended on which cell was A. The import always makes the south/west
+cell A; `navm_patch` (cellview's To ESM, `mesh_to_esm`) makes the patched cell
+A. Arktwend VorMountainsX0Y5 / PastureLandX0Y6: the pinned X0Y6 edge
+2263.7..2429.8 has two candidates in X0Y5, tri 2 (2258.2..2342.0, midpoints
+46.6 apart, 10-20u short of the seam) and tri 3 (2342.0..2436.7, 42.6 apart,
+reaching the seam). Patched in place the edge linked to tri 3 and the walk
+crossed; every import linked it to tri 2, left tri 3 with no link, and
+tate_nembrest and theater_calisto_house stalled at (2300, 24450). Both cells'
+geometry was identical in the passing and failing builds. `match_seam` now
+pairs the closest candidates first over the whole seam, so both tools write
+the same links.
+
 ---
 
 ## Phase 1 — corridors + doors + links (a complete, narrow navmesh)

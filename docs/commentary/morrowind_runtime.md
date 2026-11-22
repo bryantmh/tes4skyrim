@@ -5317,6 +5317,18 @@ dialogue functions `PcCommonDisease` / `PcBlightDisease` answer the same hook, a
 `PcCorprus` asks `GetEffect`'s hook for effect 132 (TES3's name: "Corpus"); before, all three
 answered a constant 0. Old `SPEL.txt` files without the field read as type -1.
 
+<a id="cures-purge-by-class"></a>**A cure takes a base-list disease off too.**
+`ApplyCure` (`game_calls_spell.cpp`) purges every staged spell of the cured
+class from the actor, as OpenMW's spelleffects.cpp does. Skyrim's
+`Actor.RemoveSpell` reaches only spells added at runtime, so a disease in an
+NPC's BASE spell list stayed, `HoldsSpell` kept answering yes, and
+`GetCommonDisease` never fell to 0. A script's `RemoveSpell` already records
+such a removal (`spell|removed`); the cure's purge did not. Assantus Hansar
+(Droops in his base list, `assantusScript` waiting on `GetCommonDisease == 0`)
+stayed diseased after Cure Common Disease on Other hit him:
+tt_ministry_cure 0/2. The purge now records the removal for a spell the actor
+holds; both runs that started then passed.
+
 Reading the list brought one catch: Skyrim's `Actor.RemoveSpell` only takes off spells added
 at runtime, never one from the actor's BASE list, and `HasSpell` still sees that one. OpenMW's
 `RemoveSpell` removes it, so curing the Shurdan-Raplay kwama queen (`RemoveSpell

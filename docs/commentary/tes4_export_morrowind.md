@@ -886,6 +886,17 @@ A bed's `Bed_Standard` keeps running: the master's runtime sidecar binds
 object scripts per PLACEMENT FormID (`SCPT_instances.txt`), and the override
 keeps that FormID. The FURN carries the script too, for the record.
 
+<a id="hybrid-furniture-raises-onactivate"></a>**A scripted bed must still hear
+`OnActivate`.** The script stayed bound, but MorrowindRuntime swaps `Activate`
+per form type and `TESFurniture` (vtable id 189309, Activate id 17420) was not
+in `kActivateTargets` (`plugin/ids.h`), so the player's click on a FURN went
+straight to Skyrim's bed and the script never saw it. `Bed_Standard` hid this
+(the engine opens the same Sleep menu), but Arktwend's `EnderalLagerAufbauBett`
+advances its quest inside `if ( OnActivate == 1 )`: the Sleep menu opened, the
+state never moved, and enderal_burg_camp failed with "no MessageBox opened".
+With furniture hooked (17 of 17 slots) the script claims the click and calls
+`ShowRestMenu` itself, as it did while the bed was an activator.
+
 **Grass.** Morrowind's land has none; Morroblivion lists it on its LTEX
 records (75 grass references, all to its own 41 GRAS). Each of the plugin's
 LTEX whose [land twin](#hybrid-ground) lists grass is overridden in the

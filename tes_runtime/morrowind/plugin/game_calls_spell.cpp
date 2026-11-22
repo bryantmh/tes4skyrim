@@ -228,7 +228,10 @@ void PurgeSpells(void* ref, const std::vector<std::string>& ids, bool remove,
     PostToMainThread([ref, forms, remove]() {
         for (void* form : forms) {
             if (g_dispelSpell) g_dispelSpell(PapyrusVm(), 0, ref, form);
-            if (remove && g_removeSpell) g_removeSpell(PapyrusVm(), 0, ref, form);
+            if (!remove || !g_removeSpell) continue;
+            // Actor.RemoveSpell leaves a BASE-list spell in place, so the removal is recorded as a script's is.
+            if (HoldsSpell(ref, form)) State().SetVar(kRemovedSpellOwner, RemovedKey(ref, form), 1.0f);
+            g_removeSpell(PapyrusVm(), 0, ref, form);
         }
     });
 }

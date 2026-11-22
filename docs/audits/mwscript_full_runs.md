@@ -426,6 +426,12 @@ arktwend_side 6/6 in every Arktwend run since 13.
 - Case: walks + `bye if open`; X0Y6 hill = user's long-path leg exception (steers v2 + valley legs 9960 28811 /
   11602 31869 / 14089 34673).
 - Fixed: Wache02 must greet first (theater_guards walk); PastureLandX0Y6 user pin verts snapped onto the X0Y5 seam.
+- 11-21: X0Y5/X0Y6 seam stall (2300 24450) = seam pairing depended on which cell was first; an import linked the pinned
+  edge to X0Y5 tri 2 instead of tri 3 (the in-place patch linked tri 3). Fixed in `edge_links.match_seam`
+  ([doc](../commentary/tes5_import_navmesh.md#seam-pairing-is-the-same-from-both-sides)). The case now gets past the
+  seam; OPEN: the leg 14089 34673 -> 15170 35301 slides SE down the slope into the PastureLandX3Y8 dip
+  (14718 34060 z -40, off mesh): 1 pass (after struggling in the dip), 2 stalls. Predictor: reached. Picture
+  temp/seam_regress/PastureLandX3Y8_dip_walk.png. Not diagnosed.
 - X0Y6 corridor history (all FAILED, don't retry): ribbon pin; pins v1-v8 of the rock/strip (v8 kept as
   engine-valid); single walk replacing the steers; choke theory (150-172 wide); followers-as-obstacles;
   preferred-flag; slope sub-steps; stand-on-top / step / face-direction rules.
@@ -433,6 +439,7 @@ arktwend_side 6/6 in every Arktwend run since 13.
 ## tate_nembrest -- passing
 - Case: steers v2 over X0Y6 (user allowed a FEW high-level steers) + station walk; plaza pin (pocket under the
   stands), cemetery wall-end pin, X2Y5 rock pin, X0Y6 v8. 3/3 since; not in a lane fail since run 22.
+- 11-21: failed at the X0Y5/X0Y6 seam after an import (see theater_calisto_house); 3/3 with the seam pairing fix.
 
 ## sohn_home -- OPEN (the one recurring Arktwend fail; runs 38, 40, 41)
 - 🛑 USER GOAL (11-16, do not substitute): (1) make sohn_home MOSTLY pass -- after EVERY failure look at the stop
@@ -582,3 +589,18 @@ object_script box owner); kWalkLogTicks 60 -> 300; measure pace v4; republish th
 other MW-format plugins (Recover, persistent actors, door joins); landing-link blast radius on Oblivion; docs
 after in-game confirmation (hello approach, door lock, alarm, persistent actors, split/door joins, pins, root
 rule, ENCH, lift); ask about the NAVM id changes above.
+
+## 11-21 regression pass (hybrid builds)
+- enderal_burg_camp "no MessageBox": hybrid places the scripted camp bed as FURN; the runtime did not hook
+  TESFurniture::Activate, so `OnActivate` never rose. Hooked (17 slots): 3/3.
+  ([doc](../commentary/tes4_export_morrowind.md#hybrid-furniture-raises-onactivate))
+- tt_ministry_cure 0/2: a cure did not record the removal of a BASE-list disease. Fixed in `PurgeSpells`: 3 of 3 runs
+  that started. ([doc](../commentary/morrowind_runtime.md#cures-purge-by-class))
+- arena_join / arena_wolves / arena_boars: Hawk's greetings end in Goodbye and the cases talked again without
+  clicking it (the open conversation was taken as the new one). `bye` added: arktwend_side 6/6. Why these passed
+  before is not established.
+- bm_siege: `expect SkaalAttack == 2` raced the fight (it read 3); now `>= 2`: 2 of 2 runs that started.
+- bm_karstaag 2/2 and hh_twin_lamps3_escort 2 of 2 started runs on the ESMs rebuilt with the seam pairing fix; no
+  other change.
+- Three games plus an Oblivion import at once ran the machine out of memory: a game failed to start
+  (temp/crash/nostart_1121_163706) and the import's parse pool broke. Run imports without three games up.

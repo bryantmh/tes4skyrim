@@ -673,8 +673,9 @@ dispatch `mov rcx,[ref+0x40] / mov rax,[rcx] / call [rax+0x1b8]` uses):
 | `0x23ace0` | BOOK |
 | `0x22fe60` | LIGH |
 | `0x228870` | FLOR |
+| `0x22a120` | FURN (hooked since hybrid mode places scripted beds as furniture; see [tes4_export_morrowind.md](../commentary/tes4_export_morrowind.md#hybrid-furniture-raises-onactivate)) |
 
-So the base slot is NOT shared: **9 distinct functions**, and a single swap on
+So the base slot is NOT shared: **10 distinct functions**, and a single swap on
 `TESBoundObject` would miss BOOK, WEAP, ACTI, CONT, DOOR, LIGH, FLOR and NPC —
 which is most of what carries a script. The hook is one vtable swap per type,
 each refusing to install unless the slot already holds the function it expects,

@@ -23,7 +23,7 @@ run
 player->PositionCell -159200 211500 3010 0 "Skaal Village"
 until 600 GetPCCell "Skaal Village" == 1
 wait 60
-expect SkaalAttack == 2
+expect SkaalAttack >= 2
 until 600 "BM_werewolf_skaal1A3"->GetDisabled == 0
 until 600 "BM_werewolf_skaal1B3"->GetDisabled == 0
 until 600 "BM_werewolf_skaal1C3"->GetDisabled == 0

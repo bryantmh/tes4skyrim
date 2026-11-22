@@ -32,8 +32,10 @@ expect GetJournalIndex A_IV_Arena == 3
 bye
 talk ARENHawk
 expect GetJournalIndex A_IV_Arena == 4
+bye
 talk ARENHawk
 expect GetJournalIndex A_IV_Arena == 5
+bye
 end
 
 case arena_wolves
@@ -48,6 +50,7 @@ player->Position 3900 51543 433 90
 wait 60
 talk ARENHawk
 expect GetJournalIndex A_IV_Arena == 6
+bye
 end
 
 case arena_boars
@@ -62,6 +65,7 @@ player->Position 3900 51543 433 90
 wait 60
 talk ARENHawk
 expect GetJournalIndex A_IV_Arena == 7
+bye
 end
 
 case arena_joroka
