@@ -90,12 +90,18 @@ end
 # Menu expected: the birthsign menu. TES4_Chargen.Ask hands it to MorrowindRuntime's chargen menu, so `pick` names the
 # row (BSGN FULL); the MessageBox pages are only its fallback. The Emperor then re-greets (stage 44) with "The signs I read ..." and the
 # player asks "What about me?" (his answer for the picked sign sets 45); CharGenQuest sets 50 after his speech.
+# That answer offers "Can you see my fate?" and "Aren't you afraid to die?"; their answers offer each other and
+# "Where are we going?" (needs Charactergen.fate and .die, set by the two answers), the only line with no choices.
+# Since the force greet's exit hold (af21975f) Goodbye stays hidden until then, as in Oblivion.
 case ambush_b_birthsign
 pick The Warrior
 until 900 GetStage Charactergen >= 44
 hear 900 UrielSeptimRef The signs I read
 wait 30
 ask "What about me?"
+ask "Can you see my fate?"
+ask "Aren't you afraid to die?"
+ask "Where are we going?"
 bye
 until 3600 GetStage Charactergen >= 45
 until 3600 GetStage Charactergen >= 50

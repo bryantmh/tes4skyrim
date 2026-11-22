@@ -27,12 +27,9 @@ from scipy.spatial import cKDTree
 
 from asset_convert import paths
 from asset_convert.character import head_fit
-from asset_convert.character.body_wrap import field_path
 from asset_convert.character.morrowind_body import body_groups
-from asset_convert.character.skin_retarget import (SKEL_MORROWIND, SKEL_OBLIVION,
-                                                   SKEL_SKYRIM_FEMALE, SKEL_SKYRIM_MALE,
-                                                   load_skeleton, retarget_skin_to_skyrim)
-from asset_convert.character.skyrim_overrides import OBLIVION_TO_SKYRIM_BONE_MAP
+from asset_convert.character.skin_retarget import (SKEL_MORROWIND, SKEL_OBLIVION, SKYRIM,
+                                                   load_skeleton)
 from asset_convert.character.wrap_mesh import (build_adjacency, closest_point_on_triangles,
                                                geom_bone_weights, geom_triangles, geom_world,
                                                group_mean, iter_skinned_geoms, read_nif,
@@ -267,13 +264,12 @@ def _group_arrays(items, labeler=None):
     return arrays
 
 
-def _posed_verts(items, gender: str, morrowind: bool):
-    """A group's vertices after the FK retarget its armor gets (no wrap), or None."""
+def _posed_verts(items, gender: str, morrowind: bool, destination):
+    """A group's vertices after the FK retarget its armor gets onto `destination` (no wrap), or None."""
     v_parts = []
     for name, factory in items:
         data = factory()
-        retarget_skin_to_skyrim(data, src_path=_GENDER_TAGS[gender] + Path(name).name,
-                                allow_wrap=False, morrowind=morrowind)
+        destination.pose_body(data, _GENDER_TAGS[gender] + Path(name).name, morrowind)
         v_parts.extend(geom_world(b, r)[0] for b, r in iter_skinned_geoms(data))
     return np.vstack(v_parts) if v_parts else None
 
@@ -288,9 +284,10 @@ def load_ob_group(gender: str) -> dict:
 # Fitting
 # ---------------------------------------------------------------------------
 
-def _segment_axis(parent, child, src_skel, sk_skel):
-    """(Skyrim segment head, unit axis, Skyrim/source length ratio), or None."""
-    sk_p, sk_c = OBLIVION_TO_SKYRIM_BONE_MAP.get(parent), OBLIVION_TO_SKYRIM_BONE_MAP.get(child)
+def _segment_axis(parent, child, src_skel, sk_skel, bone_map):
+    """(destination segment head, unit axis, destination/source length ratio), or None; `bone_map`
+    names the destination's bones."""
+    sk_p, sk_c = bone_map.get(parent), bone_map.get(child)
     if (parent not in src_skel or child not in src_skel
             or sk_p not in sk_skel or sk_c not in sk_skel):
         return None
@@ -303,14 +300,14 @@ def _segment_axis(parent, child, src_skel, sk_skel):
     return sk_head, sk_vec / sk_len, sk_len / src_len
 
 
-def _segment_scale(verts, bones, src_skel, sk_skel):
-    """FK-posed `verts` with limb segments stretched to Skyrim length, blended by skin weight.
+def _segment_scale(verts, bones, src_skel, sk_skel, bone_map):
+    """FK-posed `verts` with limb segments stretched to the destination's length, blended by skin weight.
 
     Fit initialisation only; armor is never axis-scaled.
     """
     acc, wsum = np.zeros_like(verts), np.zeros(len(verts))
     for parent, child, riders in _SCALE_SEGMENTS:
-        seg = _segment_axis(parent, child, src_skel, sk_skel)
+        seg = _segment_axis(parent, child, src_skel, sk_skel, bone_map)
         weighted = [bones[bn] for bn in (parent,) + riders if bn in bones]
         if seg is None or not weighted:
             continue
@@ -345,9 +342,10 @@ def _project_points(points, normals, target):
     return cp[np.arange(len(points)), np.argmin(d_f, axis=1)]
 
 
-def _sk_target(gender, group, weight):
-    """(verts, tris, triangle normals, centroid KD-tree) of one Skyrim target, or None."""
-    sk = load_sk_surface(gender, group, weight)
+def _sk_target(gender, group, weight, surfaces):
+    """(verts, tris, triangle normals, centroid KD-tree) of one destination target, or None;
+    `surfaces` is the destination's."""
+    sk = surfaces(gender, group, weight)
     if sk is None:
         return None
     sk_v, sk_t = sk
@@ -380,10 +378,11 @@ def _report(label, cur, fk_raw, tris, graph, target) -> None:
           f'p95={np.percentile(corr, 95):.2f} max={corr.max():.2f}')
 
 
-def _fit_group(gender, group, gd, fk_raw, skels, verbose):
-    """([dst0, dst1], the _0 Skyrim surface) for one group, or None without a target.
+def _fit_group(gender, group, gd, fk_raw, skels, verbose, surfaces):
+    """([dst0, dst1], the _0 destination surface) for one group, or None without a target.
 
-    The head starts from the UV correspondence instead of the FK pose.
+    `skels` is (source skeleton, destination skeleton, bone map). The head starts from the UV
+    correspondence instead of the FK pose.
     See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
     """
     seed = _segment_scale(fk_raw.copy(), gd['bones'], *skels)
@@ -395,7 +394,7 @@ def _fit_group(gender, group, gd, fk_raw, skels, verbose):
     graph = (wg, n_g) + tuple(build_adjacency(gd['tris'], wg, n_g))
     fitted, surface = [], None
     for wt in (0, 1):
-        target = _sk_target(gender, group, wt)
+        target = _sk_target(gender, group, wt, surfaces)
         if target is None:
             print(f'  [{gender}/{group}] missing SK target surface _{wt}')
             return None
@@ -437,9 +436,10 @@ def _part_ids(group, v0, body_v0):
     return part
 
 
-def _fit_all(gender, groups, posed, skels, verbose):
+def _fit_all(gender, groups, posed, skels, verbose, destination):
     """({npz array: [per group]}, head pack or None), or None when a fit fails."""
     src_skel, sk_skel, ob_skel = skels
+    fit_skels = (src_skel, sk_skel, destination.bone_map(src_skel))
     acc = {key: [] for key in _STACKED + ('part',)}
     body_v0 = groups['body']['v0'] if 'body' in groups else None
     head, offset = None, 0
@@ -447,7 +447,7 @@ def _fit_all(gender, groups, posed, skels, verbose):
         if len(posed[group]) != len(gd['v0']):
             print(f'  [{gender}/{group}] vert count mismatch T-pose vs FK')
             return None
-        fit = _fit_group(gender, group, gd, posed[group], (src_skel, sk_skel), verbose)
+        fit = _fit_group(gender, group, gd, posed[group], fit_skels, verbose, destination.surfaces)
         if fit is None:
             return None
         (dst0, dst1), surface = fit
@@ -506,32 +506,35 @@ def _save(out, acc, hf, has_head, verbose, label_key) -> None:
         print(f'  saved {out.name}: {len(stacked["src"])} verts, {len(stacked["tris"])} tris')
 
 
-def build_field(gender: str, source: str = 'oblivion', verbose: bool = True) -> bool:
-    """Build and save the wrap field for one gender of one source game; success."""
+def build_field(gender: str, source: str = 'oblivion', verbose: bool = True, destination=None) -> bool:
+    """Build and save the wrap field for one gender of one source game onto `destination`'s body
+    (Skyrim's by default), over the wrap groups it has; success."""
+    destination = destination or SKYRIM
     female = gender == 'female'
     ob_skel = load_skeleton(SKEL_OBLIVION)
-    sk_skel = load_skeleton(SKEL_SKYRIM_FEMALE if female else SKEL_SKYRIM_MALE)
+    sk_skel = load_skeleton(destination.skeletons[female])
     morrowind = source == 'morrowind'
     src_skel = load_skeleton(SKEL_MORROWIND[female]) if morrowind else ob_skel
     if not ob_skel or not sk_skel or not src_skel:
         print(f'  [{gender}] skeleton JSONs missing — cannot build')
         return False
-    sources = body_groups(gender) if morrowind else _oblivion_groups(gender)
+    sources = {g: items for g, items in (body_groups(gender) if morrowind else _oblivion_groups(gender)).items()
+               if g in destination.groups}
     labeler, label_key = _LABELERS[morrowind]
     groups = {g: a for g, items in sources.items()
               if (a := _group_arrays(items, labeler)) is not None}
     posed = {g: p for g, items in sources.items()
-             if (p := _posed_verts(items, gender, morrowind)) is not None}
+             if (p := _posed_verts(items, gender, morrowind, destination)) is not None}
     if not groups or set(groups) != set(posed):
         print(f'  [{gender}] {source} body meshes missing — cannot build')
         return False
     skels = (src_skel, sk_skel, ob_skel)
-    fit = _fit_all(gender, groups, posed, skels, verbose)
+    fit = _fit_all(gender, groups, posed, skels, verbose, destination)
     if fit is None:
         return False
     acc, head = fit
     hf = _apply_head_fit(acc, head, gender, skels, verbose)
-    _save(field_path(female, morrowind), acc, hf, 'head' in groups, verbose, label_key)
+    _save(destination.fields(female, morrowind), acc, hf, 'head' in groups, verbose, label_key)
     return True
 
 

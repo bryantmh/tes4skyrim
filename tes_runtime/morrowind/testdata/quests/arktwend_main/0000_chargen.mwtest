@@ -43,7 +43,8 @@ until 900 "ANFBischofDerminus"->GetDistance "MarkerANFCharGen01" <= 300
 end
 
 # At the statue Derminus tells the player of the ring; the statue opens the
-# race, class, sign and review menus, then gives up the ring.
+# race, class, sign and review menus, then gives up the ring. Before the class
+# menu the game asks how to pick a class (Generate / Pick / Create): button 1.
 case chargen_statue
 run
 player->PositionCell 4320 3100 418 0 "Melee, Monastery Church"
@@ -51,6 +52,7 @@ wait 120
 bye
 activate MeleeKlosterCharGenStatue
 close RaceSex Menu
+button 1
 pick Warrior
 pick The Warrior
 until 600 CharGenState == -1

@@ -1,0 +1,89 @@
+# Shivering Isles. A full run is a new game through the main-quest chargen and sewer cases (oblivion_main
+# --to sewers_tutorial_ends --checkpoints), then this folder with `--load mwtest_sewers_tutorial_ends`.
+#
+# SE01Door "A Door in Niben Bay". SE01DoorScript sets 10 a game day after MQ01 90; the door's own script
+# (SEDoorToShiveringIslesScript) sets it as soon as the player is within 512. Walking onto the island trips
+# SE01TrigZoneREF (TrigZone01 x1.1, about 460 square round 89011 -34206): Belmyne Dreleth comes out of the door, rants
+# twice (SE01BelmyneRant), Gaius Prentus says "Stay back! This one's violent!" and they fight. Belmyne's death starts the
+# gate speech: four lines (SE01GateSpeech, said through the voice NPC SE01GateVoice1) count SE01Door.gatespeechVAR to
+# 4, which unlocks the door. Gaius then force-greets the player (StartConversation SE01GaiusForceGreet, stage 10,
+# within 512).
+# DRAFT 2026-11-17 from temp/si/dial.py + temp/si/src.py: not run yet.
+
+# The island's navmesh lies west of the trigger box (temp/si/door_island.png); the player lands there (never inside the
+# box) and walks to the door, through the trigger.
+case se01_island
+run
+cow TES4Tamriel 21 -9
+wait 60
+run
+player.setpos x 88550
+player.setpos y -34300
+player.setpos z 650
+wait 30
+walk SE01Door1REF
+until 600 GetStage SE01Door >= 10
+until 900 SE01Door.BelmyneStart == 2
+defend SEGaiusPrentusREF
+until 3600 SEBelmyneDrelethREF.GetDead == 1
+# Gaius's force-greet comes in the middle of the gate speech (run si_1a: after its 2nd line), and the speech (a
+# GameMode poll) waits while that conversation is open, as Oblivion's GameMode did in a menu. So the topics come
+# first: "I'd stay back from that door if I were you." (INFO 000133DC) -> "Strange Door" ("I don't know where it came
+# from", 000133D8, stage 10) offers "What happened to them?" -> "I'm going in." (000133DA, goodbye) = 20.
+hear 1800 SEGaiusPrentusREF stay back from that door
+ask "Strange Door"
+ask "What happened to them?"
+ask "I'm going in."
+until 300 GetStage SE01Door >= 20
+bye if open
+hear 1800 any Really, do come in
+until 1800 SE01Door.gatespeechVAR == 4
+end
+
+# The door (SE01Door1REF) takes the player to the waiting room in the Isles. Haskill asks the player to sit
+# (SE01HaskillTalk) and sits in SE01HaskillChairREF; the player takes SE01PlayerChairREF.
+# Haskill's greeting "Yes. What can I do for you? I imagine you're here about the door?" (00019D69) needs him seated
+# (else "Let's be civil, shall we? Please, have a seat.", a goodbye, 0005DD11: GetSitting != 3).
+# The choices are gated on Haskill's own variables (GetScriptVariable): "Why did that door appear in Cyrodiil?"
+# needs introWho and introWhat, "What happens now?" needs introWant and introPeople (run si_1b: after "Who are you?"
+# only "What is this place?" was listed). So: "Strange Door" (000133DF) -> "Who are you?" (30, introWho) -> "What
+# is this place?" (introWhat) -> "Why did that door appear in Cyrodiil?" -> "What do you want with me?" (introWant)
+# -> "And the people outside?" -> "How can they be cured?" (introPeople) -> "What happens now?" -> "And if I go
+# through the door?" (goodbye) = 40. Each gate's write is in the line before, so the list after it tests it.
+case se01_haskill
+activate SE01Door1REF
+until 600 player.GetDistance SE01DoorMarkerREF < 600
+wait 60
+activate SE01PlayerChairREF
+until 600 player.GetSitting >= 3
+until 1800 SEHaskillREF.GetSitting == 3
+talk SEHaskillREF
+ask "Strange Door"
+ask "Who are you?"
+until 300 GetStage SE01Door >= 30
+ask "What is this place?"
+ask "Why did that door appear in Cyrodiil?"
+ask "What do you want with me?"
+ask "And the people outside?"
+ask "How can they be cured?"
+ask "What happens now?"
+ask "And if I go through the door?"
+until 300 GetStage SE01Door >= 40
+bye if open
+end
+
+# Talking again: "Well? Have you made up your mind?" (0005E36F, say once) offers "No, thanks." / "I'll do it."; the
+# second (0005E371, goodbye) sets 200, leaveVAR 1 and disables the controls. Haskill walks out
+# (SE01HaskillLeavePackage; its OnPackageDone sets leaveVAR 2), the waiting room dissolves, and 23 s later
+# SE01DoorScript re-enables the controls and sets 201; once the player is off the chair it sets SE02 5.
+# Standing up is the player's: a moveto to the door marker stands in.
+case se01_join
+talk SEHaskillREF
+ask "I'll do it."
+until 300 GetStage SE01Door >= 200
+until 1800 SEHaskillREF.leaveVAR == 2
+until 3600 GetStage SE01Door >= 201
+run
+player.moveto SE01DoorMarkerREF
+until 900 GetStage SE02 >= 5
+end

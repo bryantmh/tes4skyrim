@@ -98,6 +98,9 @@ _G32.SelectObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
 _G32.GetBitmapBits.argtypes = (wintypes.HANDLE, ctypes.c_long, ctypes.c_void_p)
 _G32.DeleteObject.argtypes = (wintypes.HANDLE,)
 _G32.DeleteDC.argtypes = (wintypes.HANDLE,)
+DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ctypes.c_void_p(-4)
+_U32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+_U32.SetThreadDpiAwarenessContext.argtypes = (ctypes.c_void_p,)
 
 
 def _find_window(desk, window_class: str) -> int:
@@ -125,11 +128,89 @@ def capture(desktop: str, window_class: str):
     desk = _U32.OpenDesktopW(desktop, 0, False, DESKTOP_READOBJECTS_ENUMERATE)
     if not desk:
         return None
+    # Physical pixels: a DPI-unaware caller gets a scaled-down window rect on a scaled display and
+    # captures only its top-left part.
+    previous = _U32.SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
     try:
         hwnd = _find_window(desk, window_class)
         return _capture_window(hwnd) if hwnd else None
     finally:
+        if previous:
+            _U32.SetThreadDpiAwarenessContext(previous)
         _U32.CloseDesktop(desk)
+
+
+def fit_window(desktop: str, window_class: str, width: int, height: int) -> tuple:
+    """Shrink the `window_class` window on `desktop` to `width` x `height` when it is larger; its size
+    before, or None when there is no such window or it could not be resized.
+
+    A window can only be moved from a thread on its own desktop, so this runs on a thread of its own that
+    joins `desktop` (a thread that owns no window may).
+    """
+    import threading
+    result = []
+
+    def work():
+        """Joins the desktop, measures the window and resizes it."""
+        desk = _U32.OpenDesktopW(desktop, 0, False, 0x10000000)  # GENERIC_ALL
+        if not desk:
+            return
+        try:
+            if not _U32.SetThreadDesktop(desk):
+                return
+            hwnd = _find_window(desk, window_class)
+            rect = wintypes.RECT()
+            if not hwnd or not _U32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                return
+            size = (rect.right - rect.left, rect.bottom - rect.top)
+            # SWP_NOZORDER | SWP_NOACTIVATE
+            if (size[0] <= width and size[1] <= height) or _U32.SetWindowPos(hwnd, 0, 0, 0, width, height, 0x0014):
+                result.append(size)
+        finally:
+            _U32.CloseDesktop(desk)
+
+    thread = threading.Thread(target=work)
+    thread.start()
+    thread.join()
+    return result[0] if result else None
+
+
+def press_key(desktop: str, window_class: str, key: int, hold: float = 0.15) -> bool:
+    """Press virtual key `key` in the `window_class` window on `desktop`, hold it `hold` seconds and
+    release it (window messages, as a keyboard driver's reach no hidden desktop); False when there is no
+    such window.
+
+    A message can only be posted from a thread on the window's own desktop: see `fit_window`.
+    """
+    import threading
+    import time
+    result = []
+
+    def work():
+        """Joins the desktop and posts key down, the character for Enter, and key up."""
+        desk = _U32.OpenDesktopW(desktop, 0, False, 0x10000000)  # GENERIC_ALL
+        if not desk:
+            return
+        try:
+            hwnd = _find_window(desk, window_class) if _U32.SetThreadDesktop(desk) else 0
+            if not hwnd:
+                return
+            scan = _U32.MapVirtualKeyW(key, 0) << 16
+            post = _U32.PostMessageW
+            post.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+            sent = post(hwnd, 0x0100, key, 1 | scan)  # WM_KEYDOWN
+            if key == 0x0D:
+                post(hwnd, 0x0102, key, 1 | scan)  # WM_CHAR
+            time.sleep(hold)
+            if sent and post(hwnd, 0x0101, key, 1 | scan | 0xC0000000):  # WM_KEYUP
+                result.append(True)
+        finally:
+            _U32.CloseDesktop(desk)
+
+    thread = threading.Thread(target=work)
+    thread.start()
+    thread.join()
+    return bool(result)
 
 
 def _capture_window(hwnd: int) -> Image.Image:

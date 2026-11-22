@@ -5,7 +5,9 @@
 // log) and LocalAppData (Plugins.txt) at the folders named by
 // TES_SANDBOX_DOCUMENTS / TES_SANDBOX_LOCALAPPDATA, so a test run never reads
 // or writes the player's own profile. With TES_SANDBOX_MUTE=1 it also keeps the
-// game's audio session muted.
+// game's audio session muted; with TES_SANDBOX_MUTE=0 it unmutes it (Windows
+// remembers a session's mute per exe path, so a muted test run would otherwise
+// silence the player's next launch of the same exe).
 //
 // No code bytes are patched. shell32's EXPORT table is repointed, which every
 // module bound after this one (SKSE, every plugin) resolves through, and the
@@ -188,7 +190,7 @@ void PatchLoadedModules() {
 }
 
 // Mutes this process's audio session on the default output device; the HRESULT.
-HRESULT MuteSession() {
+HRESULT MuteSession(BOOL mute) {
     IMMDeviceEnumerator* devices = nullptr;
     IMMDevice* device = nullptr;
     IAudioSessionManager* sessions = nullptr;
@@ -199,7 +201,7 @@ HRESULT MuteSession() {
     if (SUCCEEDED(hr)) hr = device->Activate(__uuidof(IAudioSessionManager), CLSCTX_ALL, nullptr,
                                              reinterpret_cast<void**>(&sessions));
     if (SUCCEEDED(hr)) hr = sessions->GetSimpleAudioVolume(nullptr, FALSE, &volume);
-    if (SUCCEEDED(hr)) hr = volume->SetMute(TRUE, nullptr);
+    if (SUCCEEDED(hr)) hr = volume->SetMute(mute, nullptr);
     for (IUnknown* p : {static_cast<IUnknown*>(volume), static_cast<IUnknown*>(sessions),
                         static_cast<IUnknown*>(device), static_cast<IUnknown*>(devices)}) {
         if (p) p->Release();
@@ -214,11 +216,26 @@ DWORD WINAPI MuteThread(LPVOID) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     HRESULT last = S_FALSE;
     for (;;) {
-        const HRESULT hr = MuteSession();
+        const HRESULT hr = MuteSession(TRUE);
         if (hr != last) Log("audio session mute: hr=0x%08lX", static_cast<unsigned long>(hr));
         last = hr;
         Sleep(2000);
     }
+}
+
+// Clears the mute Windows remembers for this exe's session, for the first minute
+// only (the game opens its audio streams a few seconds in; after that the player's
+// own mixer choice stands).
+DWORD WINAPI UnmuteThread(LPVOID) {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    HRESULT last = S_FALSE;
+    for (int tries = 0; tries < 30; ++tries) {
+        const HRESULT hr = MuteSession(FALSE);
+        if (hr != last) Log("audio session unmute: hr=0x%08lX", static_cast<unsigned long>(hr));
+        last = hr;
+        Sleep(2000);
+    }
+    return 0;
 }
 
 bool ReadFolder(const wchar_t* variable, wchar_t* out) {
@@ -249,8 +266,8 @@ void Install() {
     g_redirects[2] = {"SHGetKnownFolderPath", reinterpret_cast<void*>(&HookKnownFolderPath),
                       reinterpret_cast<void*>(g_realKnown)};
     wchar_t mute[8] = {};
-    if (GetEnvironmentVariableW(L"TES_SANDBOX_MUTE", mute, 8) && mute[0] == L'1') {
-        CloseHandle(CreateThread(nullptr, 0, MuteThread, nullptr, 0, nullptr));
+    if (GetEnvironmentVariableW(L"TES_SANDBOX_MUTE", mute, 8) && (mute[0] == L'1' || mute[0] == L'0')) {
+        CloseHandle(CreateThread(nullptr, 0, mute[0] == L'1' ? MuteThread : UnmuteThread, nullptr, 0, nullptr));
     }
     Log("Documents -> %ls", g_documents);
     Log("LocalAppData -> %ls", g_localAppData);

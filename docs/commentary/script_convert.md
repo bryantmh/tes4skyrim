@@ -2060,6 +2060,27 @@ body at OnEnd breaks it four different ways, each fixed by one helper.
   did NOT stop the ghost walking a package already running (347 -> 2004), so
   Skyrim's restraint holds an actor only until a moving package starts.
   `tests/test_script_restraint.py`.
+- <a id="redress-after-inventory-change"></a>**An item call that moves armor on
+  an actor re-dresses it (`redress.py`, `TES4Polyfill.Redress`).** Oblivion
+  re-scores an NPC's inventory when it changes and wears the best piece per
+  slot; Skyrim never does. MQ05 stage 20 takes Baurus's Blades armor away so he
+  can go undercover, and Oblivion dresses him in the LowerShirt11 /
+  LowerPants08 he carries; MQ06 stage 10 hands the armor back with `addItem`.
+  Converted, he stood bare-chested in loincloth, boots and bracers from MQ05 to
+  the end of the main quest (2026-11-17 recording: the Bruma chapel, the Great
+  Gate, Cloud Ruler, the finale). Each run of `AddItem` / `RemoveItem` /
+  `RemoveAllItems` on one non-player reference that names an Armor property
+  (or removes everything) is followed by one `TES4Polyfill.Redress(<ref>)`,
+  which walks the actor's inventory (SKSE `GetNthForm`) and equips per slot in
+  the importer's outfit order: upper body first, armor over clothing, then gold
+  value ([upper-body-first](tes5_import_actors.md#upper-body-first)). Jewelry,
+  the player and dead actors are left alone. **The equip is locked**
+  (`abPreventRemoval`): measured on Baurus at Luther Broad's, an unlocked
+  `equipitem LowerShirt11` read `GetEquipped 0` straight away (the NPC's AI puts
+  its outfit back), while the locked one held, also across a move from Luther
+  Broad's to Cloud Ruler Temple. Because a locked piece is not swapped out by the
+  AI, each equip first unequips whatever is worn in the new piece's slots
+  (SKSE `GetWornForm`).
 - <a id="lost-line-ends"></a>**`_end_watch` (pipeline.py) — a line's result
   must not depend on the player hearing it.** Measured in run 23c (the Blades'
   welcome at Cloud Ruler Temple, player left at the gate ~3,000 units away):
@@ -2083,27 +2104,6 @@ body at OnEnd breaks it four different ways, each fixed by one helper.
   2, judged the turn not its own and skipped `nextspeaker = 2`; OnBegin then
   stepped 2 -> 3, and its own fallback found the count already spent. (Cut, most
   likely, by Mankar's next poll Say: SayLine had given up before the engine
-- <a id="redress-after-inventory-change"></a>**An item call that moves armor on
-  an actor re-dresses it (`redress.py`, `TES4Polyfill.Redress`).** Oblivion
-  re-scores an NPC's inventory when it changes and wears the best piece per
-  slot; Skyrim never does. MQ05 stage 20 takes Baurus's Blades armor away so he
-  can go undercover, and Oblivion dresses him in the LowerShirt11 /
-  LowerPants08 he carries; MQ06 stage 10 hands the armor back with `addItem`.
-  Converted, he stood bare-chested in loincloth, boots and bracers from MQ05 to
-  the end of the main quest (2026-11-17 recording: the Bruma chapel, the Great
-  Gate, Cloud Ruler, the finale). Each run of `AddItem` / `RemoveItem` /
-  `RemoveAllItems` on one non-player reference that names an Armor property
-  (or removes everything) is followed by one `TES4Polyfill.Redress(<ref>)`,
-  which walks the actor's inventory (SKSE `GetNthForm`) and equips per slot in
-  the importer's outfit order: upper body first, armor over clothing, then gold
-  value ([upper-body-first](tes5_import_actors.md#upper-body-first)). Jewelry,
-  the player and dead actors are left alone. **The equip is locked**
-  (`abPreventRemoval`): measured on Baurus at Luther Broad's, an unlocked
-  `equipitem LowerShirt11` read `GetEquipped 0` straight away (the NPC's AI puts
-  its outfit back), while the locked one held, also across a move from Luther
-  Broad's to Cloud Ruler Temple. Because a locked piece is not swapped out by the
-  AI, each equip first unequips whatever is worn in the new piece's slots
-  (SKSE `GetWornForm`).
   began the line.) Failed in 1 of 7 runs of the speech; not reproduced on demand.
 - <a id="turn-handoff"></a>**`split_turn_handoff` — the handoff cannot wait for
   OnEnd.** In TES4 the result script set `convCount`/`speaker` and charged
@@ -3863,12 +3863,52 @@ plain Skyrim `StopCombat` left those memberships in place, so the actor
 re-engaged as soon as it saw its target again. Every StopCombat now goes
 through `EndCombat`, which removes the actor from its ATTACKER memberships
 (`TES4ForceCombatAttackers` and `WIPlayerEnemyFaction`) and then calls
-`StopCombat`. The raised Aggression stays; at tier 1 it attacks only enemies.
+`StopCombat`. The raised Aggression stays; at tier 1 it attacks only enemies
+(an attempt to lower it again is under
+[SE02 Gatekeeper killed by his ally](#se02-gatekeeper-killed-by-his-ally)).
 
 Victims membership is left alone. In TES4, `B.StopCombat` stops B, while the
 actor attacking B fights on. Removing B from Victims would take away its
 attacker's hostility and end a fight Oblivion continues. The first version
 removed Victims too, and the blast-radius review caught it.
+
+## SE02 Gatekeeper killed by his ally: three stop-timing attempts, all reverted
+<a id="se02-gatekeeper-killed-by-his-ally"></a>
+
+**Code:** none shipped (`TES4Polyfill.EndCombatApproach`, `TES4_CombatQueue` as before).
+
+**Symptom (Shivering Isles SE02, run si_2c and scratch replays, about 1 run in
+5):** the Gatekeeper dies offstage right after the orc scene (stage 10), so
+stage 150 and Jayred's "The Gatekeeper is slain" come before the player fights
+him. **Measured (OnHit / OnCombatStateChanged / OnDeath traces):** the killer is
+`SE02OrcCaptainRef`. `SE02OrcCaptainScript` (fightStage 6, then
+startFightDoOnce 2) stops the captain, stops the Gatekeeper, removes the
+Gatekeeper's `SE02AbInvincibility` (Restore + Fortify Health 1000) and takes
+both out of `SE02SpecialCombatFaction` (special-combat flag), which leaves them
+allies (`SEGatekeeperFaction` +100 = Ally). In the failing runs the captain's
+combat goes to 0 (his stop), the Gatekeeper's next swing hits him, his combat
+goes to 1 on the Gatekeeper, and he kills the now-mortal 90-health Gatekeeper
+in about 5 s before running off.
+
+**Reverted attempts (repeats from the SE01 end save):**
+1. StopCombat carried out in the caller's call, dropping the attacker's queued
+   StartCombat: 0 of 1, worse. The captain stood down while still in the
+   special-combat faction (removed a few lines later), at the Aggression 1 that
+   `ForceCombatNow` raised for his `startCombat`, and re-attacked at once.
+2. The same, plus StopCombat lowering an Aggression the queue raised back to 0:
+   0 of 1.
+3. StopCombat after the caller's pass, ahead of queued StartCombats, plus the
+   Aggression restore: 5 of 6, no better than the baseline (about 4 of 5).
+
+So the stop's timing is not the cause. Also ruled out by 12-run replays: the
+ally/friend hit allowances (`setgs` all four to 1000: still dies) and the
+leftover `TES4ForceCombat` factions (removed by console: still dies).
+**Confirmed:** console `StopCombatAlarmOnActor` on BOTH actors right after
+stage 10 -> 12 of 12 clean. Each StopCombat ends only its own actor's fight, the
+other side is still attacking it, so it re-enters to defend; Oblivion stopped
+both in one frame. The fix (not built): a TES4 stopCombat that is part of a
+mutual stop must also end the opponent's fight against this actor, without
+breaking the victim rule above.
 
 ## `SetAV Speed` becomes a SpeedMult ratio
 <a id="speed-write-becomes-speedmult"></a>
@@ -4839,6 +4879,31 @@ fragment; the fragment's last line is `((Self as Quest) as <script>).TES4StageRa
 the script's poll skips its pass while a noted stage is under 1 real second old.
 NOT yet confirmed in game.
 
+**A skipped pass re-arms the poll's own interval** (`_pass_guard`'s `rearm`; the
+same for a skip on another script's held writes). It used to return with only the
+5 s insurance arm set, so the poll slept 5 s. Measured at real speed on
+CharacterGen stage 16 (2026-11-20, `chargen_emperor_in_cell`, Papyrus trace): the
+fragment says the Emperor's 3.06 s "You ... I've seen you ..." and sets
+`convTimer` to its length; the pass at the stage skipped, the next came 5.0 s
+later and counted 0.1 s (a gap over 2 s is clamped), then the timer ran its whole
+3.06 s again, so "Let me see your face..." began 8.0 s after the line did (5 s of
+silence). With the re-arm the next pass comes 0.03-0.06 s after the fragment ends,
+and the greeting began 3.04-3.09 s after the line, 3 runs of 3. A skip because
+the previous pass is still running keeps the plain return: that pass re-arms
+when it ends ([poll pile-up](#poll-pile-up)).
+
+**The fragment's end restarts the poll's count of real seconds** (`_settle_pair`,
+when the poll counts `getSecondsPassed`). A pass charges the time since the
+previous pass, so a timer the fragment set between two passes also lost the time
+before it was set: the stage-16 trace showed a pass 0.07 s after the timer was set
+charging 0.224 s. The greeting then cut the end of the Emperor's line. TES4 ran a
+stage's result inside the frame, so the fragment's own time counts for no timer
+(one set before the stage runs at most that much longer). Measured at true real
+time (no `--fast`: `iFPSClamp=0`, vsync on), the greeting's start after "You ...
+I've seen you ..." (3.07 s audio): before 2.72, 3.31, 2.83, 3.14, 3.30 s (cut 2 of
+5); after 3.59-3.94 s (0 of 5). Under `--fast` the same case read 2.67-3.59 s
+either way: see [timing under the governor](headless_testing.md#quiet).
+
 ### The dialogue poll gate
 <a id="the-dialogue-poll-gate"></a>
 
@@ -4879,31 +4944,6 @@ The importer renames Oblivion's `Tamriel` worldspace to `TES4Tamriel`
 Arktwend is a Morrowind-engine game, so the TES3 exporter gives it the same
 synthesized `WrldMorrowind` as Morrowind itself; when Arktwend (or a master of
 it) is in the plugin chain, the importer writes `WrldArktwend` instead so the two
-**A skipped pass re-arms the poll's own interval** (`_pass_guard`'s `rearm`; the
-same for a skip on another script's held writes). It used to return with only the
-5 s insurance arm set, so the poll slept 5 s. Measured at real speed on
-CharacterGen stage 16 (2026-11-20, `chargen_emperor_in_cell`, Papyrus trace): the
-fragment says the Emperor's 3.06 s "You ... I've seen you ..." and sets
-`convTimer` to its length; the pass at the stage skipped, the next came 5.0 s
-later and counted 0.1 s (a gap over 2 s is clamped), then the timer ran its whole
-3.06 s again, so "Let me see your face..." began 8.0 s after the line did (5 s of
-silence). With the re-arm the next pass comes 0.03-0.06 s after the fragment ends,
-and the greeting began 3.04-3.09 s after the line, 3 runs of 3. A skip because
-the previous pass is still running keeps the plain return: that pass re-arms
-when it ends ([poll pile-up](#poll-pile-up)).
-
-**The fragment's end restarts the poll's count of real seconds** (`_settle_pair`,
-when the poll counts `getSecondsPassed`). A pass charges the time since the
-previous pass, so a timer the fragment set between two passes also lost the time
-before it was set: the stage-16 trace showed a pass 0.07 s after the timer was set
-charging 0.224 s. The greeting then cut the end of the Emperor's line. TES4 ran a
-stage's result inside the frame, so the fragment's own time counts for no timer
-(one set before the stage runs at most that much longer). Measured at true real
-time (no `--fast`: `iFPSClamp=0`, vsync on), the greeting's start after "You ...
-I've seen you ..." (3.07 s audio): before 2.72, 3.31, 2.83, 3.14, 3.30 s (cut 2 of
-5); after 3.59-3.94 s (0 of 5). Under `--fast` the same case read 2.67-3.59 s
-either way: see [timing under the governor](headless_testing.md#quiet).
-
 never share an EditorID. Its persistent cell (`<worldspace>Persistent`) follows,
 and its display name becomes "Arktwend" in place of the exporter's hardcoded
 "Morrowind" (which also names its Location, `TES4ArktwendLocation`). Morrowind,
@@ -5647,6 +5687,21 @@ Function exists in Oblivion but not Papyrus. A polyfill script provides the equi
   parent does not re-emit it. A promoted variable target does not get
   `ReleaseBreakaway`: `_needs_havok_release` resolves the receiver by EditorID.
   Guarded by `tests/test_playgroup_variable_target.py`.
+  <a id="playgroup-waits-for-3d"></a>
+  An object's `playgroup` is `TES4Polyfill.PlayGroup(obj, "<Group>")`, which
+  waits (at most 5 real seconds) while the object is enabled in an attached cell
+  but has no 3D yet, then calls `PlayAnimation`. MQ16 stage 58 enables
+  MQ16EndgameBattle (the dragon-vs-Dagon fight that ends as the stone statue) and
+  its script plays `Equip` on its next pass; in the 2026-11-17 full run the
+  object had no 3D then (`(05062C7D): does not have 3d`), the animation never
+  started, `TES4IsAnimPlaying` read false at once, and the finale ended on the
+  model's opening pose: Dagon standing, no statue. Measured on a kept game: a
+  freshly enabled MQ16EndgameBattle shows that opening pose; setting the script's
+  `startAnimating` to 1 with its 3D loaded played the fight to the statue; a
+  console `setdestroyed 1` / `0` on it changed nothing visible (the stage
+  58 / 60 `setdestroyed` calls are not the cause). After the change the finale
+  ends on the statue with Dagon gone. The fire shader the same script plays one
+  line earlier (`pms effectfiredragon`) still meets no 3D.
 - `GetPos X/Y/Z` → `GetPositionX()` / `GetPositionY()` / `GetPositionZ()`
 - `SetPos X/Y/Z` → `SetPosition(x, y, z)` (needs axis decomposition)
 - `GetAngle X/Y/Z` → `GetAngleX()` / `GetAngleY()` / `GetAngleZ()`
@@ -5718,21 +5773,6 @@ only the safe name is registered, `if message == 0` is compiled as the TES4
 
 ### Step 6: Variable → Property Conversion
 
-  <a id="playgroup-waits-for-3d"></a>
-  An object's `playgroup` is `TES4Polyfill.PlayGroup(obj, "<Group>")`, which
-  waits (at most 5 real seconds) while the object is enabled in an attached cell
-  but has no 3D yet, then calls `PlayAnimation`. MQ16 stage 58 enables
-  MQ16EndgameBattle (the dragon-vs-Dagon fight that ends as the stone statue) and
-  its script plays `Equip` on its next pass; in the 2026-11-17 full run the
-  object had no 3D then (`(05062C7D): does not have 3d`), the animation never
-  started, `TES4IsAnimPlaying` read false at once, and the finale ended on the
-  model's opening pose: Dagon standing, no statue. Measured on a kept game: a
-  freshly enabled MQ16EndgameBattle shows that opening pose; setting the script's
-  `startAnimating` to 1 with its 3D loaded played the fight to the statue; a
-  console `setdestroyed 1` / `0` on it changed nothing visible (the stage
-  58 / 60 `setdestroyed` calls are not the cause). After the change the finale
-  ends on the statue with Dagon gone. The fire shader the same script plays one
-  line earlier (`pms effectfiredragon`) still meets no 3D.
 ```
 TES4: short doOnce            → Int Property doOnce = 0 Auto
 TES4: float timer             → Float Property timer = 0.0 Auto

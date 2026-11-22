@@ -67,7 +67,7 @@ until 3000 "DIEBTate"->GetDistance player < 600
 talk 05AC094A
 ask Travel
 choose 1
-until 300 Diebesgildevar == 11
+until 300 Diebesgildevar >= 11
 until 600 "DIEBTate".State == 2
 until 300 MenuMode == 1
 wait 60

@@ -29,6 +29,9 @@ PLUGIN = ['Oblivion.esm']
 #: The Morrowind rig instead of a plugin's, and which gender; set from --morrowind / --female.
 SOURCE = {'morrowind': False, 'female': False}
 
+#: Another rig than Skyrim's: skeleton JSON, bone map JSON, output (--target); limbs put on its joints (--aim).
+TARGET = {'skeleton': None, 'bone_map': None, 'out': None, 'aim': False}
+
 sys.path.insert(0, str(PROJECT_ROOT))
 from asset_convert.character.skyrim_overrides_falloutnv import bone_map_for
 from scipy.optimize import minimize as sp_minimize
@@ -141,8 +144,10 @@ def _character_dir():
 
 
 def _pose_out_path():
-    """Where this run's best-pose cache is written."""
+    """Where this run's best-pose cache is written: --out for another rig, else beside Skyrim's."""
     gen = PROJECT_ROOT / 'asset_convert' / 'generated'
+    if TARGET['out']:
+        return Path(TARGET['out'])
     if _plugin_slug() == 'oblivion':
         return gen / 'best_animation_pose.json'
     return gen / ('best_animation_pose_%s.json' % _plugin_slug())
@@ -395,16 +400,19 @@ def compute_fk_world_positions(skeleton_bones, anim_transforms):
     return world_positions
 
 
+def _bone_map(skeleton_bones) -> dict:
+    """{source bone: target bone}: the --target bone map JSON, else the source's Skyrim map."""
+    if TARGET['bone_map']:
+        return json.loads(Path(TARGET['bone_map']).read_text(encoding='utf-8'))
+    return bone_map_for(skeleton_bones)
+
+
 def get_skyrim_targets_in_ob_space():
-    """Load Skyrim bone positions and rotate 90° into Oblivion coordinate space.
-    
-    Skyrim skeleton is Z-up, Oblivion is effectively X-up (the 90° convention rotation).
-    We rotate Skyrim positions by -90° around Z to get them into OB space.
-    
-    Actually from Procrustes analysis, bone POSITIONS are already in the same coordinate
-    system (only 1.8° difference). So let's just load them directly and see.
+    """(source bone world positions, target rig bone world positions), both read from their
+    skeleton JSONs as stored: the target rig's (--target, else Skyrim's) is already in the source's
+    space (Skyrim's bone positions differ from Oblivion's frame by 1.8 degrees, Procrustes).
     """
-    sk_json = PROJECT_ROOT / 'asset_convert' / 'generated' / (
+    sk_json = Path(TARGET['skeleton']) if TARGET['skeleton'] else PROJECT_ROOT / 'asset_convert' / 'generated' / (
         'skeleton_bones_skyrim_%s.json' % ('female' if SOURCE['female'] else 'male'))
     ob_json = _source_skeleton_json()
     for path in (sk_json, ob_json):
@@ -439,9 +447,8 @@ def find_best_pose(skeleton_bones, kf_dir, ob_positions, sk_positions):
     kf_files = sorted(Path(kf_dir).rglob('*.kf'))
     print(f"Scanning {len(kf_files)} .kf files...")
     
-    # Build OB->SK name mapping for bones we care about
     mapped_bones = {}
-    for ob_name, sk_name in bone_map_for(skeleton_bones).items():
+    for ob_name, sk_name in _bone_map(skeleton_bones).items():
         if ob_name in skeleton_bones and sk_name in sk_positions:
             mapped_bones[ob_name] = sk_name
     
@@ -585,7 +592,7 @@ def find_pose(args):
     print("\nRest-pose (T-pose) distances OB->SK:")
     total = 0
     n = 0
-    for ob_name, sk_name in sorted(bone_map_for(skeleton_bones).items()):
+    for ob_name, sk_name in sorted(_bone_map(skeleton_bones).items()):
         if ob_name in skeleton_bones and sk_name in sk_positions:
             ob_pos = skeleton_bones[ob_name]['world'][3, :3]
             sk_pos = sk_positions[sk_name]
@@ -974,6 +981,117 @@ def _mirror(cache, skeleton_bones, mapped_bones, sk_positions) -> int:
     return count
 
 
+#: Second singular value, against the first, below which a bone's target directions fix no roll.
+_AIM_RANK = 0.05
+
+
+def _shortest_arc(a, b) -> np.ndarray:
+    """Row-vector rotation turning unit `a` onto unit `b` about their common normal."""
+    axis, cos = np.cross(a, b), float(np.clip(np.dot(a, b), -1.0, 1.0))
+    sin = np.linalg.norm(axis)
+    if sin < 1e-9:
+        return np.eye(3)
+    k = axis / sin
+    cross = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    return (cos * np.eye(3) + sin * cross + (1.0 - cos) * np.outer(k, k)).T
+
+
+def _aim_rotation(posed, target) -> np.ndarray:
+    """Row-vector rotation R taking the unit rows of `posed` onto `target` (posed @ R ~ target):
+    Kabsch, or the shortest arc of their means where the rows fix no roll."""
+    posed = posed / np.linalg.norm(posed, axis=1, keepdims=True)
+    target = target / np.linalg.norm(target, axis=1, keepdims=True)
+    u, s, vt = np.linalg.svd(posed.T @ target)
+    if len(posed) < 2 or s[1] < _AIM_RANK * s[0]:
+        mean_p, mean_t = posed.mean(axis=0), target.mean(axis=0)
+        return _shortest_arc(mean_p / np.linalg.norm(mean_p), mean_t / np.linalg.norm(mean_t))
+    return u @ np.diag([1.0, 1.0, np.sign(np.linalg.det(u @ vt))]) @ vt
+
+
+def _chain_below(name, pose, depth=2) -> list:
+    """The limb-chain bones up to `depth` levels under `name`."""
+    chain = {b for bones in _CHAINS.values() for b in bones}
+    out = []
+    for child in pose.bones[name]['children']:
+        if child in chain and child in pose.bones:
+            out.append(child)
+            out += _chain_below(child, pose, depth - 1) if depth > 1 else []
+    return out
+
+
+def _aim(pose, mapped_bones, sk_positions) -> int:
+    """Put each limb bone with a target below it on its target joint, turned so the directions to the
+    targets below it match the target rig's; parents first; how many bones.
+    See: docs/commentary/asset_convert_armor.md#aimed-limbs
+    """
+    count = 0
+    for name in (b for chain in _CHAIN_ORDER for b in _CHAINS[chain]):
+        below = [b for b in _chain_below(name, pose) if b in mapped_bones]
+        if name not in pose.bones or name not in mapped_bones or not below:
+            continue
+        origin, goal = pose.world[name][3, :3], sk_positions[mapped_bones[name]]
+        posed = np.array([pose.world[b][3, :3] - origin for b in below])
+        target = np.array([sk_positions[mapped_bones[b]] - goal for b in below])
+        keep = (np.linalg.norm(posed, axis=1) > 1e-3) & (np.linalg.norm(target, axis=1) > 1e-3)
+        if not keep.any():
+            continue
+        world = pose.world[name].copy()
+        world[:3, :3] = world[:3, :3] @ _aim_rotation(posed[keep], target[keep])
+        world[3, :3] = goal
+        parent = pose.bones[name]['parent']
+        pose.local[name] = world @ np.linalg.inv(pose.world.get(parent, np.eye(4)))
+        pose.refresh([name])
+        count += 1
+    return count
+
+
+def _mirror_from_left(cache, skeleton_bones) -> int:
+    """Give every right bone its left twin's delta, X-mirrored, so the sides pose as mirror images;
+    how many pairs. For an aimed cache: each left bone already stands on its target joint.
+    See: docs/commentary/asset_convert_armor.md#aimed-limbs
+    """
+    pairs = _lr_pairs(skeleton_bones)
+    for lbone, rbone in pairs:
+        delta = _M4 @ _cached_delta(cache, lbone) @ _M4
+        cache['bone_transforms'].pop(rbone, None)
+        cache['delta_matrices'][rbone] = [float(x) for x in delta.flatten()]
+        cache['world_positions'][rbone] = [float(x) for x in (skeleton_bones[rbone]['world'] @ delta)[3, :3]]
+    return len(pairs)
+
+
+def _scored_below(name, skeleton_bones, mapped_bones) -> bool:
+    """Whether any bone under `name` (not `name` itself) has a target, so its rotation is scored."""
+    return any(child in mapped_bones or _scored_below(child, skeleton_bones, mapped_bones)
+               for child in skeleton_bones[name]['children'] if child in skeleton_bones)
+
+
+def _follow_parents(cache, skeleton_bones, mapped_bones) -> int:
+    """Give every bone whose rotation no target scores (twists, helpers, finger and toe tips) its
+    parent's delta, i.e. its rest pose against its parent; how many bones. Parents first.
+    See: docs/commentary/asset_convert_armor.md#unscored-bones-follow-their-parent
+    """
+    count = 0
+    for name in sorted(skeleton_bones, key=lambda n: _depth(n, skeleton_bones)):
+        parent = skeleton_bones[name]['parent']
+        if parent not in skeleton_bones or _scored_below(name, skeleton_bones, mapped_bones):
+            continue
+        delta = _cached_delta(cache, parent)
+        cache['bone_transforms'].pop(name, None)
+        cache['world_positions'][name] = [float(x) for x in (skeleton_bones[name]['world'] @ delta)[3, :3]]
+        if np.allclose(delta, np.eye(4), atol=1e-4):
+            cache['delta_matrices'].pop(name, None)
+        else:
+            cache['delta_matrices'][name] = [float(x) for x in delta.flatten()]
+        count += 1
+    return count
+
+
+def _depth(name, skeleton_bones) -> int:
+    """How many bones are above `name`."""
+    parent = skeleton_bones[name]['parent']
+    return 0 if parent not in skeleton_bones else 1 + _depth(parent, skeleton_bones)
+
+
 def _cache_rmsd(cache, mapped_bones, sk_positions) -> float:
     """RMS distance of the cached world positions from their Skyrim targets."""
     total, n = 0, 0
@@ -998,7 +1116,7 @@ def build_cache(args):
     skeleton_bones = _source_hierarchy(skel_path)
     print("Loading target positions...")
     _ob_positions, sk_positions = get_skyrim_targets_in_ob_space()
-    mapped_bones = {ob: sk for ob, sk in bone_map_for(skeleton_bones).items()
+    mapped_bones = {ob: sk for ob, sk in _bone_map(skeleton_bones).items()
                     if ob in skeleton_bones and sk in sk_positions}
     all_parsed = _parse_corpus(kf_files)
     _print_candidates(all_parsed, skeleton_bones)
@@ -1009,10 +1127,16 @@ def build_cache(args):
     print(f"\n  Multi-start L-BFGS-B refinement (K={_MULTI_START_K}, theta_max={_THETA_MAX:.2f} rad)")
     for name in _CHAIN_ORDER:
         _refine_chain(name, corpus[name], pose, mapped_bones, sk_positions)
+    if TARGET['aim']:
+        print(f"\n  Aimed {_aim(pose, mapped_bones, sk_positions)} limb bones at their targets")
     pre_mirror = _pose_rmsd(pose, mapped_bones, sk_positions)
     print(f"\n  Pre-mirror RMSD: {pre_mirror:.4f}")
     cache = _cache_dict(pose, pre_mirror)
-    print(f"  Mirrored {_mirror(cache, skeleton_bones, mapped_bones, sk_positions)} L/R pairs")
+    if TARGET['aim']:
+        print(f"  Mirrored {_mirror_from_left(cache, skeleton_bones)} L/R pairs from the left")
+    else:
+        print(f"  Mirrored {_mirror(cache, skeleton_bones, mapped_bones, sk_positions)} L/R pairs")
+    print(f"  {_follow_parents(cache, skeleton_bones, mapped_bones)} unscored bones follow their parents")
     rmsd = _cache_rmsd(cache, mapped_bones, sk_positions)
     cache['rmsd'] = float(rmsd)
     cache['info'] = f'Approach A softmax T={_TEMPERATURE}, RMSD={rmsd:.4f}'
@@ -1040,10 +1164,19 @@ if __name__ == '__main__':
                         help='Read the vanilla Morrowind rig (base_anim + xbase_anim.kf)')
     parser.add_argument('--female', action='store_true',
                         help='With --morrowind: the female rig, fitted to the female Skyrim skeleton')
+    parser.add_argument('--target', nargs=3, metavar=('SKELETON', 'BONE_MAP', 'OUT'),
+                        help="Fit another rig than Skyrim's: its skeleton JSON (world 4x4 per bone, "
+                             "the source's units and axes), {source bone: rig bone} JSON, output path")
+    parser.add_argument('--aim', action='store_true',
+                        help='After the search, put each limb bone on its target joint, aimed along '
+                             "the target rig's limb")
 
     args = parser.parse_args()
     PLUGIN[0] = args.plugin
     SOURCE.update(morrowind=args.morrowind, female=args.female)
+    TARGET['aim'] = args.aim
+    if args.target:
+        TARGET.update(zip(('skeleton', 'bone_map', 'out'), args.target))
     
     if args.skeleton:
         dump_skeleton(args)

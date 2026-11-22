@@ -217,7 +217,7 @@ def instrument_actor(path, log, tag):
     return True
 
 
-_EVENT_RE = re.compile(r'^Event (\w+)\([^)]*\)\n', re.M)
+_EVENT_RE = re.compile(r'^Event (\w+)\(([^)]*)\)\n', re.M)
 
 #: Script-level converter state variables worth dumping next to the properties.
 _STATE_VAR_RE = re.compile(r'^(?:Bool|Int|Float|ObjectReference)\s+(TES4_\w+)',
@@ -246,6 +246,11 @@ def _object_block(log, tag, event, fields):
             f'  String _s = {expr}\n{trace}')
 
 
+def _event_params(params: str) -> list:
+    """The parameter names of an event signature, in order."""
+    return [p.split()[-1] for p in params.split(',') if p.strip()]
+
+
 #: Item events probed even when the script does not handle them.
 _ITEM_EVENTS = ('OnEquipped(Actor akActor)', 'OnUnequipped(Actor akActor)',
                 'OnRead()',
@@ -253,23 +258,32 @@ _ITEM_EVENTS = ('OnEquipped(Actor akActor)', 'OnUnequipped(Actor akActor)',
                 'ObjectReference akOldContainer)')
 
 
+#: Actor events probed even when the script does not handle them.
+_ACTOR_EVENTS = ('OnCombatStateChanged(Actor akTarget, int aeCombatState)',
+                 'OnHit(ObjectReference akAggressor, Form akSource, Projectile akProjectile, '
+                 'bool abPowerAttack, bool abSneakAttack, bool abBashAttack, bool abHitBlocked)',
+                 'OnDeath(Actor akKiller)')
+
+
 def instrument_object(path, log, tag):
     """Trace every event an object script receives, with its state variables.
 
     OnUpdate also logs a heartbeat every 10 ticks, so a poll that stops is
-    visible; item events the script lacks are added as probe-only events.
+    visible; item / actor events the script lacks are added as probe-only events.
     """
     src = open(path, encoding='utf-8').read()
     if MARKER in src:
         return False
     src = _add_state(src) + '\nInt _dbgTicks = 0\n'
-    if 'extends ObjectReference' in src.split('\n', 1)[0]:
-        src += ''.join(f'\nEvent {sig}\nEndEvent\n' for sig in _ITEM_EVENTS
-                       if f'Event {sig.split("(")[0]}(' not in src)
+    head = src.split('\n', 1)[0]
+    probes = _ITEM_EVENTS if 'extends ObjectReference' in head else ()
+    probes = _ACTOR_EVENTS if 'extends Actor' in head else probes
+    src += ''.join(f'\nEvent {sig}\nEndEvent\n' for sig in probes
+                   if f'Event {sig.split("(")[0]}(' not in src)
     fields = (_conditional_props(src) + _STATE_VAR_RE.findall(src)
               + [f'{g}.GetValue()' for g in _GLOBAL_PROP_RE.findall(src)])
     src = _EVENT_RE.sub(lambda m: m.group(0) + _object_block(
-        log, tag, m.group(1), fields), src)
+        log, tag, m.group(1), _event_params(m.group(2)) + fields), src)
     open(path, 'w', encoding='utf-8').write(src)
     return True
 

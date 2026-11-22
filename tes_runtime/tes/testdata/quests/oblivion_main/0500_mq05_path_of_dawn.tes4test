@@ -195,6 +195,9 @@ talk BaurusRef
 ask "Alright. I'll cover you."
 until 300 GetStage MQ05 >= 78
 ask "I'm ready when you are."
+# His answer ("Listen. I may not survive this ...", 000A31BF) offers three replies, each answered by a goodbye
+# line; since the force greet's exit hold (af21975f) Goodbye stays hidden until one is picked, as in Oblivion.
+ask "I understand. We'll do it - together."
 bye if open
 # He walks to the table in 02 only while his cell is loaded (54c replay: the player sent ahead to 02 left him
 # standing in 01 for 9000 ticks; loading his cell moved him on), so the player stays with him until he is in 02.

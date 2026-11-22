@@ -1,7 +1,8 @@
 """Full headless run of every quest/opcode case folder, chain by chain.
 
     python tools/validate/safe_run.py python -m tools.live.full_run [stage ...]
-    env INSTANCES="1,2" (instances the lanes share), RESUME="<folder>:<case>" (start mid-lane)
+    env INSTANCES="1,2" (instances the lanes share), TOKENS="t1,t2" (their `checkout` lease tokens, same order),
+        RESUME="<folder>:<case>" (start mid-lane)
 
 Each stage builds its lane's instance with its plugins, then runs its folders in order. Lanes (stages that
 share checkpoints) run side by side, one per free instance. A failing case is recorded and the folder resumes
@@ -107,7 +108,8 @@ def record(row: dict) -> None:
 def instance(args: list, out_name: str) -> tuple:
     """(exit code, output) of `test_instance <args>` on this lane's instance, its output kept in `out_name`."""
     slot = getattr(LANE_INSTANCE, 'slot', 1)
-    proc = subprocess.run([sys.executable, '-m', 'tools.live.test_instance', '--instance', str(slot)] + args,
+    lease = ['--token', LANE_INSTANCE.token] if getattr(LANE_INSTANCE, 'token', '') else []
+    proc = subprocess.run([sys.executable, '-m', 'tools.live.test_instance', '--instance', str(slot)] + lease + args,
                           cwd=REPO, capture_output=True, text=True, encoding='utf-8', errors='replace')
     text = proc.stdout + proc.stderr
     with open(os.path.join(OUT_DIR, out_name), 'w', encoding='utf-8') as f:
@@ -195,9 +197,10 @@ def run_folder(stage: str, tool: str, folder: str, start: list, flags: list, tim
         first = ['--from', names[nxt]]
 
 
-def run_lane(slot: int, stages: tuple, wanted: set, resume: str) -> None:
-    """Runs `stages` in order on instance `slot`; `resume` is `folder:case` to start mid-lane."""
-    LANE_INSTANCE.slot = slot
+def run_lane(slot: tuple, stages: tuple, wanted: set, resume: str) -> None:
+    """Runs `stages` in order on instance `slot` (number, lease token); `resume` is `folder:case` to start mid-lane."""
+    LANE_INSTANCE.slot, LANE_INSTANCE.token = slot
+    slot = slot[0]
     folder_at, case_at = resume.split(':') if resume else ('', '')
     skipping = bool(folder_at)
     for stage, mods, folders in (s for s in STAGES if s[0] in stages):
@@ -228,8 +231,10 @@ def main() -> None:
     wanted = set(sys.argv[1:])
     lanes = [lane for lane in LANES if not wanted or wanted & set(lane)]
     free = queue.Queue()
-    for slot in os.environ.get('INSTANCES', '1,2').split(','):
-        free.put(int(slot))
+    slots = os.environ.get('INSTANCES', '1,2').split(',')
+    tokens = os.environ.get('TOKENS', '').split(',')
+    for i, slot in enumerate(slots):
+        free.put((int(slot), tokens[i] if i < len(tokens) else ''))
 
     def on_free_instance(lane):
         """Runs `lane` on the next free instance, then frees it."""

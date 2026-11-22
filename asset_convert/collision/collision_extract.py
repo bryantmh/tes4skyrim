@@ -91,6 +91,8 @@ _COS_MAX_SLOPE = math.cos(math.radians(MAX_SLOPE_DEG))
 CMS_TO_GAME = 70.0
 #: Havok->game units. See: docs/commentary/asset_convert_collision.md#collision-extraction-scale
 PRIM_TO_GAME = 70.0
+#: Havok->game units in an unconverted TES4 NIF. See: docs/commentary/asset_convert_collision.md#collision-extraction-scale
+TES4_HAVOK_TO_GAME = 7.0
 
 # OblivionLayer values survive conversion in bhkRigidBody.havok_col_filter.layer.
 # Only real world collision supports/obstructs an NPC.
@@ -112,6 +114,7 @@ BLOCKING = 1
 
 # ---------------------------------------------------------------------------
 # Primitive shapes
+# ---------------------------------------------------------------------------
 
 _BOX_FACES = ((0, 1, 2), (0, 2, 3), (4, 6, 5), (4, 7, 6),
               (0, 4, 5), (0, 5, 1), (1, 5, 6), (1, 6, 2),
@@ -141,36 +144,53 @@ def _convex_hull_tris(pts):
         return _aabb_tris(min(xs), min(ys), min(zs), max(xs), max(ys), max(zs))
 
 
-def _primitive_tris(shape, depth=0):
-    """Game-unit triangles for a primitive (or list/transform of primitives)."""
+def _mesh_shape_tris(shape, s):
+    """Game-unit triangles of a TES4 triangle-mesh shape; `s` is havok->game units.
+
+    See: docs/commentary/asset_convert_collision.md#collision-extraction-scale
+    """
+    data = getattr(shape, 'data', None)
+    if data is not None and hasattr(data, 'triangles'):
+        sc = getattr(shape, 'scale', None)
+        f = [s * (getattr(sc, a, 1.0) or 1.0) for a in 'xyz']
+        groups = [([(v.x * f[0], v.y * f[1], v.z * f[2]) for v in data.vertices],
+                   [(t.triangle.v_1, t.triangle.v_2, t.triangle.v_3) for t in data.triangles])]
+    else:
+        k = s / TES4_HAVOK_TO_GAME
+        groups = [([(v.x * k, v.y * k, v.z * k) for v in sd.vertices], sd.get_triangles())
+                  for sd in (getattr(shape, 'strips_data', None) or ())]
+    return [tuple(pts[i] for i in tri) for pts, tris in groups for tri in tris if max(tri) < len(pts)]
+
+
+def _primitive_tris(shape, depth=0, scale=PRIM_TO_GAME):
+    """Game-unit triangles for a primitive, a TES4 mesh shape, or a list/transform of them."""
     if shape is None or depth > 6:
         return []
     n = type(shape).__name__
-    s = PRIM_TO_GAME
-
+    if n in ('bhkPackedNiTriStripsShape', 'bhkNiTriStripsShape'):
+        return _mesh_shape_tris(shape, scale)
     if n == 'bhkListShape':
-        out = []
-        for sub in shape.sub_shapes:
-            out.extend(_primitive_tris(sub, depth + 1))
-        return out
-
+        return [tri for sub in shape.sub_shapes for tri in _primitive_tris(sub, depth + 1, scale)]
+    inner = _primitive_tris(getattr(shape, 'shape', None), depth + 1, scale)
     if n in ('bhkConvexTransformShape', 'bhkTransformShape'):
-        inner = _primitive_tris(getattr(shape, 'shape', None), depth + 1)
-        try:
-            t = shape.transform
-            m = ((t.m_11, t.m_12, t.m_13),
-                 (t.m_21, t.m_22, t.m_23),
-                 (t.m_31, t.m_32, t.m_33))
-            tr = (t.m_14 * s, t.m_24 * s, t.m_34 * s)
+        return _transformed_tris(shape, inner, scale)
+    return _solid_tris(shape, n, scale)
 
-            def xf(p):
-                return (m[0][0] * p[0] + m[0][1] * p[1] + m[0][2] * p[2] + tr[0],
-                        m[1][0] * p[0] + m[1][1] * p[1] + m[1][2] * p[2] + tr[1],
-                        m[2][0] * p[0] + m[2][1] * p[1] + m[2][2] * p[2] + tr[2])
-            return [tuple(xf(p) for p in tri) for tri in inner]
-        except AttributeError:
-            return inner
 
+def _transformed_tris(shape, inner, s):
+    """`inner` (game-unit triangles) moved by a transform shape's matrix; `s` scales its translation."""
+    try:
+        t = shape.transform
+    except AttributeError:
+        return inner
+    m = ((t.m_11, t.m_12, t.m_13), (t.m_21, t.m_22, t.m_23), (t.m_31, t.m_32, t.m_33))
+    tr = (t.m_14 * s, t.m_24 * s, t.m_34 * s)
+    return [tuple(tuple(sum(m[i][k] * p[k] for k in range(3)) + tr[i] for i in range(3)) for p in tri)
+            for tri in inner]
+
+
+def _solid_tris(shape, n, s):
+    """Game-unit triangles of a convex, box, capsule or sphere shape `n`; [] for any other."""
     if n == 'bhkConvexVerticesShape':
         return _convex_hull_tris([(v.x * s, v.y * s, v.z * s)
                                   for v in shape.vertices])
@@ -236,14 +256,13 @@ def read_nif_data(nif_path: str):
     return data
 
 
-def collision_from_data(data) -> Optional[dict]:
+def collision_from_data(data, havok_to_game: float = PRIM_TO_GAME) -> Optional[dict]:
     """Collision soup from an ALREADY-PARSED NIF (see extract_nif_collision).
 
     A body is placed by its own transform (a bhkRigidBodyT's), then at its
-    OWNING NODE's world transform: collision usually sits on the root, but
-    where it hangs off a moved child the engine still honours that chain.
-    Non-pathing layers (clutter, biped ragdolls, triggers) are dropped
-    wholesale.
+    OWNING NODE's world transform. Non-pathing layers (clutter, biped
+    ragdolls, triggers) are dropped. `havok_to_game`: PRIM_TO_GAME for a
+    converted NIF, TES4_HAVOK_TO_GAME for an unconverted TES4 one.
     See: docs/commentary/asset_convert_collision.md#body-placement
     """
     walk: List[float] = []
@@ -253,8 +272,8 @@ def collision_from_data(data) -> Optional[dict]:
     for body in data.blocks:
         if type(body).__name__ not in ('bhkRigidBody', 'bhkRigidBodyT'):
             continue
-        tris = _body_tris(body)
-        for place in (_body_transform(body), placement.get(id(body))):
+        tris = _body_tris(body, havok_to_game)
+        for place in (_body_transform(body, havok_to_game), placement.get(id(body))):
             if place is not None:
                 tris = [tuple(place(pt) for pt in tri) for tri in tris]
 
@@ -472,7 +491,7 @@ def _can_move(body) -> bool:
     return float(getattr(body, 'mass', 0.0) or 0.0) > 0.0
 
 
-def _body_tris(body):
+def _body_tris(body, havok_to_game: float = PRIM_TO_GAME):
     """Game-unit triangles for one rigid body, or [] if it does not path.
 
     Non-pathing layers (clutter, biped ragdolls, triggers) are dropped
@@ -496,7 +515,7 @@ def _body_tris(body):
         return []
 
     if type(shape).__name__ != 'bhkCompressedMeshShape':
-        return _primitive_tris(shape)
+        return _primitive_tris(shape, scale=havok_to_game)
     cms_data = getattr(shape, 'data', None)
     if cms_data is None:
         return []
@@ -548,7 +567,7 @@ def _body_placements(data):
     return out
 
 
-def _body_transform(body):
+def _body_transform(body, havok_to_game: float = CMS_TO_GAME):
     """f(point) placing a bhkRigidBodyT's shape by its own rotation and translation; None when identity.
 
     See: docs/commentary/asset_convert_collision.md#nested-owner-transform
@@ -557,7 +576,7 @@ def _body_transform(body):
         return None
     q, t = body.rotation, body.translation
     R = quat_mat(q.w, q.x, q.y, q.z)
-    T = [t.x * CMS_TO_GAME, t.y * CMS_TO_GAME, t.z * CMS_TO_GAME]
+    T = [t.x * havok_to_game, t.y * havok_to_game, t.z * havok_to_game]
     return None if _is_identity(R, T, 1.0) else _placer(R, T, 1.0)
 
 

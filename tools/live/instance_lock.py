@@ -1,5 +1,7 @@
 """Checkout leases for the test instances: one session holds an instance until it checks it back in.
 
+Game-neutral: OBRConversion's `obr_convert.instance` leases its own instances through it.
+
     python -m tools.live.test_instance checkout --who "<task>"   # prints the instance and its token
     python -m tools.live.test_instance --instance N --token T <subcommand> ...
     python -m tools.live.test_instance --instance N --token T checkin
@@ -16,6 +18,8 @@ import time
 
 #: The test instances a session may check out.
 SLOTS = (1, 2, 3)
+#: The command line that takes `--instance N --token T`, printed after a checkout.
+TOOL = 'python -m tools.live.test_instance'
 #: A lease unused this long, on an instance whose game is not running, may be taken by the next checkout.
 STALE_SECONDS = 2 * 3600
 #: Subcommands that need no lease: they only read the leases or the instance's status.
@@ -23,8 +27,8 @@ OPEN_COMMANDS = ('checkout', 'checkouts', 'status')
 
 
 def lease_dir(first_instance: str) -> str:
-    """The folder holding one `<slot>.json` lease per checked-out instance."""
-    return os.path.join(os.path.dirname(first_instance), 'Skyrim Test checkouts')
+    """The folder holding one `<slot>.json` lease per instance: `<first instance's folder> checkouts`."""
+    return os.path.normpath(first_instance) + ' checkouts'
 
 
 def _path(first_instance: str, slot: int) -> str:
@@ -54,30 +58,38 @@ def _write(path: str, lease: dict, exclusive: bool) -> bool:
 
 
 def is_stale(lease: dict, running: bool) -> bool:
-    """Whether `lease` is unused for STALE_SECONDS with its game not running."""
-    return not running and time.time() - lease.get('last_used', 0) > STALE_SECONDS
+    """Whether `lease` may be taken: game stopped, and `while_running` or unused STALE_SECONDS."""
+    return not running and (lease.get('while_running') or time.time() - lease.get('last_used', 0) > STALE_SECONDS)
 
 
-def checkout(first_instance: str, who: str, running) -> int:
-    """Leases the first free (or stale) instance to `who` and prints its slot and token; 0 on success.
+def take(first_instance: str, who: str, running, slots=SLOTS, while_running: bool = False):
+    """Leases the first free (or stale) instance of `slots` to `who`: (slot, token), or None when all are held.
 
-    `running(slot)` says whether that instance's game is running.
+    `running(slot)` says whether that instance's game is running. A `while_running` lease ends with its game.
     """
     os.makedirs(lease_dir(first_instance), exist_ok=True)
     now = time.time()
-    lease = {'token': secrets.token_hex(4), 'who': who, 'since': now, 'last_used': now}
-    for slot in SLOTS:
+    lease = {'token': secrets.token_hex(4), 'who': who, 'since': now, 'last_used': now,
+             'while_running': while_running}
+    for slot in slots:
         path = _path(first_instance, slot)
         held = read(first_instance, slot)
         if held and is_stale(held, running(slot)):
             print('instance %d: reclaimed the stale lease of "%s"' % (slot, held.get('who')))
             os.remove(path)
         if _write(path, dict(lease, slot=slot), exclusive=True):
-            print('checked out instance %d  token %s' % (slot, lease['token']))
-            print('use: python -m tools.live.test_instance --instance %d --token %s <subcommand>'
-                  % (slot, lease['token']))
-            return 0
-    print_leases(first_instance)
+            return slot, lease['token']
+    return None
+
+
+def checkout(first_instance: str, who: str, running, slots=SLOTS, tool: str = TOOL) -> int:
+    """Leases a free instance (`take`) and prints its slot, token and `tool` line; 0 on success."""
+    taken = take(first_instance, who, running, slots)
+    if taken:
+        print('checked out instance %d  token %s' % taken)
+        print('use: %s --instance %d --token %s <subcommand>' % ((tool,) + taken))
+        return 0
+    print_leases(first_instance, slots)
     print('every test instance is checked out; wait for one or coordinate with its holder')
     return 1
 
@@ -87,20 +99,20 @@ def _stamp(seconds: float) -> str:
     return datetime.datetime.fromtimestamp(seconds).strftime('%Y-%m-%d %H:%M')
 
 
-def print_leases(first_instance: str) -> None:
+def print_leases(first_instance: str, slots=SLOTS) -> None:
     """Prints who holds each instance and when it was last used."""
-    for slot in SLOTS:
+    for slot in slots:
         lease = read(first_instance, slot)
         print('instance %d: %s' % (slot, 'free' if not lease else 'held by "%s" since %s, last used %s' % (
             lease.get('who'), _stamp(lease.get('since', 0)), _stamp(lease.get('last_used', 0)))))
 
 
-def require(first_instance: str, slot: int, token: str) -> None:
+def require(first_instance: str, slot: int, token: str, tool: str = TOOL) -> None:
     """Exits unless `token` holds instance `slot`; refreshes the lease's last use when it does."""
     lease = read(first_instance, slot)
     if not lease:
-        sys.exit('instance %d is not checked out: run `python -m tools.live.test_instance checkout --who "<task>"` '
-                 'and pass its --instance and --token' % slot)
+        sys.exit('instance %d is not checked out: run `%s checkout --who "<task>"` '
+                 'and pass its --instance and --token' % (slot, tool))
     if lease.get('token') != token:
         sys.exit('instance %d is checked out by "%s"; pass your own lease\'s --instance and --token, '
                  'or `checkout` a free one' % (slot, lease.get('who')))

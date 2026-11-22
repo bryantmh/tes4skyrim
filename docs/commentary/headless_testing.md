@@ -59,6 +59,10 @@ refuses to run unless it gets both `--instance N` and the matching `--token T`.
 `C:\Other Games\Skyrim Test checkouts\<N>.json`. Each use of the lease refreshes
 it. A lease that has gone unused for 2 hours, on an instance whose game is not
 running, is stale, and the next `checkout` takes it over and prints that it did.
+A lease taken with `while_running` (OBRConversion's `play`, which the user starts
+by hand) is stale as soon as its game is not running. The module is game-neutral:
+OBRConversion's `obr_convert.instance` leases its own instances
+(`C:\Other Games\OBR Test checkouts`) with its own slots and command line.
 
 ```bash
 python -m tools.live.test_instance checkout --who "Hlaalu quest run"   # -> instance 2  token 1a2b3c4d
@@ -138,7 +142,8 @@ Verified: the player's `skse64.log`, `Skyrim.ini`, `SkyrimPrefs.ini` and
 `Plugins.txt` kept their timestamps across every run.
 
 <a id="sandbox-mute"></a>With `TES_SANDBOX_MUTE=1` a thread re-mutes the process's Windows audio
-session every 2 s (`hr=0` logged). That mute is the ONLY silencing: the game
+session every 2 s (`hr=0` logged). Windows remembers that mute per exe path, so a later launch of the
+same exe meant to be heard sets `TES_SANDBOX_MUTE=0`: the session is unmuted for its first minute. That mute is the ONLY silencing: the game
 itself runs at `fAudioMasterVolume=1`, and never at 0. At game volume 0 the
 engine does not wait out a line's voice file; it moves to the next response by
 the text alone. Measured 2026-11-20 at real speed on the Emperor's greeting

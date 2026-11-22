@@ -21,7 +21,7 @@ from shapely.ops import unary_union
 from tes5_import.navmesh.corridor import ccw_in_plan
 
 #: Bump when `apply_frozen` builds differently, so every patched cell re-caches.
-FROZEN_VERSION = 7
+FROZEN_VERSION = 8
 
 #: Plan area (u^2) below which an overlap or a refill piece is float noise.
 AREA_EPS = 1.0
@@ -43,6 +43,9 @@ CORNER_TOL = 8.0
 
 #: Shortest plan altitude a refill triangle may have; a thinner one is a leftover, not floor.
 SLIVER_ALT = 4.0
+
+#: Share of a patch triangle's plan area that later same-storey triangles must cover to have replaced it.
+STALE_SHARE = 0.5
 
 
 def plan_area(p):
@@ -98,21 +101,26 @@ def covered_by(tris_pts):
 
 
 def _newest(frozen):
-    """`frozen` without any triangle a LATER one overlaps on its storey.
+    """`frozen` without any triangle that LATER ones on its storey cover over STALE_SHARE of.
 
     A re-pin appends its triangles, so where an edit re-cut an older patch
-    triangle the later pieces are the mesh the human last saw.
+    triangle the later pieces are the mesh the human last saw. A neighbour
+    grazing it by snapping noise has not replaced it.
     See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
     """
     region = _region(frozen)
     tree = STRtree([foot for _pts, foot in region])
-    stale = set()
-    for i, (pts, foot) in enumerate(region):
-        for j in tree.query(foot):
-            hit = foot.intersection(region[int(j)][1]) if j > i else None
-            if hit is not None and hit.area > AREA_EPS and _storey_gap(pts, region[int(j)][0], hit) <= STOREY_BAND:
-                stale.add(id(pts))
+    stale = {id(pts) for i, (pts, foot) in enumerate(region)
+             if _later_cover(i, region, tree) > STALE_SHARE * foot.area}
     return [pts for pts in frozen if id(pts) not in stale]
+
+
+def _later_cover(i, region, tree):
+    """Plan area of region triangle `i` that later triangles on its storey overlap."""
+    pts, foot = region[i]
+    later = ((foot.intersection(region[int(j)][1]), int(j)) for j in tree.query(foot) if j > i)
+    hits = [h for h, j in later if h.area > AREA_EPS and _storey_gap(pts, region[j][0], h) <= STOREY_BAND]
+    return unary_union(hits).area if hits else 0.0
 
 
 def _owners(corners, region, tree):
@@ -547,22 +555,27 @@ def _on_edge(verts, a, b, opp, used):
     return [int(used[0][i]) for i in np.argsort(s) if hit[i] and used[0][i] not in (a, b)]
 
 
+def _vertex_set(verts, tris):
+    """(ids, their points) of every vertex `tris` use, as `_on_edge` takes them."""
+    ids = np.array(sorted({v for t in tris for v in t}), dtype=int)
+    return ids, np.asarray([verts[v] for v in ids], dtype=float).reshape(-1, 3)
+
+
 def close_t_junctions(verts, tris, first=0):
-    """`tris` with every open edge that a vertex of `tris[first:]` (the patch) lies on fanned at it; new
-    pieces appended.
+    """`tris` with open edges fanned at the vertices lying on them; new pieces appended.
 
     A vertex part-way along another triangle's edge leaves the two sides
-    unlinked, and the engine does not path across. Nothing moves; the
-    triangle keeps its index as the first piece, so ledge indices hold.
-    Only the patch's vertices fan: the generator's own mesh elsewhere is not
-    the patch's business (fanning it laid a triangle over others, 2026-11-15).
+    unlinked, and the engine does not path across. Nothing moves; a triangle
+    keeps its index as the first piece, so ledge indices hold. A patch
+    triangle (`tris[first:]`) fans at any vertex; a generator triangle only
+    at the patch's.
     See: docs/commentary/tes5_import_navmesh.md#frozen-navmesh-patches
     """
     out = [tuple(t) for t in tris]
-    ids = np.array(sorted({v for t in out[first:] for v in t}), dtype=int)
-    used = (ids, np.asarray([verts[v] for v in ids], dtype=float).reshape(-1, 3))
+    patch, every = (_vertex_set(verts, out[part:]) for part in (first, 0))
     counts = _edge_counts(out)
     for i in range(len(out)):
+        used = every if i >= first else patch
         for k in range(3):
             a, b, opp = out[i][k], out[i][(k + 1) % 3], out[i][(k + 2) % 3]
             mid = _on_edge(verts, a, b, opp, used) if counts.get(frozenset((a, b))) == 1 else []

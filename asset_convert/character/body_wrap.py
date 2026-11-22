@@ -130,6 +130,7 @@ HEAD_BONES = ('Bip01 Head', 'NPC Head [Head]')
 DELTA_SMOOTH_PASSES = 12
 
 _FIELD_CACHE: dict = {}
+_EXACT_CACHE: dict = {}
 
 
 from asset_convert.character.wrap_mesh import (
@@ -138,7 +139,8 @@ from asset_convert.character.wrap_mesh import (
     group_mean as _group_mean, smooth_group_field as _smooth_group_field,
     weld_groups)
 from asset_convert.character.skin_retarget import (
-    SKEL_OBLIVION, deform_vertices_animation_fk, load_animation_deltas, load_skeleton, m44_to_np)
+    SKEL_OBLIVION, SKYRIM, deform_vertices_animation_fk, load_animation_deltas, load_skeleton,
+    m44_to_np)
 from asset_convert.character import head_fit
 
 
@@ -251,12 +253,16 @@ def field_path(female: bool, morrowind: bool = False) -> Path:
 
 
 def get_field(female: bool, morrowind: bool = False):
-    """Load (and cache) the wrap field for a gender and source, or None."""
-    key = (female, morrowind)
+    """Load (and cache) Skyrim's wrap field for a gender and source, or None."""
+    return load_field(field_path(female, morrowind))
+
+
+def load_field(path: Path):
+    """Load (and cache) the wrap field npz at `path`, or None."""
+    key = str(path)
     if key in _FIELD_CACHE:
         return _FIELD_CACHE[key]
     field = None
-    path = field_path(female, morrowind)
     if path.exists() and _PYFFI:
         try:
             with np.load(path, allow_pickle=False) as z:
@@ -541,22 +547,45 @@ def _fit_head_gear(s, new_w, female, race, src_skel):
     return new_w
 
 
-def _push_clear(s, new_w, field, weight):
-    """`new_w` pushed out to the authored clearance plus margin from the fitted Skyrim body.
+def _fitted_target(field, weight) -> tuple:
+    """`field`'s fitted body as a push target: (tris owner, verts, normals, tree, reliability)."""
+    return field, field.dst[weight], field.dst_tri_n[weight], field.dst_tree[weight], field.tri_rel[weight]
+
+
+def _exact_target(destination, female: bool, weight: int) -> tuple:
+    """The destination's own body as a push target (see `_fitted_target`), every triangle reliable.
+
+    See: docs/commentary/asset_convert_armor.md#retarget-destinations
+    """
+    key = (id(destination), female, weight)
+    if key not in _EXACT_CACHE:
+        from scipy.spatial import cKDTree
+        verts, tris = destination.surfaces('female' if female else 'male', 'body', weight)
+        normals = np.cross(verts[tris[:, 1]] - verts[tris[:, 0]], verts[tris[:, 2]] - verts[tris[:, 0]])
+        normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-12)
+        _EXACT_CACHE[key] = (SimpleNamespace(tris=tris), verts, normals, cKDTree(verts[tris].mean(axis=1)),
+                             np.ones(len(tris)))
+    return _EXACT_CACHE[key]
+
+
+def _push_clear(s, new_w, field, target, keep_depth=True):
+    """`new_w` pushed out to the authored clearance plus margin from the `target` body surface.
 
     PUSH_ITERS rounds; each deficit is diffused over the armor graph, keeping PUSH_RAW_KEEP
-    of the raw deficit as a floor.
+    of the raw deficit as a floor. Without `keep_depth` (a body not hidden under worn gear) a
+    vertex authored inside the source body counts as touching it.
     See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
     """
     c0, _n0, _r0 = blended_clearance(field, s.PRE, field.src, field.src_tri_n,
                                       field.src_tree, k=CLEAR_K)
+    c0 = c0 if keep_depth else np.maximum(c0, 0.0)
     margin = CLEAR_MARGIN * np.exp(-(np.maximum(c0, 0.0) / CLEAR_MARGIN_RANGE) ** 2) * np.exp(
         -(np.minimum(c0, 0.0) / CLEAR_INNER_FADE) ** 2)
     prox = np.exp(-(np.maximum(c0, 0.0) / CLEAR_PROX) ** 2)
     adj = _build_adjacency(s.TRIS, s.wg, s.n_g) if len(s.TRIS) else None
     for _ in range(PUSH_ITERS):
-        c1, n1, rel1 = blended_clearance(field, new_w, field.dst[weight], field.dst_tri_n[weight],
-                                          field.dst_tree[weight], field.tri_rel[weight], k=CLEAR_K)
+        owner, verts, normals, tree, reliability = target
+        c1, n1, rel1 = blended_clearance(owner, new_w, verts, normals, tree, reliability, k=CLEAR_K)
         deficit = raw = ((c0 + margin) - c1) * prox * rel1 * (1.0 - s.HF)
         if adj is not None:
             smooth = _smooth_group_field(_group_mean(raw[:, None], s.wg, s.n_g), adj[0], adj[1],
@@ -577,16 +606,18 @@ def _write_back(metas, new_w, skel_root) -> None:
             vert.x, vert.y, vert.z = (float(c) for c in out[vi])
 
 
-def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool,
-                      weight: int = 0, race=None, src_skel: dict = None) -> int:
+def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool, weight: int = 0, race=None,
+                      src_skel: dict = None, destination=None) -> int:
     """FK deform + exact body-fit correction for all non-PRN skinned shapes; how many (0 = run plain FK).
 
-    FK first, then the wrap field cancels FK's measured error against the Skyrim body,
-    all shapes solved as one system. `weight` picks the _0/_1 body, `race` a beast head
-    pack, `src_skel` (the source rest skeleton) the pose cache and head origin.
+    FK first, then the wrap field cancels FK's measured error against the destination's body
+    (Skyrim's by default), all shapes solved as one system. `weight` picks the _0/_1 body, `race` a
+    beast head pack, `src_skel` the pose cache and head origin; head gear is fitted only onto a
+    destination with a head group.
     See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
     """
-    bone_deltas, alias = load_animation_deltas(src_skel), oblivion_alias_map(src_skel)
+    destination = destination or SKYRIM
+    bone_deltas, alias = load_animation_deltas(src_skel, destination), oblivion_alias_map(src_skel)
     if not bone_deltas:
         return 0
     pre_fk = _pre_fk_world(skinned_geoms, skel_root)
@@ -596,7 +627,10 @@ def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool,
         return 0
     _weld(s)
     new_w = s.VW + _field_corrections(field, s.VW, s.ABC, weight) * (1.0 - s.HF)[:, None]
-    new_w = _push_clear(s, _fit_head_gear(s, new_w, female, race, src_skel), field, weight)
+    if 'head' in destination.groups:
+        new_w = _fit_head_gear(s, new_w, female, race, src_skel)
+    target = _fitted_target(field, weight) if destination.hides_body else _exact_target(destination, female, weight)
+    new_w = _push_clear(s, new_w, field, target, destination.hides_body)
     _write_back(s.metas, _group_mean(new_w, s.wg, s.n_g)[s.wg], skel_root)
     return len(s.metas)
 

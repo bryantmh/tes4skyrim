@@ -591,14 +591,14 @@ def _take_land(rec, coords, lands: dict, count_only: bool,
         if rec.sub(b'VHGT') is not None:
             lands[coords] = True
         return
-    land = _decode_land(rec.body, lambda b, t: rec.sub(t.encode()), remap)
+    land = decode_land(rec.body, lambda b, t: rec.sub(t.encode()), remap)
     if land is not None:
         lands[coords] = land
     elif not allow_unscoped:
         lands.pop(coords, None)
 
 
-def _decode_land(body, _sub, remap=None):
+def decode_land(body, _sub, remap=None):
     """Decode VHGT → heights (33×33), VCLR → colors (33×33,3), layers."""
     vhgt = _sub(body, 'VHGT')
     if vhgt is None or len(vhgt) < 4 + VERTS_SIDE * VERTS_SIDE:

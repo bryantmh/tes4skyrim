@@ -1069,8 +1069,7 @@ columns by `_HAVOK_SCALE` (0.1) on write, and `decode_cms()` returns havok
 units divided by 7. Both therefore reach game units through the same factor,
 `70.0` (7 game-per-havok / 0.1), so `CMS_TO_GAME == PRIM_TO_GAME`.
 
-`PRIM_TO_GAME` was previously `10.0`, the factor correct for a TES4 SOURCE
-mesh, whose primitives are plain havok units. Against converted output that
+`PRIM_TO_GAME` was previously `10.0`. Against converted output that
 extracted every primitive shape exactly 7x too small, so navmesh generation
 saw a collision body far inside the render geometry and walked straight
 through it. Measured on `furniture/middleclass/middletable02.nif`
@@ -1081,6 +1080,17 @@ ratio of 0.141 on x, 0.146 on y, 0.143 on z. The three sibling tables
 the CMS path, measured 0.997-1.010 on the same test and were never affected.
 2,327 meshes under `output/Oblivion.esm/meshes/tes4` carry a primitive
 collision shape and were all extracted undersized.
+
+**An unconverted TES4 NIF** (OBRConversion reads the mod's own meshes) passes
+`havok_to_game=TES4_HAVOK_TO_GAME` (7.0): its primitives, `bhkRigidBodyT` and
+transform-shape translations and `hkPackedNiTriStripsData` vertices are plain havok
+units, while `bhkNiTriStripsShape`'s `NiTriStripsData` is already in game units.
+Measured as collision/render extent per axis on Nehrim's meshes:
+`rocks/colovianhighlands/chrock050.nif` (packed strips) 0.94/0.96/0.99,
+`architecture/farmhouse/farmhouseconstruction05.nif` (packed) 1.00/0.90/0.89,
+`furniture/middleclass/middletable02.nif` (box + convex) 1.04/0.97/1.00,
+`furniture/lowerclass/lowerclassbench01.nif` 1.00/0.99/1.01. The converted NIFs this pipeline reads never hold those two shapes
+(conversion rebuilds them as MOPP + `bhkCompressedMeshShape`), so the default path is unchanged.
 
 <a id="body-placement"></a>**A rigid body is placed at its OWNING NODE's world transform** (`collision_from_data`, `_body_placements`). The extractor read every `bhkRigidBody` out of `data.blocks` and emitted its triangles in the body's own frame, on the stated assumption that conversion moves collision to the root node. That holds for most meshes but not all: `tes4/dungeons/chargen/prisonsecretwall01.nif` keeps its two boxes on the child nodes `bed` (translation 12.8, 170.0, -125.8) and `wall` (-61.6, 214.7, -64.0), so both were emitted ~200u from where they belong -- a phantom 171x94x227u box at the mesh origin that the navmesh then built against, while IN GAME the collision sits correctly because the engine honours the node chain. The walk accumulates rotation, uniform scale and translation per node and records a placer only for a chain that is not the identity, so the common root-mounted body pays nothing. The shape's own transform is already baked in by `_primitive_tris` / `decode_cms` and is not re-applied.
 

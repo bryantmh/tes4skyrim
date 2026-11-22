@@ -1267,6 +1267,94 @@ Arktwend 2 worn models, vanilla 0.
   - Laplacian-smoothed mesh weights: Created discontinuities. REVERTED.
   - Global/per-mesh inverse filter, RBF interpolation, 2x global overshoot: All failed (see repo memory for full list)
 
+## Retarget destinations: another rig than Skyrim's
+<a id="retarget-destinations"></a>
+
+**Code:** `Destination`, `SKYRIM` and `retarget_skin` in `asset_convert/character/skin_retarget.py`;
+`--target` in `tools/generators/kf_animation_explorer.py`
+
+The source side was already a parameter (Oblivion, FO3/FNV and Morrowind skeletons, each with its own
+pose cache). The destination is one too: a `Destination` names its rest skeleton per sex (the same
+world-4x4 JSON as `skeleton_bones_skyrim_*.json`, in the source NIF's units and axes), a source-to-
+destination bone map, and the pose cache per source skeleton. `SKYRIM` wraps the existing files, and
+every Skyrim caller uses it unchanged.
+
+- `retarget_skin(data, destination, female)` runs only the rig-independent phases: bake to bind pose
+  (0), the pose cache's FK pose (B), bones onto the destination's frames (A), binds from them (C). No
+  body wrap (its field is fitted to Skyrim's bodies) and no skin partitions or dismember slots (a
+  Skyrim NIF's format). Bones keep their source names; the caller renames them.
+- `retarget_skin_to_skyrim` shares Phase C through `_bind`; partitions stay its own step.
+- The pose cache for another rig: `python -m tools.generators.kf_animation_explorer --build-cache
+  --target <skeleton.json> <bone_map.json> <out.json>`. Without `--target` the run is Skyrim's, as
+  before.
+- No regression: five worn meshes (iron cuirass male and female, iron helmet with its two beast
+  variants, a lower-class shirt, a Nehrim Eyren battledress) convert byte-identically before and
+  after (`PYTHONHASHSEED=0`, `nif_batch`), and `tests/test_skin_retarget.py` and
+  `tests/test_armor_source_rigs.py` pass unchanged (47 passed, 9 skipped).
+- First user: OBRConversion, onto Oblivion Remastered's human rig (`obr_convert/worn.py`).
+- **The body wrap takes the destination too.** A `Destination` also names its wrap field npz, its
+  target body surfaces per (gender, group, weight), the wrap groups it has (a `head` group is what
+  turns the head-gear fit on), how to pose a reference body part without the wrap (`pose_body`), and
+  whether its body is hidden under worn gear (`hides_body`). `body_wrap_build.build_field(...,
+  destination=)` fits the source body onto that surface, scaling limb segments by the destination's
+  bone map; `deform_geoms_wrap` reads the destination's pose cache. Skyrim's male field built through
+  the destination path is array-identical to the one built before, and the five worn meshes above
+  convert byte-identically.
+- **A body that shows under worn gear (`hides_body` False).** Oblivion and Skyrim hide the covered
+  body part, so the push keeps a vertex's authored depth inside the source body (collars, waist
+  wraps). Oblivion Remastered does not hide its body (its own worn meshes sit outside it: iron cuirass
+  0.6% of area more than 2 units under the skin), so there a vertex authored inside counts as
+  touching, and the push measures against the destination's real body (`_exact_target`, every
+  triangle reliable) instead of the fitted source body: the fitted surface's stretch reliability
+  (0.44-0.53 across a female bust fitted onto a different bust) let the push move such vertices only
+  half way. Tried and reverted: also clearing each armor triangle's centre and edge midpoints (the
+  remaining under-skin area is large flat triangles across body curves); it cut that area by under a
+  tenth and made the run 2.5 minutes slower.
+
+### Aimed limbs (`--aim`)
+<a id="aimed-limbs"></a>
+
+**Code:** `_aim` in `tools/generators/kf_animation_explorer.py`
+
+The search scores joint POSITIONS, so where the two rigs' limb segments differ in length no rotation
+puts every joint on its target, and the least-squares compromise bows the limb. Oblivion's upper
+arm is 21.8 units and forearm 14.8; Oblivion Remastered's 19.4 and 19.1. Against that rig the
+search left the hand 2.2 off but the elbow 4.7 FORWARD of the rig's elbow (upper arm 1.4), and
+sleeves sat visibly in front of the body's arms.
+
+`--aim` runs after the search: each limb-chain bone with a target below it, parents first, is put
+on its target joint and turned by the rotation (Kabsch over unit directions) that best takes the
+directions to the chain bones one and two levels below it onto the target rig's; with only one
+direction (or collinear ones) the shortest arc, so no roll is invented. Each segment then lies along
+the target's segment from the target's joint; a length difference shows only along the limb. It is
+opt-in: Skyrim's cache is built without it.
+
+An aimed cache is mirrored from the LEFT side (`_mirror_from_left`): every right bone takes its left
+twin's delta, X-mirrored, so the two sides are exact mirror images and, both rigs being symmetric,
+the right side stands on its joints too. Neither of the alternatives works: the search mirror
+averages each bone's two deltas on its own, whose translation depends on its rotation, so two exact
+sides with different roll (kept from the corpus frame where the directions fix none) averaged to an
+upper arm 20.8 units off its joint (forearm 8.2) while the hands stayed exact; not mirroring at all
+left the sides rolled differently (one pauldron twisted against the other).
+
+### Unscored bones follow their parent
+<a id="unscored-bones-follow-their-parent"></a>
+
+**Code:** `_follow_parents` in `tools/generators/kf_animation_explorer.py`
+
+The pose search scores bone POSITIONS only. A bone with no target below it (the arm twists, the
+shoulder and wrist helpers, the last finger joints, the toes) moves no scored position by turning,
+so its rotation is whatever the chosen corpus frame happened to hold, and the L/R mirror then edits
+each bone's delta on its own. Measured on the cache built for Oblivion Remastered's rig: upper-arm
+twist 40.1 degrees off its upper arm, forearm twist 46.2 off its forearm, shoulder helper 9.9 off the
+clavicle it hangs from. Mesh weighted to them was torn into spikes: iron cuirass shoulder vertices
+(0.71 twist, 0.29 clavicle) stood 14.9 units off the body, 11 above the shoulder. Every such bone now
+takes its parent's delta (its rest pose against its parent), parents first; the spikes are gone.
+
+- Skyrim's shipped `best_animation_pose.json` was **not** rebuilt. It holds the same kind of offset,
+  smaller (upper-arm twist 10.8, forearm twist 16.4, shoulder helper 0.0 degrees off their parents);
+  a rebuild would take them to 0 and so change Skyrim output.
+
 ## Distorted worn clothing — nested bones placed with the wrong operand order (SOLVED 2026-08-25)
 <a id="distorted-worn-clothing-nested-bones"></a>
 

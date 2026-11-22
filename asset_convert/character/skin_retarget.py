@@ -32,7 +32,9 @@ See: docs/commentary/asset_convert_armor.md#cuirass-edge-gap-ideas
 import json
 import math
 import numpy as np
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 # Apply all PyFFI patches (time.clock fix, nif.xml condition fixes) before import
@@ -585,16 +587,36 @@ def _pose_path(src_skel) -> Path:
     return _ANIM_POSE_PATH
 
 
-def load_animation_deltas(src_skel: dict = None):
+@dataclass(frozen=True)
+class Destination:
+    """The rig and body a retarget lands on: rest `skeletons` {female: JSON}, `bone_map(source
+    skeleton)`, `poses(source skeleton)` pose cache, wrap `fields(female, morrowind)` npz, target
+    `surfaces(gender, group, weight)` -> (verts, tris), its wrap `groups`, `pose_body(data,
+    src_path, morrowind)` posing a reference body part unwrapped, and whether it `hides_body`
+    under worn gear.
+    See: docs/commentary/asset_convert_armor.md#retarget-destinations
+    """
+
+    skeletons: dict
+    bone_map: Callable
+    poses: Callable
+    fields: Callable
+    surfaces: Callable
+    groups: tuple
+    pose_body: Callable
+    hides_body: bool
+
+
+def load_animation_deltas(src_skel: dict = None, destination: Destination = None):
     """Pre-computed delta matrices (inv(rest_world) @ anim_world) per bone.
 
     Built by tools/generators/kf_animation_explorer.py --build-cache over the
     source game's own .kf corpus and skeleton; each delta moves a vertex from
-    its rest pose to the best-matching animation pose. The source skeleton
-    selects the cache (`_pose_path`).
+    its rest pose to the pose that best matches the destination's rig. The
+    source skeleton and the destination select the cache.
     See: docs/commentary/asset_convert_falloutnv.md#fnv-animation-pose
     """
-    path = _pose_path(src_skel)
+    path = (destination or SKYRIM).poses(src_skel)
     key = str(path)
     if key in _anim_delta_cache:
         return _anim_delta_cache[key]
@@ -974,28 +996,29 @@ def _rig_skeleton(data, morrowind: bool, female: bool) -> dict:
     return _source_skeleton(data)
 
 
-def _deform_vertices(skinned_geoms, skel_root, ob_skel, female, morrowind, wrap) -> None:
-    """Phase B: the body wrap when its field loads, else the plain FK pose.
+def _deform_vertices(skinned_geoms, skel_root, ob_skel, female, morrowind, wrap, destination=None) -> None:
+    """Phase B: the destination's body wrap when its field loads, else the plain FK pose.
 
     `wrap` is (allowed, weight, race). body_wrap is imported here because it
     imports this module (through wrap_mesh).
     """
     allowed, weight, race = wrap
+    destination = destination or SKYRIM
     wrapped = 0
     if allowed:
         try:
-            from asset_convert.character.body_wrap import deform_geoms_wrap, get_field
-            field = get_field(female, morrowind)
+            from asset_convert.character.body_wrap import deform_geoms_wrap, load_field
+            field = load_field(destination.fields(female, morrowind))
             if field is not None:
-                wrapped = deform_geoms_wrap(skinned_geoms, skel_root, field, female,
-                                            weight=weight, race=race, src_skel=ob_skel)
+                wrapped = deform_geoms_wrap(skinned_geoms, skel_root, field, female, weight=weight,
+                                            race=race, src_skel=ob_skel, destination=destination)
         except Exception as e:
             import traceback
             traceback.print_exc()
             print(f'      [WRAP] wrap deform failed ({e}) — falling back to FK')
             wrapped = 0
     if not wrapped:
-        bone_deltas = load_animation_deltas(ob_skel)
+        bone_deltas = load_animation_deltas(ob_skel, destination)
         if bone_deltas:
             deform_vertices_animation_fk(skinned_geoms, skel_root, bone_deltas)
 
@@ -1045,23 +1068,27 @@ def _place_bones(skinned_geoms, bone_nodes, skel_root, sk_skel, src_map) -> None
         _place_bone(bone, parent_map, skel_root, sk_skel, src_map)
 
 
+def _bind(block, prn_bone_name, skel_root, targets) -> None:
+    """Phase C for one shape: a Prn shape into its placed bone's frame, then binds from the moved
+    bones. `targets` is (destination skeleton, source bone map)."""
+    if prn_bone_name:
+        sk_name, W_sk = _resolve_sk_target(prn_bone_name, *targets)
+        if sk_name is not None:
+            _bake_shape_into_bone_frame(block, W_sk)
+    manual_update_bind_position(block, block.skin_instance, skel_root)
+
+
 def _rebind(skinned_geoms, skel_root, targets, prn_out, authored) -> int:
     """Phase C+D: bind matrices from the moved bones, then fresh partitions; how many shapes.
 
     `targets` is (Skyrim skeleton, source bone map); `authored` is
     (authored body part, allowed body parts).
     """
-    sk_skel, src_map = targets
     for block, is_prn, prn_bone_name in skinned_geoms:
         if is_prn and prn_out is not None:
             prn_out.add(id(block))
-        if is_prn and prn_bone_name:
-            sk_name, W_sk = _resolve_sk_target(prn_bone_name, sk_skel, src_map)
-            if sk_name is not None:
-                _bake_shape_into_bone_frame(block, W_sk)
-        skin = block.skin_instance
-        manual_update_bind_position(block, skin, skel_root)
-        regen_skin_partition(block, skin, get_block_name(block), bone_name=prn_bone_name,
+        _bind(block, prn_bone_name if is_prn else None, skel_root, targets)
+        regen_skin_partition(block, block.skin_instance, get_block_name(block), bone_name=prn_bone_name,
                              authored_body_part=authored[0], authored_allowed=authored[1])
     return len(skinned_geoms)
 
@@ -1105,7 +1132,7 @@ def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None
     Returns the number of geometries retargeted.
     """
     female = mesh_is_female(src_path)
-    sk_skel = load_skeleton(SKEL_SKYRIM_FEMALE if female else SKEL_SKYRIM_MALE)
+    sk_skel = load_skeleton(SKYRIM.skeletons[female])
     ob_skel = _rig_skeleton(data, morrowind, female)
     if not sk_skel or not ob_skel:
         return 0
@@ -1125,3 +1152,48 @@ def retarget_skin_to_skyrim(data, src_path: str = '', prn_out: set | None = None
         _reweight_morrowind_arms(skinned_geoms, skel_root, sk_skel, (female, weight), authored_body_part)
     return _rebind(skinned_geoms, skel_root, (sk_skel, src_map), prn_out,
                    (authored_body_part, authored_allowed))
+
+
+def retarget_skin(data, destination: Destination, female: bool = False, wrap: bool = True) -> int:
+    """Pose a NIF's skinned shapes onto `destination`'s rig and body in place; how many shapes.
+
+    Phases 0, B (its body wrap when `wrap` and its field loads, else the FK pose), A and C of
+    `retarget_skin_to_skyrim`: bones take the destination's rest frames and keep their source
+    names; no skin partitions.
+    See: docs/commentary/asset_convert_armor.md#retarget-destinations
+    """
+    dest_skel = load_skeleton(destination.skeletons[female])
+    src_skel = _source_skeleton(data)
+    skel_root, bone_nodes, skinned_geoms = _collect_skin_targets(data)
+    if not dest_skel or not src_skel or not skel_root or not skinned_geoms:
+        return 0
+    targets = (dest_skel, destination.bone_map(src_skel))
+    bake_geoms_to_bind_pose(skinned_geoms, skel_root)
+    _deform_vertices(skinned_geoms, skel_root, src_skel, female, False, (wrap, 0, None), destination)
+    _place_bones(skinned_geoms, bone_nodes, skel_root, *targets)
+    for block, is_prn, prn_bone_name in skinned_geoms:
+        _bind(block, prn_bone_name if is_prn else None, skel_root, targets)
+    return len(skinned_geoms)
+
+
+def _skyrim_field(female: bool, morrowind: bool) -> Path:
+    """Skyrim's wrap field npz; body_wrap is imported here because it imports this module."""
+    from asset_convert.character.body_wrap import field_path
+    return field_path(female, morrowind)
+
+
+def _skyrim_surface(gender: str, group: str, weight: int):
+    """Skyrim's body surface for a wrap group; body_wrap_build imported here: it imports this module."""
+    from asset_convert.character.body_wrap_build import load_sk_surface
+    return load_sk_surface(gender, group, weight)
+
+
+def _skyrim_pose_body(data, src_path: str, morrowind: bool) -> int:
+    """A reference body part FK-posed onto Skyrim's rig, no wrap; how many shapes."""
+    return retarget_skin_to_skyrim(data, src_path=src_path, allow_wrap=False, morrowind=morrowind)
+
+
+#: Skyrim's rig and body, the destination every Skyrim conversion retargets onto.
+SKYRIM = Destination({False: SKEL_SKYRIM_MALE, True: SKEL_SKYRIM_FEMALE}, bone_map_for, _pose_path,
+                     _skyrim_field, _skyrim_surface, ('body', 'hands', 'feet', 'head'), _skyrim_pose_body,
+                     True)

@@ -4,7 +4,7 @@ A cell whose terrain the author deleted ships a LAND that keeps its texture
 layers but carries no VNML/VHGT -- the "water only, no landscape" case (DATA
 flags clear bit 0x01; vanilla writes 28 and lets the engine auto-calc normals).
 
-`_decode_land` returns None for such a record because there are no heights to
+`decode_land` returns None for such a record because there are no heights to
 decode. The scan then simply skipped it, which for an OVERLAY is wrong: the
 master's heightmap stayed in `lands`, so distant terrain kept rendering the very
 ground the plugin removed. Reported in-game on TWMP_ValenwoodImproved as "a
@@ -40,7 +40,7 @@ def _land_body(with_height: bool) -> bytes:
 
 
 def _finder(body):
-    """The `_sub` accessor `_decode_land` is called with."""
+    """The `_sub` accessor `decode_land` is called with."""
     def get(blob, name):
         want = name.encode() if isinstance(name, str) else name
         i = 0
@@ -56,17 +56,17 @@ def _finder(body):
 
 def test_decode_land_returns_none_without_heights():
     body = _land_body(with_height=False)
-    assert terrain_lod._decode_land(body, _finder(body)) is None
+    assert terrain_lod.decode_land(body, _finder(body)) is None
 
 
 def test_decode_land_returns_data_with_heights():
     body = _land_body(with_height=True)
-    assert terrain_lod._decode_land(body, _finder(body)) is not None
+    assert terrain_lod.decode_land(body, _finder(body)) is not None
 
 
 def _apply(lands, coords, body, is_overlay):
     """The scan's decision for one LAND record, mirrored exactly."""
-    land = terrain_lod._decode_land(body, _finder(body))
+    land = terrain_lod.decode_land(body, _finder(body))
     if land is not None:
         lands[coords] = land
     elif is_overlay:
