@@ -864,8 +864,9 @@ def _load_unskinned(char_dir, rel):
     return np.vstack(v_parts), np.vstack(t_parts)
 
 
-def _neck_surfaces(gender):
-    """(ob_neck_v, ob_neck_t, sk_neck_v, sk_neck_t) in WORLD coords, or None.
+def _neck_surfaces(gender, destination=None):
+    """(ob_neck_v, ob_neck_t, sk_neck_v, sk_neck_t) in WORLD coords, or None; the target neck is
+    `destination`'s body (Skyrim's by default).
 
     The OB head mesh ends at local z -3.5 on the BACK of the neck, so hair
     hanging below it had nothing to conform to and kept the occiput's
@@ -878,7 +879,7 @@ def _neck_surfaces(gender):
         g = load_ob_group(gender)
         if 'body' not in g:
             return None
-        sk = load_sk_surface(gender, 'body', 0)
+        sk = (destination.surfaces if destination else load_sk_surface)(gender, 'body', 0)
         if sk is None:
             return None
 
@@ -969,7 +970,7 @@ def relaxed_deltas(src_v, src_t, flat, sk_t, o_ob, o_sk):
     return field_tris, dv
 
 
-def _neck_extended(head_v0, head_tris, sk_surface, gender):
+def _neck_extended(head_v0, head_tris, sk_surface, gender, destination=None):
     """(src_v, src_t, sk_v, sk_t, n_head_sk): both surfaces plus the neck column.
 
     See _neck_surfaces for why the neck is appended; without it both are the
@@ -977,7 +978,7 @@ def _neck_extended(head_v0, head_tris, sk_surface, gender):
     """
     sk_v = np.asarray(sk_surface[0], dtype=np.float64)
     sk_t = np.asarray(sk_surface[1], dtype=np.int64)
-    neck = _neck_surfaces(gender)
+    neck = _neck_surfaces(gender, destination)
     if neck is None:
         return head_v0, head_tris, sk_v.copy(), sk_t, len(sk_v)
     onv, ont, snv, snt = neck
@@ -986,7 +987,7 @@ def _neck_extended(head_v0, head_tris, sk_surface, gender):
 
 
 def build_arrays(head_v0, head_tris, sk_surface, char_dir,
-                 o_ob, o_sk, gender='male') -> dict:
+                 o_ob, o_sk, gender='male', destination=None) -> dict:
     """The hf_* arrays body_wrap_build.build_field stores in the field npz.
 
     head_v0 / head_tris   OB head group, authored T-pose, WORLD coords
@@ -995,14 +996,18 @@ def build_arrays(head_v0, head_tris, sk_surface, char_dir,
     o_ob / o_sk           head-space origins (Bip01 Head / NPC Head world)
     gender                which npz this is ('male'/'female'), selecting the
                           gendered Skyrim mesh in each race pack
+    destination           the retarget destination whose head this is (None:
+                          Skyrim's); race-group morphs and race packs only
+                          where it takes Skyrim's head data
     """
     head_v0 = np.asarray(head_v0, dtype=np.float64)
     head_tris = np.asarray(head_tris, dtype=np.int64)
     o_ob = np.asarray(o_ob, dtype=np.float64)
     o_sk = np.asarray(o_sk, dtype=np.float64)
     src_v, src_t, sk_full_ext, sk_t, n_head_sk = _neck_extended(
-        head_v0, head_tris, sk_surface, gender)
-    group_deltas = _group_head_deltas(gender, n_head_sk, len(sk_full_ext))
+        head_v0, head_tris, sk_surface, gender, destination)
+    skyrim = destination is None or destination.skyrim_heads
+    group_deltas = _group_head_deltas(gender, n_head_sk, len(sk_full_ext)) if skyrim else {}
 
     def _build_one(morph_delta):
         """(field tris, dv, ear-capped target) for one base or group-morphed head."""
@@ -1029,7 +1034,7 @@ def build_arrays(head_v0, head_tris, sk_surface, char_dir,
         out[f'hf_g_{gname}_dv'] = gdv.astype(np.float32)
         out[f'hf_g_{gname}_sk_v'] = gflat.astype(np.float32)
         out[f'hf_g_{gname}_skf_v'] = (sk_full_ext + delta).astype(np.float32)
-    for race in _RACE_PACKS:
+    for race in _RACE_PACKS if skyrim else ():
         out.update(_build_race_pack(race, char_dir, gender, o_ob, o_sk) or {})
     return out
 
@@ -1194,13 +1199,19 @@ class _HeadFit:
 _CACHE: dict = {}
 
 
-def _get(female: bool):
-    key = bool(female)
+def field_of(destination, female: bool):
+    """The field npz holding the head fit onto `destination`'s head; None for Skyrim's (the default)."""
+    return None if destination is None else destination.fields(female, False)
+
+
+def _get(female: bool, field=None):
+    """The head fit in wrap field npz `field` (None: Skyrim's for the gender), or None."""
+    path = Path(field) if field else _GEN_DIR / f'body_wrap_{"female" if female else "male"}.npz'
+    key = bool(female) if field is None else str(path)
     if key in _CACHE:
         return _CACHE[key]
     fit = None
     if _SCIPY:
-        path = _GEN_DIR / f'body_wrap_{"female" if female else "male"}.npz'
         if path.exists():
             try:
                 with np.load(path) as z:
@@ -1212,8 +1223,8 @@ def _get(female: bool):
     return fit
 
 
-def fit_available(female: bool) -> bool:
-    return _get(female) is not None
+def fit_available(female: bool, field=None) -> bool:
+    return _get(female, field) is not None
 
 
 def _target_surfaces(fit, race, group):
@@ -1252,15 +1263,15 @@ def register_source_pack(female: bool, key: str, src_v, src_t, race=None,
     return key
 
 
-def field_deltas(P, female: bool, race=None):
+def field_deltas(P, female: bool, race=None, field=None):
     """Per-vertex field deltas for head-LOCAL points P, or None.
 
     Each point samples the displacement field at its closest point on the
     OB scalp — the same mapping fit_head_gear applies.  Used by the skinned
     head-gear path so a skinned helmet's head-weighted verts move by exactly
-    what a rigid helmet would move.
+    what a rigid helmet would move. `field`: as `_get`.
     """
-    fit = _get(female)
+    fit = _get(female, field)
     if fit is None:
         return None
     pack = fit.races.get(race, fit.human)
@@ -1271,7 +1282,7 @@ def field_deltas(P, female: bool, race=None):
 
 
 def fit_head_gear(shapes, female: bool, race=None, group=None,
-                  cover_ears=False, hug=False):
+                  cover_ears=False, hug=False, field=None):
     """Fit head gear from OB face space into SK head space.
 
     `shapes` is a list of (verts (N,3), tris (M,3)) in authored face-space
@@ -1283,14 +1294,15 @@ def fit_head_gear(shapes, female: bool, race=None, group=None,
     human races and Dremora wear.  `hug` (hair only) compresses the authored
     near-skin standoff toward the vanilla hug — helmets keep their authored
     clearance exactly.  Returns a list of fitted vert arrays (SK head space)
-    or None when no fit data exists.
+    or None when no fit data exists.  `field` names another destination's
+    head fit (see `field_of`; None: Skyrim's).
     """
     return _fit_core(shapes, female, race, group, cover_ears=cover_ears,
-                     hug=hug)
+                     hug=hug, field=field)
 
 
-def _fit_core(shapes, female, race, group, cover_ears=False, hug=False):
-    fit = _get(female)
+def _fit_core(shapes, female, race, group, cover_ears=False, hug=False, field=None):
+    fit = _get(female, field)
     if fit is None or not shapes:
         return None
     pack = fit.races.get(race, fit.human)

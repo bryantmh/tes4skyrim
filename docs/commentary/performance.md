@@ -799,7 +799,8 @@ failing. It prints the holder, recorded in `logs/heavy_job.txt`, at once and
 again every 5 minutes. The holder writes that file as
 `{pid, label, work, queued, started}` and deletes it on exit.
 `python -m tools.misc.build_queue` shows the running build and the whole queue
-live.
+live. Another project calls `use_queue(mutex, holder file, env var)` first to get a
+queue of its own (OBRConversion's Unreal jobs), never waiting on this one.
 
 - **Strict arrival order.** Every job leaves a ticket in
   `logs/heavy_queue/<pid>.json` naming its work (plugins, steps, `--only` and

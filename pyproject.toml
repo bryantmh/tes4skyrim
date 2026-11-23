@@ -12,7 +12,7 @@ requires-python = ">=3.14"
 dev = ["pytest", "ruff", "vulture"]
 
 [tool.setuptools]
-py-modules = ["convert", "gui", "output_layout", "preflight",
+py-modules = ["convert", "convert_cli", "gui", "output_layout", "preflight",
               "source_paths", "version"]
 
 [tool.setuptools.packages.find]

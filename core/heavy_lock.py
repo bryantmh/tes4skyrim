@@ -69,6 +69,16 @@ _STILL_ACTIVE = 259
 _HANDLE = None
 
 
+def use_queue(mutex_name: str, holder_file: Path, held_env_var: str) -> None:
+    """Make this process's `hold_heavy_lock` and `snapshot` use another project's queue: its own mutex,
+    holder file (its ticket folder `heavy_queue` beside it) and held-lock environment variable, so its
+    jobs line up with each other and never wait on this project's. Call before either."""
+    global MUTEX_NAME, HOLDER_FILE, QUEUE_DIR, HELD_ENV_VAR
+    MUTEX_NAME, HELD_ENV_VAR = mutex_name, held_env_var
+    HOLDER_FILE = Path(holder_file)
+    QUEUE_DIR = HOLDER_FILE.parent / "heavy_queue"
+
+
 def _kernel32():
     """kernel32 with pointer-sized handles for the calls used here."""
     import ctypes

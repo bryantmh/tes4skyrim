@@ -16,6 +16,7 @@ Output is a DecodedClip of per-bone tracks sampled at a fixed fps, ready for
 retarget-free HKX writing (the converted skeleton keeps Oblivion bone names).
 """
 
+import math
 import os
 import sys
 from dataclasses import dataclass, field
@@ -290,6 +291,103 @@ def _sample_transform_data_static(interp, times: np.ndarray):
     return trans, rots, scales
 
 
+#: NiPathInterpolator flags (nif.xml PathFlags).
+_PATH_OPEN, _PATH_CONSTANT_VELOCITY, _PATH_FOLLOW, _PATH_FLIP = 0x2, 0x10, 0x20, 0x40
+#: Points per path segment for the arc-length table of a constant-velocity path.
+_PATH_STEPS = 64
+
+
+def _hermite(keys, segment: int, s: np.ndarray):
+    """Points and tangents (d/ds) on a path's `segment` (between keys i and i+1) at params `s` in [0, 1]: a
+    cubic Hermite through the keys' values with key i's forward and key i+1's backward tangents, as
+    NifSkope's quadratic key interpolation."""
+    a, b = keys[segment], keys[segment + 1]
+    p0 = np.array([a.value.x, a.value.y, a.value.z])
+    p1 = np.array([b.value.x, b.value.y, b.value.z])
+    t0 = np.array([a.forward.x, a.forward.y, a.forward.z])
+    t1 = np.array([b.backward.x, b.backward.y, b.backward.z])
+    s = s[:, None]
+    point = (p0 * (2 * s**3 - 3 * s**2 + 1) + t0 * (s**3 - 2 * s**2 + s)
+             + p1 * (-2 * s**3 + 3 * s**2) + t1 * (s**3 - s**2))
+    tangent = (p0 * (6 * s**2 - 6 * s) + t0 * (3 * s**2 - 4 * s + 1)
+               + p1 * (-6 * s**2 + 6 * s) + t1 * (3 * s**2 - 2 * s))
+    return point, tangent
+
+
+def _sample_path(interp, times: np.ndarray):
+    """Sample a NiPathInterpolator (a node moved along a curve: circling birds) at `times`: (translations
+    (S, 3), rotations (S, 4) w,x,y,z or None). Its percent data (NiFloatData, linear) says how far along the
+    path each moment is; a ConstantVelocity path is walked by arc length, any other by its keys' times.
+    With Follow, the node turns so its follow axis (0 X, 1 Y, 2 Z; negated with Flip) points along the
+    path, Z kept up. Banking is not applied."""
+    # pyffi names these fields unknown_*: flags, follow axis; pos_data and float_data.
+    flags = int(getattr(interp, 'flags', getattr(interp, 'unknown_short', 0)))
+    axis = int(getattr(interp, 'follow_axis', getattr(interp, 'unknown_short_2', 1)))
+    path = getattr(interp, 'path_data', None) or getattr(interp, 'pos_data', None)
+    percent = getattr(interp, 'percent_data', None) or getattr(interp, 'float_data', None)
+    keys = list(path.data.keys) if path is not None and path.data is not None else []
+    if len(keys) < 2:
+        return None, None
+    pkeys = list(percent.data.keys) if percent is not None and percent.data is not None else []
+    if pkeys:
+        pct = np.interp(times, [k.time for k in pkeys], [k.value for k in pkeys])
+    else:
+        pct = (times - times[0]) / max(times[-1] - times[0], 1e-9)
+    # An open curve stops at its ends; a closed one wraps (a clockwise circler runs 0 -> -0.993).
+    pct = np.clip(pct, 0.0, 1.0) if flags & _PATH_OPEN else np.mod(pct, 1.0)
+    params = np.linspace(0.0, 1.0, _PATH_STEPS + 1)
+    points, tangents, where = [], [], []
+    for segment in range(len(keys) - 1):
+        point, tangent = _hermite(keys, segment, params)
+        points.append(point if not segment else point[1:])
+        tangents.append(tangent if not segment else tangent[1:])
+        span = keys[segment + 1].time - keys[segment].time
+        at = keys[segment].time + params * span
+        where.append(at if not segment else at[1:])
+    points, tangents, where = np.vstack(points), np.vstack(tangents), np.concatenate(where)
+    if flags & _PATH_CONSTANT_VELOCITY:
+        length = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))])
+        lookup = pct * length[-1]
+        grid = length
+    else:
+        lookup = where[0] + pct * (where[-1] - where[0])
+        grid = where
+    trans = np.stack([np.interp(lookup, grid, points[:, c]) for c in range(3)], axis=1)
+    if not flags & _PATH_FOLLOW:
+        return trans, None
+    ahead = np.stack([np.interp(lookup, grid, tangents[:, c]) for c in range(3)], axis=1)
+    rots = np.zeros((len(times), 4))
+    for i, direction in enumerate(ahead):
+        forward = direction / max(np.linalg.norm(direction), 1e-9) * (-1.0 if flags & _PATH_FLIP else 1.0)
+        up = np.array([0.0, 0.0, 1.0])
+        side = np.cross(forward, up)
+        if np.linalg.norm(side) < 1e-6:
+            side = np.array([1.0, 0.0, 0.0])
+        side /= np.linalg.norm(side)
+        up = np.cross(side, forward)
+        # Columns: where the node's own X, Y, Z axes point. The follow axis runs along the path.
+        cols = {0: (forward, -side, up), 1: (side, forward, up), 2: (side, -up, forward)}[axis]
+        rots[i] = _matrix_to_quat(np.stack(cols, axis=1))
+    return trans, _hemisphere_align(rots)
+
+
+def _matrix_to_quat(m: np.ndarray) -> np.ndarray:
+    """A rotation matrix (column vectors) as a quaternion (w, x, y, z)."""
+    trace = m[0, 0] + m[1, 1] + m[2, 2]
+    if trace > 0:
+        s = 2.0 * math.sqrt(trace + 1.0)
+        return np.array([0.25 * s, (m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s])
+    i = int(np.argmax([m[0, 0], m[1, 1], m[2, 2]]))
+    j, k = (i + 1) % 3, (i + 2) % 3
+    s = 2.0 * math.sqrt(max(1.0 + m[i, i] - m[j, j] - m[k, k], 1e-12))
+    q = np.zeros(4)
+    q[0] = (m[k, j] - m[j, k]) / s
+    q[1 + i] = 0.25 * s
+    q[1 + j] = (m[j, i] + m[i, j]) / s
+    q[1 + k] = (m[k, i] + m[i, k]) / s
+    return q
+
+
 def _euler_xyz_to_quat(rx, ry, rz) -> np.ndarray:
     """Vectorized XYZ-order euler → quaternion (w,x,y,z), Gamebryo convention
     (R = Rz @ Ry @ Rx applied to row vectors, i.e. X then Y then Z)."""
@@ -400,6 +498,14 @@ def decode_kf(kf_path: str, fps: float = DEFAULT_FPS) -> list:
     return clips
 
 
+def decode_sequences(data, fps: float = DEFAULT_FPS) -> list:
+    """Decode every NiControllerSequence of already-read NIF data, one
+    DecodedClip each: a .kf's roots, or the sequences a NIF embeds under its
+    NiControllerManager (an animated door's Open and Close, a lamp's Idle)."""
+    return [_decode_sequence(block, fps) for block in data.blocks
+            if isinstance(block, NifFormat.NiControllerSequence)]
+
+
 def _decode_sequence(seq, fps: float) -> DecodedClip:
     start = float(seq.start_time)
     stop = float(seq.stop_time)
@@ -439,6 +545,10 @@ def _decode_sequence(seq, fps: float) -> DecodedClip:
                 trans, rots, scales = _sample_bspline(interp, times)
         elif isinstance(interp, NifFormat.NiTransformInterpolator):
             trans, rots, scales = _sample_transform_data(interp, times)
+        elif isinstance(interp, NifFormat.NiPathInterpolator):
+            # A node moved along a curve (circling birds): place, and with Follow the heading.
+            trans, rots = _sample_path(interp, times)
+            scales = None
         elif (isinstance(interp, NifFormat.NiBoolInterpolator)
               and _controlled_block_ctrl_type(cb)
               == 'NiVisController'):

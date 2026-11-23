@@ -250,3 +250,18 @@ def test_a_queued_jobs_replacement_keeps_its_place(tmp_path):
     queued.wait(timeout=30)
     running.wait(timeout=30)
     assert _held(newer_out)[1] < _held(scripts_out)[1]
+
+
+@_WINDOWS
+def test_another_projects_queue_never_waits_on_this_one(tmp_path):
+    """`use_queue` gives a process its own mutex and tickets: it holds its lock while this project's is held."""
+    running = _start(tmp_path, 4)
+    assert _held(running.stdout.readline())
+    other = tmp_path / "other"
+    source = ("import sys; sys.path.insert(0, {root!r}); import core.heavy_lock as h; "
+              "h.use_queue('Local\\OtherProjectHeavyJobTest', h.Path({holder!r}), 'OTHER_HEAVY_LOCK_HELD'); "
+              "print('held', h.hold_heavy_lock('other'), h.QUEUE_DIR, flush=True)"
+              ).format(root=str(ROOT), holder=str(other / "holder.txt"))
+    out = subprocess.run([sys.executable, "-c", source], capture_output=True, text=True, timeout=10).stdout
+    running.wait(timeout=30)
+    assert out.split()[:2] == ["held", "True"] and out.split()[2] == str(other / "heavy_queue")

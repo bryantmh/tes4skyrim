@@ -352,6 +352,17 @@ false**, and the gate hid a signal that was in the file the whole time.
   filtering — edit the two together or normals bind to the wrong faces**), and
   `_repair_inverted_floors` applies them before consulting the toggle at all.
 
+- **The navmesh extractor applies step 0 too** (`collision_extract._primitive_tris`,
+  2026-11-23). Every triangle it returns faces the side Havok collides on: a mesh
+  triangle by its stored normal (`_mesh_shape_tris`; per-triangle for packed data,
+  the per-vertex average with the same `_AUTHORED_NORMAL_MIN_LEN` test for strips),
+  a box, capsule, sphere or convex hull outward (`_outward`), and a mirroring
+  transform shape turned back. Its own classifier reads `abs(nz)`, so nothing here
+  changed; OBRConversion builds a one-sided Unreal navmesh from it. Over Nehrim's
+  interior collision meshes the topmost flat face mixed up and down faces in 1,629
+  of 3,926 meshes before, 25 after; built two-sided, the navmesh had walkable
+  floors inside every solid taller than an actor (`test_collision_extract_winding.py`).
+
 - **Steps 1-3 are INFERENCE and stay gated, because inference costs false
   positives.** Step 1 seeds each welded component from an arbitrary triangle and
   propagates that choice, so a component seeded inward inverts wholesale:

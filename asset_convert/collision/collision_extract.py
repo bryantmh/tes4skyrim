@@ -144,26 +144,93 @@ def _convex_hull_tris(pts):
         return _aabb_tris(min(xs), min(ys), min(zs), max(xs), max(ys), max(zs))
 
 
+def _facing(tri):
+    """A triangle's unnormalized face normal (its winding's facing)."""
+    (ax, ay, az), (bx, by, bz), (cx, cy, cz) = tri
+    ux, uy, uz, vx, vy, vz = bx - ax, by - ay, bz - az, cx - ax, cy - ay, cz - az
+    return (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+
+
+def _wound_to(tri, normal):
+    """`tri`, rewound when its winding faces against `normal` (None: as it is).
+
+    The same test as collision_winding's step 0: the normal must oppose the face by AUTHORED_NORMAL_DOT."""
+    from asset_convert.collision.collision_winding import AUTHORED_NORMAL_DOT
+    if normal is None:
+        return tri
+    f = _facing(tri)
+    fl = math.sqrt(f[0] ** 2 + f[1] ** 2 + f[2] ** 2)
+    nl = math.sqrt(normal[0] ** 2 + normal[1] ** 2 + normal[2] ** 2)
+    if fl < 1e-12 or nl < 1e-6:
+        return tri
+    dot = (f[0] * normal[0] + f[1] * normal[1] + f[2] * normal[2]) / (fl * nl)
+    return (tri[0], tri[2], tri[1]) if dot < AUTHORED_NORMAL_DOT else tri
+
+
+def _strip_normal(normals, tri):
+    """The authored normal of a strips triangle: its corners' normals averaged, None when the average is
+    too short to be this face's (a smoothed edge; collision._AUTHORED_NORMAL_MIN_LEN)."""
+    from asset_convert.collision.collision import _AUTHORED_NORMAL_MIN_LEN
+    if not normals or max(tri) >= len(normals):
+        return None
+    avg = [sum(normals[i][axis] for i in tri) / 3.0 for axis in range(3)]
+    return avg if math.sqrt(sum(v * v for v in avg)) >= _AUTHORED_NORMAL_MIN_LEN else None
+
+
 def _mesh_shape_tris(shape, s):
     """Game-unit triangles of a TES4 triangle-mesh shape; `s` is havok->game units.
 
+    Each is wound to face the way the file says it does: Havok collides with a mesh triangle on one side,
+    and Nehrim's packed strips lost the strip parity, so half a floor quad is wound backwards while its
+    stored normal still faces up (collision_winding step 0). The stored normal decides; a triangle
+    without a usable one keeps its winding.
     See: docs/commentary/asset_convert_collision.md#collision-extraction-scale
+    See: docs/commentary/asset_convert_collision.md#rewritten-2026-08-20-round-3--the-winding-is-authored-stop-inferring-it
     """
     data = getattr(shape, 'data', None)
     if data is not None and hasattr(data, 'triangles'):
         sc = getattr(shape, 'scale', None)
         f = [s * (getattr(sc, a, 1.0) or 1.0) for a in 'xyz']
-        groups = [([(v.x * f[0], v.y * f[1], v.z * f[2]) for v in data.vertices],
-                   [(t.triangle.v_1, t.triangle.v_2, t.triangle.v_3) for t in data.triangles])]
-    else:
-        k = s / TES4_HAVOK_TO_GAME
-        groups = [([(v.x * k, v.y * k, v.z * k) for v in sd.vertices], sd.get_triangles())
-                  for sd in (getattr(shape, 'strips_data', None) or ())]
-    return [tuple(pts[i] for i in tri) for pts, tris in groups for tri in tris if max(tri) < len(pts)]
+        pts = [(v.x * f[0], v.y * f[1], v.z * f[2]) for v in data.vertices]
+        out = []
+        for t in data.triangles:
+            tri = (t.triangle.v_1, t.triangle.v_2, t.triangle.v_3)
+            if max(tri) >= len(pts):
+                continue
+            n = getattr(t, 'normal', None)
+            # A normal turns by the inverse of the shape's scale.
+            n = None if n is None else tuple(c / k for c, k in zip((n.x, n.y, n.z), f))
+            out.append(_wound_to(tuple(pts[i] for i in tri), n))
+        return out
+    k = s / TES4_HAVOK_TO_GAME
+    out = []
+    for sd in (getattr(shape, 'strips_data', None) or ()):
+        pts = [(v.x * k, v.y * k, v.z * k) for v in sd.vertices]
+        normals = ([(n.x, n.y, n.z) for n in sd.normals]
+                   if getattr(sd, 'has_normals', False) and sd.normals else None)
+        out.extend(_wound_to(tuple(pts[i] for i in tri), _strip_normal(normals, tri))
+                   for tri in sd.get_triangles() if max(tri) < len(pts))
+    return out
+
+
+def _outward(tris):
+    """A convex solid's triangles each wound to face away from its centre (Havok's inside is solid)."""
+    if not tris:
+        return tris
+    corners = [p for tri in tris for p in tri]
+    centre = [sum(p[axis] for p in corners) / len(corners) for axis in range(3)]
+    out = []
+    for tri in tris:
+        f = _facing(tri)
+        away = [sum(p[axis] for p in tri) / 3.0 - centre[axis] for axis in range(3)]
+        out.append((tri[0], tri[2], tri[1]) if sum(a * b for a, b in zip(f, away)) < 0 else tri)
+    return out
 
 
 def _primitive_tris(shape, depth=0, scale=PRIM_TO_GAME):
-    """Game-unit triangles for a primitive, a TES4 mesh shape, or a list/transform of them."""
+    """Game-unit triangles for a primitive, a TES4 mesh shape, or a list/transform of them, each wound to
+    face the side Havok collides on: a mesh triangle by its authored normal (`_mesh_shape_tris`), a solid's
+    outward (`_outward`)."""
     if shape is None or depth > 6:
         return []
     n = type(shape).__name__
@@ -174,7 +241,7 @@ def _primitive_tris(shape, depth=0, scale=PRIM_TO_GAME):
     inner = _primitive_tris(getattr(shape, 'shape', None), depth + 1, scale)
     if n in ('bhkConvexTransformShape', 'bhkTransformShape'):
         return _transformed_tris(shape, inner, scale)
-    return _solid_tris(shape, n, scale)
+    return _outward(_solid_tris(shape, n, scale))
 
 
 def _transformed_tris(shape, inner, s):
@@ -185,8 +252,12 @@ def _transformed_tris(shape, inner, s):
         return inner
     m = ((t.m_11, t.m_12, t.m_13), (t.m_21, t.m_22, t.m_23), (t.m_31, t.m_32, t.m_33))
     tr = (t.m_14 * s, t.m_24 * s, t.m_34 * s)
-    return [tuple(tuple(sum(m[i][k] * p[k] for k in range(3)) + tr[i] for i in range(3)) for p in tri)
-            for tri in inner]
+    moved = [tuple(tuple(sum(m[i][k] * p[k] for k in range(3)) + tr[i] for i in range(3)) for p in tri)
+             for tri in inner]
+    # A mirroring matrix turns every winding around: turn it back so each still faces its own side.
+    det = (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+           + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+    return [(a, c, b) for a, b, c in moved] if det < 0 else moved
 
 
 def _solid_tris(shape, n, s):
@@ -565,6 +636,29 @@ def _body_placements(data):
         except Exception:
             continue
     return out
+
+
+def body_points(body, havok_to_game: float = PRIM_TO_GAME) -> list:
+    """Game-unit points of one rigid body's shape in its OWNING NODE's space
+    (placed by a bhkRigidBodyT's own transform), whatever its layer: the
+    corners of a body that a skeletal mesh's physics asset hangs on that
+    node's bone. [] for a body with no readable shape."""
+    from asset_convert.collision.cms import decode_cms
+
+    shape = getattr(body, 'shape', None)
+    while shape is not None and type(shape).__name__ == 'bhkMoppBvTreeShape':
+        shape = getattr(shape, 'shape', None)
+    if shape is not None and type(shape).__name__ == 'bhkCompressedMeshShape':
+        try:
+            tris = [tuple(tuple(v * CMS_TO_GAME for v in p) for p in tri)
+                    for (_key, tri) in decode_cms(shape.data)]
+        except Exception:
+            tris = []
+    else:
+        tris = _primitive_tris(shape, scale=havok_to_game)
+    points = [pt for tri in tris for pt in tri]
+    place = _body_transform(body, havok_to_game)
+    return [place(pt) for pt in points] if place else points
 
 
 def _body_transform(body, havok_to_game: float = CMS_TO_GAME):

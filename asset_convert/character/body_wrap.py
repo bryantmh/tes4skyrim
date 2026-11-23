@@ -525,19 +525,21 @@ def head_origin(src_skel, default):
     return default
 
 
-def _fit_head_gear(s, new_w, female, race, src_skel):
-    """`new_w` with head gear's head-weighted verts mapped through head_fit's scalp field.
+def _fit_head_gear(s, new_w, female, race, src_skel, destination=None):
+    """`new_w` with head gear's head-weighted verts mapped through head_fit's scalp field onto
+    `destination`'s head (Skyrim's by default).
 
     Verts are taken head-local about the SOURCE rig's head bone and blended by head-weight
     fraction; fitted verts are exempted from the clearance push (HF raised).
     See: docs/commentary/asset_convert_armor.md#head-gear-fit
     """
     m_head = (s.HW > 1e-3) & (s.HG > 0.5)
-    hfit = head_fit._get(female) if m_head.any() else None
+    field = head_fit.field_of(None if destination is None or destination.skyrim_heads else destination, female)
+    hfit = head_fit._get(female, field) if m_head.any() else None
     if hfit is None:
         return new_w
     o_src = head_origin(src_skel, hfit.o_ob)
-    delta = head_fit.field_deltas(s.PRE[m_head] - o_src, female, race=race)
+    delta = head_fit.field_deltas(s.PRE[m_head] - o_src, female, race=race, field=field)
     if delta is None:
         return new_w
     tgt = s.PRE[m_head] + (hfit.o_sk - o_src) + delta
@@ -628,7 +630,7 @@ def deform_geoms_wrap(skinned_geoms, skel_root, field, female: bool, weight: int
     _weld(s)
     new_w = s.VW + _field_corrections(field, s.VW, s.ABC, weight) * (1.0 - s.HF)[:, None]
     if 'head' in destination.groups:
-        new_w = _fit_head_gear(s, new_w, female, race, src_skel)
+        new_w = _fit_head_gear(s, new_w, female, race, src_skel, destination)
     target = _fitted_target(field, weight) if destination.hides_body else _exact_target(destination, female, weight)
     new_w = _push_clear(s, new_w, field, target, destination.hides_body)
     _write_back(s.metas, _group_mean(new_w, s.wg, s.n_g)[s.wg], skel_root)

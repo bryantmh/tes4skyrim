@@ -378,17 +378,17 @@ def _report(label, cur, fk_raw, tris, graph, target) -> None:
           f'p95={np.percentile(corr, 95):.2f} max={corr.max():.2f}')
 
 
-def _fit_group(gender, group, gd, fk_raw, skels, verbose, surfaces):
+def _fit_group(gender, group, gd, fk_raw, skels, verbose, surfaces, uv_seed=True):
     """([dst0, dst1], the _0 destination surface) for one group, or None without a target.
 
     `skels` is (source skeleton, destination skeleton, bone map). The head starts from the UV
-    correspondence instead of the FK pose.
+    correspondence with Skyrim's head instead of the FK pose, when `uv_seed`.
     See: docs/commentary/asset_convert_armor.md#body-wrap-armor-fitting
     """
     seed = _segment_scale(fk_raw.copy(), gd['bones'], *skels)
-    if group == 'head':
-        uv_seed = _uv_head_seed(gender, gd['v0'])
-        seed = uv_seed if uv_seed is not None else seed
+    if group == 'head' and uv_seed:
+        uv = _uv_head_seed(gender, gd['v0'])
+        seed = uv if uv is not None else seed
     wg = weld_groups(gd['v0'])
     n_g = int(wg.max()) + 1
     graph = (wg, n_g) + tuple(build_adjacency(gd['tris'], wg, n_g))
@@ -447,7 +447,8 @@ def _fit_all(gender, groups, posed, skels, verbose, destination):
         if len(posed[group]) != len(gd['v0']):
             print(f'  [{gender}/{group}] vert count mismatch T-pose vs FK')
             return None
-        fit = _fit_group(gender, group, gd, posed[group], fit_skels, verbose, destination.surfaces)
+        fit = _fit_group(gender, group, gd, posed[group], fit_skels, verbose, destination.surfaces,
+                         destination.skyrim_heads)
         if fit is None:
             return None
         (dst0, dst1), surface = fit
@@ -464,25 +465,28 @@ def _fit_all(gender, groups, posed, skels, verbose, destination):
     return acc, head
 
 
-def _apply_head_fit(acc, head, gender, skels, verbose) -> dict:
-    """head_fit's arrays, with the head rows of dst0/dst1 replaced by its field mapping.
+def _apply_head_fit(acc, head, gender, skels, verbose, destination) -> dict:
+    """head_fit's arrays onto `destination`'s head (about the bone Oblivion's head maps to), with the
+    head rows of dst0/dst1 replaced by its field mapping.
 
     See: docs/commentary/asset_convert_armor.md#head-gear-fit
     """
     if head is None:
         return {}
     hv0, htris, surface, slot = head
-    _src_skel, sk_skel, ob_skel = skels
+    src_skel, sk_skel, ob_skel = skels
+    head_bone = destination.bone_map(src_skel)['Bip01 Head']
     try:
         hf = head_fit.build_arrays(hv0, htris, surface, _OB_CHAR_DIR,
                                    o_ob=ob_skel['Bip01 Head'][3, :3],
-                                   o_sk=sk_skel['NPC Head [Head]'][3, :3], gender=gender)
+                                   o_sk=sk_skel[head_bone][3, :3], gender=gender,
+                                   destination=None if destination.skyrim_heads else destination)
     except Exception as e:
         traceback.print_exc()
         print(f'  [{gender}] head-fit arrays failed: {e}')
         return {}
     if 'hf_dv' in hf:
-        carrier = sk_skel['NPC Head [Head]'][3, :3] - ob_skel['Bip01 Head'][3, :3]
+        carrier = sk_skel[head_bone][3, :3] - ob_skel['Bip01 Head'][3, :3]
         head_dst = hv0 + carrier + hf['hf_dv'].astype(np.float64)[:len(hv0)]
         acc['dst0'][slot] = acc['dst1'][slot] = head_dst
         if verbose:
@@ -533,7 +537,7 @@ def build_field(gender: str, source: str = 'oblivion', verbose: bool = True, des
     if fit is None:
         return False
     acc, head = fit
-    hf = _apply_head_fit(acc, head, gender, skels, verbose)
+    hf = _apply_head_fit(acc, head, gender, skels, verbose, destination)
     _save(destination.fields(female, morrowind), acc, hf, 'head' in groups, verbose, label_key)
     return True
 

@@ -1310,6 +1310,17 @@ every Skyrim caller uses it unchanged.
   half way. Tried and reverted: also clearing each armor triangle's centre and edge midpoints (the
   remaining under-skin area is large flat triangles across body curves); it cut that area by under a
   tenth and made the run 2.5 minutes slower.
+- **The head fit onto another destination's head.** With a `head` group, `build_field` builds
+  [head_fit](#head-gear-fit)'s arrays onto the destination's own head surface, about the bone its map
+  gives `Bip01 Head`, with its body as the neck column; they are saved in the destination's field npz,
+  and `head_fit.fit_head_gear` / `field_deltas` / `fit_available` read another field by `field=`
+  (`head_fit.field_of(destination, female)`; None is Skyrim's, as every Skyrim caller passes). Skyrim's
+  own head data (the UV-correspondence seed against `malehead.nif`, the race-group morphs, the beast
+  race heads) is only taken where `Destination.skyrim_heads` (True for `SKYRIM`). Skyrim's male field
+  rebuilt after the change is array-identical (37 of 37 arrays); the head, hair and source-rig tests
+  pass (62). On Oblivion Remastered's head the field moves Oblivion's scalp by 1.3 units on average,
+  2.2 at most; its rigid horned helm then has 17 vertices more than 1 unit under the game's head skin
+  instead of 51, every one of them authored as far inside Oblivion's own head.
 
 ### Aimed limbs (`--aim`)
 <a id="aimed-limbs"></a>

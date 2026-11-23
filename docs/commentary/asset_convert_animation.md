@@ -663,6 +663,19 @@ type is not the animation gate; retyping itself is save-safe, see
 sequence's); a generated per-mesh graph instead of the shared one (works, but
 the shared one is what vanilla ships and what is verified live).
 
+### `NiPathInterpolator`: a node moved along a curve (2026-11-22)
+
+Nehrim's circling seagulls and ravens (`mr_siika/seagulls/seagullcircle*.nif`, `mr_siika/raven/*`) move
+their bird node with a `NiPathInterpolator`: path keys (`NiPosData`, quadratic: Hermite with each key's
+forward/backward tangents) and a percent curve (`NiFloatData`, 0 -> 1 over the sequence). Flags 56 =
+Bank | ConstantVelocity | Follow, follow axis Y: the bird flies at constant speed, nose along the path.
+Skyrim's NIFs keep the interpolator as authored, so nothing here sampled it; `kf_decode._sample_path`
+does now (for OBRConversion, which needs per-bone tracks): arc-length walk for ConstantVelocity, key
+times otherwise, Follow as a heading with Z kept up. A closed curve (no CurveTypeOpen flag) wraps its
+percent: the clockwise circler runs 0 -> -0.993 (flags 120, with Flip), which clamped would stand still. Banking is not applied (Gamebryo's bank formula
+is not in the references). pyffi names the fields `unknown_short` (flags), `unknown_short_2` (follow
+axis), `pos_data`, `float_data`.
+
 **`sae <event>` is the fastest first diagnostic** for any "animated object does
 nothing": empty reply = the graph is bound and knows the event; *"not processed
 by the graph"* = no such event or no graph. Then `python tools/live/nif_live.py

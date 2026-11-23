@@ -592,8 +592,9 @@ class Destination:
     """The rig and body a retarget lands on: rest `skeletons` {female: JSON}, `bone_map(source
     skeleton)`, `poses(source skeleton)` pose cache, wrap `fields(female, morrowind)` npz, target
     `surfaces(gender, group, weight)` -> (verts, tris), its wrap `groups`, `pose_body(data,
-    src_path, morrowind)` posing a reference body part unwrapped, and whether it `hides_body`
-    under worn gear.
+    src_path, morrowind)` posing a reference body part unwrapped, whether it `hides_body`
+    under worn gear, and whether its head fit also takes Skyrim's own head data (`skyrim_heads`:
+    the UV-correspondence seed, race-group head morphs and beast race heads, all Skyrim meshes).
     See: docs/commentary/asset_convert_armor.md#retarget-destinations
     """
 
@@ -605,6 +606,7 @@ class Destination:
     groups: tuple
     pose_body: Callable
     hides_body: bool
+    skyrim_heads: bool = True
 
 
 def load_animation_deltas(src_skel: dict = None, destination: Destination = None):

@@ -6,6 +6,7 @@ real root motion). Tests that need source assets or hkxcmd skip cleanly when
 they are absent.
 """
 
+import math
 import os
 import subprocess
 import sys
@@ -1953,3 +1954,40 @@ def test_mount_preloads_vanilla_paired_clips():
     assert ('1343509563', '2690022896', '7891816') in mount
     assert ('1343509563', '957333247', '7891816') in mount
     assert len(mount) == 3 and len(_preload_triples(base)) == 1
+
+
+def _path_interp(points, tangents, flags, axis=1, duration=4.0):
+    """A stand-in NiPathInterpolator: a closed path through `points` (Hermite tangents), swept 0 -> 1."""
+    from types import SimpleNamespace as NS
+    vec = lambda v: NS(x=v[0], y=v[1], z=v[2])
+    keys = [NS(time=i / (len(points) - 1), value=vec(p), forward=vec(t), backward=vec(t))
+            for i, (p, t) in enumerate(zip(points, tangents))]
+    pct = [NS(time=0.0, value=0.0), NS(time=duration, value=1.0)]
+    return NS(unknown_short=flags, unknown_short_2=axis, pos_data=NS(data=NS(keys=keys)),
+              float_data=NS(data=NS(keys=pct)))
+
+
+def test_path_interpolator_circles_and_follows():
+    """A 4-segment Hermite circle (the circling seagull's) is walked at constant speed, the node's Y axis
+    along the path (Follow), as Gamebryo plays NiPathInterpolator."""
+    from asset_convert.havok.kf_decode import _sample_path
+    r, k = 175.0, 175.0 * math.pi / 2 * 1.0434  # quarter-circle Hermite tangent
+    points = [(0, 0, 0), (r, -r, 0), (2 * r, 0, 0), (r, r, 0), (0, 0, 0)]
+    tangents = [(0, -k, 0), (k, 0, 0), (0, k, 0), (-k, 0, 0), (0, -k, 0)]
+    times = np.linspace(0.0, 4.0, 121)
+    trans, rots = _sample_path(_path_interp(points, tangents, 0x10 | 0x20), times)
+    radius = np.linalg.norm(trans - np.array([r, 0.0, 0.0]), axis=1)
+    assert radius.min() > 0.97 * r and radius.max() < 1.03 * r
+    w, x, y, z = rots.T
+    heading = np.stack([2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w)], axis=1)
+    travel = np.diff(trans, axis=0)
+    travel /= np.linalg.norm(travel, axis=1, keepdims=True)
+    assert np.einsum('ij,ij->i', heading[:-1], travel).min() > 0.95
+
+
+def test_path_interpolator_without_follow_keeps_rotation():
+    """An open curve without Follow: only the place moves, stopping at its end; no rotation channel."""
+    from asset_convert.havok.kf_decode import _sample_path
+    trans, rots = _sample_path(_path_interp([(0, 0, 0), (10, 0, 0)], [(10, 0, 0), (10, 0, 0)], 0x10 | 0x2),
+                               np.linspace(0.0, 4.0, 5))
+    assert rots is None and trans[0] == pytest.approx([0, 0, 0]) and trans[-1] == pytest.approx([10, 0, 0])
