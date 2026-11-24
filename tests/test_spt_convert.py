@@ -533,6 +533,7 @@ class TestFindOblivionExe:
         monkeypatch.setattr(source_paths, '_registry_path',
                             lambda game: registry if game == 'oblivion' else '')
         monkeypatch.setattr(source_paths, 'SCRIPT_DIR', tmp_path)
+        monkeypatch.setattr(source_paths, 'DATA_ROOT', tmp_path)
         (tmp_path / 'conversion_config.json').write_text(
             json.dumps({'tes4DataPath': configured}), encoding='utf-8')
         return spt_engine_geom.find_oblivion_exe(**given)

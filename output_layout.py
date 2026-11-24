@@ -160,9 +160,30 @@ def master_record_dir(export_dir, master: str) -> Path:
 #  One handle per plugin
 # ---------------------------------------------------------------------------
 
+#: Where the code and its bundled data are: this checkout, or TESRACT.exe's unpacked copy.
 REPO_ROOT = Path(__file__).resolve().parent
-DEFAULT_EXPORT = REPO_ROOT / "export"
-DEFAULT_OUTPUT = REPO_ROOT / "output"
+#: Set by the first TESRACT.exe process so every process it starts writes to the same folder.
+DATA_ROOT_ENV = "TESRACT_DATA_ROOT"
+
+
+def _data_root() -> Path:
+    """Where TESRACT writes (export/, output/, logs/, the config): beside TESRACT.exe, else this checkout.
+
+    See: docs/commentary/core_gui.md#single-exe
+    """
+    inherited = os.environ.get(DATA_ROOT_ENV)
+    if inherited:
+        return Path(inherited)
+    compiled = globals().get("__compiled__")
+    root = Path(compiled.containing_dir) if compiled is not None else REPO_ROOT
+    os.environ[DATA_ROOT_ENV] = str(root)
+    return root
+
+
+#: Where TESRACT writes; equal to REPO_ROOT when run from source.
+DATA_ROOT = _data_root()
+DEFAULT_EXPORT = DATA_ROOT / "export"
+DEFAULT_OUTPUT = DATA_ROOT / "output"
 
 
 def configured_output(saved) -> Path:
@@ -170,7 +191,7 @@ def configured_output(saved) -> Path:
 
     See: docs/reference/pipeline.md#the-config-file-is-per-install
     """
-    return REPO_ROOT / saved if saved else DEFAULT_OUTPUT
+    return DATA_ROOT / saved if saved else DEFAULT_OUTPUT
 
 
 def output_setting(out_root) -> str:

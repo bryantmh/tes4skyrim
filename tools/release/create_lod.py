@@ -43,7 +43,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from core.subprocess_flags import configure_multiprocessing
 from core.process_job import create_pool_job
 from core.heavy_lock import hold_heavy_lock
-from output_layout import assets_for
+from output_layout import DATA_ROOT, assets_for
 
 configure_multiprocessing()
 create_pool_job()
@@ -314,8 +314,8 @@ def main() -> int:
     from asset_convert.lod.esm_scan import formid_remap_table
 
     out_root = (Path(args.output_dir) if args.output_dir
-                else SCRIPT_DIR / "output")
-    export_root = SCRIPT_DIR / "export"
+                else DATA_ROOT / "output")
+    export_root = DATA_ROOT / "export"
     lod_dir = out_root / LOD_DIR_NAME
 
     _print_header(out_root, lod_dir, drop_staged_meshes(lod_dir))

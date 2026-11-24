@@ -7,6 +7,11 @@ export/
 output/
 logs/
 temp/
+# TESRACT.exe builds (tools/release/build_exe.py)
+/build/
+/TESRACT.exe
+/TESRACT.exe.old
+/.tesract/
 /references/
 # Private Python environment made by "TES Auto-Convert.cmd".
 /.venv/

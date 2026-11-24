@@ -112,7 +112,7 @@ def test_non_pipeline_paths_need_no_rerun(path):
 
 
 @pytest.mark.parametrize("path", [
-    "gui.py", "gui.pyw", "core/gui/app.py", "core/gui/panels.py",
+    "gui.py", "gui.pyw", "core/gui/window.py", "core/gui/ui/app.slint",
 ])
 def test_gui_change_is_reported_as_gui_only(path):
     """The GUI lives in core/gui/; a change there re-runs no pipeline step."""

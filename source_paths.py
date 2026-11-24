@@ -10,6 +10,8 @@ import json
 import os
 from pathlib import Path
 
+from output_layout import DATA_ROOT
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 #: Game -> the conversion_config.json key overriding its auto-detected path.
@@ -85,7 +87,7 @@ def load_config(config_path: str = None) -> dict:
         with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
     try:
-        with open(SCRIPT_DIR / "conversion_config.json", "r", encoding="utf-8") as f:
+        with open(DATA_ROOT / "conversion_config.json", "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return {}
@@ -119,7 +121,7 @@ def resolve_plugin_path(file_name: str, tes4_data: str,
     EVERY `os.path.join(tes4_data, name)` must go through here.
     See: docs/reference/pipeline.md#plugin-source-resolution
     """
-    export_dir = export_dir or str(SCRIPT_DIR / "export")
+    export_dir = export_dir or str(DATA_ROOT / "export")
     selected = os.path.join(tes4_data or "", file_name)
     in_selected = bool(tes4_data) and os.path.isfile(selected)
     return (_registered_source(export_dir, file_name, not in_selected)

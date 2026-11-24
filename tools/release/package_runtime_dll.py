@@ -41,7 +41,7 @@ from asset_convert.ui.menu_art import (ICON_SETS, MENU_ICONS_KEY, MENU_STYLE_KEY
                                        STYLES, effect_icons, menu_art, resolve)
 from asset_convert.ui.morrowind_menu_art import MissingArtError
 from asset_convert.ui.skyrim_skills import SKILL_TABLE, skill_table_text
-from output_layout import finished_dir, write_mod_zip
+from output_layout import DATA_ROOT, finished_dir, write_mod_zip
 from core.chargen_source import CHARGEN_SOURCE_KEY, SHARED_CHARGEN, shared_lines
 from tools.generators.gen_morrowind_chargen_swf import (BIRTH_MOVIE, CLASS_MOVIE,
                                                         birth_window, class_window)
@@ -58,10 +58,10 @@ MOD_NAME = "TESRuntime"
 SRC_DIR = SCRIPT_DIR / "tes_runtime"
 
 #: Where the pipeline's exports and the source registry live.
-EXPORT_ROOT = SCRIPT_DIR / "export"
+EXPORT_ROOT = DATA_ROOT / "export"
 
 #: The per-install settings the GUI writes; its `menuStyle` picks the menus' look.
-CONFIG_FILE = SCRIPT_DIR / "conversion_config.json"
+CONFIG_FILE = DATA_ROOT / "conversion_config.json"
 
 #: MorrowindRuntime's menus as the game loads them, each with the function that composes it.
 MENUS = ((Path("Interface") / "morrowind_dialogue.swf", dialogue_window),
@@ -222,7 +222,7 @@ def main() -> int:
                          "chargen menus show (default: the config's chargenSource)")
     args = ap.parse_args()
     out_root = (Path(args.output_dir) if args.output_dir
-                else SCRIPT_DIR / "output")
+                else DATA_ROOT / "output")
     style, icons = configured_choice()
     return package(out_root, args.mod, Path(args.export_root),
                    (args.menu_style or style, args.menu_icons or icons), args.chargen_source)

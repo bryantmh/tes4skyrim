@@ -1,0 +1,249 @@
+// Everything the Python side reads and writes. One global, so every screen and dialog binds to the
+// same values; the Python controllers own the logic and only set these properties.
+
+export struct RailStep { key: string, num: string, title: string, sub: string, state: string }
+export struct CheckItem { key: string, title: string, detail: string, status: string, tone: string, action: string, action2: string, highlight: bool, mono: bool }
+export struct GameRow { key: string, name: string, sub: string, status: string, tone: string }
+export struct PluginRow { name: string, origin: string, archive: bool, base: bool, parts: bool, status: string, tone: string, checked: bool, locked: bool }
+export struct ModeOpt { key: string, name: string, lines: string, need: string }
+export struct Lane { label: string, sub: string, start: float, end: float, state: string, selected: bool, done-mark: bool }
+export struct Tick { pos: float, label: string }
+export struct KV { k: string, v: string }
+export struct LogLine { text: string, tag: string }
+export struct LoadItem { key: string, title: string, detail: string, status: string, tone: string, include: bool, toggle: bool, tag: string, action: string }
+export struct WorldRow { name: string, plugins: string, status: string, tone: string }
+export struct InstallRow { order: string, name: string, detail: string, status: string, tone: string }
+export struct PickRow { name: string, detail: string, tag: string, checked: bool, enabled: bool }
+
+export global Ui {
+    // ---- Window
+    in-out property <string> view: "choose";
+    in-out property <string> dialog: "";
+    in-out property <string> version;
+    in-out property <string> update-version;
+    in-out property <[RailStep]> rail;
+    in-out property <image> banner;
+    in-out property <int> banner-x;
+    in-out property <int> banner-y;
+    in-out property <int> banner-w;
+    in-out property <int> banner-h;
+    in-out property <string> toast;
+    in-out property <bool> busy;
+    in-out property <string> status-step: "Ready";
+    in-out property <string> status-elapsed;
+    in-out property <string> status-left;
+    in-out property <string> output-path;
+    callback go(string);
+    callback open-dialog(string);
+    callback close-dialog();
+    callback theme-changed(string);
+    callback tick();
+
+    // ---- Setup
+    in-out property <[CheckItem]> skyrim-checks;
+    in-out property <[CheckItem]> tool-checks;
+    in-out property <[CheckItem]> place-checks;
+    in-out property <[string]> look-options;
+    in-out property <int> look;
+    in-out property <[string]> icon-options;
+    in-out property <int> icons;
+    in-out property <[string]> chargen-options;
+    in-out property <int> chargen;
+    callback setup-act(string, int);
+    callback recheck();
+    callback set-look(int);
+    callback set-icons(int);
+    callback set-chargen(int);
+
+    // ---- Choose
+    in-out property <[GameRow]> games;
+    in-out property <int> game: -1;
+    in-out property <string> game-name;
+    in-out property <string> game-path;
+    in-out property <string> game-mode;
+    in-out property <string> game-error;
+    in-out property <bool> ask-mode;
+    in-out property <[ModeOpt]> mode-options;
+    in-out property <int> pending-mode;
+    in-out property <string> mode-note;
+    in-out property <[PluginRow]> plugins;
+    in-out property <string> filter: "all";
+    in-out property <string> query;
+    in-out property <[string]> filter-labels;
+    in-out property <[string]> filter-keys;
+    in-out property <bool> scanning;
+    in-out property <string> go-title;
+    in-out property <string> go-sub;
+    in-out property <string> go-label;
+    in-out property <bool> go-enabled;
+    callback pick-game(int);
+    callback add-game();
+    callback remove-game();
+    callback set-filter(string);
+    callback set-query(string);
+    callback toggle-plugin(int, bool);
+    callback tick-shown(bool);
+    callback add-archive();
+    callback add-folder();
+    callback manage-mods();
+    callback plugin-parts(int);
+    callback use-mode(int);
+    callback start-run();
+
+    // ---- Convert
+    in-out property <string> run-title;
+    in-out property <string> run-time;
+    in-out property <float> run-frac;
+    in-out property <bool> running;
+    in-out property <bool> run-done;
+    in-out property <[Lane]> lanes;
+    in-out property <[Tick]> ticks;
+    in-out property <float> now-pos;
+    in-out property <string> now-label;
+    in-out property <string> skipped;
+    in-out property <string> detail-title;
+    in-out property <string> detail-status;
+    in-out property <string> detail-tone;
+    in-out property <string> detail-text;
+    in-out property <[KV]> detail-rows;
+    in-out property <[LogLine]> log;
+    in-out property <string> workers-text;
+    callback cancel-run();
+    callback run-again();
+    callback select-lane(int);
+    callback clear-log();
+    callback open-run-log();
+
+    // ---- Load order
+    in-out property <[LoadItem]> lo-items;
+    in-out property <[LoadItem]> lo-extras;
+    in-out property <[WorldRow]> worlds;
+    in-out property <string> lod-warn;
+    in-out property <string> build-label;
+    in-out property <bool> build-enabled;
+    callback lo-include(string, bool);
+    callback lo-action(string);
+    callback build-ready();
+    callback lod-update-waiting();
+    callback lod-build-anyway();
+
+    // ---- Install
+    in-out property <int> manager;
+    in-out property <[string]> manager-options;
+    in-out property <string> manager-where;
+    in-out property <[InstallRow]> installs;
+    in-out property <string> install-label;
+    in-out property <bool> install-enabled;
+    in-out property <string> launch-label;
+    callback set-manager(int);
+    callback install();
+    callback launch();
+    callback uninstall();
+    callback open-finished();
+
+    // ---- Dialogs: info and confirm
+    in-out property <string> info-title;
+    in-out property <string> info-text;
+    in-out property <string> confirm-title;
+    in-out property <string> confirm-text;
+    in-out property <string> confirm-yes;
+    in-out property <string> confirm-no;
+    callback confirm-answer(bool);
+
+    // ---- Dialog: list picker (masters, body patch, mesh folders, parts, Oblivion UI, added mods)
+    in-out property <string> pick-title;
+    in-out property <string> pick-blurb;
+    in-out property <[PickRow]> pick-rows;
+    in-out property <string> pick-warn;
+    in-out property <string> pick-ok;
+    in-out property <string> pick-extra;
+    in-out property <bool> pick-bulk: true;
+    callback pick-toggle(int, bool);
+    callback pick-all(bool);
+    callback pick-accept();
+    callback pick-extra-clicked();
+    callback pick-row-action(int);
+
+    // ---- Dialog: distant LOD
+    in-out property <[string]> lod-details;
+    in-out property <int> lod-detail;
+    in-out property <[PickRow]> lod-plugins;
+    in-out property <[PickRow]> lod-worlds;
+    in-out property <bool> lod-force;
+    in-out property <string> lod-why;
+    callback lod-set-detail(int);
+    callback lod-toggle-plugin(int, bool);
+    callback lod-move(int, int);
+    callback lod-toggle-world(int, bool);
+    callback lod-set-force(bool);
+    callback lod-reset();
+    callback lod-accept();
+    callback lod-pack-only();
+
+    // ---- Dialog: import a mod
+    in-out property <string> import-title;
+    in-out property <string> import-summary;
+    in-out property <string> import-target;
+    in-out property <[PickRow]> import-subs;
+    in-out property <[PickRow]> import-plugins;
+    in-out property <string> import-warn;
+    in-out property <bool> import-keep: true;
+    in-out property <string> import-keep-text;
+    callback import-toggle-sub(int, bool);
+    callback import-toggle-plugin(int, bool);
+    callback import-all(string, bool);
+    callback import-go();
+
+    // ---- Dialog: Morrowind mode change
+    in-out property <int> mode-choice;
+    in-out property <string> patch-state;
+    in-out property <bool> patch-rebuild;
+    callback mode-switch();
+
+    // ---- Dialog: advanced
+    in-out property <int> adv-tab;
+    in-out property <[PickRow]> adv-steps;
+    in-out property <string> adv-steps-note;
+    in-out property <string> mesh-folders;
+    in-out property <int> parallax;
+    in-out property <string> parallax-note;
+    in-out property <bool> tex-only;
+    in-out property <int> winding;
+    in-out property <int> navgen;
+    in-out property <bool> nav-cache;
+    in-out property <[string]> worker-options;
+    in-out property <int> workers;
+    in-out property <string> logs-kept;
+    in-out property <bool> pack-default;
+    callback adv-step(int, bool);
+    callback adv-steps-all(bool);
+    callback adv-auto();
+    callback adv-mesh-folders();
+    callback set-parallax(int);
+    callback set-tex-only(bool);
+    callback set-winding(int);
+    callback set-navgen(int);
+    callback set-nav-cache(bool);
+    callback set-workers(int);
+    callback set-logs-kept(string);
+    callback set-pack-default(bool);
+    callback open-folder(string);
+
+    // ---- Dialog: navmesh editor
+    in-out property <string> nav-url;
+    in-out property <string> nav-state;
+    in-out property <string> nav-tone;
+    in-out property <string> nav-last;
+    in-out property <string> pins-dir;
+    in-out property <string> nav-plugin;
+    callback nav-toggle();
+    callback nav-open();
+    callback nav-pins();
+    callback nav-import();
+
+    // ---- Dialog: about and versions
+    in-out property <string> about-version;
+    in-out property <[KV]> versions;
+    callback open-link(string);
+    callback check-updates();
+}

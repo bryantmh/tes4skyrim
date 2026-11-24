@@ -614,9 +614,18 @@ Otherwise the search order is the bundled `external/ffmpeg/` build first (see
 it is a known build with a known codec set, whereas whatever ffmpeg a user
 already has could be any version with any codecs compiled out.
 
-`need_decoder` skips a candidate that cannot decode that codec. The bundled
-build is deliberately minimal (`--disable-everything`), so one predating a
-source format decodes nothing rather than falling back -- FO3/FNV voice is Ogg
-Vorbis where Oblivion's is MP3, and without this every one of FalloutNV.esm's
-52,896 `.ogg` lines failed with "Invalid data found when processing input".
-The codec check lets such a run fall through to a PATH ffmpeg that can read it.
+On Windows the bundled build is returned without being run. It ships with
+every install and checkout, and test-running it (`-version`, then
+`-decoders`, each with a 10 s limit) is what made the window's Setup screen
+report ffmpeg "missing" twice on 2026-11-23 while the file sat there intact; the
+cause of those failed runs was never reproduced. Preflight no longer checks
+ffmpeg at all for the same reason: it is part of the install, not something the
+user provides.
+
+`need_decoder` applies only to a PATH ffmpeg. The bundled build is
+deliberately minimal (`--disable-everything`) but enables every decoder the
+pipeline reads (`tools/generators/build_ffmpeg.py`: mp3, vorbis, the PCM and
+ADPCM WAV codecs) -- FO3/FNV voice is Ogg Vorbis where Oblivion's is MP3, and a
+build once predated Vorbis, which failed every one of FalloutNV.esm's 52,896
+`.ogg` lines with "Invalid data found when processing input". Rebuild the
+bundled copy when a new source codec is added.

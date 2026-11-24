@@ -1,0 +1,306 @@
+// Step 2: pick a game, then the plugins in it. A Morrowind game asks for its mode first.
+
+import { ListView, LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Ui } from "state.slint";
+import { Btn, Box, Divider, SectionLabel, Heading, Muted, Pill, Tick, Chip } from "widgets.slint";
+
+component GameCard {
+    in property <string> name;
+    in property <string> sub;
+    in property <string> status;
+    in property <string> tone;
+    in property <bool> selected;
+    callback clicked();
+    width: 210px;
+    height: 96px;
+    Rectangle {
+        border-radius: Theme.r-md;
+        border-width: selected ? 2px : 1px;
+        border-color: selected ? Theme.accent : (touch.has-hover ? Theme.muted : Theme.line);
+        background: Theme.surface;
+    }
+    VerticalLayout {
+        padding: 14px;
+        spacing: 4px;
+        Text { text: name; font-family: Theme.display-font; font-size: 20px; color: Theme.fg; overflow: elide; }
+        Text { text: sub; font-size: 12.5px; color: Theme.muted; overflow: elide; }
+        HorizontalLayout { alignment: start; Pill { text: status; tone: tone; } }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component ModeAsk {
+    Rectangle {
+        border-radius: Theme.r-lg;
+        border-width: 1px;
+        border-color: Theme.accent;
+        background: Theme.surface-2;
+    }
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+        Text { text: "How should Morrowind be converted?"; font-family: Theme.display-font; font-size: 22px; color: Theme.fg; }
+        Muted { text: "Applies to Morrowind.esm, Tribunal, Bloodmoon and every Morrowind mod."; }
+        HorizontalLayout {
+            spacing: 12px;
+            for opt[i] in Ui.mode-options: Rectangle {
+                border-radius: Theme.r-md;
+                border-width: i == Ui.pending-mode ? 2px : 1px;
+                border-color: i == Ui.pending-mode ? Theme.accent : Theme.line;
+                background: Theme.surface;
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 6px;
+                    Text { text: opt.name; font-weight: 600; font-size: 15px; color: Theme.fg; }
+                    Text { text: opt.lines; font-size: 13px; color: Theme.muted; wrap: word-wrap; }
+                    Text { text: opt.need; font-size: 12.5px; color: Theme.fg; wrap: word-wrap; }
+                }
+                TouchArea { mouse-cursor: pointer; clicked => { Ui.pending-mode = i; } }
+            }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            Btn {
+                text: Ui.mode-options.length > 0 ? "Use " + Ui.mode-options[Ui.pending-mode].name : "Use";
+                kind: "primary";
+                enabled: Ui.game-error == "";
+                clicked => { Ui.use-mode(Ui.pending-mode); }
+            }
+            Muted { text: Ui.mode-note; vertical-alignment: center; }
+        }
+    }
+}
+
+component PluginList {
+    Box {
+        VerticalLayout {
+            Rectangle {
+                height: 34px;
+                background: Theme.surface-2;
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 12px;
+                    Tick { y: (parent.height - 18px) / 2; checked: false; toggled(on) => { Ui.tick-shown(on); } }
+                    Text { text: "PLUGIN"; color: Theme.muted; font-size: 11px; font-weight: 600; vertical-alignment: center; width: 45%; }
+                    Text { text: "FROM"; color: Theme.muted; font-size: 11px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 2; preferred-width: 0px; }
+                    Text { text: "STATUS"; color: Theme.muted; font-size: 11px; font-weight: 600; vertical-alignment: center; width: 130px; }
+                }
+            }
+            Divider { }
+            ListView {
+                height: 330px;
+                for row[i] in Ui.plugins: Rectangle {
+                    height: 38px;
+                    background: row.locked ? Theme.accent-soft : transparent;
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        Tick {
+                            y: (parent.height - 18px) / 2;
+                            checked: row.checked;
+                            enabled: !row.locked;
+                            toggled(on) => { Ui.toggle-plugin(i, on); }
+                        }
+                        HorizontalLayout {
+                            width: 45%;
+                            alignment: start;
+                            spacing: 8px;
+                            Text { text: row.name; font-family: Theme.mono-font; font-size: 12.5px; color: Theme.fg; vertical-alignment: center; overflow: elide; }
+                            if row.base: Rectangle {
+                                width: base-tag.preferred-width + 12px;
+                                height: 18px;
+                                y: (parent.height - 18px) / 2;
+                                border-radius: Theme.r-sm;
+                                border-width: 1px;
+                                border-color: Theme.line;
+                                base-tag := Text { text: "base game"; font-size: 11px; color: Theme.muted; }
+                            }
+                        }
+                        HorizontalLayout {
+                            horizontal-stretch: 2;
+                            preferred-width: 0px;
+                            alignment: start;
+                            spacing: 6px;
+                            if row.archive: Rectangle {
+                                width: arch-tag.preferred-width + 12px;
+                                height: 18px;
+                                y: (parent.height - 18px) / 2;
+                                border-radius: Theme.r-sm;
+                                border-width: 1px;
+                                border-color: Theme.line;
+                                arch-tag := Text { text: "archive"; font-size: 11px; color: Theme.muted; }
+                            }
+                            Text { text: row.origin; font-size: 12.5px; color: Theme.muted; vertical-alignment: center; overflow: elide; }
+                            if row.parts: Btn { text: "Parts"; kind: "link"; small: true; clicked => { Ui.plugin-parts(i); } }
+                        }
+                        VerticalLayout { width: 130px; alignment: center; HorizontalLayout { alignment: start; Pill { text: row.status; tone: row.tone; } } }
+                    }
+                    Divider { y: 0; width: parent.width; visible: i > 0; }
+                }
+            }
+        }
+    }
+}
+
+export component ChooseView {
+    ScrollView {
+        content-width: self.visible-width;
+        VerticalLayout {
+            alignment: start;
+            padding: 32px;
+            padding-top: 24px;
+            spacing: 12px;
+            Heading { text: "Choose"; }
+            HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                width: 36px;
+                alignment: center;
+                padding-bottom: 16px;
+                Btn {
+                    text: "‹";
+                    visible: strip.content-width > strip.visible-width;
+                    enabled: strip.content-x < 0;
+                    clicked => { strip.content-x = min(0px, strip.content-x + 444px); }
+                }
+            }
+            strip := ScrollView {
+                height: 112px;
+                content-width: cards.preferred-width;
+                content-height: 96px;
+                cards := HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                for g[i] in Ui.games: GameCard {
+                    name: g.name;
+                    sub: g.sub;
+                    status: g.status;
+                    tone: g.tone;
+                    selected: i == Ui.game;
+                    clicked => { Ui.pick-game(i); }
+                }
+                Rectangle {
+                    width: 160px;
+                    height: 96px;
+                    border-radius: Theme.r-md;
+                    border-width: 1.5px;
+                    border-color: Theme.line;
+                    VerticalLayout {
+                        alignment: center;
+                        Text { text: "Add a game"; font-weight: 600; horizontal-alignment: center; color: Theme.fg; }
+                        Text { text: "Its Data folder"; font-size: 12.5px; horizontal-alignment: center; color: Theme.muted; }
+                    }
+                    TouchArea { mouse-cursor: pointer; clicked => { Ui.add-game(); } }
+                }
+                }
+            }
+            VerticalLayout {
+                width: 36px;
+                alignment: center;
+                padding-bottom: 16px;
+                Btn {
+                    text: "›";
+                    visible: strip.content-width > strip.visible-width;
+                    enabled: strip.content-x > strip.visible-width - strip.content-width;
+                    clicked => { strip.content-x = max(strip.visible-width - strip.content-width, strip.content-x - 444px); }
+                }
+            }
+            }
+            if Ui.game >= 0: HorizontalLayout {
+                spacing: 12px;
+                padding-top: 12px;
+                Text { text: Ui.game-name; font-family: Theme.display-font; font-size: 22px; color: Theme.fg; vertical-alignment: center; }
+                Text { text: Ui.game-path; font-family: Theme.mono-font; font-size: 12.5px; color: Theme.muted; vertical-alignment: center; overflow: elide; }
+                if Ui.game-mode != "": HorizontalLayout {
+                    horizontal-stretch: 0;
+                    spacing: 8px;
+                    alignment: center;
+                    Rectangle {
+                        horizontal-stretch: 0;
+                        height: 26px;
+                        border-radius: 13px;
+                        border-width: 1px;
+                        border-color: Theme.accent;
+                        background: Theme.accent-soft;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            Text { text: Ui.game-mode; color: Theme.accent; font-weight: 600; font-size: 12.5px; vertical-alignment: center; }
+                        }
+                    }
+                    Btn { text: "Change"; small: true; clicked => { Ui.open-dialog("mode"); } }
+                }
+                Btn { text: "Remove from list"; kind: "link"; small: true; clicked => { Ui.remove-game(); } }
+            }
+            if Ui.game-error != "": Rectangle {
+                border-radius: Theme.r-md;
+                border-width: 1px;
+                border-color: Theme.bad;
+                background: Theme.bad-soft;
+                HorizontalLayout {
+                    padding: 12px;
+                    padding-left: 16px;
+                    spacing: 12px;
+                    Text { text: Ui.game-error; color: Theme.bad; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
+                    Btn { text: "Supported versions"; small: true; clicked => { Ui.open-dialog("versions"); } }
+                }
+            }
+            if Ui.ask-mode: ModeAsk { }
+            if Ui.game >= 0 && !Ui.ask-mode: VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit {
+                        placeholder-text: "Search plugins";
+                        text: Ui.query;
+                        edited(t) => { Ui.set-query(t); }
+                        min-width: 200px;
+                    }
+                    for label[i] in Ui.filter-labels: Chip {
+                        text: label;
+                        active: Ui.filter == Ui.filter-keys[i];
+                        clicked => { Ui.set-filter(Ui.filter-keys[i]); }
+                    }
+                }
+                if Ui.scanning: Muted { text: "Reading plugins…"; }
+                PluginList { }
+                Rectangle {
+                    border-radius: Theme.r-md;
+                    border-width: 1.5px;
+                    border-color: Theme.line;
+                    HorizontalLayout {
+                        padding: 12px;
+                        padding-left: 16px;
+                        spacing: 12px;
+                        Muted { text: "Drop a .7z, .zip, .rar or a mod folder here to add it to " + Ui.game-name + ". Installers with options ask which parts to use."; vertical-alignment: center; }
+                        Btn { text: "Add mod archive"; small: true; clicked => { Ui.add-archive(); } }
+                        Btn { text: "Add mod folder"; small: true; clicked => { Ui.add-folder(); } }
+                        Btn { text: "Manage added mods"; kind: "link"; small: true; clicked => { Ui.manage-mods(); } }
+                    }
+                }
+                Rectangle {
+                    border-radius: Theme.r-md;
+                    background: Theme.accent-soft;
+                    HorizontalLayout {
+                        padding: 16px;
+                        spacing: 16px;
+                        VerticalLayout {
+                            alignment: center;
+                            Text { text: Ui.go-title; font-family: Theme.display-font; font-size: 22px; color: Theme.fg; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Muted { text: Ui.go-sub; vertical-alignment: center; }
+                                Btn { text: "Steps and options"; kind: "link"; small: true; clicked => { Ui.open-dialog("advanced"); } }
+                            }
+                        }
+                        VerticalLayout { alignment: center; horizontal-stretch: 0; Btn { text: Ui.go-label; kind: "primary"; enabled: Ui.go-enabled && !Ui.running; clicked => { Ui.start-run(); } } }
+                    }
+                }
+            }
+        }
+    }
+}

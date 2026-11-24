@@ -1,8 +1,8 @@
 """What the window reads before it can draw: tables, settings, disk, children.
 
-Four leaf concerns with one thing in common -- none of them touch tkinter, so
+Four leaf concerns with one thing in common -- none of them touch the window, so
 this module imports no GUI toolkit and `gui.py` can re-export from it without
-dragging Tk into a headless import (tests/test_version_upgrade.py depends on
+dragging Slint into a headless import (tests/test_version_upgrade.py depends on
 that).
 
 The pipeline STEPS/GLOBAL_ACTIONS tables live here because the runner, the
@@ -35,47 +35,13 @@ from core import process_job
 from core.collision_options import default_for_plugin as _winding_default
 from core.run_log import DEFAULT_RUNS_KEPT
 from core.subprocess_flags import configure_multiprocessing
-from output_layout import asset_root
+from output_layout import DATA_ROOT, asset_root
 
 #: The repo root: this file is `<root>/core/gui/config.py`.
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-CONFIG_FILE = REPO_ROOT / "conversion_config.json"
-EXPORT_DIR = REPO_ROOT / "export"
-
-
-#: Every color the window uses; the teal `global_btn` marks non-pipeline
-CLR = {
-    "bg":           "#1e1e2e",
-    "panel":        "#2a2a3d",
-    "border":       "#44475a",
-    "accent":       "#7c6af7",
-    "accent_hover": "#9a8cf8",
-    "btn":          "#313244",
-    "btn_hover":    "#45475a",
-    "green":        "#a6e3a1",
-    "red":          "#f38ba8",
-    "yellow":       "#f9e2af",
-    "blue":         "#89dceb",
-    "text":         "#cdd6f4",
-    "subtext":      "#6c7086",
-    "log_bg":       "#141420",
-    "log_fg":       "#cdd6f4",
-    "log_info":     "#89b4fa",
-    "log_ok":       "#a6e3a1",
-    "log_err":      "#f38ba8",
-    "log_warn":     "#f9e2af",
-    "check_on":     "#7c6af7",
-    "check_off":    "#44475a",
-    "gold":         "#c9a35c",
-    "gold_hover":   "#ddb96f",
-    "global_btn":   "#26404a",
-    "global_hover": "#325764",
-}
-
-
-#: Loaded HICONs; freeing one blanks the taskbar button.
-ICON_HANDLES = []
+CONFIG_FILE = DATA_ROOT / "conversion_config.json"
+EXPORT_DIR = DATA_ROOT / "export"
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +99,7 @@ NAVMESH_GENERATOR_CONFIG_KEY = "navmeshGenerator"
 NAVMESH_PINS_CONFIG_KEY = "navmeshPinsDir"
 
 #: That folder until the user picks another: beside the app, so an update never replaces it.
-DEFAULT_NAVMESH_PINS_DIR = REPO_ROOT / "my_navmesh_pins"
+DEFAULT_NAVMESH_PINS_DIR = DATA_ROOT / "my_navmesh_pins"
 
 
 def navmesh_pins_dir(cfg=None) -> str:
@@ -494,37 +460,6 @@ def scan_mesh_subdirs(file_name: str) -> list:
     if not mesh_dir.is_dir():
         return []
     return sorted(d.name for d in mesh_dir.iterdir() if d.is_dir())
-
-
-def parse_dropped_paths(data: str) -> list:
-    """Split a tkdnd <Drop> payload into real filesystem paths.
-
-    tkdnd hands over a Tcl list: paths with spaces are wrapped in braces
-    ("{C:/My Mods/a.zip} C:/b.zip"), and a single unbraced path may still
-    contain spaces. Tk's own splitlist applies the quoting rules correctly but
-    needs a widget to call through, so this is the manual fallback.
-    """
-    if not data:
-        return []
-    out, buf, depth = [], '', 0
-    for ch in data:
-        if ch == '{':
-            depth += 1
-            if depth == 1:
-                continue
-        elif ch == '}':
-            depth -= 1
-            if depth == 0:
-                out.append(buf)
-                buf = ''
-                continue
-        elif ch == ' ' and depth == 0:
-            out.append(buf)
-            buf = ''
-            continue
-        buf += ch
-    out.append(buf)
-    return [p for p in (s.strip() for s in out) if p]
 
 
 # ---------------------------------------------------------------------------

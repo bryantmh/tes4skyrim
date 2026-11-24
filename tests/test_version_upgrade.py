@@ -881,6 +881,7 @@ def _imported_group(tmp_path, monkeypatch, plugs, label='My Pack'):
     """Point version.py at a temp root holding an imported multi-plugin mod."""
     import json
     monkeypatch.setattr(v, "SCRIPT_DIR", tmp_path)
+    monkeypatch.setattr(v, "DATA_ROOT", tmp_path)
     monkeypatch.setattr(v, "STATE_FILE", tmp_path / ".conversion_state.json")
     exp = tmp_path / "export"
     exp.mkdir(parents=True, exist_ok=True)

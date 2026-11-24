@@ -1,0 +1,104 @@
+// Step 4: what is built once for every converted game together, and distant LOD per worldspace.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Ui, LoadItem } from "state.slint";
+import { Btn, Box, Divider, SectionLabel, Heading, Muted, Pill, Tick } from "widgets.slint";
+
+component ItemList {
+    in property <[LoadItem]> items;
+    Box {
+        VerticalLayout {
+            for item[i] in items: VerticalLayout {
+                if i > 0: Divider { }
+                HorizontalLayout {
+                    padding: 12px;
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 12px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Text { text: item.title; font-weight: 600; color: Theme.fg; vertical-alignment: center; }
+                            if item.tag != "": Pill { text: item.tag; tone: "info"; }
+                        }
+                        Text { text: item.detail; font-size: 13px; color: Theme.muted; wrap: word-wrap; }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 10px;
+                        horizontal-stretch: 0;
+                        if item.toggle: HorizontalLayout {
+                            spacing: 6px;
+                            Tick { y: (parent.height - 18px) / 2; checked: item.include; toggled(on) => { Ui.lo-include(item.key, on); } }
+                            Text { text: "Include"; font-size: 13px; color: Theme.fg; vertical-alignment: center; }
+                        }
+                        VerticalLayout { alignment: center; Pill { text: item.status; tone: item.tone; } }
+                        if item.action != "": Btn { text: item.action; small: true; clicked => { Ui.lo-action(item.key); } }
+                    }
+                }
+                if item.key == "lod": VerticalLayout {
+                    padding: 12px;
+                    padding-top: 0px;
+                    spacing: 8px;
+                    Box {
+                        VerticalLayout {
+                            for w[j] in Ui.worlds: VerticalLayout {
+                                if j > 0: Divider { }
+                                HorizontalLayout {
+                                    padding: 8px;
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 12px;
+                                    Text { text: w.name; color: Theme.fg; font-size: 13px; horizontal-stretch: 2; preferred-width: 0px; vertical-alignment: center; overflow: elide; }
+                                    Text { text: w.plugins; color: Theme.muted; font-size: 12.5px; horizontal-stretch: 3; preferred-width: 0px; vertical-alignment: center; overflow: elide; }
+                                    Pill { text: w.status; tone: w.tone; }
+                                }
+                            }
+                        }
+                    }
+                    if Ui.lod-warn != "": Rectangle {
+                        border-radius: Theme.r-md;
+                        background: Theme.warn-soft;
+                        HorizontalLayout {
+                            padding: 10px;
+                            padding-left: 12px;
+                            spacing: 8px;
+                            Text { text: Ui.lod-warn; font-size: 13px; color: Theme.fg; wrap: word-wrap; vertical-alignment: center; }
+                            Btn { text: "Update them"; small: true; clicked => { Ui.lod-update-waiting(); } }
+                            Btn { text: "Build anyway"; small: true; clicked => { Ui.lod-build-anyway(); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component LoadOrderView {
+    ScrollView {
+        content-width: self.visible-width;
+        VerticalLayout {
+            alignment: start;
+            padding: 32px;
+            padding-top: 24px;
+            spacing: 8px;
+            HorizontalLayout {
+                VerticalLayout {
+                    Heading { text: "Load order"; }
+                    Muted { text: "Built once for every converted game together."; }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    Btn { text: Ui.build-label; kind: "primary"; enabled: Ui.build-enabled && !Ui.running; clicked => { Ui.build-ready(); } }
+                }
+            }
+            ItemList { items: Ui.lo-items; }
+            SectionLabel { text: "OPTIONAL"; }
+            ItemList { items: Ui.lo-extras; }
+        }
+    }
+}

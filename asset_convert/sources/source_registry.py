@@ -49,6 +49,8 @@ from pathlib import Path
 
 REGISTRY_NAME = 'sources.json'
 REGISTRY_VERSION = 2
+#: Registry key: Data folders the user removed, which discovery must not list again.
+REMOVED_KEY = 'removed_directories'
 
 # Subfolder of export/<plugin>/ holding the plugin binary and the retained
 # archive. Deliberately not the export root: `_source` can never collide with
@@ -208,11 +210,11 @@ def label_for_directory(path) -> str:
     """A short human name for a Data folder.
 
     'D:/Other Games/Nehrim At Fate's Edge/Data' -> 'Nehrim At Fate's Edge'.
-    The parent of `Data` is the install name, which is what distinguishes two
-    directories in a list; the literal word "Data" never does.
+    The parent of `Data` (Morrowind's `Data Files`) is the install name, which
+    is what distinguishes two directories in a list; the folder's own name never does.
     """
     p = Path(str(path).rstrip('/\\'))
-    if p.name.lower() == 'data' and p.parent.name:
+    if p.name.lower() in ('data', 'data files') and p.parent.name:
         return p.parent.name
     return p.name or str(path)
 
@@ -224,29 +226,34 @@ def add_directory(export_dir, path, label=None) -> bool:
         return False
     data = load(export_dir)
     rows = data.setdefault('directories', [])
-    key = os.path.normcase(os.path.normpath(path))
-    for row in rows:
-        existing = row.get('path') if isinstance(row, dict) else row
-        if os.path.normcase(os.path.normpath(str(existing))) == key:
-            return False
+    key = _norm(path)
+    removed = data.get(REMOVED_KEY) or []
+    data[REMOVED_KEY] = [p for p in removed if p != key]
+    if any(_norm(row.get('path') if isinstance(row, dict) else row) == key for row in rows):
+        if len(data[REMOVED_KEY]) != len(removed):
+            save(export_dir, data)
+        return False
     rows.append({'path': path, 'label': label or label_for_directory(path)})
     save(export_dir, data)
     return True
 
 
 def remove_directory(export_dir, path) -> bool:
-    """Unregister a Data directory. The folder itself is never touched."""
+    """Unregister a Data directory and keep discovery from listing it again; the folder is never touched."""
     data = load(export_dir)
     rows = data.get('directories') or []
-    key = os.path.normcase(os.path.normpath(str(path)))
-    kept = [r for r in rows
-            if os.path.normcase(os.path.normpath(
-                str(r.get('path') if isinstance(r, dict) else r))) != key]
-    if len(kept) == len(rows):
-        return False
-    data['directories'] = kept
+    key = _norm(path)
+    data['directories'] = [r for r in rows if _norm(r.get('path') if isinstance(r, dict) else r) != key]
+    removed = data.setdefault(REMOVED_KEY, [])
+    if key not in removed:
+        removed.append(key)
     save(export_dir, data)
     return True
+
+
+def removed_directories(export_dir) -> set:
+    """Normalized paths of the Data folders the user removed."""
+    return set(load(export_dir).get(REMOVED_KEY) or [])
 
 
 def _norm(path) -> str:
@@ -359,8 +366,9 @@ def migrate_known_directories(export_dir, extra_dirs=(),
         except Exception:
             pass
 
+    hidden = removed_directories(export_dir)
     added = 0
-    for path in candidates:
+    for path in [p for p in candidates if _norm(p.strip()) not in hidden]:
         path = path.strip()
         # Only register folders that still exist AND hold plugins: a stale
         # entry from a moved install would otherwise sit in the list forever.
@@ -382,11 +390,12 @@ def all_sources(export_dir, extra_dirs=()) -> list:
     Directories first (in registration order), then imported mods newest
     first. `extra_dirs` are paths to include even if unregistered -- the
     configured tes4DataPath, so a fresh install with an empty registry still
-    shows its game folder.
+    shows its game folder -- unless the user removed them; they come after
+    the registered ones, so the order never depends on the game picked last.
     """
     out = []
-    seen = set()
-    for path in list(extra_dirs) + [r['path'] for r in directories(export_dir)]:
+    seen = removed_directories(export_dir)
+    for path in [r['path'] for r in directories(export_dir)] + list(extra_dirs):
         path = str(path or '').strip()
         if not path:
             continue

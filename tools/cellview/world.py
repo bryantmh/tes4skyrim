@@ -26,6 +26,7 @@ import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from core.python_cmd import python_cmd
 from core.navmesh_options import set_edge_pins_only, set_keep_flood
 from core.subprocess_flags import POPEN_FLAGS
 from tes5_import.base.navmesh_pins import PARTS, build_pins, hand_edits_for, load
@@ -206,7 +207,7 @@ def _worker(plugin, key):
         return got[1]
     if got:
         got[1].kill()
-    proc = subprocess.Popen([sys.executable, '-u', os.path.abspath(__file__), '--serve', plugin],
+    proc = subprocess.Popen(python_cmd(os.path.abspath(__file__), '--serve', plugin),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, errors='replace', **POPEN_FLAGS)
     _WORKERS[plugin] = (key, proc)
@@ -228,7 +229,7 @@ def _ask(proc, cell, path, key):
 def _make(plugin, path, key, cell):
     """Build into `path`: an interior in the plugin's worker, the whole plugin in a process of its own."""
     if not cell:
-        _run_build([sys.executable, os.path.abspath(__file__), plugin, path, key])
+        _run_build(python_cmd(os.path.abspath(__file__), plugin, path, key))
         return
     with _WORKER_LOCK:
         _ask(_worker(plugin, key), cell, path, key)

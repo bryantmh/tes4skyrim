@@ -1,0 +1,129 @@
+// Step 1: what this PC has. Checked at every start; shown first until everything needed is found.
+
+import { ScrollView, ComboBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Ui, CheckItem } from "state.slint";
+import { Btn, Box, Divider, SectionLabel, Heading, Muted, Seg, CheckLine } from "widgets.slint";
+
+component CheckList {
+    in property <[CheckItem]> items;
+    Box {
+        VerticalLayout {
+            for item[i] in items: VerticalLayout {
+                if i > 0: Divider { }
+                CheckLine {
+                    title: item.title;
+                    detail: item.detail;
+                    status: item.status;
+                    tone: item.tone;
+                    action: item.action;
+                    action2: item.action2;
+                    highlight: item.highlight;
+                    mono-detail: item.mono;
+                    act(n) => { Ui.setup-act(item.key, n); }
+                }
+            }
+        }
+    }
+}
+
+component Choice {
+    in property <string> title;
+    in property <string> detail;
+    in property <[string]> options;
+    in property <int> current;
+    // More options than this become a dropdown, which never runs off the window.
+    in property <int> seg-max: 3;
+    callback selected(int);
+    HorizontalLayout {
+        padding: 12px;
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text { text: title; color: Theme.fg; font-weight: 600; }
+            Text { text: detail; color: Theme.muted; font-size: 12.5px; wrap: word-wrap; }
+        }
+        if options.length > 0 && options.length <= seg-max: Seg { options: options; current: current; selected(i) => { root.selected(i); } }
+        if options.length > seg-max: ComboBox {
+            horizontal-stretch: 0;
+            min-width: 220px;
+            model: options;
+            current-index: current;
+            selected => { root.selected(self.current-index); }
+        }
+        if options.length == 0: Text { text: "No converted game yet"; color: Theme.muted; vertical-alignment: center; }
+    }
+}
+
+export component SetupView {
+    ScrollView {
+        content-width: self.visible-width;
+        VerticalLayout {
+            alignment: start;
+            padding: 32px;
+            padding-top: 24px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 16px;
+                VerticalLayout {
+                    Heading { text: "Setup"; }
+                    Muted { text: "Checked at every start."; }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Btn { text: "Check again"; clicked => { Ui.recheck(); } }
+                    Btn { text: "Continue"; kind: "primary"; clicked => { Ui.go("choose"); } }
+                }
+            }
+            if Ui.update-version != "": Box {
+                tint: Theme.info-soft;
+                edge: Theme.info;
+                CheckLine {
+                    title: "TESRACT " + Ui.update-version + " is available";
+                    detail: "You have " + Ui.version;
+                    action: "Update";
+                    action2: "Release notes";
+                    act(n) => { Ui.setup-act("update", n); }
+                }
+            }
+            SectionLabel { text: "SKYRIM"; }
+            CheckList { items: Ui.skyrim-checks; }
+            SectionLabel { text: "CONVERTING"; }
+            CheckList { items: Ui.tool-checks; }
+            SectionLabel { text: "MENUS IN GAME"; }
+            Box {
+                VerticalLayout {
+                    Choice {
+                        title: "Look";
+                        detail: "Dialogue, stats and level-up menus, shared by every converted game";
+                        options: Ui.look-options;
+                        current: Ui.look;
+                        selected(i) => { Ui.set-look(i); }
+                    }
+                    Divider { }
+                    Choice {
+                        title: "Icons";
+                        detail: "From a game you have installed";
+                        options: Ui.icon-options;
+                        current: Ui.icons;
+                        selected(i) => { Ui.set-icons(i); }
+                    }
+                    Divider { }
+                    Choice {
+                        title: "Classes and birthsigns";
+                        detail: "One class menu and one birthsign menu for all games";
+                        options: Ui.chargen-options;
+                        current: Ui.chargen;
+                        selected(i) => { Ui.set-chargen(i); }
+                    }
+                }
+            }
+            SectionLabel { text: "OUTPUT AND MOD MANAGER"; }
+            CheckList { items: Ui.place-checks; }
+        }
+    }
+}

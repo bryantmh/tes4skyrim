@@ -33,7 +33,7 @@ from tools.validate import code_rules_ast as D
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 #: Scratch, vendored and generated trees are not judged.
-SKIP_PARTS = ('temp', 'references', 'external', 'output', 'export', 'build',
+SKIP_PARTS = ('temp', 'references', 'external', 'output', 'export', 'build', '.tesract',
               '.git', 'node_modules', '__pycache__', '.venv')
 
 #: Dataflow facts, not heuristics: ruff reports these with no false positives.

@@ -18,12 +18,10 @@ See: docs/commentary/tes_runtime_journal.md#journal-stage-text
 import glob
 import os
 import struct
-import threading
 
 from asset_convert.sources.bsa_extract import read_bsa_files
-from asset_convert.sources.skyrim_assets import find_skyrim_data
 from asset_convert.ui.journal_patch import is_patched, patch_movie
-from core.gui.config import CLR, scan_skyrim_load_order
+from core.gui.config import scan_skyrim_load_order
 from output_layout import finished_dir, write_mod_zip
 
 #: The journal movies: vanilla's and SkyUI's, and Quest Journal Overhaul's.
@@ -125,15 +123,15 @@ def build_journal_mod(data_dir: str, out_root) -> tuple:
 
 
 def report_status(outcomes: list) -> tuple:
-    """The dialog's (headline, color): any failure wins, then any patch."""
+    """The (headline, tone) of a build: any failure wins, then any patch."""
     if FAILED in outcomes:
-        return 'Build Failed', CLR['red']
+        return 'Build Failed', 'bad'
     if PATCHED in outcomes:
-        return 'Built Successfully', CLR['green']
-    return 'Nothing Patched', CLR['yellow']
+        return 'Built Successfully', 'good'
+    return 'Nothing Patched', 'warn'
 
 
-def _report_body(results: list, zip_path) -> str:
+def report_body(results: list, zip_path) -> str:
     """The dialog text: one line per movie, then where the mod went."""
     body = '\n'.join(line for _, line in results)
     if zip_path is None:
@@ -143,22 +141,3 @@ def _report_body(results: list, zip_path) -> str:
             'Clicking an objective then shows the journal text its stage had; '
             'click it again for the current text. Needs TESRuntime.dll, '
             'and works for objectives shown after it was installed.')
-
-
-def run_patch(app) -> None:
-    """The menu command: build on a worker, then report on the UI thread."""
-    data_dir = app.tes5_var.get().strip() or find_skyrim_data()
-    if not data_dir or not os.path.isdir(data_dir):
-        app.info(MOD_NAME, 'Could not find the Skyrim Special Edition Data '
-                           'folder. Set the Skyrim SE Data Directory first.')
-        return
-    out_root = app.out_root()
-
-    def _worker():
-        """Build, then hop back: tkinter is not thread-safe."""
-        results, zip_path = build_journal_mod(data_dir, out_root)
-        status = report_status([outcome for outcome, _ in results])
-        body = _report_body(results, zip_path)
-        app.root.after(0, lambda: app.info(MOD_NAME, body, status=status))
-
-    threading.Thread(target=_worker, daemon=True).start()

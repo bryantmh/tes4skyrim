@@ -5032,7 +5032,7 @@ Oblivion, Nehrim and Morroblivion creatures are authored above it (up to
 **Code:** `plugin/chargen_menu.cpp`, `plugin/chargen_tables.cpp`;
 `core/chargen_source.py`, `script_convert/context_setup.chargen_records`,
 `message_menus.build_chargen_menus`; `tes5_import/actors/attribute_tables.chargen_lines`;
-`tools/release/package_runtime_dll.chargen_table`; `core/gui/morrowind.add_chargen_menu`;
+`tools/release/package_runtime_dll.chargen_table`; `core/gui/morrowind.menu_choices`;
 `tools/generators/gen_morrowind_chargen_swf.py`.
 
 Two windows of our own, built like the level-up dialog: a class menu

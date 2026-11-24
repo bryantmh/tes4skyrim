@@ -1443,8 +1443,9 @@ uncovered** (was 2.5% uncovered / 2452 broken pathgrid edges with contours).
   NAVI has NO EDID; order is `NVER(=12), NVMI…, NVPP(empty: two 0 counts)`.
 - **Exterior PGRD/REFR point coords are WORLD coords** (not cell-local) → LAND
   origin = `grid_x*4096, grid_y*4096`.
-- **Dependencies**: `numpy` + `scipy` (Delaunay); `mapbox_earcut` used when
-  present (fallback ear-clipper otherwise). `shapely` is no longer needed.
+- **Dependencies**: `numpy` + `scipy` (Delaunay). The ear-clipping fallback is
+  mapbox's C++ `earcut.hpp`, compiled into `_navgrow_native`; the Python
+  `mapbox_earcut` package is no longer used or required.
 - **Performance**: geometry is cached across runs (see Geometry cache above),
   so repeat imports pay ~ms per cell. Cold builds: the 2026-07-15 pass cut
   per-cell CPU ~33% on a 65-cell mix (Wendir02 13.6s→6.1s) by vectorizing

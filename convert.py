@@ -61,7 +61,7 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
 
-from output_layout import (BODY_SLOTS_PATCH, configured_output, finished_dir,
+from output_layout import (BODY_SLOTS_PATCH, DATA_ROOT, configured_output, finished_dir,
                            paths, plugin_out_root, record_dir, tree_members,
                            write_mod_zip)
 from papyrus_compile import phase_compile
@@ -73,6 +73,8 @@ from tes4_export.morrowind_patch import (
 from core.plugin_masters import (binary_master_chain, get_masters_from_binary,
                                  is_master_export, topological_order)
 import core.run_log as run_log
+from core.phase_info import PHASE_INFO
+from core.python_cmd import python_cmd
 
 
 # Papyrus batch compilation (see phase_compile).  An error line from
@@ -531,7 +533,7 @@ def phase_extract(file_name: str, tes4_data: str, config: dict,
       * everything else extracts the BSAs sitting beside the plugin, in
         whichever registered Data directory holds it.
     """
-    extract_dir = str(SCRIPT_DIR / "export")
+    extract_dir = str(DATA_ROOT / "export")
     if file_name == PATCH_NAME:
         print(f"[{file_name}] Its Export step extracts the assets it ships")
         return True
@@ -580,7 +582,7 @@ def _use_plugin_namespace(file_name: str) -> str:
     """
     from asset_convert.game_paths import namespace_for, set_namespace
     from asset_convert.nif import morroblivion_textures
-    rec_dir = record_dir(str(SCRIPT_DIR / "export"), file_name)
+    rec_dir = record_dir(str(DATA_ROOT / "export"), file_name)
     ns = namespace_for(rec_dir)
     set_namespace(ns)
     morroblivion_textures.activate(rec_dir)
@@ -604,8 +606,8 @@ def phase_assets(file_name: str, config: dict, output_dir: str = None,
     _use_plugin_namespace(file_name)
     from asset_convert.asset_pipeline import convert_meshes
 
-    extract_dir = str(SCRIPT_DIR / "export")
-    out_dir     = output_dir or str(SCRIPT_DIR / "output")
+    extract_dir = str(DATA_ROOT / "export")
+    out_dir     = output_dir or str(DATA_ROOT / "output")
 
     if winding_fix is None:
         winding_fix = default_for_plugin(file_name)
@@ -662,8 +664,8 @@ def phase_speedtrees(file_name: str, config: dict, output_dir: str = None):
     _use_plugin_namespace(file_name)
     from asset_convert.asset_pipeline import convert_speedtrees
 
-    extract_dir = str(SCRIPT_DIR / "export")
-    out_dir     = output_dir or str(SCRIPT_DIR / "output")
+    extract_dir = str(DATA_ROOT / "export")
+    out_dir     = output_dir or str(DATA_ROOT / "output")
 
     # Branches come from Oblivion's own SpeedTree code by DEFAULT.  It needs a
     # configured Oblivion.exe plus the committed native/dist harness; when
@@ -704,12 +706,12 @@ def phase_creatures(file_name: str, tes5_data: str, config: dict,
     _use_plugin_namespace(file_name)
     from asset_convert.havok.creature_pipeline import convert_creatures
 
-    export_root = str(SCRIPT_DIR / "export")
+    export_root = str(DATA_ROOT / "export")
     export_subdir = str(record_dir(export_root, file_name))
     if not os.path.isdir(export_subdir):
         print(f"[{file_name}] No export directory, skipping creatures")
         return False
-    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    out_root = Path(output_dir) if output_dir else DATA_ROOT / "output"
     out_meshes = str(plugin_out_root(out_root, file_name, export_root)
                      / "meshes")
 
@@ -748,7 +750,7 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
 
     _install_navmesh_cache(file_name, config)
 
-    out_root = output_dir or str(SCRIPT_DIR / "output")
+    out_root = output_dir or str(DATA_ROOT / "output")
     os.makedirs(out_root, exist_ok=True)
     # Every plugin gets its own output folder (output/<plugin>/<plugin>), which
     # is also where the asset/mesh pipeline writes. Create it unconditionally:
@@ -817,8 +819,8 @@ def phase_sounds(file_name: str, config: dict, output_dir: str = None,
     _use_plugin_namespace(file_name)
     from asset_convert.asset_pipeline import convert_sounds
 
-    extract_dir = str(SCRIPT_DIR / "export")
-    out_dir     = output_dir or str(SCRIPT_DIR / "output")
+    extract_dir = str(DATA_ROOT / "export")
+    out_dir     = output_dir or str(DATA_ROOT / "output")
 
     print(f"[{file_name}] Converting sounds to XWM...")
     stats = convert_sounds(
@@ -864,13 +866,13 @@ def phase_scripts(file_name: str, config: dict, output_dir: str = None):
     from script_convert.pipeline import convert_all_scripts
     from tes5_import.base.artifact_schema import StaleArtifactError
 
-    export_root = str(SCRIPT_DIR / "export")
+    export_root = str(DATA_ROOT / "export")
     export_subdir = str(record_dir(export_root, file_name))
     if not os.path.isdir(export_subdir):
         print(f"[{file_name}] No export directory, skipping scripts")
         return False
 
-    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    out_root = Path(output_dir) if output_dir else DATA_ROOT / "output"
     if file_name == PATCH_NAME:
         staged = stage_pair_scripts(export_root, out_root)
         print(f"[{file_name}] Staged {staged} split-pair child script(s)")
@@ -919,13 +921,12 @@ def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
     if not plugin_paths:
         print("WARNING: none of the selected plugins were found - body-slot patch not generated")
         return True
-    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    out_root = Path(output_dir) if output_dir else DATA_ROOT / "output"
     stage = out_root / f"_{BODY_SLOTS_PATCH}"
     shutil.rmtree(stage, ignore_errors=True)
     ret = subprocess.run(
-        [sys.executable, str(SCRIPT_DIR / "tools" / "creature" / "patch_body_slots.py"),
-         *plugin_paths, "-o", str(stage / f"{BODY_SLOTS_PATCH}.esp"),
-         "--meshes-root", str(stage / "meshes")],
+        python_cmd(SCRIPT_DIR / "tools" / "creature" / "patch_body_slots.py",
+                   *plugin_paths, "-o", stage / f"{BODY_SLOTS_PATCH}.esp", "--meshes-root", stage / "meshes"),
         cwd=str(SCRIPT_DIR), capture_output=True, text=True, **_POPEN_FLAGS)
     print(ret.stdout + ret.stderr, end="")
     if ret.returncode == 0:
@@ -947,9 +948,9 @@ def phase_pack(file_name: str, config: dict, output_dir: str = None):
     """
     from asset_convert.sources.bsa_pack import pack_bsas
 
-    out_dir = output_dir or str(SCRIPT_DIR / "output")
+    out_dir = output_dir or str(DATA_ROOT / "output")
     bsarch  = config.get("bsarchPath") or None
-    export_root = str(SCRIPT_DIR / "export")
+    export_root = str(DATA_ROOT / "export")
     export_dir = record_dir(export_root, file_name)
 
     print(f"[{file_name}] Packing BSAs...")
@@ -984,9 +985,9 @@ def phase_pack_zip(file_name: str, config: dict, output_dir: str = None):
     """
     from asset_convert.sources.bsa_pack import LOOSE_ONLY_DIRS
 
-    out_root = Path(output_dir) if output_dir else SCRIPT_DIR / "output"
+    out_root = Path(output_dir) if output_dir else DATA_ROOT / "output"
     src_root = plugin_out_root(out_root, file_name,
-                               str(SCRIPT_DIR / "export"))
+                               str(DATA_ROOT / "export"))
     if not src_root.is_dir():
         print(f"[{file_name}] Source not found: {src_root}, skipping zip pack")
         return False
@@ -1039,7 +1040,7 @@ def _run_pipeline():
     tes4_data = args.data_dir or tes4_data
     source_registry.select_directory(tes4_data)
     output_dir = args.output_dir or str(configured_output(config.get("outputDir")))
-    export_dir = str(SCRIPT_DIR / "export")
+    export_dir = str(DATA_ROOT / "export")
     os.makedirs(export_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -1117,24 +1118,6 @@ def _preflight(steps):
     return preflight.RC_MISSING_DEP
 
 
-#: step -> (banner, version-record key, scope). 'plugin' skips asset-only mods; 'global' runs once.
-_PHASE_INFO = {
-    'export': ("Phase 1: EXPORT TES4 RECORDS", 'export', 'plugin'),
-    'extract': ("Phase 2: EXTRACT TES4 ARCHIVES", 'extract', 'all'),
-    'meshes': ("Phase 3: CONVERT MESHES AND TEXTURES", 'meshes', 'all'),
-    'speedtrees': ("Phase 4: CONVERT SPEEDTREES", 'speedtrees', 'all'),
-    'creatures': ("Phase 5: CONVERT CREATURES", 'creatures', 'plugin'),
-    'import': ("Phase 6: BUILD TES5 PLUGIN", 'import_', 'plugin'),
-    'sounds': ("Phase 7: CONVERT SOUNDS", 'sounds', 'all'),
-    'scripts': ("Phase 8: CONVERT SCRIPTS", 'scripts', 'plugin'),
-    'lod': ("GENERATE LOD", 'create_lod', 'global'),
-    'skyrim_patch': ("Phase 10: PATCH SKYRIM (BODY SLOTS)", 'modify_body_meshes',
-                     'global'),
-    'pack_bsa': ("Phase 11: PACK BSA ARCHIVES", 'pack', 'all'),
-    'pack_zip': ("Phase 12: PACK ZIP ARCHIVES", 'pack_zip', 'all'),
-}
-
-
 def _phase_runners(run) -> dict:
     """step -> callable(plugin) -> ok, bound to this run's paths and options."""
     a, cfg, out = run.args, run.config, run.output_dir
@@ -1204,7 +1187,7 @@ def _run_steps(steps, order, run) -> tuple:
     runners = _phase_runners(run)
     step_ok, success = {}, True
     for step in steps:
-        title, key, scope = _PHASE_INFO[step]
+        title, key, scope = PHASE_INFO[step]
         targets = _phase_targets(scope, order, asset_only)
         if not targets:
             continue
@@ -1225,8 +1208,7 @@ def _create_lod(output_dir) -> bool:
     Tiles sit on a fixed grid keyed by worldspace and coordinate, so `-f`
     cannot narrow the bake to one plugin.
     """
-    cmd = [sys.executable, "-u",
-           str(SCRIPT_DIR / "tools" / "release" / "create_lod.py")]
+    cmd = python_cmd(SCRIPT_DIR / "tools" / "release" / "create_lod.py")
     if output_dir:
         cmd += ["--output-dir", str(output_dir)]
     return subprocess.call(cmd, **_POPEN_FLAGS) == 0
@@ -1310,7 +1292,7 @@ def main():
         "Command": " ".join(["convert.py"] + sys.argv[1:]),
     }
     log = (None if _is_informational_argv() or os.environ.get(SUPERVISED_ENV_VAR)
-           else run_log.start_cli_run(SCRIPT_DIR / "logs", config, header))
+           else run_log.start_cli_run(DATA_ROOT / "logs", config, header))
     code = 1
     try:
         code = _run_pipeline()

@@ -28,7 +28,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from asset_convert.lod.sibling_lod import LOD_DIR_NAME
-from output_layout import finished_dir, tree_members, write_mod_zip
+from output_layout import DATA_ROOT, finished_dir, tree_members, write_mod_zip
 
 
 def package(out_root: Path) -> int:
@@ -74,7 +74,7 @@ def main() -> int:
                     help="Output directory (default: output/ in project root)")
     args = ap.parse_args()
     out_root = (Path(args.output_dir) if args.output_dir
-                else SCRIPT_DIR / "output")
+                else DATA_ROOT / "output")
     return package(out_root)
 
 

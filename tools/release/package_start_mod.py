@@ -23,7 +23,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from output_layout import finished_dir, tree_members, write_mod_zip
+from output_layout import DATA_ROOT, finished_dir, tree_members, write_mod_zip
 from tools.release.make_game_select_esp import build as build_start_mod
 from tools.release.make_nehrim_no_start_patch import PATCH_NAME as DEV_PATCH_NAME
 
@@ -75,7 +75,7 @@ def main() -> int:
                     help="Output directory (default: output/ in project root)")
     args = ap.parse_args()
     out_root = (Path(args.output_dir) if args.output_dir
-                else SCRIPT_DIR / "output")
+                else DATA_ROOT / "output")
     return package(out_root)
 
 

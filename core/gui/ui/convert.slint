@@ -1,0 +1,187 @@
+// Step 3: the run. One lane per step, bars on a shared time axis, the selected step's details, the log.
+
+import { ListView, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Ui } from "state.slint";
+import { Btn, Box, Divider, Heading, Muted, Pill } from "widgets.slint";
+
+component Timeline {
+    property <length> name-w: 200px;
+    Box {
+        VerticalLayout {
+            Rectangle {
+                height: 28px;
+                background: Theme.surface-2;
+                for t in Ui.ticks: Text {
+                    x: root.name-w + (parent.width - root.name-w) * t.pos + 4px;
+                    y: 6px;
+                    text: t.label;
+                    font-size: 11px;
+                    color: Theme.muted;
+                }
+                Text { x: 12px; y: 6px; text: "Step"; font-size: 11px; color: Theme.muted; }
+            }
+            for lane[i] in Ui.lanes: Rectangle {
+                height: 46px;
+                Divider { y: 0; width: parent.width; }
+                Rectangle {
+                    x: 0;
+                    width: root.name-w;
+                    background: lane.selected ? Theme.accent-soft : transparent;
+                    VerticalLayout {
+                        padding-left: 12px;
+                        alignment: center;
+                        Text {
+                            text: (lane.done-mark ? "✓  " : "") + lane.label;
+                            font-size: 13px;
+                            font-weight: 600;
+                            color: lane.state == "skip" ? Theme.muted : Theme.fg;
+                        }
+                        Text { text: lane.sub; font-size: 11.5px; color: Theme.muted; overflow: elide; }
+                    }
+                    TouchArea { mouse-cursor: pointer; clicked => { Ui.select-lane(i); } }
+                }
+                Rectangle { x: root.name-w; width: 1px; background: Theme.line; }
+                for t in Ui.ticks: Rectangle {
+                    x: root.name-w + (parent.width - root.name-w) * t.pos;
+                    width: 1px;
+                    background: Theme.line;
+                    opacity: 0.6;
+                }
+                if lane.state == "skip": Text {
+                    x: root.name-w + 10px;
+                    y: (parent.height - self.height) / 2;
+                    text: "Up to date, skipped";
+                    font-size: 12px;
+                    color: Theme.muted;
+                }
+                if lane.state != "skip" && lane.end > lane.start: Rectangle {
+                    x: root.name-w + (parent.width - root.name-w) * lane.start;
+                    width: max(4px, (parent.width - root.name-w) * (lane.end - lane.start) - 2px);
+                    y: 9px;
+                    height: 28px;
+                    border-radius: 5px;
+                    border-width: 1px;
+                    border-color: Theme.line;
+                    background: lane.state == "done" ? Theme.lane-done : lane.state == "run" ? Theme.accent : Theme.sunken;
+                    clip: true;
+                    Text {
+                        x: 6px;
+                        text: lane.state == "run" ? "Running" : lane.state == "done" ? "" : "Queued";
+                        font-size: 11px;
+                        color: lane.state == "run" ? Theme.accent-fg : Theme.muted;
+                        vertical-alignment: center;
+                        height: parent.height;
+                    }
+                }
+            }
+            Rectangle { height: 0px; }
+        }
+        if Ui.running: Rectangle {
+            x: root.name-w + (parent.width - root.name-w) * Ui.now-pos;
+            width: 2px;
+            background: Theme.bad;
+            Text { x: 5px; y: 4px; text: Ui.now-label; font-size: 11px; font-weight: 600; color: Theme.bad; }
+        }
+    }
+}
+
+export component ConvertView {
+    VerticalLayout {
+        padding: 32px;
+        padding-top: 24px;
+        spacing: 12px;
+        HorizontalLayout {
+            Heading { text: "Convert"; }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                if Ui.running: Btn { text: "Cancel"; kind: "danger"; clicked => { Ui.cancel-run(); } }
+                if !Ui.running && Ui.lanes.length > 0: Btn { text: "Run again"; clicked => { Ui.run-again(); } }
+            }
+        }
+        if Ui.lanes.length == 0: Box {
+            VerticalLayout {
+                padding: 24px;
+                spacing: 8px;
+                Text { text: "Nothing is running."; color: Theme.fg; font-weight: 600; }
+                Muted { text: "Choose a game and its plugins, then start converting."; }
+                HorizontalLayout { alignment: start; Btn { text: "Choose"; kind: "primary"; clicked => { Ui.go("choose"); } } }
+            }
+        }
+        if Ui.lanes.length > 0: Box {
+            tint: Theme.surface-2;
+            HorizontalLayout {
+                padding: 16px;
+                spacing: 16px;
+                VerticalLayout {
+                    spacing: 6px;
+                    HorizontalLayout {
+                        Text { text: Ui.run-title; font-weight: 600; font-size: 15px; color: Theme.fg; overflow: elide; }
+                        Text { text: Ui.run-time; color: Theme.muted; horizontal-alignment: right; }
+                    }
+                    Rectangle {
+                        height: 8px;
+                        border-radius: 4px;
+                        background: Theme.sunken;
+                        Rectangle { x: 0; width: parent.width * Ui.run-frac; border-radius: 4px; background: Theme.accent; }
+                    }
+                }
+                if Ui.run-done: Btn { text: "Next: load order"; kind: "primary"; clicked => { Ui.go("loadorder"); } }
+                if !Ui.run-done: Text { text: Ui.workers-text; color: Theme.muted; vertical-alignment: center; }
+            }
+        }
+        if Ui.lanes.length > 0: Timeline { }
+        if Ui.skipped != "": Muted { text: Ui.skipped; }
+        HorizontalLayout {
+            spacing: 16px;
+            vertical-stretch: 1;
+            if Ui.lanes.length > 0: Box {
+                width: 320px;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+                    alignment: start;
+                    HorizontalLayout {
+                        Text { text: Ui.detail-title; font-weight: 600; font-size: 15px; color: Theme.fg; }
+                        HorizontalLayout { alignment: end; Pill { text: Ui.detail-status; tone: Ui.detail-tone; } }
+                    }
+                    Muted { text: Ui.detail-text; }
+                    for kv in Ui.detail-rows: HorizontalLayout {
+                        Text { text: kv.k; color: Theme.muted; font-size: 13px; }
+                        Text { text: kv.v; color: Theme.fg; font-size: 13px; horizontal-alignment: right; wrap: word-wrap; }
+                    }
+                }
+            }
+            VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    Text { text: "Log"; font-weight: 600; font-size: 13px; color: Theme.fg; vertical-alignment: center; }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+                        Btn { text: "Clear"; small: true; clicked => { Ui.clear-log(); } }
+                        Btn { text: "Full log"; small: true; clicked => { Ui.open-run-log(); } }
+                    }
+                }
+                Box {
+                    tint: Theme.sunken;
+                    min-height: 200px;
+                    log-view := ListView {
+                        property <int> count: Ui.log.length;
+                        changed count => { self.content-y = min(0px, self.visible-height - self.content-height); }
+                        for line in Ui.log: Text {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            text: line.text;
+                            color: Theme.log-color(line.tag);
+                            font-family: Theme.mono-font;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

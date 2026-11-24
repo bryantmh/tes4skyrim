@@ -24,6 +24,8 @@ import sys
 import sysconfig
 from pathlib import Path
 
+from output_layout import DATA_ROOT
+
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
 # convert.py exits with this when a phase is missing a dependency.  Distinct
@@ -129,7 +131,7 @@ def _has_imported_mods() -> bool:
     """
     try:
         from asset_convert.sources import source_registry
-        return bool(source_registry.plugins(SCRIPT_DIR / 'export'))
+        return bool(source_registry.plugins(DATA_ROOT / 'export'))
     except Exception:
         return False
 
@@ -196,27 +198,6 @@ def _bundled_exe(rel: str, name: str, purpose: str,
             '`brew install --cask wine-stable`)',
             f'{name} is present at {path}, but off Windows it needs wine to run')
     return None
-
-
-def _ffmpeg() -> 'Missing | None':
-    """ffmpeg ships with the repo (external/ffmpeg/), so absence is a broken
-    checkout rather than a missing user install -- same as the other bundled
-    exes.  PATH is still searched as a fallback, so a user who deleted the
-    bundled copy but has their own ffmpeg keeps working.  The build must
-    decode Vorbis, the codec of every FO3/FNV voice line."""
-    from asset_convert.audio.audio_converter import find_ffmpeg
-    if find_ffmpeg(need_decoder='vorbis'):
-        return None
-    return Missing(
-        'ffmpeg',
-        'Decoding MP3/WAV/Ogg Vorbis audio before re-encoding',
-        'This binary ships with the repo. Restore it:\n'
-        'git checkout -- external/ffmpeg/ffmpeg.exe\n'
-        '(if that does not restore it, your antivirus may have quarantined '
-        'it)\n'
-        'Or rebuild it: python tools/generators/build_ffmpeg.py\n'
-        'Or install any ffmpeg on your PATH: winget install Gyan.FFmpeg',
-    )
 
 
 def _xwmaencode() -> 'Missing | None':
@@ -355,8 +336,6 @@ _REQUIREMENTS = {
         lambda: _pip('numpy', 'numpy', 'Navmesh geometry'),
         lambda: _pip('scipy', 'scipy', 'Navmesh triangulation'),
         lambda: _pip('shapely', 'shapely', 'Navmesh corridor boolean union'),
-        lambda: _pip('mapbox_earcut', 'mapbox_earcut',
-                     'Navmesh triangulation fallback when Delaunay fails'),
         lambda: _pip('pyffi', 'PyFFI', 'Reading converted meshes for collision '
                                        'and OBND bounds'),
         lambda: _native_missing('_navgrow_native',
@@ -365,7 +344,6 @@ _REQUIREMENTS = {
     ],
 
     'sounds': [
-        _ffmpeg,
         _xwmaencode,
         _lipgenerator,
     ],

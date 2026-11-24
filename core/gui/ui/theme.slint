@@ -1,0 +1,63 @@
+// Colors, type and radii for the whole window. Light and dark are both designed; `mode` is the
+// user's choice (system, dark, light) and `os-dark` is the Windows setting read at startup.
+
+export global Theme {
+    in-out property <string> mode: "system";
+    in-out property <bool> os-dark: false;
+    out property <bool> dark: mode == "dark" || (mode == "system" && os-dark);
+
+    out property <color> bg: dark ? #101216 : #e9ecef;
+    out property <color> surface: dark ? #181b20 : #ffffff;
+    out property <color> surface-2: dark ? #1e2228 : #f2f4f6;
+    out property <color> sunken: dark ? #13161a : #e1e5e9;
+    out property <color> fg: dark ? #e6e8eb : #1a1e23;
+    out property <color> muted: dark ? #949daa : #5a6470;
+    out property <color> line: dark ? #2a2f37 : #d2d8de;
+    out property <color> accent: dark ? #d4a352 : #946520;
+    out property <color> accent-soft: dark ? #3a2e1b : #f3e6d0;
+    out property <color> accent-fg: dark ? #1b1306 : #ffffff;
+    out property <color> good: dark ? #57bd78 : #2b8048;
+    out property <color> good-soft: dark ? #1b3324 : #dcefe2;
+    out property <color> warn: dark ? #e2a843 : #a8690f;
+    out property <color> warn-soft: dark ? #3a2d15 : #f6e8cf;
+    out property <color> bad: dark ? #e66a5c : #b8372b;
+    out property <color> bad-soft: dark ? #3d1f1b : #f6dcd8;
+    out property <color> info: dark ? #74a6dc : #346699;
+    out property <color> info-soft: dark ? #1a2a3b : #dde8f3;
+    out property <color> lane-done: dark ? #3a414b : #c5ccd3;
+    out property <color> scrim: dark ? #000000a0 : #14181e73;
+
+    out property <string> display-font: "Sitka Heading";
+    out property <string> mono-font: "Cascadia Mono";
+    out property <length> r-sm: 4px;
+    out property <length> r-md: 8px;
+    out property <length> r-lg: 12px;
+
+    public pure function tone-fg(tone: string) -> color {
+        if (tone == "good") { return good; }
+        if (tone == "warn") { return warn; }
+        if (tone == "bad") { return bad; }
+        if (tone == "run") { return accent; }
+        if (tone == "info") { return info; }
+        return muted;
+    }
+
+    public pure function tone-bg(tone: string) -> color {
+        if (tone == "good") { return good-soft; }
+        if (tone == "warn") { return warn-soft; }
+        if (tone == "bad") { return bad-soft; }
+        if (tone == "run") { return accent-soft; }
+        if (tone == "info") { return info-soft; }
+        return sunken;
+    }
+
+    public pure function log-color(tag: string) -> color {
+        if (tag == "err") { return bad; }
+        if (tag == "warn") { return warn; }
+        if (tag == "ok") { return good; }
+        if (tag == "head") { return accent; }
+        if (tag == "cmd") { return info; }
+        if (tag == "dim") { return muted; }
+        return fg;
+    }
+}

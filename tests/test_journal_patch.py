@@ -14,7 +14,6 @@ from asset_convert.ui.journal_patch import (KIND_QJO, KIND_QUESTS_PAGE, MARKER,
                                             is_patched, patch_movie)
 from asset_convert.ui.swf import (TAG_DO_ACTION, TAG_DO_INIT_ACTION, TAG_END,
                                   TAG_SHOW_FRAME, TWIPS, Swf, Tag, pack_rect)
-from core.gui.config import CLR
 from core.gui.journal import (FAILED, MOD_NAME, PATCHED, SKIPPED,
                               _archive_rank, build_journal_mod, report_status)
 from output_layout import write_mod_zip
@@ -113,10 +112,9 @@ def test_other_movies_untouched():
 
 def test_report_headline():
     """A failure reads red, any patch green, and all-skipped yellow."""
-    assert report_status([PATCHED, FAILED]) == ('Build Failed', CLR['red'])
-    assert report_status([PATCHED, SKIPPED]) == ('Built Successfully',
-                                                 CLR['green'])
-    assert report_status([SKIPPED]) == ('Nothing Patched', CLR['yellow'])
+    assert report_status([PATCHED, FAILED]) == ('Build Failed', 'bad')
+    assert report_status([PATCHED, SKIPPED]) == ('Built Successfully', 'good')
+    assert report_status([SKIPPED]) == ('Nothing Patched', 'warn')
 
 
 def test_mod_zip_holds_the_patched_journal(tmp_path):

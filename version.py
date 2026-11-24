@@ -28,7 +28,8 @@ Both are tracked:
     on the tag -- which made master's VERSION permanently wrong and, worse,
     meant the whole scheme depended on a direct push and could not work for a
     PR merge.
-  * `.conversion_state.json` (repo root, gitignored) records the version that
+  * `.conversion_state.json` (beside the export and output folders: the repo root,
+    or beside TESRACT.exe; gitignored) records the version that
     last completed each pipeline step.  It is per-step and per-plugin because
     an upgrade that only touches meshes should not invalidate an Import the
     user ran an hour ago, and converting Nehrim should not mark Oblivion's
@@ -76,11 +77,12 @@ import urllib.request
 from pathlib import Path
 
 from core.gui.config import GLOBAL_ACTIONS, STEPS
+from output_layout import DATA_ROOT
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 VERSION_FILE = SCRIPT_DIR / "VERSION"
-STATE_FILE   = SCRIPT_DIR / ".conversion_state.json"
+STATE_FILE   = DATA_ROOT / ".conversion_state.json"
 
 # What VERSION reads in a working checkout, where the tree sits between tags.
 DEV_VERSION = "0.0-dev"
@@ -708,7 +710,7 @@ def _group_siblings(plugin: str | None) -> list:
     except ImportError:
         return []
     try:
-        members = source_registry.group_members(SCRIPT_DIR / 'export', plugin)
+        members = source_registry.group_members(DATA_ROOT / 'export', plugin)
     except Exception:
         return []
     return [n for n in members if _plugin_key(n) != _plugin_key(plugin)]

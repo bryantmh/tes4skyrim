@@ -1,0 +1,81 @@
+// Step 5: install the finished mods with a mod manager, in order, and start the game.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Ui } from "state.slint";
+import { Btn, Box, Divider, SectionLabel, Heading, Muted, Pill, Seg } from "widgets.slint";
+
+export component InstallView {
+    ScrollView {
+        content-width: self.visible-width;
+        VerticalLayout {
+            alignment: start;
+            padding: 32px;
+            padding-top: 24px;
+            spacing: 10px;
+            Heading { text: "Install & play"; }
+            Box {
+                tint: Theme.surface-2;
+                HorizontalLayout {
+                    padding: 14px;
+                    padding-left: 16px;
+                    spacing: 12px;
+                    Text { text: "Install with"; color: Theme.fg; vertical-alignment: center; }
+                    VerticalLayout { alignment: center; Seg { options: Ui.manager-options; current: Ui.manager; selected(i) => { Ui.set-manager(i); } } }
+                    Text { text: Ui.manager-where; color: Theme.muted; font-size: 12.5px; vertical-alignment: center; overflow: elide; }
+                }
+            }
+            Box {
+                VerticalLayout {
+                    for row[i] in Ui.installs: VerticalLayout {
+                        if i > 0: Divider { }
+                        HorizontalLayout {
+                            padding: 10px;
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            Text { text: row.order; width: 20px; font-family: Theme.display-font; color: Theme.muted; horizontal-alignment: right; vertical-alignment: center; }
+                            Text { text: row.name; font-family: Theme.mono-font; font-size: 12.5px; color: Theme.fg; vertical-alignment: center; horizontal-stretch: 3; preferred-width: 0px; overflow: elide; }
+                            Text { text: row.detail; font-size: 12.5px; color: Theme.muted; vertical-alignment: center; horizontal-stretch: 1; preferred-width: 0px; overflow: elide; }
+                            HorizontalLayout { alignment: end; horizontal-stretch: 0; Pill { text: row.status; tone: row.tone; } }
+                        }
+                    }
+                    if Ui.installs.length == 0: Muted { text: "Nothing in Finished Mods yet. Convert a game first."; }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                if Ui.install-label != "": Btn { text: Ui.install-label; kind: "primary"; enabled: Ui.install-enabled && !Ui.running; clicked => { Ui.install(); } }
+                if Ui.launch-label != "": Btn { text: Ui.launch-label; clicked => { Ui.launch(); } }
+                Btn { text: "Open Finished Mods"; clicked => { Ui.open-finished(); } }
+            }
+            SectionLabel { text: "AFTER PLAYING"; }
+            Box {
+                VerticalLayout {
+                    HorizontalLayout {
+                        padding: 12px;
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        VerticalLayout {
+                            Text { text: "Navmesh editor"; font-weight: 600; color: Theme.fg; }
+                            Muted { text: "Pins where NPCs should or shouldn't walk. Used by the next Import."; }
+                        }
+                        HorizontalLayout { alignment: end; Btn { text: "Open"; small: true; clicked => { Ui.open-dialog("navmesh"); } } }
+                    }
+                    if Ui.manager < 2: Divider { }
+                    if Ui.manager < 2: HorizontalLayout {
+                        padding: 12px;
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        VerticalLayout {
+                            Text { text: "Uninstall"; font-weight: 600; color: Theme.fg; }
+                            Muted { text: "Removes the converted mods from " + Ui.manager-options[Ui.manager] + "."; }
+                        }
+                        HorizontalLayout { alignment: end; Btn { text: "Uninstall"; kind: "danger"; small: true; clicked => { Ui.uninstall(); } } }
+                    }
+                }
+            }
+        }
+    }
+}

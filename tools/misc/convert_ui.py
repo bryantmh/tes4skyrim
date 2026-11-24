@@ -43,7 +43,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from asset_convert.ui import ui_cursor
 from asset_convert.ui import ui_menus
 from asset_convert.sources.bsa_extract import read_bsa_files
-from output_layout import finished_dir, write_mod_zip
+from output_layout import DATA_ROOT, finished_dir, write_mod_zip
 
 MOD_NAME = "Oblivion UI"
 MESSAGE_BOX_SWF = r'interface\messagebox.swf'
@@ -91,7 +91,7 @@ def find_data_dirs(oblivion=None, skyrim=None):
     """(oblivion Data, skyrim Data) -- explicit paths win over auto-detection."""
     import json
     config = {}
-    config_path = SCRIPT_DIR / 'conversion_config.json'
+    config_path = DATA_ROOT / 'conversion_config.json'
     if config_path.is_file():
         try:
             config = json.loads(config_path.read_text(encoding='utf-8'))
@@ -349,7 +349,7 @@ def main() -> int:
     args = ap.parse_args()
 
     out_root = (Path(args.output_dir) if args.output_dir
-                else SCRIPT_DIR / 'output')
+                else DATA_ROOT / 'output')
     return convert(out_root,
                    oblivion_data=args.oblivion_data,
                    skyrim_data=args.skyrim_data,

@@ -6,9 +6,8 @@ scipy==1.18.1
 shapely==2.1.2
 Pillow==12.3.0
 lz4==4.4.5
-mapbox_earcut==2.1.0
 setuptools==84.0.0
 # Package SKSE Mod embeds OpenMW's MysticCards.ttf in the Morrowind menu.
 fonttools==4.63.0
-# Optional: drag mod archives onto the GUI.
-tkinterdnd2==0.6.3
+# The window (Slint).
+slint==1.19.0b1

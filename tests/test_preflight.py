@@ -201,8 +201,7 @@ def test_convert_prints_the_version_warning_without_aborting():
 def test_audio_probes_use_the_phases_own_lookup(monkeypatch):
     """If these drifted, a check could pass while the Sounds phase then fails."""
     import asset_convert.audio.audio_converter as ac
-    for finder, expect in (('find_ffmpeg', 'ffmpeg'),
-                           ('find_xwmaencode', 'xWMAEncode.exe'),
+    for finder, expect in (('find_xwmaencode', 'xWMAEncode.exe'),
                            ('find_lipgenerator', 'LipGenerator.exe')):
         monkeypatch.setattr(ac, finder, lambda *a, **k: None)
         names = [m.name for m in preflight.check_phase('sounds')]

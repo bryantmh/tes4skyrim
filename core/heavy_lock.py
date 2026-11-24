@@ -27,6 +27,7 @@ from pathlib import Path
 
 from convert_cli import STEP_FLAGS
 from core.process_job import RC_CANCELLED, create_pool_job, run_process
+from output_layout import DATA_ROOT
 
 #: The mutex every heavy job takes; per logon session, as the agents share one.
 MUTEX_NAME = "Local\\TESConversionHeavyJob"
@@ -44,7 +45,7 @@ _RANK = {step: n for n, (step, _flag) in enumerate(STEP_FLAGS)}
 _REACHED = "[heavy-lock] reached"
 
 #: Who holds the lock, `{pid, label, work, queued, started}`; the holder deletes it on exit.
-HOLDER_FILE = Path(__file__).resolve().parent.parent / "logs" / "heavy_job.txt"
+HOLDER_FILE = DATA_ROOT / "logs" / "heavy_job.txt"
 
 #: The holder line the first lock version wrote, before the file became JSON.
 _TEXT_HOLDER = re.compile(r"^(.*) \(pid (\d+), since (\d\d:\d\d:\d\d)\)$")

@@ -542,16 +542,18 @@ TESConversion/
     navmesh_options.py    # navmesh generator (--navmesh-generator), user pin folder (--navmesh-pins)
     plugin_masters.py     # master lists from binary headers
 
-    gui/                  # the converter window
-      app.py              # GuiApp carrier, palette, OS chrome, assembly order
+    gui/                  # the converter window (Slint): docs/commentary/core_gui.md
+      ui/*.slint          # every screen, dialog, widget and the theme
+      window.py           # loads the UI, shared helpers, rail, dialogs, the 50 ms tick
+      native.py           # Win32 pickers, dropped files, icon, dark mode
+      session.py          # settings and the current choices
+      setup_view.py checks.py            # Step 1, Setup
+      choose_view.py games.py mods.py morrowind.py   # Step 2, Choose
+      run_view.py runner.py              # Step 3, Convert: commands, logs, stamps
+      loadorder_view.py loadorder.py journal.py      # Step 4, Load order
+      install_view.py install.py vortex_state.py     # Step 5, Install & play
       config.py           # step tables, settings, scanners, run_process
-      widgets.py          # dialogs, scroller, tooltips, plugin combobox
-      menus.py            # the dark menu bar
-      selection.py        # sources, step checkboxes, Upgrade, drop zone
-      panels.py           # the five modal panels
-      runner.py           # log, run state, commands, stamps, execution
-      mods.py             # Plugins ▸ import mod entries
-      morrowind.py        # Settings > Morrowind source
+      navmesh_editor.py   # the navmesh editor server
 
   logs/                   # run-<timestamp>-<plugin>.log (gitignored)
 

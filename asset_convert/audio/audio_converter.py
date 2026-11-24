@@ -74,20 +74,18 @@ def find_ffmpeg(ffmpeg_path: str = 'ffmpeg',
                 need_decoder: str = '') -> 'str | None':
     """Return the ffmpeg executable path if found, else None.
 
-    An explicit `ffmpeg_path` is used alone; otherwise the bundled build
-    is preferred over PATH. `need_decoder` skips a candidate that cannot
-    decode that codec.
+    An explicit `ffmpeg_path` is used alone. Otherwise the bundled build is
+    returned as-is on Windows, never test-run: it ships with the install and
+    decodes every codec the pipeline needs. PATH is the fallback, where
+    `need_decoder` skips a build that cannot decode that codec.
 
     See: docs/commentary/asset_convert_audio.md#which-ffmpeg-a-run-uses
     """
-    if ffmpeg_path and ffmpeg_path != 'ffmpeg':
-        candidates = [ffmpeg_path]
-    else:
-        candidates = []
-        bundled = paths.EXTERNAL / 'ffmpeg' / 'ffmpeg.exe'
-        if bundled.is_file():
-            candidates.append(str(bundled))
-        candidates.append('ffmpeg')
+    bundled = paths.EXTERNAL / 'ffmpeg' / 'ffmpeg.exe'
+    explicit = ffmpeg_path and ffmpeg_path != 'ffmpeg'
+    if not explicit and sys.platform == 'win32' and bundled.is_file():
+        return str(bundled)
+    candidates = [ffmpeg_path] if explicit else ['ffmpeg']
 
     for cand in candidates:
         try:
@@ -130,7 +128,7 @@ def find_xwmaencode(search_dir: 'str | None' = None) -> 'str | None':
     candidates = []
     if search_dir:
         candidates.append(Path(search_dir) / 'xWMAEncode.exe')
-    candidates.append(paths.EXTERNAL / 'xwmaencode' / 'xWMAEncode.exe')
+    candidates.append(paths.XWMAENCODE)
 
     for cand in candidates:
         if cand.is_file():

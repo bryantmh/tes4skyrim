@@ -1,0 +1,168 @@
+// The TESRACT window: banner and numbered steps on the left, the current step on the right,
+// a status line along the bottom, dialogs and notices drawn over everything.
+
+import { Theme } from "theme.slint";
+import { Ui } from "state.slint";
+import { Btn, Divider, Pill } from "widgets.slint";
+import { SetupView } from "setup.slint";
+import { ChooseView } from "choose.slint";
+import { ConvertView } from "convert.slint";
+import { LoadOrderView } from "loadorder.slint";
+import { InstallView } from "install.slint";
+import { Dialogs } from "dialogs.slint";
+
+export { Ui, Theme }
+
+component RailButton {
+    in property <string> num;
+    in property <string> title;
+    in property <string> sub;
+    in property <string> state;
+    in property <bool> current;
+    callback clicked();
+    min-height: 54px;
+    Rectangle {
+        border-radius: Theme.r-md;
+        border-width: current ? 1px : 0px;
+        border-color: Theme.line;
+        background: current ? Theme.surface : (touch.has-hover ? Theme.sunken : transparent);
+    }
+    HorizontalLayout {
+        padding: 8px;
+        spacing: 12px;
+        Rectangle {
+            width: 28px;
+            height: 28px;
+            y: (parent.height - 28px) / 2;
+            border-radius: 14px;
+            border-width: 1.5px;
+            border-color: state == "done" ? Theme.good : state == "active" ? Theme.accent : state == "warn" ? Theme.warn : state == "bad" ? Theme.bad : Theme.line;
+            background: state == "done" ? Theme.good-soft : state == "active" ? Theme.accent : state == "warn" ? Theme.warn-soft : state == "bad" ? Theme.bad-soft : Theme.surface;
+            Text {
+                text: num;
+                font-size: 12px;
+                font-weight: 600;
+                color: state == "done" ? Theme.good : state == "active" ? Theme.accent-fg : state == "warn" ? Theme.warn : state == "bad" ? Theme.bad : Theme.muted;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Text { text: title; font-weight: 600; font-size: 13.5px; color: Theme.fg; }
+            Text { text: sub; font-size: 12px; color: Theme.muted; overflow: elide; }
+        }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component FootButton {
+    in property <string> text;
+    in property <string> note;
+    callback clicked();
+    min-height: 32px;
+    Rectangle { border-radius: Theme.r-md; background: touch.has-hover ? Theme.sunken : transparent; }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        Text { text: root.text; font-size: 13px; color: Theme.fg; vertical-alignment: center; }
+        Text { text: root.note; font-size: 12px; color: Theme.muted; vertical-alignment: center; horizontal-alignment: right; }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component App inherits Window {
+    title: "T.E.SR.A.C.T " + Ui.version;
+    preferred-width: 1240px;
+    preferred-height: 860px;
+    min-width: 960px;
+    min-height: 640px;
+    background: Theme.bg;
+    default-font-family: "Segoe UI";
+    default-font-size: 14px;
+
+    callback cycle-theme();
+    cycle-theme => {
+        Theme.mode = Theme.mode == "system" ? "dark" : Theme.mode == "dark" ? "light" : "system";
+        Ui.theme-changed(Theme.mode);
+    }
+
+    VerticalLayout {
+        HorizontalLayout {
+            vertical-stretch: 1;
+            Rectangle {
+                width: 236px;
+                background: Theme.surface-2;
+                VerticalLayout {
+                    padding: 12px;
+                    padding-top: 16px;
+                    spacing: 4px;
+                    Image {
+                        source: Ui.banner;
+                        source-clip-x: Ui.banner-x;
+                        source-clip-y: Ui.banner-y;
+                        source-clip-width: Ui.banner-w;
+                        source-clip-height: Ui.banner-h;
+                        height: 66px;
+                        image-fit: contain;
+                    }
+                    Rectangle { height: 8px; }
+                    Divider { }
+                    Rectangle { height: 8px; }
+                    for step in Ui.rail: RailButton {
+                        num: step.num;
+                        title: step.title;
+                        sub: step.sub;
+                        state: step.state;
+                        current: Ui.view == step.key;
+                        clicked => { Ui.go(step.key); }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    Divider { }
+                    if Ui.update-version != "": FootButton { text: "Update available"; note: Ui.update-version; clicked => { Ui.go("setup"); } }
+                    FootButton { text: "Advanced"; note: "Steps, options"; clicked => { Ui.open-dialog("advanced"); } }
+                    FootButton { text: "About"; note: Ui.version; clicked => { Ui.open-dialog("about"); } }
+                    FootButton { text: "Theme"; note: Theme.mode; clicked => { root.cycle-theme(); } }
+                }
+                Rectangle { x: parent.width - 1px; width: 1px; background: Theme.line; }
+            }
+            Rectangle {
+                background: Theme.surface;
+                if Ui.view == "setup": SetupView { width: parent.width; height: parent.height; }
+                if Ui.view == "choose": ChooseView { width: parent.width; height: parent.height; }
+                if Ui.view == "convert": ConvertView { width: parent.width; height: parent.height; }
+                if Ui.view == "loadorder": LoadOrderView { width: parent.width; height: parent.height; }
+                if Ui.view == "install": InstallView { width: parent.width; height: parent.height; }
+            }
+        }
+        Divider { }
+        Rectangle {
+            height: 28px;
+            background: Theme.surface-2;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 24px;
+                Text { text: Ui.status-step; font-size: 12px; color: Theme.fg; vertical-alignment: center; }
+                if Ui.status-elapsed != "": Text { text: "Elapsed " + Ui.status-elapsed; font-size: 12px; color: Theme.muted; vertical-alignment: center; }
+                if Ui.status-left != "": Text { text: Ui.status-left; font-size: 12px; color: Theme.muted; vertical-alignment: center; }
+                Text { text: "Output " + Ui.output-path; font-size: 12px; color: Theme.muted; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
+            }
+        }
+    }
+
+    Dialogs { width: parent.width; height: parent.height; }
+
+    if Ui.toast != "": Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 80px;
+        width: toast-text.preferred-width + 32px;
+        height: 36px;
+        border-radius: Theme.r-md;
+        background: Theme.fg;
+        toast-text := Text { text: Ui.toast; color: Theme.surface; font-size: 13px; }
+    }
+
+    if Ui.busy: Rectangle {
+        background: transparent;
+        TouchArea { mouse-cursor: wait; }
+    }
+}

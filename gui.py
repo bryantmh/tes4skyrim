@@ -1,8 +1,9 @@
 """
-TES4 Auto-Convert - the launcher.
+TESRACT - the launcher, and TESRACT.exe's entry point.
 
-The window itself lives in `core/gui/`; this module only starts it, or forwards
-to convert.py when asked for the headless path. It re-exports the step tables
+The window itself lives in `core/gui/`; this module only starts it, forwards
+to convert.py when asked for the headless path, or (inside TESRACT.exe) runs
+the module another TESRACT process asked for (`core.python_cmd`). It re-exports the step tables
 and the winding settings for callers that import `gui` directly.
 
 Usage:
@@ -20,7 +21,6 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
 from core.collision_options import WINDING_FIX_DEFAULT_PLUGINS
-from core.gui.app import DND_AVAILABLE
 from core.gui.config import (
     GLOBAL_ACTIONS,
     PACKING_STEPS,
@@ -34,12 +34,15 @@ from core.gui.config import (
     scan_plugins,
     winding_enabled_for,
 )
+from core.gui.native import set_app_id
+from core.gui.splash import Splash
 from core.process_job import create_pool_job
+from core.python_cmd import python_cmd, run_from_argv
 from core.subprocess_flags import POPEN_FLAGS as _POPEN_FLAGS
 
 #: Re-exported for callers that import `gui` directly.
 __all__ = [
-    "DND_AVAILABLE", "GLOBAL_ACTIONS", "PACKING_STEPS", "STEPS",
+    "GLOBAL_ACTIONS", "PACKING_STEPS", "STEPS",
     "WINDING_AUTO", "WINDING_FIX_DEFAULT_PLUGINS", "WINDING_MODES",
     "WINDING_OFF", "WINDING_ON", "default_on_steps", "gui_main", "main",
     "scan_converted", "scan_plugins", "winding_enabled_for",
@@ -52,14 +55,20 @@ def gui_main():
     The window's process owns the Job Object that ties convert.py and its
     workers to it, so it is created here rather than when a module is imported.
     """
-    if importlib.util.find_spec("tkinter") is None:
-        print("ERROR: tkinter not available")
+    if importlib.util.find_spec("slint") is None:
+        text = f"The window needs Slint, which {sys.executable} lacks.\n\npip install -r requirements.txt"
+        print(f"ERROR: {text}")
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, text, "TESRACT", 0x10)
         return 1
-    from core.gui.app import build_window
+    set_app_id()
+    splash = Splash()
+    splash.show()
+    from core.gui.window import run_window
 
     create_pool_job()
-    build_window().mainloop()
-    return 0
+    return run_window(splash)
 
 
 def _relaunch_windowless() -> bool:
@@ -99,14 +108,16 @@ def _relaunch_windowless() -> bool:
 
 
 def main():
-    """Entry point: open the GUI, or forward `--cli` to convert.py."""
+    """Entry point: run a module TESRACT.exe was asked to run, else open the GUI or forward `--cli`."""
+    if run_from_argv(sys.argv):
+        return 0
     parser = argparse.ArgumentParser(description="TES4 Auto-Convert GUI")
     parser.add_argument("--cli", action="store_true",
                         help="Headless: forward remaining args to convert.py")
     args, extra = parser.parse_known_args()
 
     if args.cli:
-        cmd = [sys.executable, "-u", str(SCRIPT_DIR / "convert.py")] + extra
+        cmd = python_cmd(SCRIPT_DIR / "convert.py", *extra)
         return subprocess.run(cmd, cwd=str(SCRIPT_DIR),
                               **_POPEN_FLAGS).returncode
 

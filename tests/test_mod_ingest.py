@@ -701,6 +701,18 @@ def test_all_sources_includes_unregistered_configured_dir(tmp_path):
     assert len(rows) == 1
 
 
+def test_removed_dir_stays_removed_until_added_again(tmp_path):
+    """Removing a folder survives discovery (tes4DataPath, history); adding it by hand restores it."""
+    export = tmp_path / 'export'
+    ob = _fake_install(tmp_path, 'Oblivion', ['Oblivion.esm'])
+    source_registry.add_directory(export, str(ob))
+    source_registry.remove_directory(export, str(ob))
+    source_registry.migrate_known_directories(export, extra_dirs=[str(ob)], include_history=False)
+    assert source_registry.all_sources(export, extra_dirs=[str(ob)]) == []
+    source_registry.add_directory(export, str(ob))
+    assert [r['label'] for r in source_registry.all_sources(export, extra_dirs=[str(ob)])] == ['Oblivion']
+
+
 def test_migrate_skips_missing_and_pluginless_dirs(tmp_path):
     export = tmp_path / 'export'
     ob = _fake_install(tmp_path, 'Oblivion', ['Oblivion.esm'])

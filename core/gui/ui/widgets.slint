@@ -1,0 +1,205 @@
+// The small pieces every screen is built from: buttons, status pills, checkboxes, segmented
+// choices, filter chips and the bordered list box.
+
+import { Theme } from "theme.slint";
+
+export component Btn {
+    in property <string> text;
+    in property <string> kind: "normal";
+    in property <bool> small: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    min-height: small ? 28px : 36px;
+    max-height: self.min-height;
+    max-width: label.preferred-width + (kind == "link" ? 0px : (small ? 20px : 32px));
+    horizontal-stretch: 0;
+    Rectangle {
+        border-radius: Theme.r-md;
+        border-width: kind == "link" ? 0px : 1px;
+        border-color: kind == "primary" ? Theme.accent : Theme.line;
+        background: kind == "primary" ? (touch.has-hover && enabled ? Theme.accent.brighter(8%) : Theme.accent)
+            : kind == "link" ? transparent : (touch.has-hover && enabled ? Theme.surface-2 : Theme.surface);
+        opacity: enabled ? 1 : 0.5;
+    }
+    HorizontalLayout {
+        padding-left: kind == "link" ? 0px : (small ? 10px : 16px);
+        padding-right: self.padding-left;
+        label := Text {
+            text: root.text;
+            color: kind == "primary" ? Theme.accent-fg : kind == "danger" ? Theme.bad : kind == "link" ? Theme.accent : Theme.fg;
+            font-size: small ? 12.5px : 14px;
+            font-weight: 500;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Pill {
+    in property <string> text;
+    in property <string> tone: "idle";
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    min-height: 22px;
+    Rectangle { border-radius: 11px; background: Theme.tone-bg(tone); }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        alignment: center;
+        Rectangle {
+            width: 6px;
+            height: 6px;
+            y: (parent.height - 6px) / 2;
+            border-radius: 3px;
+            background: Theme.tone-fg(tone);
+        }
+        Text { text: root.text; color: Theme.tone-fg(tone); font-size: 12px; font-weight: 500; vertical-alignment: center; }
+    }
+}
+
+export component Tick {
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+    width: 18px;
+    height: 18px;
+    Rectangle {
+        border-radius: 4px;
+        border-width: 1.5px;
+        border-color: checked ? Theme.accent : Theme.muted;
+        background: checked ? Theme.accent : Theme.surface;
+        opacity: enabled ? 1 : 0.45;
+        Text { text: checked ? "✓" : ""; color: Theme.accent-fg; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.checked = !root.checked; root.toggled(root.checked); }
+    }
+}
+
+export component Seg {
+    in property <[string]> options;
+    in-out property <int> current;
+    callback selected(int);
+    horizontal-stretch: 0;
+    Rectangle { border-radius: Theme.r-md; border-width: 1px; border-color: Theme.line; background: Theme.surface-2; }
+    HorizontalLayout {
+        padding: 2px;
+        spacing: 2px;
+        for opt[i] in options: Rectangle {
+            border-radius: Theme.r-md - 1px;
+            background: i == current ? Theme.surface : transparent;
+            border-width: i == current ? 1px : 0px;
+            border-color: Theme.accent;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 5px;
+                padding-bottom: 5px;
+                Text { text: opt; font-size: 13px; font-weight: 500; color: i == current ? Theme.accent : Theme.fg; vertical-alignment: center; }
+            }
+            TouchArea { mouse-cursor: pointer; clicked => { root.current = i; root.selected(i); } }
+        }
+    }
+}
+
+export component Chip {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+    horizontal-stretch: 0;
+    min-height: 26px;
+    Rectangle {
+        border-radius: 13px;
+        border-width: 1px;
+        border-color: active ? Theme.accent : Theme.line;
+        background: active ? Theme.accent-soft : Theme.surface;
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        Text { text: root.text; font-size: 12.5px; color: active ? Theme.accent : Theme.fg; vertical-alignment: center; }
+    }
+    TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component Box inherits Rectangle {
+    in property <color> tint: Theme.surface;
+    in property <color> edge: Theme.line;
+    border-radius: Theme.r-md;
+    border-width: 1px;
+    border-color: edge;
+    background: tint;
+    clip: true;
+}
+
+export component Divider inherits Rectangle {
+    height: 1px;
+    background: Theme.line;
+}
+
+export component SectionLabel inherits Text {
+    color: Theme.muted;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.9px;
+}
+
+export component Heading inherits Text {
+    color: Theme.fg;
+    font-family: Theme.display-font;
+    font-size: 28px;
+}
+
+export component Muted inherits Text {
+    color: Theme.muted;
+    font-size: 13px;
+    wrap: word-wrap;
+}
+
+// One line of a checklist: a title and detail on the left, a status pill and up to two buttons on the right.
+export component CheckLine {
+    in property <string> title;
+    in property <string> detail;
+    in property <string> status;
+    in property <string> tone;
+    in property <string> action;
+    in property <string> action2;
+    in property <bool> highlight;
+    in property <bool> mono-detail;
+    callback act(int);
+    Rectangle { background: highlight ? Theme.tone-bg(tone) : transparent; }
+    HorizontalLayout {
+        padding: 12px;
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text { text: title; color: Theme.fg; font-weight: 600; font-size: 14px; wrap: word-wrap; }
+            if detail != "": Text {
+                text: detail;
+                color: Theme.muted;
+                font-size: 12.5px;
+                wrap: word-wrap;
+                font-family: mono-detail ? Theme.mono-font : "";
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            horizontal-stretch: 0;
+            if status != "": Pill { text: status; tone: tone; }
+            if action2 != "": Btn { text: action2; small: true; clicked => { root.act(2); } }
+            if action != "": Btn { text: action; small: true; kind: highlight ? "primary" : "normal"; clicked => { root.act(1); } }
+        }
+    }
+}

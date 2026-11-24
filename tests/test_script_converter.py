@@ -6320,6 +6320,8 @@ def test_compile_dependent_refuses_stale_root_statics(tmp_path, monkeypatch, cap
     import papyrus_compile as compiler
 
     monkeypatch.setattr(compiler, 'SCRIPT_DIR', tmp_path)
+
+    monkeypatch.setattr(compiler, 'DATA_ROOT', tmp_path)
     _shared_pack_export(tmp_path)
     source = _shared_pack_output(tmp_path, False)
     (source / 'TES4Polyfill.psc').write_text('Scriptname TES4Polyfill Hidden\n')
@@ -6341,6 +6343,8 @@ def test_compile_shared_sources_respects_empty_plugin_ownership(tmp_path, monkey
     import papyrus_compile as compiler
 
     monkeypatch.setattr(compiler, 'SCRIPT_DIR', tmp_path)
+
+    monkeypatch.setattr(compiler, 'DATA_ROOT', tmp_path)
     _shared_pack_export(tmp_path)
     source = _shared_pack_output(tmp_path, owns_script)
     output = tmp_path / 'output'

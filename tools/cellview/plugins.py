@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from asset_convert.collision.collision_extract import collision_cache_is_current
 from asset_convert.sources import source_registry
+from core.python_cmd import python_cmd
 from core.plugin_masters import masters_from_export_header
 from core.subprocess_flags import POPEN_FLAGS
 from output_layout import assets_for, record_dir
@@ -113,7 +114,7 @@ def build_collision(plugin):
     success, else why the cache is still missing.
     """
     names = masters_from_export_header(export_dir(plugin)) + [plugin]
-    run = subprocess.run([sys.executable, '-u', RESCAN] + names, cwd=ROOT,
+    run = subprocess.run(python_cmd(RESCAN, *names), cwd=ROOT,
                          capture_output=True, text=True, errors='replace',
                          **POPEN_FLAGS)
     NavIndex.disarm()
