@@ -166,6 +166,8 @@ constexpr const char* kFileStates = "state_formid.txt";
 constexpr const char* kFileCrime = "crime_formid.txt";
 LayeredTable<FormRef> g_factionForms;
 std::vector<StateRow> g_states;
+constexpr const char* kFileOwnerGates = "owner_gates.txt";
+std::vector<OwnerGateRow> g_ownerGates;
 LayeredTable<FormRef> g_realmCrime{false};
 
 // The conversion-owned records runtime effects act through, by name: today
@@ -539,6 +541,7 @@ void ClearScriptTables() {
     g_factions.clear();
     g_factionForms.clear();
     g_states.clear();
+    g_ownerGates.clear();
     g_realmCrime.clear();
     g_effectForms.clear();
     g_gmsts.clear();
@@ -761,6 +764,13 @@ void LoadWorldRows(int layer, const std::string& pluginDir) {
                [layer](const std::string& key, const std::string& value) {
                    g_states.push_back({Lower(key), ParseFormRef(value), layer});
                });
+    ForEachRow(pluginDir + kFileOwnerGates,
+               [layer](const std::string& ref, const std::string& value) {
+                   const std::size_t bar = value.find('|');
+                   if (bar == std::string::npos) return;
+                   g_ownerGates.push_back({ParseFormRef(ref), Lower(value.substr(0, bar)),
+                                           ParseFormRef(value.substr(bar + 1)), layer});
+               });
     ForEachRow(pluginDir + kFileCrime,
                [layer](const std::string&, const std::string& value) {
                    g_realmCrime.Add(layer, kCrimeRow, ParseFormRef(value));
@@ -818,6 +828,7 @@ const FormRef* FindFactionForm(const std::string& faction) {
 }
 
 const std::vector<StateRow>& StateRows() { return g_states; }
+const std::vector<OwnerGateRow>& OwnerGateRows() { return g_ownerGates; }
 
 const FormRef* RealmCrimeFaction() { return g_realmCrime.Find(kCrimeRow); }
 

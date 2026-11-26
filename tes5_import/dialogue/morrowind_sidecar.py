@@ -37,6 +37,7 @@ from .morrowind_placements import (PLACED_EXPORTS, SCRIPTED_EXPORTS, SCRIPTED_TY
 from .morrowind_sidecar_source import (forget_gathered, gather,
                                        own_dialogue_blocks, source_chain,
                                        spell_kinds, weapon_kinds)
+from .morrowind_owner_gates import OWNER_GATES_TABLE, owner_gate_rows
 from .morrowind_temples import skyrim_rows
 from ..base.equivalents import tes3_lockpick_form
 from ..record_types.magic_morrowind import effect_form_rows
@@ -1098,6 +1099,8 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
                              say_rows(export_dir,
                                       os.path.basename(plugin_name)))
               + _write_lines(os.path.join(out_dir, CRIME_TABLE), _crime_lines())
+              + _write_lines(os.path.join(out_dir, OWNER_GATES_TABLE),
+                             owner_gate_rows(export_dir, plugin_name))
               + _teleport_tables(export_dir, output_path, plugin_name, out_dir,
                                  writer, master_index)
               + _journal_quests(writer, out_dir, plugin_name,

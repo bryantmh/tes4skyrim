@@ -53,7 +53,7 @@ TES4_PLUGIN_PREFIX = 'morrowind_ob'
 
 _RECORD_MARK = '---RECORD_BEGIN---'
 _PLACEMENT_KEYS = ('PosX', 'PosY', 'PosZ', 'RotX', 'RotY', 'RotZ')
-_REF_KEYS = ('FormID', 'NAME', 'ParentCELL', 'EditorID') + _PLACEMENT_KEYS
+_REF_KEYS = ('FormID', 'NAME', 'ParentCELL', 'EditorID', 'XOWN.Owner', 'XGLB.Global') + _PLACEMENT_KEYS
 _SCRIPTED_KEYS = ('FormID', 'EditorID', 'SCRI')
 _CELL_KEYS = ('FormID', 'EditorID', 'FULL', 'ParentWRLD')
 
@@ -102,10 +102,12 @@ def _base_id(base: str) -> int:
 def _take_ref(out: dict, rec: dict, in_refr: bool, owner: str,
               scripted: set) -> None:
     """Fold one placed reference into `folder_tables`' `first`, `instances`,
-    and, for a REFR, `travel` and `markers`."""
+    `gated`, and, for a REFR, `travel` and `markers`."""
     base, formid = rec.get('NAME', ''), rec.get('FormID', '')
     if base and formid[:2].upper() == owner:
         out['first'].setdefault(base, formid)
+        if rec.get('XGLB.Global') and rec.get('XOWN.Owner'):
+            out['gated'].append(rec)
     if formid and base.upper() in scripted:
         out['instances'].append(rec)
     if not in_refr:
@@ -180,8 +182,9 @@ def folder_tables(folder: str) -> dict:
     `scripted` `[(file, record)]` of `SCRIPTED_EXPORTS`, `cells` CELL.txt's
     records, `first` `{base: first placement FormID the folder owns}`,
     `travel` `{lower TES3Travel EditorID: FormID}`, `markers` the REFRs of a
-    `MARKER_KINDS` base, and `instances` the placements of a scripted base,
-    the folder's own or a `runtime_masters` master's.
+    `MARKER_KINDS` base, `instances` the placements of a scripted base,
+    the folder's own or a `runtime_masters` master's, and `gated` the folder's
+    own owned placements whose ownership a global lifts.
     """
     scripted = [(name, rec) for name in SCRIPTED_EXPORTS
                 for rec in export_records(os.path.join(folder, name), _SCRIPTED_KEYS)]
@@ -190,7 +193,7 @@ def folder_tables(folder: str) -> dict:
     bases.update(base for base, _rec, _dir, _name in master_scripted(folder))
     owner = f'{len(masters_from_export_header(folder)):02X}'
     out = {'scripted': scripted, 'first': {}, 'travel': {}, 'markers': [],
-           'instances': [],
+           'instances': [], 'gated': [],
            'cells': list(export_records(os.path.join(folder, 'CELL.txt'), _CELL_KEYS))}
     for name in PLACEMENT_EXPORTS:
         for rec in export_records(os.path.join(folder, name), _REF_KEYS):

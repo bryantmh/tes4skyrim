@@ -131,6 +131,30 @@ player->PositionCell -257 -161 135 0 "Seyda Neen, Arrille's Tradehouse"
 until 300 GetPCCell "Seyda Neen, Arrille's Tradehouse" == 1
 end
 
+# Renting a bed: the Halfway Tavern's room bed (058D6E37) is Drelasa Ramothran's, owned only while
+# Rent_Pelagiad_Halfway is 0. Paying 10 gold through Beds sets `rent` on her Pub_Pelagiad_Halfway, which
+# sets the global. Skyrim refuses an owned bed, so a day's sleep in it proves the rental handed it over.
+# See docs/commentary/morrowind_runtime.md#ownership-globals
+case inn_bed_rental
+run
+player->AddItem "Gold_001" 10
+player->PositionCell 291 400 30 0 "Pelagiad, Halfway Tavern"
+until 300 GetPCCell "Pelagiad, Halfway Tavern" == 1
+approach 05862281
+talk drelasa ramothran
+ask beds
+choose 1
+bye
+until 60 Rent_Pelagiad_Halfway == 1
+run
+player->PositionCell 760 254 300 0 "Pelagiad, Halfway Tavern"
+wait 30
+rest 1x24 058D6E37 Day != "drelasa ramothran".rentDay
+run
+player->PositionCell -257 -161 135 0 "Seyda Neen, Arrille's Tradehouse"
+until 300 GetPCCell "Seyda Neen, Arrille's Tradehouse" == 1
+end
+
 # 50_world.mwtest drives arrille next: his base back, then alive.
 case arrille_restored
 run

@@ -116,6 +116,7 @@ void EffectTick() {
     TickJump(player);
     TickStillActors(player);
     TickSanctuary(player);
+    TickOwnerGates();
     TickAttributeEffects(player);
     TickPlayerFollowers();
 }

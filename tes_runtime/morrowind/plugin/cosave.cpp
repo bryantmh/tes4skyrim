@@ -3,6 +3,7 @@
 #include <string>
 
 #include "dialogue_state.h"
+#include "game_calls.h"
 #include "log.h"
 #include "object_script.h"
 #include "object_tick.h"
@@ -89,6 +90,7 @@ void RevertState() {
     State().Reset();
     ClearInstances();
     ResetTickState();
+    gamecalls::ResetOwnerGates();
     State().StartStartupScripts();
     Log("cosave: state reverted");
 }

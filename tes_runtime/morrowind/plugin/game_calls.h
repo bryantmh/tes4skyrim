@@ -19,4 +19,11 @@ void InstallGameCalls();
 // explicit target can act on the speaker. Null clears it.
 void SetSpeakerRef(const char* actorId, void* ref);
 
+// Forgets which owner each ownership-gated reference was given, so the first
+// tick after a load sets each one again from its global.
+// See: docs/commentary/morrowind_runtime.md#ownership-globals
+namespace gamecalls {
+void ResetOwnerGates();
+}  // namespace gamecalls
+
 }  // namespace tesruntime::mw

@@ -1239,6 +1239,24 @@ def _placement_lines(pos: tuple, rot: tuple, prefix: str = '') -> list:
             f'{prefix}RotY={rot[1]}', f'{prefix}RotZ={rot[2]}']
 
 
+def _ownership_lines(ref, ctx: MorrowindContext) -> list:
+    """XOWN, plus XRNK for a faction owner's rank and XGLB for the global that lifts it.
+
+    See: docs/commentary/tes4_export_morrowind.md#ownership-globals
+    """
+    owner = ctx.resolve(ref.owner)
+    faction = '' if owner else ctx.resolve(ref.faction)
+    if not owner and not faction:
+        return []
+    lines = [f'XOWN.Owner={owner or faction}']
+    if faction and ref.faction_rank >= 0:
+        lines.append(f'XRNK.Rank={ref.faction_rank}')
+    gate = ctx.resolve(ref.owner_global, 'GLOB')
+    if gate:
+        lines.append(f'XGLB.Global={gate}')
+    return lines
+
+
 def ref_lines(ref, parent_cell: str, ctx: MorrowindContext):
     """One placed reference, or None when its base object cannot resolve.
 
@@ -1253,9 +1271,7 @@ def ref_lines(ref, parent_cell: str, ctx: MorrowindContext):
     lines.extend(_placement_lines(ref.pos, ref.rot))
     if ref.scale != 1.0:
         lines.append(f'XSCL.Scale={ref.scale}')
-    owner = ctx.resolve(ref.owner) or ctx.resolve(ref.faction)
-    if owner:
-        lines.append(f'XOWN.Owner={owner}')
+    lines.extend(_ownership_lines(ref, ctx))
     if ref.lock_level > 0:
         lines.append(f'XLOC.Level={min(ref.lock_level, 100)}')
         key = ctx.resolve(ref.key)

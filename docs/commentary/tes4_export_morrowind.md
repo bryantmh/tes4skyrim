@@ -3055,3 +3055,12 @@ a positional read scores those as material "skyrim" and returns nothing.
 LTEX classifies from its EditorID first — the authored `NAME` field, e.g.
 `Sand`, `Road Dirt`, `AI_Grass_Cobbles` — with the texture file name as
 tiebreak for the records whose EditorID is itself a filename.
+
+
+## <a id="ownership-globals"></a>Ownership: owner, faction rank and global
+
+A reference's `ANAM` owner, else its `CNAM` faction, becomes `XOWN.Owner`; a
+faction owner's `INDX` rank becomes `XRNK.Rank`; and the `BNAM` global that
+lifts the ownership while nonzero becomes `XGLB.Global`, the key the TES4
+export uses. Skyrim keeps no global on a REFR, so MorrowindRuntime applies it:
+[morrowind_runtime.md](morrowind_runtime.md#ownership-globals).

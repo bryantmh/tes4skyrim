@@ -5466,3 +5466,24 @@ condition (0x32cb80) clears when combat ends, so it was not used.
 1.6.1170 character controller code read so far (`bhkCharProxyController` vtable, the state
 `Simulate` functions, `bhkCharacterPointCollector::addCdPoint`) no stored supporting body
 was found.
+
+
+## <a id="ownership-globals"></a>Ownership globals: renting a bed
+
+A TES3 cell reference can name a global in `BNAM` beside its owner (`ANAM`) or
+faction (`CNAM`). While that global is nonzero the reference is unowned
+(OpenMW `MechanicsManager::isAllowedToUse`, `cellref.getGlobalVariable()`).
+Every publican's rental works this way: the rent topic sets `rent` on the
+publican's script (`Pub_Pelagiad_Halfway`), which sets `Rent_Pelagiad_Halfway`
+to 1 for the day and back to 0 on the cell change after it ends.
+
+Skyrim's REFR has no such field (xEdit: `XGLB` is TES4-only), so the export
+writes it as `XGLB.Global`, the sidecar stages `owner_gates.txt`
+(`Plugin|ref=global|OwnerPlugin|owner`), and `game_calls_owner.cpp` keeps each
+reference in line: while the global is set the player owns it, through
+`ObjectReference.SetActorOwner` (id 56223), as vanilla's `RentRoomScript` hands
+a rented bed over; once it clears, the authored owner comes back through
+`SetActorOwner` or `SetFactionOwner` (56228). A reference whose cell is not
+loaded has no form, so it is retried every 500 ms until it loads. A load
+forgets what was applied, since the save holds whatever owner the reference
+had then.

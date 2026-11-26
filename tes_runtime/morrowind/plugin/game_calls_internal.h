@@ -248,6 +248,10 @@ constexpr std::uint32_t kUnarmedWeapon = 0x000001F4;
 // Keeps the player's and each watched actor's Sanctuary faction rank at its
 // summed Sanctuary. game_calls_sanctuary.cpp.
 void TickSanctuary(void* player);
+// Hands each ownership-gated reference to the player while its global is set,
+// and back to its authored owner after. game_calls_owner.cpp.
+void TickOwnerGates();
+void InstallOwnerCalls();
 // The engine's float game setting `name`, read and written in place; null when
 // absent. Game thread. game_calls_query.cpp.
 float* GameSettingFloat(const char* name);

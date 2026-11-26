@@ -415,6 +415,17 @@ constexpr std::uint64_t kRefActivate = 56139;
 // See: docs/commentary/morrowind_runtime.md#show-rest-menu
 constexpr std::uint64_t kPlayerCanSleepHere = 40443;
 constexpr std::uint64_t kToggleSleepWaitMenu = 52490;
+// ObjectReference.SetActorOwner(ActorBase) (0x9d12a0 on 1.6.659) and
+// .SetFactionOwner(Faction) (0x9d1710), found at their registrations beside
+// the name strings like SetLockLevel, whose same-shaped site gives 0x9d1740 ->
+// 56229. Both take the reference in r8 and the owner in r9.
+// See: docs/commentary/morrowind_runtime.md#ownership-globals
+constexpr std::uint64_t kRefSetActorOwner = 56223;
+constexpr std::uint64_t kRefSetFactionOwner = 56228;
+// TESFaction's form type (skse64 GameForms.h kFormType_Faction).
+constexpr std::uint8_t kFormTypeFaction = 0x0B;
+// The player's ActorBase in Skyrim.esm.
+constexpr std::uint32_t kPlayerBase = 0x00000007;
 constexpr std::uint64_t kRefLock = 56198;
 constexpr std::uint64_t kRefIsLocked = 56196;
 constexpr std::uint64_t kRefSetLockLevel = 56229;

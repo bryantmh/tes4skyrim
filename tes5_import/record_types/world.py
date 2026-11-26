@@ -1107,6 +1107,8 @@ def _achr_links(rec: dict) -> bytes:
     owner = get_formid(rec, 'XOWN.Owner')
     if owner:
         subs += pack_formid_subrecord('XOWN', owner)
+        if rec.get('XRNK.Rank'):
+            subs += pack_subrecord('XRNK', struct.pack('<i', get_int(rec, 'XRNK.Rank')))
     return subs
 
 

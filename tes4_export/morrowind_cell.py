@@ -34,6 +34,8 @@ class CellRef:
     owner: str = ''
     faction: str = ''
     faction_rank: int = -1
+    #: BNAM: the global that, while nonzero, lifts this reference's ownership (OpenMW `mGlobalVariable`).
+    owner_global: str = ''
     key: str = ''
     trap: str = ''
     soul: str = ''
@@ -211,6 +213,7 @@ _REF_HANDLERS = {
     'TNAM': lambda r, s: setattr(r, 'trap', get_string(s)),
     'ANAM': lambda r, s: setattr(r, 'owner', get_string(s)),
     'CNAM': lambda r, s: setattr(r, 'faction', get_string(s)),
+    'BNAM': lambda r, s: setattr(r, 'owner_global', get_string(s)),
     'XSOL': lambda r, s: setattr(r, 'soul', get_string(s)),
     'INDX': _ref_rank,
     'NAM9': _ref_count,

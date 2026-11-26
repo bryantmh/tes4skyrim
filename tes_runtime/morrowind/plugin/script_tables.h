@@ -449,6 +449,18 @@ struct StateRow {
 };
 const std::vector<StateRow>& StateRows();
 
+// One placed reference whose ownership a TES3 global lifts while nonzero
+// (owner_gates.txt): the reference, the global, and its authored owner.
+// See: docs/commentary/morrowind_runtime.md#ownership-globals
+struct OwnerGateRow {
+    FormRef ref;
+    std::string global;
+    FormRef owner;
+    // The sidecar whose view the global is read through.
+    int layer = -1;
+};
+const std::vector<OwnerGateRow>& OwnerGateRows();
+
 // A GMST by name, or null when the chain staged none of that name.
 const GmstDef* FindGmst(const std::string& name);
 // A GMST's float or int as a float, or `fallback` when absent.
