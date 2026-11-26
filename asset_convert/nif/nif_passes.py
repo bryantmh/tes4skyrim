@@ -464,17 +464,103 @@ def wrap_root_transform(root, has_skin, furn_shift):
         bake_node_transform_into_body(root.collision_object, root,
                                       extra_z=furn_shift)
 
-    inner.num_children = root.num_children
-    inner.children.update_size()
-    for j in range(root.num_children):
-        inner.children[j] = root.children[j]
-
     root.rotation = _identity_matrix()
     root.translation.x = 0.0
     root.translation.y = 0.0
     root.translation.z = 0.0
     root.scale = 1.0
+    _hand_children_to(root, inner)
+    return True
+
+
+def _hand_children_to(root, inner):
+    """Make `inner` the root's only child, holding the children the root had."""
+    inner.num_children = root.num_children
+    inner.children.update_size()
+    for j in range(root.num_children):
+        inner.children[j] = root.children[j]
     root.num_children = 1
     root.children.update_size()
     root.children[0] = inner
+
+
+#: Name suffix of the node that takes a root's own transform controller.
+ROOT_MOVER_SUFFIX = b' Anim'
+
+#: NiTimeController.flags bit 5: a controller manager drives this controller.
+_CTLR_MANAGER_CONTROLLED = 0x20
+
+#: NiTimeController.flags bit 3: the controller runs, so it writes its target.
+_CTLR_ACTIVE = 0x08
+
+
+def _own_chain(root):
+    """The root's controllers in chain order; none when a manager is among them."""
+    chain = []
+    ctrl = getattr(root, 'controller', None)
+    while ctrl is not None:
+        chain.append(ctrl)
+        ctrl = ctrl.next_controller
+    if any(isinstance(c, NifFormat.NiControllerManager) for c in chain):
+        return []
+    return chain
+
+
+def _is_own(ctrl):
+    """True for a transform controller that no manager drives."""
+    return (isinstance(ctrl, NifFormat.NiKeyframeController)
+            and not ctrl.flags & _CTLR_MANAGER_CONTROLLED)
+
+
+def _writes_keys(ctrl):
+    """True for a running controller whose interpolator holds at least one key."""
+    data = getattr(ctrl.interpolator, 'data', None)
+    if data is None or not ctrl.flags & _CTLR_ACTIVE:
+        return False
+    return bool(data.num_rotation_keys or data.translations.num_keys
+                or data.scales.num_keys)
+
+
+def _set_chain(node, ctrls):
+    """Make `ctrls`, in order, the node's whole controller chain."""
+    node.controller = ctrls[0] if ctrls else None
+    for ctrl, after in zip(ctrls, ctrls[1:] + [None]):
+        ctrl.next_controller = after
+
+
+def _root_mover(root, wrapped):
+    """The inner node a root's controller moves to: the wrapper's, else a new one."""
+    kids = [c for c in root.children if c is not None]
+    if (wrapped and len(kids) == 1 and type(kids[0]).__name__ == 'NiNode'
+            and kids[0].name == root.name):
+        return kids[0]
+    inner = NifFormat.NiNode()
+    inner.name = bytes(root.name).rstrip(b'\x00') + ROOT_MOVER_SUFFIX
+    inner.flags = NIF_FLAGS
+    _hand_children_to(root, inner)
+    return inner
+
+
+def move_root_controller(root, has_skin, wrapped, stats):
+    """Move the root's own transform controllers onto an inner NiNode; True when moved.
+
+    Nothing moves unless one of them is active and holds key data. They go,
+    in their order, to the wrapper's inner node when the root was wrapped,
+    else to a new node; every other controller of the chain and the collision
+    stay on the root. Skinned meshes and rig roots are exempt, as in the wrapper.
+    See: docs/commentary/asset_convert_nif.md#root-transform-controller
+    """
+    if has_skin or not hasattr(root, 'children') \
+            or bytes(root.name).rstrip(b'\x00') == b'NPC Root [Root]':
+        return False
+    chain = _own_chain(root)
+    movers = [c for c in chain if _is_own(c)]
+    if not any(_writes_keys(c) for c in movers):
+        return False
+    inner = _root_mover(root, wrapped)
+    _set_chain(root, [c for c in chain if not _is_own(c)])
+    _set_chain(inner, movers)
+    for ctrl in movers:
+        ctrl.target = inner
+    stats['root_controllers_moved'] = stats.get('root_controllers_moved', 0) + 1
     return True
