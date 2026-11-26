@@ -355,7 +355,7 @@ backwards, with the curve facing the archer.
 ## Weight-slider variants
 <a id="weight-slider-variants"></a>
 
-**Code:** `_write_weight_variants` in `asset_convert/nif/nif_converter.py`
+**Code:** `write_weight_variants` in `asset_convert/nif/wearable_variants.py`
 
 Biped wearables get vanilla-style `_0` / `_1` variants: the ARMA records for
 body, hands and feet gear reference `<name>_1.nif` with the weight slider
@@ -380,6 +380,57 @@ still gets the pair its ARMA asks for.
 
 A beast-race head variant is a copy of ONE mesh, never a weight pair: head gear
 has the slider off, and `_0`/`_1` would collide with the race suffix.
+
+## <a id="first-person-meshes"></a>First-person meshes: only what hangs on the forearms and hands
+
+**Code:** `asset_convert/character/first_person.py`, `_write_first_person` in
+`asset_convert/nif/wearable_variants.py`, `_arma_models` in
+`tes5_import/record_types/equipment.py`
+
+An ARMA with no first-person model (MOD4/MOD5) falls back to its worn mesh in
+first person. Every converted armature lacked one, so the camera saw parts of
+the shirt it sits inside: the Morrowind common shirt (borrowed Morroblivion
+`Clothes\Shirts\Common01\male_1.nif`) showed a strip along the bottom of the
+screen when looking down, on the headless instance. Vanilla shields carry no
+MOD4 either (24 of 28) and still show in first person, which is the same
+fallback.
+
+Vanilla census (Skyrim.esm, human-race ARMAs): 120 of 126 body addons carry a
+first-person model (the 6 without are NPC-only: mannequin, Yarl torsos,
+Briarheart), forearms 140/162, feet 0/73, head/hair/circlet 2/121. The
+first-person model is a separate `1stPerson<name>` file beside the worn one
+(`Clothes\FarmClothes01\1stPersontorsom_1.nif`, its weight pair derived as
+for MOD2).
+
+**The rule: first person shows only geometry on the forearms and hands.** The
+mesh stage writes `1stPerson<name>` beside every worn variant it writes (`_0`
+and `_1`, or the plain mesh). A skinned shape keeps the triangles whose three
+vertices are weighted most heavily to a bone named `Forearm`, `Hand`, `Finger`
+or `Shield`; a rigid shape stays only when the mesh's `Prn` names such a node
+(a shield's `SHIELD`, which hangs on the forearm). An emptied shape is removed,
+so a shirt or helmet ships an empty first-person file and draws nothing. The
+partition is rebuilt with the shape's original body part. Measured: the common
+shirt keeps 182 of its 471 skin triangles (the bare forearms) and none of its
+994 cloth ones; a gauntlet, a shield and a cuirass's `Arms` keep what they wear
+on the arm.
+
+The importer names the copies as MOD4/MOD5 on every armature it writes; beast
+armatures share the human copy, since head gear has nothing to keep.
+
+A borrowed hybrid mesh's stamp includes the converter version
+(`hybrid_build._stamp`); without it a converter change never reached the
+shared `Morroblivion Hybrid Assets` meshes.
+
+Confirmed on the headless instance (Morrowind.esm, hybrid mode): with the
+common shirt equipped, looking straight down, the shirt strip is gone; an
+equipped Imperial shield still shows. Blast radius on that build: 630 ARMAs,
+579 with MOD4 (the other 51 carry no worn model), 423 distinct first-person
+paths, every one written; 715 `1stPerson` files (431 Morrowind.esm, 284
+Hybrid Assets), 477 keeping geometry and 238 empty, all of them helmets,
+boots, greaves, pauldrons and similar, none a gauntlet, bracer, glove or
+shield. Tests: `tests/test_first_person_meshes.py`, and
+`test_first_person_meshes_are_the_worn_meshes_1stperson_copies` in
+`tests/test_beast_head_gear.py`.
 
 ### <a id="prn-bone-fallback"></a>A worn piece with no Prn and no skin
 

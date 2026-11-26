@@ -62,6 +62,7 @@ from .common import (
 )
 
 
+from asset_convert.character.first_person import first_person_path
 from asset_convert.character.morrowind_coverage import (BODY_PARTITIONS,
                                                         coverage_bits,
                                                         part_slots, sided_slot)
@@ -682,25 +683,28 @@ def _arma_dnam(use_slider: bool, tes5_biped: int) -> bytes:
 
 
 def _arma_models(rec: dict, beast_race, use_slider: bool) -> bytes:
-    """MOD2/MOD3: the worn meshes, female falling back to male.
+    """MOD2-MOD5: the worn meshes, then their first-person copies, female falling back to male.
 
     A beast armature wears the per-race mesh fitted to its skull; weight-morphed
-    gear names its `_1` variant.
+    gear names its `_1` variant. Every race shares the human first-person copy.
+    See: docs/commentary/asset_convert_armor.md#first-person-meshes
     """
-    def _weighted(path: str) -> str:
+    def _weighted(path: str, beast) -> str:
         p = prefix_path(path)
         if not p.lower().endswith('.nif'):
             return p
-        if beast_race:
-            return p[:-4] + ARMA_BEAST_RACES[beast_race][2] + '.nif'
+        if beast:
+            return p[:-4] + ARMA_BEAST_RACES[beast][2] + '.nif'
         return p[:-4] + '_1.nif' if use_slider else p
 
     male_model = get_str(rec, 'Male.BipedModel.MODL')
     female_model = get_str(rec, 'Female.BipedModel.MODL') or male_model
-    subs = pack_string_subrecord('MOD2', _weighted(male_model)) if male_model else b''
-    if female_model:
-        subs += pack_string_subrecord('MOD3', _weighted(female_model))
-    return subs
+    models = (('MOD2', male_model, beast_race), ('MOD3', female_model, beast_race),
+              ('MOD4', male_model, None), ('MOD5', female_model, None))
+    return b''.join(
+        pack_string_subrecord(sig, first_person_path(_weighted(path, beast))
+                              if sig in ('MOD4', 'MOD5') else _weighted(path, beast))
+        for sig, path, beast in models if path)
 
 
 def _arma_races(beast_race, exclude_beast_races: bool) -> bytes:
@@ -717,7 +721,7 @@ def _arma_races(beast_race, exclude_beast_races: bool) -> bytes:
 def _build_arma(rec: dict, arma_fid: int, tes5_biped: int, armor_type: int,
                 is_shield: bool = False, beast_race=None,
                 exclude_beast_races: bool = False) -> bytes:
-    """An ARMO's companion ARMA: EDID BOD2 RNAM DNAM MOD2 MOD3 MODL[] [SNDD].
+    """An ARMO's companion ARMA: EDID BOD2 RNAM DNAM MOD2-MOD5 MODL[] [SNDD].
 
     `beast_race` builds that race's armature (its RNAM, vampire variant and
     skull-fitted meshes); `exclude_beast_races` drops the beast races from

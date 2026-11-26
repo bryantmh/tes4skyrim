@@ -98,7 +98,7 @@ from asset_convert.nif.door_anim_morrowind import latch_source_hinge
 from asset_convert.collision.collision_original import latch_original
 from asset_convert.nif.door_plan import latch_door_model
 from asset_convert.nif.fixture_plan import latch_fixture_model
-from asset_convert.character.body_wrap import morph_converted_to_weight1
+from asset_convert.nif.wearable_variants import output_root, write_weight_variants
 from asset_convert.havok.hkx_animobject import (VANILLA_AUTOPLAY_BGED,
                                                 generate_animobject_project)
 from asset_convert.nif.addon_nodes_falloutnv import remap_addon_nodes
@@ -145,9 +145,7 @@ from asset_convert.character.skyrim_overrides import (
     WEAPON_INV_MARKER_ZOOM,
 )
 from asset_convert.character.dismember_falloutnv import hide_dismember_caps
-from asset_convert.nif.mesh_scan_emit import (record_scan_alias,
-                                              record_scan_entry,
-                                              record_scan_removal)
+from asset_convert.nif.mesh_scan_emit import record_scan_entry
 from asset_convert.collision.collision import (collision_owner,
                                                hoist_collision,
                                                mesh_has_held_body,
@@ -1246,31 +1244,16 @@ def convert_nif(src_path, dst_path, *, fix_textures=True, remap_skeleton=None,
         os.makedirs(dst_dir, exist_ok=True)
     with open(dst_path, 'wb') as f:
         f.write(buf.getvalue())
-    record_scan_entry(data, _output_root(dst_path)[2])
+    record_scan_entry(data, output_root(dst_path)[2])
 
-    _write_weight_variants(data, buf, src_path, dst_path, src_meshes_dir,
-                           wearable_plan, creature, race)
+    write_weight_variants(data, buf, src_path, dst_path, src_meshes_dir,
+                          wearable_plan, creature, race)
     if stats.get('_head_gear') and not creature and not hair and race is None:
         _write_beast_head_variants(
             src_path, dst_path,
             fix_textures=fix_textures, src_meshes_dir=src_meshes_dir,
             wearable_plan=wearable_plan, parallax=parallax)
     return _finish_result(result, stats)
-
-
-def _output_root(dst_path):
-    """(tree root, meshes root, model path) around `dst_path`'s meshes/.
-
-    Only convert_nif knows where the output tree is, so the texture passes
-    that write beside it resolve their roots here.  All three are None when
-    the destination is not inside a meshes/ tree.
-    """
-    dstn = str(dst_path).replace('/', os.sep).replace('\\', os.sep)
-    key = os.sep + 'meshes' + os.sep
-    i = dstn.lower().rfind(key)
-    if i < 0:
-        return None, None, None
-    return dstn[:i] + os.sep, dstn[:i + len(key)], dstn[i + len(key):]
 
 
 def _texture_out_path(out_root, rel):
@@ -1291,7 +1274,7 @@ def _build_flip_atlases(stats, dst_path):
     jobs = stats.pop('_flipbook_atlases', {})
     if not jobs:
         return
-    out_root = _output_root(dst_path)[0]
+    out_root = output_root(dst_path)[0]
     if out_root is None:
         return
     from asset_convert.nif import flipbook
@@ -1314,7 +1297,7 @@ def _build_height_maps(stats, dst_path):
     jobs = stats.pop('_parallax_maps', {})
     if not jobs:
         return
-    out_root = _output_root(dst_path)[0]
+    out_root = output_root(dst_path)[0]
     if out_root is None:
         return
     from asset_convert.texture import parallax
@@ -1339,7 +1322,7 @@ def _build_animobject_graph(data, stats, result, dst_path):
     if stripped:
         stats['empty_text_keys_stripped'] = stripped
 
-    _, meshes_root, model_rel = _output_root(dst_path)
+    _, meshes_root, model_rel = output_root(dst_path)
     if meshes_root is None:
         return
     try:
@@ -1387,55 +1370,6 @@ def _run_post_passes(data, stats, result, src_path, dst_path, textures_only):
             stats['gun_part_sequences'] = len(parts)
         _build_animobject_graph(data, stats, result, dst_path)
     _add_tangent_space(data)
-
-
-def _write_weight_variants(data, buf, src_path, dst_path, src_meshes_dir,
-                           wearable_plan, creature, race):
-    """Write the _0/_1 weight-slider pair the plugin actually references.
-
-    The _1 file is NEVER a second conversion: the engine lerps the pair
-    per-vertex and that REQUIRES identical topology, so it is the finished
-    weight-0 mesh post-morphed by the fitted body morph.
-    See: docs/commentary/asset_convert_armor.md#weight-slider-variants
-    """
-    srcl = str(src_path).lower().replace('\\', '/')
-    wearable = (not creature and race is None
-                and not is_ground_model(srcl.rsplit('/', 1)[-1]))
-    if not (wearable and wearable_plan is not None):
-        return
-
-    want = wp.variants_for(wearable_plan, src_path, src_meshes_dir)
-    root, ext = os.path.splitext(str(dst_path))
-
-    if not want & wp.BASE:
-        try:
-            os.remove(dst_path)
-        except OSError:
-            pass
-        record_scan_removal(_output_root(dst_path)[2])
-    if want & wp.W0:
-        with open(root + '_0' + ext, 'wb') as f:
-            f.write(buf.getvalue())
-        record_scan_alias(_output_root(root + '_0' + ext)[2],
-                          _output_root(dst_path)[2])
-    if not want & wp.W1:
-        return
-
-    w1_bytes = None
-    try:
-        if morph_converted_to_weight1(data, mesh_is_female(src_path)):
-            buf1 = _io.BytesIO()
-            data.write(buf1)
-            w1_bytes = buf1.getvalue()
-    except Exception:
-        w1_bytes = None
-    with open(root + '_1' + ext, 'wb') as f:
-        f.write(w1_bytes if w1_bytes is not None else buf.getvalue())
-    if w1_bytes is None:
-        record_scan_alias(_output_root(root + '_1' + ext)[2],
-                          _output_root(dst_path)[2])
-    else:
-        record_scan_entry(data, _output_root(root + '_1' + ext)[2])
 
 
 def _write_beast_head_variants(src_path, dst_path, *, fix_textures,

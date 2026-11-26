@@ -15,6 +15,7 @@ import os
 import shutil
 from pathlib import Path
 
+from asset_convert.character.first_person import first_person_path
 from asset_convert.character.hand_pairs import split_models
 from asset_convert.game_paths import ascii_dest, current_namespace, namespace_for, set_namespace
 from asset_convert.sources import output_files
@@ -24,6 +25,7 @@ from asset_convert.sources.hybrid_assets import (MOD_NAME, NAMESPACE, SPLIT_OWNE
 from asset_convert.texture.texture_repair import repair_texture_tree
 from core.plugin_masters import export_root
 from output_layout import asset_root
+from version import current_version
 
 #: What each borrowed file was last converted from, in the shared cache folder.
 STAMPS = 'converted.json'
@@ -137,20 +139,22 @@ def _textures(rec_dir, rows: dict, out: Path, stamps: dict, stats: dict) -> int:
 
 
 def _drop_copies(rows: dict, plugin_dir: Path, rec_dir) -> int:
-    """Discard each borrowed file (meshes with their `_0`/`_1` variants) from the plugin's output; how many went."""
+    """Discard each borrowed file (meshes with their weight and first-person variants) from the plugin's output; how many went."""
     ns, gone = namespace_for(rec_dir), 0
     for rel in rows:
         part, _sep, below = rel.partition('/')
         stem, ext = os.path.splitext(str(ascii_dest(plugin_dir / part / ns, below)))
-        names = [stem + s + ext for s in ('', '_0', '_1')] if part == 'meshes' else {stem + ext, stem + '.dds'}
+        names = {stem + ext, stem + '.dds'}
+        if part == 'meshes':
+            names = [n for s in ('', '_0', '_1') for n in (stem + s + ext, first_person_path(stem + s + ext))]
         gone += sum(output_files.discard(n) for n in names)
     return gone
 
 
 def _stamp(src: Path, plan: dict, rel: str) -> list:
-    """What a conversion of `src` depends on: its size, its time and its wearable plan entry."""
+    """What converting `src` depends on: its size, time, wearable plan entry and the converter's version."""
     st = src.stat()
-    return [st.st_size, st.st_mtime_ns, repr(plan.get(rel.lower().replace(chr(92), '/')))]
+    return [st.st_size, st.st_mtime_ns, repr(plan.get(rel.lower().replace(chr(92), '/'))), current_version()]
 
 
 def _stale(stamps: dict, key: str, src: Path, plan: dict) -> bool:

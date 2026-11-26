@@ -12,6 +12,7 @@ import struct
 
 import pytest
 
+from asset_convert.character.first_person import first_person_path
 from tes5_import.record_types import equipment as eq
 from tes5_import.base.equivalents import (
     ARMA_ADDITIONAL_RACES,
@@ -197,6 +198,18 @@ def test_head_gear_never_gets_a_weight_suffix():
             assert '_1.nif' not in _text(arma[field][0]).lower()
         slider_m, slider_f = struct.unpack('<BB', arma['DNAM'][0][2:4])
         assert slider_m == 0 and slider_f == 0
+
+
+def test_first_person_meshes_are_the_worn_meshes_1stperson_copies():
+    """MOD4/MOD5 name the `1stPerson` copy of the human MOD2/MOD3, on body gear and every beast armature."""
+    _armo, (body,) = _armas(_record(1 << 2, model='clothes\\test\\shirt.nif'))
+    for worn, first in (('MOD2', 'MOD4'), ('MOD3', 'MOD5')):
+        assert _text(body[first][0]) == first_person_path(_text(body[worn][0]))
+    _armo, armas = _armas(_record(1 << 1, edid='TestHood', model='clothes\\test\\hood.nif'))
+    human = next(a for a in armas if _fid(a['RNAM'][0]) == DEFAULT_RACE)
+    for arma in armas:
+        for field in ('MOD4', 'MOD5'):
+            assert _text(arma[field][0]) == first_person_path(_text(human['MOD2'][0])), field
 
 
 def test_beast_armatures_use_distinct_formids():
