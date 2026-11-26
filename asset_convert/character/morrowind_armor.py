@@ -787,16 +787,19 @@ def rest_skeletons(roots) -> dict:
     return {False: rest_skeleton(male, False), True: rest_skeleton(female, True)}
 
 
-def assemble_armor(rec_dir, meshes_root, log=print) -> int:
-    """Write every worn NIF the export's wearables name; how many were written.
+def assemble_armor(rec_dir, meshes_root, out_root, log=print) -> int:
+    """Write every worn NIF the export's wearables name under `out_root`; how many were written.
 
-    Runs before the batch mesh conversion so the assembled files are converted
-    with everything else. Part meshes and the skeletons resolve through this
-    plugin's mesh tree, its masters', then the vanilla Morrowind install.
+    Part meshes and the skeletons resolve through this plugin's mesh tree
+    (`meshes_root`), its masters', then the vanilla Morrowind install. An older
+    build wrote them into `meshes_root`, the export; those copies are deleted.
+    See: docs/commentary/asset_convert_armor.md#assembled-outside-the-export
     """
     specs = list(_worn_specs(rec_dir))
     if not specs:
         return 0
+    for out_rel, _parts, _female, _pauldron in specs:
+        (Path(meshes_root) / out_rel.replace(chr(92), '/')).unlink(missing_ok=True)
     roots = [Path(meshes_root)] + [Path(d) / 'meshes'
                                    for d in base_plugins.export_dirs(rec_dir)]
     skeletons = rest_skeletons(roots)
@@ -813,7 +816,7 @@ def assemble_armor(rec_dir, meshes_root, log=print) -> int:
             failed += 1
             log(f'  [skip] {out_rel}: {exc}')
             continue
-        out_path = Path(meshes_root) / out_rel.replace(chr(92), '/')
+        out_path = Path(out_root) / out_rel.replace(chr(92), '/')
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, 'wb') as fh:
             data.write(fh)

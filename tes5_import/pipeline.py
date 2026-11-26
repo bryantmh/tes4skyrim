@@ -33,11 +33,13 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 from core.plugin_masters import (master_dir, master_dirs,
                                  masters_from_export_header)
 from core.worldspace_names import set_worldspace_plugins
-from asset_convert.game_paths import namespace_for, set_namespace
+from asset_convert.game_paths import namespace_for, set_borrowed, set_namespace
+from asset_convert.sources import hybrid_assets, output_files
 from .registry import IMPORT_DISPATCH, RUNTIME_ONLY_TYPES, SKIP_TYPES
 from .navmesh.pool import collision_cache_chain
 from .base.master_export import values_of
@@ -767,7 +769,7 @@ def _prescan_vendor_trainer(by_type: dict, ctx, writer, export_dir: str,
     _step_done('vendor/trainer records')
 
 
-def rescan_mesh_caches(export_dir, mesh_dir: str, force: bool = False) -> bool:
+def rescan_mesh_caches(export_dir, mesh_dir: str, force: bool = False, assets_dir=None) -> bool:
     """Rebuild one export's bounds+collision caches if stale or behind the mesh stage.
 
     True when either cache was rewritten.  A stale cache (older entry schema)
@@ -782,10 +784,10 @@ def rescan_mesh_caches(export_dir, mesh_dir: str, force: bool = False) -> bool:
         collision_cache_is_current)
     from asset_convert.collision.mesh_scan_fragments import (clear_fragments,
                                                              merge_fragments)
-    assets_dir = assets_for(export_dir)
+    assets_dir = Path(assets_dir) if assets_dir else assets_for(export_dir)
     cache_path = str(assets_dir / 'mesh_bounds_cache.json')
     col_path = str(assets_dir / 'collision_cache.bin')
-    if not os.path.isdir(mesh_dir):
+    if not output_files.is_dir(mesh_dir):
         return False
     seed_b, seed_c = merge_fragments(assets_dir)
     current = (not force and bounds_cache_is_current(cache_path)
@@ -805,7 +807,7 @@ def rescan_mesh_caches(export_dir, mesh_dir: str, force: bool = False) -> bool:
     return True
 
 
-def _refresh_master_mesh_caches(export_dir: str) -> None:
+def _refresh_master_mesh_caches(export_dir: str, out_root: str) -> None:
     """Rescan every MASTER whose bounds/collision cache is stale.
 
     A cache-format bump strands each master not re-run since: the chain loads
@@ -819,7 +821,17 @@ def _refresh_master_mesh_caches(export_dir: str) -> None:
         mdir = master_dir(export_dir, name)
         if os.path.isdir(mdir):
             rescan_mesh_caches(
-                mdir, os.path.join(str(plugin_paths(name).out), 'meshes'))
+                mdir, os.path.join(str(plugin_paths(name, out_root=out_root).out), 'meshes'))
+
+
+def _refresh_hybrid_caches(export_dir: str, out_root: str) -> None:
+    """Rescan the shared Morroblivion Hybrid Assets caches when this plugin's chain borrows from it.
+
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-shared-assets
+    """
+    if hybrid_assets.chain_dirs(export_dir):
+        rescan_mesh_caches(export_dir, str(Path(out_root) / hybrid_assets.MOD_NAME / 'meshes'),
+                           assets_dir=hybrid_assets.cache_dir(export_dir))
 
 
 def _prescan_mesh_caches(export_dir: str, plugin_out_dir: str, _step_done):
@@ -834,7 +846,8 @@ def _prescan_mesh_caches(export_dir: str, plugin_out_dir: str, _step_done):
     from asset_convert.collision.collision_extract import (
         load_collision, door_axis_cache_is_current, scan_door_axes)
     axis_path = str(assets_for(export_dir) / 'door_panel_axis_cache.json')
-    _refresh_master_mesh_caches(export_dir)
+    _refresh_master_mesh_caches(export_dir, os.path.dirname(plugin_out_dir))
+    _refresh_hybrid_caches(export_dir, os.path.dirname(plugin_out_dir))
     rescan_mesh_caches(export_dir, os.path.join(plugin_out_dir, 'meshes'))
     if not door_axis_cache_is_current(axis_path, export_dir):
         print("  Door threshold cache missing or stale, measuring door "
@@ -846,7 +859,8 @@ def _prescan_mesh_caches(export_dir: str, plugin_out_dir: str, _step_done):
     _step_done('mesh bounds + collision caches')
 
 
-def _prescan_furniture_and_actors(by_type: dict, ctx, writer, export_dir: str, _step_done):
+def _prescan_furniture_and_actors(by_type: dict, ctx, writer, export_dir: str, _step_done,
+                                  out_root: str = None):
     """Load furniture seat lists, objective text and the actor indexes.
 
     FURN MNAM/FNPR must index the converted NIF's clustered seat
@@ -864,7 +878,7 @@ def _prescan_furniture_and_actors(by_type: dict, ctx, writer, export_dir: str, _
     _step_done('objective text')
 
     from .actors.indexes import build_actor_indexes
-    build_actor_indexes(by_type, writer, export_dir, ctx, _step_done)
+    build_actor_indexes(by_type, writer, export_dir, ctx, _step_done, out_root)
 
 
 def _prescan_forced_lists(ctx, writer) -> tuple:
@@ -1186,6 +1200,7 @@ def _open_import_run(masters, skip_types, output_path: str,
     See: docs/commentary/asset_convert_texture.md#per-game-asset-namespace
     """
     set_namespace(namespace_for(export_dir))
+    set_borrowed(export_dir)
     if masters is None:
         masters = ['Skyrim.esm']
     all_skip = SKIP_TYPES | (skip_types or set())
@@ -1267,7 +1282,7 @@ def _run_prescans(st: ImportState, all_records: list, num_new_masters: int,
                             os.path.basename(st.output_path), _step_done)
     _prescan_mesh_caches(export_dir, st.plugin_out_dir, _step_done)
     _prescan_furniture_and_actors(by_type, ctx, writer, export_dir,
-                                  _step_done)
+                                  _step_done, os.path.dirname(st.plugin_out_dir))
     st.pack_plan, st.pack_ctx, st._script_vars = _prescan_package_plan(
         by_type, ctx, writer, st.fid_to_edid, _step_done, lists)
     _prescan_leveled_actors(by_type, ctx, writer, _step_done)

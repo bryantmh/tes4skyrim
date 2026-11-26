@@ -381,12 +381,21 @@ bool Released(std::uint32_t id) {
 }
 
 // An NPC with no package: held on its authored spot, as Morrowind leaves it,
-// until it fights -- which lets it go for good, where the fight ends.
+// until it fights -- which lets it go for good, where the fight ends. The hold
+// needs a floor: an actor touching no collision underneath falls free, and is
+// held again where it lands.
+// See: docs/commentary/morrowind_runtime.md#a-hold-needs-a-floor
 bool StepHeld(std::uint32_t id, Live& actor) {
     if (Hooks().inCombat && Hooks().inCombat(id)) {
         State().holdReleased.insert(id);
         Leave(id, actor);
         return false;
+    }
+    if (Hooks().onFloor && !Hooks().onFloor(id)) {
+        if (actor.hasGoal) LogVerbose("anim: %s (%08X) falls free", actor.npc.c_str(), id);
+        Release(id, actor);
+        actor.hasPlaced = false;
+        return true;
     }
     if (!actor.hasGoal) TakeGoal(id, actor);
     Hold(id, actor);

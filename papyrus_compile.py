@@ -17,6 +17,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from asset_convert.sources import output_files
 from core.plugin_masters import master_chain
 from core.subprocess_flags import POPEN_FLAGS as _POPEN_FLAGS, windows_cmd
 from core.worker_budget import worker_count
@@ -36,6 +37,9 @@ _MAX_BATCH_RETRIES = 25
 
 #: Console cap on reported failures; the full list always goes to the log.
 _ERR_SAMPLE_CAP = 10
+
+#: Copies of the `.psc` an output folder keeps only in its archives, read by the compiler as imports.
+_IMPORTS = DATA_ROOT / "temp" / "papyrus_imports"
 
 #: CK vanilla-source layouts, modern first. See: docs/commentary/script_convert.md#vanilla-headers
 _HEADER_DIRS = (("Source", "Scripts"), ("Scripts", "Source"))
@@ -296,12 +300,22 @@ def _master_source_dirs(file_name: str, out_root: Path) -> list:
     dirs = []
     for m in reversed(master_chain(record_dir(export_root, file_name))):
         d = plugin_out_root(out_root, m, export_root) / "scripts" / "source"
-        if d.is_dir():
-            dirs.append(d)
+        found = ([d] if d.is_dir() else []) + _archived_copies(d)
+        if found:
+            dirs += found
         else:
             print(f"[{file_name}] WARNING: master scripts not found ({d}); "
                   f"scripts referencing {m}'s script types will not compile")
     return dirs
+
+
+def _archived_copies(src: Path) -> list:
+    """[a temp folder holding the `.psc` only `src`'s archives store], or [] when there are none.
+
+    See: docs/commentary/asset_convert_bsa.md#archived-script-sources
+    """
+    mirror = _IMPORTS / src.parent.parent.name
+    return [mirror] if output_files.mirror_archived(src, mirror, ".psc") else []
 
 
 def _root_statics_current(file_name: str, out_root: Path) -> bool:
@@ -315,8 +329,8 @@ def _root_statics_current(file_name: str, out_root: Path) -> bool:
         return True
     root_src = plugin_out_root(out_root, chain[0], export_root) / "scripts" / "source"
     stale = [n for n in static_script_files()
-             if not (root_src / n).is_file()
-             or (root_src / n).read_bytes() != (Path(STATIC_DIR) / n).read_bytes()]
+             if not output_files.exists(root_src / n)
+             or output_files.read_bytes(root_src / n) != (Path(STATIC_DIR) / n).read_bytes()]
     if not stale:
         return True
     print(f"[{file_name}] ERROR: {chain[0]}'s converted scripts are missing or "
@@ -387,7 +401,7 @@ def _prepare(file_name: str, config: dict, output_dir):
 
     script_out.mkdir(parents=True, exist_ok=True)
     return _Compiler(file_name, compiler, headers, script_src, script_out,
-                     _master_source_dirs(file_name, out_root),
+                     _archived_copies(script_src) + _master_source_dirs(file_name, out_root),
                      find_skse_source_scripts(config)), None
 
 

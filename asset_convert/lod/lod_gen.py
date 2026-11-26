@@ -20,6 +20,7 @@ from collections import Counter, namedtuple
 from pathlib import Path
 
 from asset_convert.game_paths import win_join
+from asset_convert.sources import output_files
 from asset_convert.lod.esm_scan import (FLAG_DISTANT_LOD,
                                         FLAG_INITIALLY_DISABLED, parse_esm,
                                         parse_esm_cached)
@@ -143,7 +144,7 @@ def _mesh_exists(path: str, output_meshes_dir: Path) -> bool:
     rel = path.lower().replace('/', '\\').lstrip('\\')
     if rel.startswith('meshes\\'):
         rel = rel[len('meshes\\'):]
-    return _win_join(output_meshes_dir, rel).exists()
+    return output_files.exists(_win_join(output_meshes_dir, rel))
 
 
 # LODGenx64 casts every LOD mesh's root block to NiNode without checking. A
@@ -170,15 +171,19 @@ def _mesh_screen_path(path: str, output_meshes_dir: Path) -> Path:
     return _win_join(output_meshes_dir, rel)
 
 
-def _lod_mesh_is_safe(path: str, output_meshes_dir: Path) -> bool:
-    """False if this mesh's root block would crash LODGen's NiNode cast."""
-    full = _mesh_screen_path(path, output_meshes_dir)
-    key = str(full).lower()
+def _lod_mesh_is_safe(path: str, output_meshes_dir: Path, sources=()) -> bool:
+    """False if this mesh's root block would crash LODGen's NiNode cast.
+
+    The mesh is read from the bake tree, else the first of `sources` (master
+    trees, loose or archived) holding it, as LODGen resolves it.
+    """
+    key = str(_mesh_screen_path(path, output_meshes_dir)).lower()
     cached = _NIF_ROOT_SAFE_CACHE.get(key)
     if cached is not None:
         return cached
 
-    if not full.exists():
+    full = _resolve_mesh(path, output_meshes_dir, sources)
+    if full is None:
         # 🔴 NOT cached, and that is the whole point.  Absence is TRANSIENT
         # here: the caller stages a mesh into this tree
         # (`_import_master_mesh`) and screens it immediately afterwards, so a
@@ -286,19 +291,9 @@ def _prescreen_meshes(paths, output_meshes_dir: Path, workers: int = 16,
         if key in _NIF_ROOT_SAFE_CACHE or key in seen:
             continue
         seen.add(key)
-        read_from = full
-        if not full.exists():
-            rel = p.lower().replace('/', '\\').lstrip('\\')
-            if rel.startswith('meshes\\'):
-                rel = rel[len('meshes\\'):]
-            read_from = None
-            for mdir in (source_meshes or []):
-                cand = _win_join(Path(mdir), rel)
-                if cand.exists():
-                    read_from = cand
-                    break
-            if read_from is None:
-                continue          # nowhere yet — let the serial path decide
+        read_from = _resolve_mesh(p, output_meshes_dir, source_meshes or ())
+        if read_from is None:
+            continue
         todo.append((key, read_from))
     if len(todo) < 2:
         return
@@ -370,7 +365,7 @@ def _root_is_ninode(full: Path) -> bool:
     worldspace, so exclusion is the safe answer.
     """
     try:
-        with open(full, 'rb') as fh:
+        with output_files.open_binary(full) as fh:
             head = fh.read(8192)
         nl = head.find(b'\n')
         if nl < 0 or nl > 128:
@@ -421,7 +416,7 @@ def _root_is_ninode_slow(full: Path) -> bool:
     try:
         from asset_convert.lod.lod_far_gen import NifFormat
         data = NifFormat.Data()
-        with open(full, 'rb') as fh:
+        with output_files.open_binary(full) as fh:
             data.read(fh)
         roots = data.roots
         return (bool(roots) and isinstance(roots[0], NifFormat.NiNode)
@@ -510,14 +505,11 @@ def _import_master_mesh(rel: str, output_meshes_dir: Path,
         # and re-registering it lets this run finish the previous one's cleanup.
         _register_if_staged_scratch(rel, output_meshes_dir, master_meshes)
         return True
-    r = rel.lower().replace('/', '\\').lstrip('\\')
-    if r.startswith('meshes\\'):
-        r = r[len('meshes\\'):]
-    for mdir in (master_meshes or []):
-        src = _win_join(Path(mdir), r)
-        if not src.exists():
-            continue
-        dst = _win_join(output_meshes_dir, r)
+    src = _resolve_mesh(rel, None, master_meshes or ())
+    if src is not None and not src.is_file():
+        return True
+    if src is not None:
+        dst = _mesh_screen_path(rel, output_meshes_dir)
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
@@ -527,6 +519,32 @@ def _import_master_mesh(rel: str, output_meshes_dir: Path,
         except OSError:
             return False
     return False
+
+
+def _resolve_mesh(rel: str, output_meshes_dir, sources=()):
+    """`rel` in the bake tree, else in the first of `sources` holding it (loose or archived), else None.
+
+    See: docs/commentary/asset_convert_bsa.md#archive-only-output
+    """
+    for root in ([output_meshes_dir] if output_meshes_dir else []) + [Path(m) for m in sources]:
+        full = _mesh_screen_path(rel, root)
+        if output_files.exists(full):
+            return full
+    return None
+
+
+def _archive_resources(mesh_dirs) -> list:
+    """LODGen `Resource=` lines for the archives of each packed output folder in `mesh_dirs`.
+
+    Listed last-folder first, so LODGen's later-wins order matches the
+    first-hit order meshes are resolved and staged in.
+    See: docs/commentary/asset_convert_bsa.md#archive-only-output
+    """
+    lines = []
+    for mdir in reversed([Path(m).parent for m in mesh_dirs]):
+        if (mdir / output_files.MANIFEST_NAME).is_file():
+            lines += [f"Resource={p.resolve()}" for p in sorted(mdir.glob('*.bsa'))]
+    return lines
 
 
 def _file_digest(p: Path) -> bytes:
@@ -618,7 +636,7 @@ def _lod_meshes_for(stat: dict, output_meshes_dir: Path, master_meshes=None):
     is_tree = is_tree_model(stat)
 
     dim = obnd_max_dim(stat)
-    authored = has_authored_lod(output_meshes_dir, far)
+    authored = has_authored_lod(_mesh_root(far, output_meshes_dir, master_meshes), far)
     if dim < LOD8_MIN_SIZE and not authored:
         return far, '', ''
     if is_tree:
@@ -812,6 +830,14 @@ def _refs_on_at_game_start(refs, stats, scope) -> list:
     return [r for r in refs if r['form_id'] not in off]
 
 
+def _mesh_root(rel: str, output_meshes_dir: Path, master_meshes) -> Path:
+    """The meshes root `rel` resolves in: the bake tree, else the first master tree holding it."""
+    for root in [output_meshes_dir] + [Path(m) for m in (master_meshes or ())]:
+        if _mesh_exists(rel, root):
+            return root
+    return output_meshes_dir
+
+
 def _resolve_base_entry(base_fid, stat, roots, skipped_unsafe):
     """The base half of a LODGen row, or None when this base is not listed.
 
@@ -836,7 +862,7 @@ def _resolve_base_entry(base_fid, stat, roots, skipped_unsafe):
                                 master_meshes)
             unsafe = [m for m in (model, lod4, lod8, lod16)
                       if m and not _lod_mesh_is_safe(
-                          m, output_meshes_dir)]
+                          m, output_meshes_dir, master_meshes)]
             if unsafe:
                 for m in unsafe:
                     skipped_unsafe.add(_normalize(m))
@@ -898,11 +924,12 @@ def _warn_unsafe(skipped_unsafe) -> None:
             print(f"    ... and {len(skipped_unsafe) - 10} more")
 
 
-def _write_input_file(output_dir: Path, edid: str, sw_x, sw_y, lines) -> Path:
+def _write_input_file(output_dir: Path, edid: str, sw_x, sw_y, lines, resources=()) -> Path:
     """Write the header and `lines` to `LODGen <edid>.txt` beside the exe.
 
     PathData is `output_dir`, absolute and ending in a backslash; PathOutput
-    is absolute; CellSW must equal the SW stored in the `.lod`.
+    is absolute; CellSW must equal the SW stored in the `.lod`; `resources` are
+    `Resource=` lines naming the archives LODGen reads after PathData.
     See: docs/commentary/asset_convert_terrain.md#lodgen-input-shape
     """
     dest      = (Path(output_dir).resolve() / 'meshes' / 'terrain' / edid
@@ -914,6 +941,7 @@ def _write_input_file(output_dir: Path, edid: str, sw_x, sw_y, lines) -> Path:
         f"CellSW={sw_x} {sw_y}",
         f"PathData={path_data}",
         f"PathOutput={dest}",
+        *resources,
     ]
 
     out_txt = LODGEN_EXE.parent / f"LODGen {edid}.txt"
@@ -980,7 +1008,8 @@ def write_lodgen_input(esm_path: Path, output_dir: Path,
         print(f"  No LOD references found for worldspace '{edid}'")
         return None
 
-    out_txt = _write_input_file(output_dir, edid, sw_x, sw_y, lines)
+    out_txt = _write_input_file(output_dir, edid, sw_x, sw_y, lines,
+                                _archive_resources(master_meshes))
 
     if keep_cells is not None:
         print(f"  Restricted to the {len(keep_cells)} cell(s) covered by the "
@@ -1160,7 +1189,7 @@ def _derive_far_meshes(stats, output_dir, referenced_models, far_nif_dirs,
     AUTHORED _far/_lod has to be staged in, and is removed after the bake.
     See: docs/commentary/asset_convert_terrain.md#generated-far-nif-belong-to-the-lod-mod
     """
-    from asset_convert.lod.lod_far_gen import (generate_missing_far_nifs,
+    from asset_convert.lod.lod_far_gen import (drop_generated, generate_missing_far_nifs,
                                                has_authored_lod)
     if not far_nif_dirs:
         generate_missing_far_nifs(stats, output_dir / 'meshes',
@@ -1181,6 +1210,7 @@ def _derive_far_meshes(stats, output_dir, referenced_models, far_nif_dirs,
         for model in models:
             far_rel = far_nif_path(model, d / 'meshes')
             if has_authored_lod(d / 'meshes', far_rel):
+                drop_generated(output_dir / 'meshes', far_rel)
                 _import_master_mesh(far_rel, output_dir / 'meshes',
                                     [d / 'meshes'])
     if made:
@@ -1581,11 +1611,10 @@ def _copy_lod_destem(rel: str, dest: Path, tex_root: Path,
         return False
     for root in [tex_root] + [Path(m) for m in (master_tex_roots or [])]:
         src = _win_join(root, base)
-        if not src.exists():
+        if not output_files.exists(src):
             continue
         try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
+            output_files.copy_to(src, dest)
             return True
         except OSError:
             return False
@@ -1600,11 +1629,11 @@ def _find_lod_texture(name, tex_root, master_tex_roots):
     test `.exists()` on the result.
     """
     p = _win_join(tex_root, name)
-    if p.exists():
+    if output_files.exists(p):
         return p
     for mr in (master_tex_roots or []):
         q = _win_join(mr, name)
-        if q.exists():
+        if output_files.exists(q):
             return q
     return p
 
@@ -1616,12 +1645,12 @@ def _synth_lod_normal(rel: str, dest: Path, tex_root: Path,
     base = stem[:-2] if stem.endswith('_a') else stem
     src_normal = _find_lod_texture(f'{base}_n.dds', tex_root, master_tex_roots)
     diffuse = _find_lod_texture(f'{stem}.dds', tex_root, master_tex_roots)
-    if not diffuse.exists():
+    if not output_files.exists(diffuse):
         diffuse = _find_lod_texture(f'{base}.dds', tex_root, master_tex_roots)
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if src_normal.exists() and src_normal != dest:
-            shutil.copy2(src_normal, dest)
+        if output_files.exists(src_normal) and src_normal != dest:
+            output_files.copy_to(src_normal, dest)
         else:
             _write_flat_normal_for(diffuse, dest)
         return True
@@ -1648,7 +1677,7 @@ def _fill_missing_lod_textures(bto_dir: Path, tex_root: Path,
     left to the master and only genuinely absent ones are handled here.
     """
     def _in_master(rel):
-        return any(_win_join(mr, rel).exists() for mr in (master_tex_roots or []))
+        return any(output_files.exists(_win_join(mr, rel)) for mr in (master_tex_roots or []))
 
     missing = sorted(r for r in _bto_texture_refs(bto_dir)
                      if not _win_join(tex_root, r).exists() and not _in_master(r))
@@ -1683,8 +1712,9 @@ def _write_flat_normal_for(atlas_diffuse: Path, dest: Path):
     size = 512
     try:
         from PIL import Image
-        if atlas_diffuse and atlas_diffuse.exists():
-            size = Image.open(atlas_diffuse).size[0]
+        if atlas_diffuse and output_files.exists(atlas_diffuse):
+            with output_files.open_binary(atlas_diffuse) as fh:
+                size = Image.open(fh).size[0]
     except Exception:
         pass
     _ensure_flat_normal_dds(dest, size)

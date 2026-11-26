@@ -35,6 +35,11 @@ def latch_original(src_path, src_meshes_dir) -> None:
     _CURRENT[:] = [rel, None, src_path, None]
 
 
+def current_mesh():
+    """The converting mesh's path under its meshes root, or None."""
+    return _CURRENT[0]
+
+
 def _morroblivion_roots() -> list:
     """Each converted Morroblivion plugin's mesh tree."""
     if not _MORROBLIVION_ROOTS and os.path.isdir(paths.EXPORT):

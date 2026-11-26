@@ -98,7 +98,7 @@ def test_export_also_implies_import():
     "TODO.txt",
     "CLAUDE.md",
     ".github/workflows/tag-on-push.yml",
-    "external/bsarch/bsarch.exe",
+    "external/hkxcmd/hkxcmd.exe",
     "TESConversion.code-workspace",
     "requirements.txt",
     "convert_cli.py",

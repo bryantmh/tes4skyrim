@@ -685,6 +685,12 @@ reconcile it afterwards.
 What lives in `AutoConvertLOD` is what belongs to the whole load order —
 LODSettings, the baked `.btr`/`.bto`/`.dds` tiles, and every GENERATED
 `_far.nif`. An AUTHORED `_far.nif` is the plugin's own art and stays with it.
+Generated copies persist between bakes, so when a plugin gains a hand-made LOD
+the old generated one (and its `_far8`/`_far16` tiers) is deleted before the
+hand-made one is staged (`drop_generated`): staging skips a path already in the
+bake tree, and the marker made `_lod_meshes_for` read it as generated. Hybrid
+Morrowind's 99 Morroblivion LODs were all shadowed this way on their first bake
+([hybrid LOD meshes](tes4_export_morrowind.md#hybrid-lod-meshes)).
 `ZZZ Merged Sibling LOD` is the previous merged-tile folder, recognised only so
 an existing install can be cleaned up; nothing writes there any more.
 
@@ -873,6 +879,52 @@ line as it arrives and still returns the full text the retry logic parses.
 `--skyblivionTexPath` is deliberately NOT passed: it prepends an extra `tes4\`
 to texture paths already under `textures	es4\`, doubling the prefix and
 causing null-pointer crashes.
+
+## <a id="morrowind-format-worldspaces"></a>Morrowind-format worldspaces always get LOD
+
+**Code:** `_add_always_lod` and `ALWAYS_LOD` in `asset_convert/lod/sibling_lod.py`
+
+A Morrowind-format plugin ships no Oblivion-format LOD, so the shipped-LOD test never qualifies its
+exterior: `WrldMorrowind` qualified only through Morroblivion's shipped LOD, and Arktwend's `WrldArktwend`
+was offered only under the dialog's Force tick. The two converted Morrowind exteriors are listed by name
+instead. Any `Source=TES3` export whose converted ESM defines one gets it, so neither needs Force.
+
+## <a id="converted-worldspace-names"></a>The LOD scan names worldspaces as the importer does
+
+**Code:** `world_renames` in `asset_convert/lod/terrain_lod.py`
+
+The bake looks worldspaces up by EditorID in the converted ESM, but the scan reads them from the export, under
+the source's name. The importer renames some (`core/worldspace_names.py`: Oblivion's `Tamriel` becomes
+`TES4Tamriel` everywhere, and Arktwend's `WrldMorrowind` becomes `WrldArktwend`), so the scan converts every
+name it reports through the same table, for the plugin and its masters. The scan used to apply only a private
+copy of the Tamriel rule. Arktwend's cells were therefore read as `WrldMorrowind` and joined Morrowind's
+LOD as an overlay.
+
+## <a id="lod-owner-is-the-base"></a>The LOD order and owner: masters first
+
+**Code:** `create_lod_order` and `owner_map` in `asset_convert/lod/sibling_lod.py`; `masters_first` in
+`core/plugin_masters.py`.
+
+The default order is `plugins.txt` (the real Skyrim load order, as the user chose it) first, then every
+other plugin, alphabetical at equal master depth (`.esm` before `.esp`). Alphabetical alone would let
+`AAAPatch.esp` (mastered on `Tamriel.esp`) apply first and be overwritten by the plugin it patches. This
+differs from `load_order`, which puts unlisted plugins first: that suits a merge nobody looks at, while
+this list is shown, reorderable and confirmed.
+
+`plugins.txt` lists only what is installed, so a converted master not installed yet sorted below its
+installed dependent. With `Tamriel_Data.esm` installed and `Morrowind.esm` not, the order began
+`Tamriel_Data, Morrowind, Bloodmoon, Tribunal, TR_Mainland`; nobody ships Oblivion-format LOD for
+`WrldMorrowind` in authored mode, so the owner fell to the first plugin defining it, Tamriel_Data (which
+overrides Morrowind's worldspace record), and Morrowind, Tribunal and Bloodmoon, its masters, could not
+overlay it: Vvardenfell baked with no land. Morroblivion mode never showed it, since Morrowind_ob ships
+LOD and owns the worldspace in the first pass. Now the order is finished by `masters_first` (each plugin
+below every master of it, otherwise kept), and `owner_map`'s second pass walks the order masters first
+too, so a worldspace's base owns it whatever order the user set by hand.
+
+Owners resolve in two passes over the whole order at once (re-listing every export per worldspace cost
+80 passes): a plugin that shipped LOD for a worldspace outranks one that merely defines it, which keeps
+Oblivion.esm owning TES4Tamriel rather than Tamriel.esp (sourcing from the extender drops Oblivion's
+terrain); the second pass covers worldspaces nobody ships LOD for.
 
 ## <a id="lod-for-plugins-that-only-edit"></a>LOD for plugins that only EDIT a worldspace
 

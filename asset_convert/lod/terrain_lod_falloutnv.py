@@ -9,6 +9,7 @@ LOD at all.
 See: docs/commentary/asset_convert_terrain.md#fo3fnv-keys-lod-by-editorid
 """
 
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -28,23 +29,17 @@ def edid_keyed_lod_tiles(export_dir) -> Counter:
         root = export_dir / sub
         if not root.is_dir():
             continue
-        for entry in root.iterdir():
-            if entry.is_dir():
-                counts[entry.name.lower()] += _count_tiles(entry)
+        with os.scandir(root) as entries:
+            for entry in entries:
+                if entry.is_dir():
+                    counts[entry.name.lower()] += _count_tiles(entry.path)
     return counts
 
 
-def _count_tiles(directory: Path) -> int:
-    """Every file under a worldspace's LOD directory, at any depth.
-
-    The folder holds its own tiles plus 'blocks' and 'normals' subfolders of the
-    same worldspace's data; the caller needs only a relative weight to rank
-    worldspaces by, so all of it counts.
-    """
-    total = 0
-    for entry in directory.iterdir():
-        total += _count_tiles(entry) if entry.is_dir() else 1
-    return total
+def _count_tiles(directory: str) -> int:
+    """Every file under a worldspace's LOD directory, at any depth (a weight to rank by)."""
+    with os.scandir(directory) as entries:
+        return sum(_count_tiles(entry.path) if entry.is_dir() else 1 for entry in entries)
 
 
 def resolve_edid_keyed(by_edid, edid_by_fid, to_converted, already):

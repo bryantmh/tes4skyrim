@@ -18,7 +18,7 @@ To fix this everywhere in one place:
     a hidden console. Safe to call on every platform; no-ops off Windows.
 
   * ``windows_cmd(cmd)`` — wrap a command list before every call that invokes
-    one of the bundled Windows tools (BSArch, hkxcmd, LODGen, the mopp bridge,
+    one of the bundled Windows tools (hkxcmd, LODGen, the mopp bridge,
     the papyrus compiler, xWMAEncode, LipGenerator):
         subprocess.run(windows_cmd(cmd), **POPEN_FLAGS)
     On Windows it returns ``cmd`` unchanged. Off Windows, if ``cmd[0]`` is a
@@ -41,13 +41,48 @@ To fix this everywhere in one place:
 All are no-ops on non-Windows-*relevant* input, so callers never need their
 own ``sys.platform`` guard.
 """
+import ctypes
 import os
 import shutil
 import subprocess
 import sys
+from ctypes import wintypes
 
 __all__ = ["POPEN_FLAGS", "configure_multiprocessing", "windows_cmd",
-          "run_streamed", "to_wine_path"]
+          "run_streamed", "to_wine_path", "ensure_std_handles"]
+
+#: GetStdHandle's codes for standard input, output and error (as DWORDs).
+STD_INPUT, STD_OUTPUT, STD_ERROR = 0xFFFFFFF6, 0xFFFFFFF5, 0xFFFFFFF4
+#: CreateFileW arguments for NUL: read or write access, shared both ways, open the existing device.
+GENERIC_READ, GENERIC_WRITE, FILE_SHARE_READ_WRITE, OPEN_EXISTING = 0x80000000, 0x40000000, 3, 3
+#: INVALID_HANDLE_VALUE as GetStdHandle returns it, and GetFileType's answer for a non-handle.
+INVALID_HANDLE, FILE_TYPE_UNKNOWN = 0xFFFFFFFFFFFFFFFF, 0
+
+
+def ensure_std_handles() -> None:
+    """Point every invalid standard handle of this process at NUL (runs when this module loads).
+
+    A process started without a console or inherited handles (the GUI, its runs, their pool workers) can
+    hold values that are not handles; `subprocess` then fails every start with WinError 6.
+    See: docs/commentary/core_gui.md#native-pieces
+    """
+    if sys.platform != "win32":
+        return
+    k32 = ctypes.windll.kernel32
+    k32.GetStdHandle.restype = wintypes.HANDLE
+    k32.GetFileType.argtypes = (wintypes.HANDLE,)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.SetStdHandle.argtypes = (wintypes.DWORD, wintypes.HANDLE)
+    for which, access in ((STD_INPUT, GENERIC_READ), (STD_OUTPUT, GENERIC_WRITE), (STD_ERROR, GENERIC_WRITE)):
+        handle = k32.GetStdHandle(which)
+        if handle and handle != INVALID_HANDLE and k32.GetFileType(handle) != FILE_TYPE_UNKNOWN:
+            continue
+        nul = k32.CreateFileW("NUL", access, FILE_SHARE_READ_WRITE, None, OPEN_EXISTING, 0, None)
+        if nul and nul != INVALID_HANDLE:
+            k32.SetStdHandle(which, nul)
+
+
+ensure_std_handles()
 
 # Flags to hide the console window of any subprocess we spawn on Windows.
 POPEN_FLAGS: dict = {}

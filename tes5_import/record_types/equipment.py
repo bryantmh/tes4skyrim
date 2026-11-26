@@ -1,7 +1,5 @@
 """Equipment converters: WEAP, ARMO, CLOT, AMMO, BOOK, ENCH, SPEL, ALCH, INGR, SGST, APPA."""
 
-from asset_convert.game_paths import current_namespace
-import re
 import struct
 
 from ..base.constants import ENCH_CAST_TYPE_MAP, ENCH_TYPE_MAP, WEAPON_TYPE_MAP, ARMA_BODY_COVERAGE_EXTRA
@@ -37,6 +35,7 @@ from .magic_variants import (DELIVERY_CONTACT, MGEF_CAST_FOR_OWNER, RANGE_DELIVE
                              delivery_variant, get_mgef_formid,
                              get_seff_variant, menu_object, owner_delivery,
                              written_once)
+from .book_text import fix_book_html, plain_text
 from ..actors.disease_contact import contact_effect
 from ..actors.vampirism_morrowind import vampire_disease_effects
 from .world_falloutnv import is_fallout_source
@@ -815,73 +814,6 @@ def convert_AMMO(rec: dict, writer=None) -> bytes:
     return pack_record('AMMO', get_formid(rec, 'FormID'), get_int(rec, 'RecordFlags'), subs)
 
 
-# Oblivion numeric font faces (SFontFile_N in Oblivion.ini) → Skyrim named
-# fonts (Interface\fontconfig.txt).  Skyrim's Scaleform BookMenu only knows
-# fonts by their $-alias — a numeric <font face=N> resolves to no font at all
-# and the book renders with NO VISIBLE TEXT.
-#   1 = Kingthings Regular (book body) → $SkyrimBooks
-#   2 = Kingthings Shadowed           → $SkyrimBooks
-#   3 = Tahoma Bold Small (UI)        → $SkyrimBooks
-#   4 = Daedric                       → $DaedricFont
-#   5 = Handwritten                   → $HandwrittenFont
-_OBLIVION_FACE_TO_SKYRIM_FONT = {
-    '1': '$SkyrimBooks',
-    '2': '$SkyrimBooks',
-    '3': '$SkyrimBooks',
-    '4': '$DaedricFont',
-    '5': '$HandwrittenFont',
-}
-
-
-def _fix_book_html(text: str) -> str:
-    """Update Oblivion book HTML for Skyrim's Scaleform BookMenu compatibility.
-
-    Applies three fixes in order:
-    1. Replace Oblivion numeric <font face=N> tags with Skyrim's named fonts
-       (see _OBLIVION_FACE_TO_SKYRIM_FONT) and strip other attributes.
-    2. Rewrite IMG src paths: Oblivion paths are relative to
-       Textures\\Menus\\ (e.g. "Book/foo.dds"); Skyrim Scaleform needs the
-       img:// scheme with a full Data-relative path
-       (img://textures/tes4/menus/book/foo.dds).
-    3. Turn bare \\r\\n line breaks into <br> where Oblivion authors used raw
-       newlines as visual breaks.
-    """
-    # 1. Remap <font face=N> / </font> to Skyrim named fonts.
-    text = re.sub(r'<(/?)[Ff][Oo][Nn][Tt](\s[^>]*)?>', _remap_font_tag, text)
-
-    # 2. Rewrite IMG src to the img:// scheme + converted texture path.
-    def _prefix_img(m):
-        path = m.group(2).replace('\\', '/')
-        if not path.lower().startswith('img://'):
-            path = ('img://textures/' + current_namespace()
-                    + '/menus/' + path.lstrip('/'))
-        return f"<img src='{path}'"
-    # Match opening quote, path, and consume the matching closing quote.
-    text = re.sub(r'<IMG\s+src=(["\']?)([^"\'>\s]+)\1', _prefix_img, text, flags=re.IGNORECASE)
-
-    # 3. Replace bare \r\n sequences (not already preceded by <br>) with <br>.
-    text = re.sub(r'(?<!>)\r\n', '<br>\r\n', text)
-
-    return text
-
-
-def _remap_font_tag(m: re.Match) -> str:
-    """Replace an Oblivion <font ...> tag with a Skyrim-compatible version.
-
-    Preserves close tags (</font>).  For open tags, maps the numeric face to
-    the equivalent Skyrim named font and strips all other attributes (color,
-    size, etc.) that Skyrim's Scaleform BookMenu doesn't handle safely.
-    """
-    slash = m.group(1)   # '/' for close tag, '' for open
-    attrs = m.group(2) or ''
-    if slash:
-        return '</font>'
-    face_m = re.search(r'face\s*=\s*["\']?(\d)', attrs, flags=re.IGNORECASE)
-    face = face_m.group(1) if face_m else '1'
-    font = _OBLIVION_FACE_TO_SKYRIM_FONT.get(face, '$SkyrimBooks')
-    return f"<font face='{font}'>"
-
-
 def convert_BOOK(rec: dict, writer=None) -> bytes:
     """BOOK — or SCRL when the book carries an enchantment.
 
@@ -906,7 +838,7 @@ def convert_BOOK(rec: dict, writer=None) -> bytes:
         subs += pack_string_subrecord('MODL', prefix_path(model))
     desc = get_str(rec, 'DESC')
     if desc:
-        desc = _fix_book_html(desc)
+        desc = fix_book_html(desc)
         subs += pack_string_subrecord('DESC', desc)
 
     # TES5 BOOK DATA (16 bytes): Flags(U8) Type(U8) pad(2) Teaches(S32) Value(U32) Weight(float)
@@ -1133,9 +1065,7 @@ def _build_scrl(rec: dict, effect_src: dict, cost: int = 0,
     subs += pack_formid_subrecord('MDOB', 0x00076E8F)
     subs += pack_formid_subrecord('ETYP', 0x00013F44)
 
-    # DESC before MODL per TES5 spec
-    desc = get_str(rec, 'DESC', '')
-    subs += pack_string_subrecord('DESC', desc)
+    subs += pack_string_subrecord('DESC', plain_text(get_str(rec, 'DESC', '')))
 
     model = get_str(rec, 'Model.MODL')
     if model:

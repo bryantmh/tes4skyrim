@@ -347,6 +347,10 @@ _RECORD_TYPE_PAPYRUS = {
     'REFR': 'ObjectReference',
 }
 
+#: TES4 record types an inventory can hold: a script on one runs its GameMode while carried.
+CARRIED_SIGNATURES = frozenset({'WEAP', 'ARMO', 'CLOT', 'BOOK', 'ALCH', 'INGR', 'LIGH', 'MISC', 'KEYM',
+                                'AMMO', 'APPA', 'SLGM', 'SGST'})
+
 
 # ===========================================================================
 # Utility functions (used by both converter.py and pipeline.py)

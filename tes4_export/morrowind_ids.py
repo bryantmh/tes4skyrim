@@ -16,6 +16,7 @@ themselves legal ID characters.
 See: docs/commentary/tes4_export_morrowind.md#morroblivion-editorid-escape
 """
 
+import functools
 import os
 import re
 
@@ -224,18 +225,26 @@ def load_master_doors(export_dir: str, remap: dict = None) -> dict:
     """
     doors = {}
     path = os.path.join(export_dir or '', 'REFR.txt')
-    if not os.path.isfile(path):
-        return doors
-    fields = {}
+    if os.path.isfile(path):
+        info = os.stat(path)
+        for fields in _door_records(path, info.st_size, info.st_mtime_ns):
+            _add_door(fields, doors, remap)
+    return doors
+
+
+@functools.lru_cache(maxsize=None)
+def _door_records(path: str, _size: int, _mtime_ns: int) -> tuple:
+    """The teleporting REFRs of one dump as scanned fields, read once per run however often a master list is rebuilt."""
+    found, fields = [], {}
     with open(path, encoding='utf-8', errors='replace') as fh:
         for line in fh:
             if line.startswith(_RECORD_BEGIN):
                 fields = {}
             elif line.startswith(_RECORD_END):
-                _add_door(fields, doors, remap)
+                found.append(fields)
             else:
                 _keep_field(fields, line, _DOOR_KEYS)
-    return doors
+    return tuple(f for f in found if 'XTEL.Door' in f)
 
 
 def _add_door(fields: dict, doors: dict, remap) -> None:

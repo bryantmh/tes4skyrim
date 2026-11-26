@@ -323,20 +323,30 @@ def test_tag_ignores_line_endings(tmp_path, monkeypatch):
     assert tag_for(b'\n', 'lf') == tag_for(b'\r\n', 'crlf')
 
 
+def test_without_sources_the_tag_is_the_one_the_build_shipped(tmp_path, monkeypatch):
+    """TESRACT.exe has no navmesh sources: its tag is the one build_exe hashed, so caches still match and expire."""
+    real = navm_pool.source_tag(False)
+    (tmp_path / navm_pool.BAKED_TAGS).write_text(json.dumps({'corridor': real, 'lattice': 'L'}))
+    col = tmp_path / 'collision_cache.bin'
+    col.write_bytes(b'payload')
+    monkeypatch.setattr(navm_pool, '__file__', str(tmp_path / 'pool.py'))
+    monkeypatch.setattr(navm_pool, 'navmesh_generator', lambda: navm_pool.CORRIDOR)
+    assert navm_pool.source_tag(False) is None
+    assert navm_pool.navmesh_geom_cache(str(col))[1] == real
+
+
 def test_cache_matches_tag_is_exact(tmp_path, monkeypatch):
-    """A correct cache passes regardless of mtime; a stale one never does."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    """A correct cache passes regardless of mtime (a checkout or unzip rewrites them); unstamped or stale never does."""
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     cdir = tmp_path / 'export' / 'Test.esm' / 'navmesh_geom_cache'
     cdir.mkdir(parents=True)
 
-    assert hook.cache_matches_tag('Test.esm', 'TAG') is False   # unstamped
+    assert nc.cache_matches_tag('Test.esm', 'TAG') is False
     (cdir / 'CACHE_TAG').write_text('TAG')
-    assert hook.cache_matches_tag('Test.esm', 'TAG') is True
-    # An old mtime must not matter -- a checkout or unzip rewrites mtimes, and
-    # rejecting on that would cry wolf on a perfectly valid cache.
+    assert nc.cache_matches_tag('Test.esm', 'TAG') is True
     os.utime(cdir / 'CACHE_TAG', (0, 0))
-    assert hook.cache_matches_tag('Test.esm', 'TAG') is True
-    assert hook.cache_matches_tag('Test.esm', 'OTHER') is False
+    assert nc.cache_matches_tag('Test.esm', 'TAG') is True
+    assert nc.cache_matches_tag('Test.esm', 'OTHER') is False
 
 
 def test_next_tag_format(monkeypatch):
@@ -412,7 +422,7 @@ def test_archive_excludes_collision_and_big_indexes(tmp_path, monkeypatch):
     each.  A glob over export/**/*.pkl would sweep in the latter, so the
     archiver names the cache directory explicitly.
     """
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     exp = tmp_path / 'export' / 'Test.esm'
     (exp / 'navmesh_geom_cache').mkdir(parents=True)
     (exp / 'collision_cache.bin').write_bytes(b'SECRET-COLLISION')
@@ -447,7 +457,7 @@ def test_archive_excludes_collision_and_big_indexes(tmp_path, monkeypatch):
 
 def test_archive_refuses_corrupt_cache(tmp_path, monkeypatch):
     """A truncated entry must block the publish, not ship silently."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     cdir = tmp_path / 'export' / 'Test.esm' / 'navmesh_geom_cache'
     cdir.mkdir(parents=True)
     (cdir / 'bad.pkl').write_bytes(b'not a pickle')
@@ -458,7 +468,7 @@ def test_archive_refuses_corrupt_cache(tmp_path, monkeypatch):
 
 def test_install_refuses_mismatched_manifest(tmp_path, monkeypatch):
     """A cache from different navmesh code must not install without --force."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     (tmp_path / 'export' / 'Test.esm').mkdir(parents=True)
     zpath = tmp_path / 'c.zip'
     with zipfile.ZipFile(zpath, 'w') as zf:
@@ -482,7 +492,7 @@ def test_install_certifies_only_a_matching_cache(tmp_path, monkeypatch):
     archive must not be certified, or the stamp would vouch for a cache the
     user was just warned about.
     """
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     (tmp_path / 'export' / 'Test.esm').mkdir(parents=True)
     zpath = tmp_path / 'c.zip'
     with zipfile.ZipFile(zpath, 'w') as zf:
@@ -507,7 +517,7 @@ def test_install_certifies_only_a_matching_cache(tmp_path, monkeypatch):
 
 def test_install_rejects_path_traversal(tmp_path, monkeypatch):
     """A crafted archive must not write outside the cache directory."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     (tmp_path / 'export' / 'Test.esm').mkdir(parents=True)
     zpath = tmp_path / 'evil.zip'
     with zipfile.ZipFile(zpath, 'w') as zf:
@@ -523,7 +533,7 @@ def test_install_rejects_path_traversal(tmp_path, monkeypatch):
 
 def test_install_requires_manifest(tmp_path, monkeypatch):
     """An archive with no manifest is unidentified and must be refused."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     (tmp_path / 'export' / 'Test.esm').mkdir(parents=True)
     zpath = tmp_path / 'nomanifest.zip'
     with zipfile.ZipFile(zpath, 'w') as zf:
@@ -629,8 +639,8 @@ def test_auto_install_downloads_on_a_dev_build(tmp_path, monkeypatch):
     """
     import version as _v
     monkeypatch.setattr(_v, 'current_version', lambda: _v.DEV_VERSION)
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
-    monkeypatch.setattr(hook, 'cache_matches_tag', lambda *a, **k: False)
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'cache_matches_tag', lambda *a, **k: False)
     monkeypatch.setattr(nc, 'source_tag', lambda _p: 'MY_TAG')
     monkeypatch.setattr(nc, '_api_releases', lambda: [{
         'tag_name': 'navmesh-cache-0.586+',
@@ -651,7 +661,7 @@ def test_find_dropin_reaches_the_documented_three_levels(tmp_path, monkeypatch):
     `depth >= 3` pruned BEFORE scanning level 3's files, so the real reach was
     two -- a silent contradiction of the documented contract.
     """
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     deep = tmp_path / nc.DROPIN_DIRNAME / 'a' / 'b' / 'c'
     deep.mkdir(parents=True)
     (deep / nc.asset_name('Test.esm')).write_bytes(b'zip')
@@ -815,8 +825,8 @@ def test_have_gh_requires_auth_not_just_presence(monkeypatch):
 
 def test_auto_install_is_a_noop_when_already_current(tmp_path, monkeypatch):
     """A current cache must not be re-installed or re-downloaded every import."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
-    monkeypatch.setattr(hook, 'cache_matches_tag', lambda *a, **k: True)
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'cache_matches_tag', lambda *a, **k: True)
     called = []
     monkeypatch.setattr(nc, 'install', lambda *a, **k: called.append(a) or 0)
     assert nc.auto_install('Test.esm', quiet=True) is False
@@ -825,8 +835,8 @@ def test_auto_install_is_a_noop_when_already_current(tmp_path, monkeypatch):
 
 def test_auto_install_prefers_dropin_over_download(tmp_path, monkeypatch):
     """An offline drop-in must win, so no network is needed at all."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
-    monkeypatch.setattr(hook, 'cache_matches_tag', lambda *a, **k: False)
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'cache_matches_tag', lambda *a, **k: False)
     ddir = tmp_path / nc.DROPIN_DIRNAME
     ddir.mkdir()
     (ddir / nc.asset_name('Test.esm')).write_bytes(b'zip')
@@ -847,7 +857,7 @@ def test_auto_install_prefers_dropin_over_download(tmp_path, monkeypatch):
 
 def test_auto_install_tolerates_a_renamed_dropin(tmp_path, monkeypatch):
     """Browsers rename duplicates ('...(1).zip'); still find it."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     ddir = tmp_path / nc.DROPIN_DIRNAME
     ddir.mkdir()
     (ddir / 'navmesh-cache-Test (1).zip').write_bytes(b'zip')
@@ -856,19 +866,19 @@ def test_auto_install_tolerates_a_renamed_dropin(tmp_path, monkeypatch):
 
 def test_auto_install_never_raises(tmp_path, monkeypatch):
     """It runs inside a conversion -- it must never break one."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
 
     def _boom(*a, **k):
         raise RuntimeError('network on fire')
 
-    monkeypatch.setattr(hook, 'cache_matches_tag', _boom)
+    monkeypatch.setattr(nc, 'cache_matches_tag', _boom)
     assert nc.auto_install('Test.esm', quiet=True) is False
 
 
 def test_auto_install_respects_download_opt_out(tmp_path, monkeypatch):
     """allow_download=False must not touch the network (metered connections)."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
-    monkeypatch.setattr(hook, 'cache_matches_tag', lambda *a, **k: False)
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'cache_matches_tag', lambda *a, **k: False)
     monkeypatch.setattr(nc, 'latest_cache_release',
                         lambda: pytest.fail('must not download'))
     assert nc.auto_install('Test.esm', quiet=True,
@@ -899,7 +909,7 @@ def test_install_accepts_a_collision_mismatch(tmp_path, monkeypatch):
     on it made the drop-in "not work if it is in the folder" for nearly
     everyone, even though invalidation is per mesh and the rest still hits.
     """
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     monkeypatch.setattr(nc, 'source_tag', lambda _p: 'TAG')
     monkeypatch.setattr(nc, 'collision_hash', lambda _p: 'MY_OWN_MESHES')
 
@@ -921,7 +931,7 @@ def test_install_accepts_a_collision_mismatch(tmp_path, monkeypatch):
 
 def test_install_still_refuses_a_source_tag_mismatch(tmp_path, monkeypatch):
     """A cache from other navmesh code is dead weight -- keep refusing it."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     monkeypatch.setattr(nc, 'source_tag', lambda _p: 'TAG')
     monkeypatch.setattr(nc, 'collision_hash', lambda _p: None)
 
@@ -942,7 +952,7 @@ def test_install_reports_a_bad_zip_without_raising(tmp_path, monkeypatch):
     download, a `.part`, a 0-byte placeholder -- skipped every remaining
     drop-in candidate AND the HTTPS download that would have fixed it.
     """
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     monkeypatch.setattr(nc, 'source_tag', lambda _p: 'TAG')
     monkeypatch.setattr(nc, 'collision_hash', lambda _p: None)
 
@@ -962,7 +972,7 @@ def test_auto_install_tries_every_dropin_candidate(tmp_path, monkeypatch):
     dropped at the top level sorts FIRST, and returning only that candidate
     made it fatal to the whole feature.
     """
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     monkeypatch.setattr(nc, 'source_tag', lambda _p: 'TAG')
     monkeypatch.setattr(nc, 'collision_hash', lambda _p: None)
 
@@ -991,7 +1001,7 @@ def test_auto_install_tries_every_dropin_candidate(tmp_path, monkeypatch):
 
 def test_find_dropin_looks_inside_extracted_folders(tmp_path, monkeypatch):
     """Extracting a download leaves the zip one folder down -- still find it."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     nested = tmp_path / nc.DROPIN_DIRNAME / 'tes4skyrim-0.586'
     nested.mkdir(parents=True)
     (nested / nc.asset_name('Test.esm')).write_bytes(b'zip')
@@ -1001,7 +1011,7 @@ def test_find_dropin_looks_inside_extracted_folders(tmp_path, monkeypatch):
 
 def test_find_dropin_prefers_the_shallowest_match(tmp_path, monkeypatch):
     """A file placed directly beats one left inside an extracted folder."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     ddir = tmp_path / nc.DROPIN_DIRNAME
     (ddir / 'sub').mkdir(parents=True)
     (ddir / 'sub' / nc.asset_name('Test.esm')).write_bytes(b'deep')
@@ -1017,8 +1027,8 @@ def test_auto_install_downloads_a_cache_covering_a_later_version(
     than the range the release advertises: any build past the tag (every dev
     checkout) was told no cache existed.
     """
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
-    monkeypatch.setattr(hook, 'cache_matches_tag', lambda *a, **k: False)
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'cache_matches_tag', lambda *a, **k: False)
     monkeypatch.setattr(nc, 'source_tag', lambda _p: 'MY_TAG')
     monkeypatch.setattr(nc, '_local_version_key', lambda: (0, 590))
     monkeypatch.setattr(nc, '_api_releases', lambda: [{
@@ -1041,8 +1051,8 @@ def test_auto_install_downloads_a_cache_covering_a_later_version(
 
 def test_auto_install_skips_a_cache_below_its_range(tmp_path, monkeypatch):
     """A closed range must not serve a version above its upper bound."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
-    monkeypatch.setattr(hook, 'cache_matches_tag', lambda *a, **k: False)
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'cache_matches_tag', lambda *a, **k: False)
     monkeypatch.setattr(nc, 'source_tag', lambda _p: 'MY_TAG')
     monkeypatch.setattr(nc, '_local_version_key', lambda: (0, 900))
     monkeypatch.setattr(nc, '_api_releases', lambda: [{
@@ -1091,8 +1101,8 @@ def test_download_allowed_honors_saved_setting_and_env(monkeypatch):
 def test_auto_install_explains_the_download_opt_out(
         tmp_path, monkeypatch, capsys):
     """Opting out must still say why nothing happened, and how to go offline."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
-    monkeypatch.setattr(hook, 'cache_matches_tag', lambda *a, **k: False)
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'cache_matches_tag', lambda *a, **k: False)
     monkeypatch.setattr(nc, 'source_tag', lambda _p: 'TAG')
     monkeypatch.setattr(nc, '_api_releases',
                         lambda: pytest.fail('must not touch the network'))
@@ -1106,8 +1116,8 @@ def test_auto_install_explains_the_download_opt_out(
 def test_auto_install_announces_an_already_current_cache(
         tmp_path, monkeypatch, capsys):
     """Silence reads as "it does not work" -- say the cache is in place."""
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
-    monkeypatch.setattr(hook, 'cache_matches_tag', lambda *a, **k: True)
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'cache_matches_tag', lambda *a, **k: True)
     assert nc.auto_install('Test.esm', quiet=False) is False
     assert 'up to date' in capsys.readouterr().out.lower()
 
@@ -1124,7 +1134,7 @@ def test_discover_plugins_publishes_only_the_hosted_three(tmp_path, monkeypatch)
     cache dir, so a plugin run once for testing left a 0-entry cache that
     failed verify() and hard-blocked every push to master.
     """
-    monkeypatch.setattr(nc, 'repo_root', lambda: str(tmp_path))
+    monkeypatch.setattr(nc, 'data_root', lambda: str(tmp_path))
     _fake_export(tmp_path, 'Oblivion.esm', 'Nehrim.esm', 'Morrowind_ob.esm',
                  'DLCShiveringIsles.esp', 'ElsweyrAnequina.esp', 'Tamriel.esp')
 

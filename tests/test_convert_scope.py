@@ -21,7 +21,7 @@ def _steps(*argv):
 def test_only_scopes_the_creature_stage():
     """`--creatures-only --only rat` is a scoped run with nothing refused."""
     args, steps = _steps('--creatures-only', '--only', 'rat')
-    assert steps == ['creatures'] and args.only == ['rat']
+    assert steps == ['creatures', 'pack_bsa'] and args.only == ['rat']
     assert unscoped_steps(args, steps) == []
 
 

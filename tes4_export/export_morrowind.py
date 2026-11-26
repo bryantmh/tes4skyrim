@@ -24,7 +24,7 @@ from core.plugin_masters import masters_from_export_header
 from .morroblivion import (MORROBLIVION_PREFIX, MorroblivionModels,
                            remap_vanilla_models)
 from .morrowind_patch import PATCH_NAME, blacklisted_bases
-from .morroblivion_hybrid import apply_hybrid, remove_copies
+from .morroblivion_hybrid import apply_hybrid, owner_roots, remove_copies
 from .morroblivion_origin import OriginShifts
 from .morrowind_armor import add_body_models, master_records
 from .morrowind_cell import (FLAG_HAS_WATER, FLAG_INTERIOR,
@@ -64,7 +64,7 @@ from .record_types.morrowind_magic import (MORROWIND_MAGIC_EXPORTERS,
 from .record_types.morrowind_scripts import MORROWIND_SCRIPT_EXPORTERS
 from .record_types.common import escape_value
 from .text_encoding import HEADER_KEY
-from .tes3_reader import (file_type, get_subrecord, is_tes3, read_file,
+from .tes3_reader import (file_type, forget_reads, get_subrecord, is_tes3, read_file,
                           read_masters)
 
 #: TES3 signature -> exporter, over every base record type this pass converts.
@@ -540,6 +540,7 @@ def run_export(file_name: str, source: str, export_dir: str,
     if masters:
         print(f"  Borrowing objects from {', '.join(_master_list(masters))}")
     result = export_plugin(source, export_dir, masters, mode == SOURCE_HYBRID)
+    forget_reads()
     total = sum(result['counts'].values())
     print(f"  Wrote {total} records to {result['output']}")
     if result['dropped']:
@@ -608,9 +609,10 @@ def export_plugin(source_path: str, export_dir: str, masters=(), hybrid: bool = 
     (docs/commentary/tes4_export_morrowind.md#hybrid-mode).
     """
     plugin = os.path.basename(source_path)
-    removed = remove_copies(export_dir, plugin)
-    if removed:
-        print(f'  Removed {removed} files an earlier hybrid export copied')
+    deleted, kept = remove_copies(export_dir, plugin, owner_roots(export_dir, morroblivion_exports(export_dir)))
+    if deleted or kept:
+        print(f'  Removed {deleted} files an older hybrid export copied into the export'
+              + (f'; kept {kept} that differ from their Morroblivion source' if kept else ''))
     header, records = read_file(source_path)
     ctx = _plugin_context(export_dir, masters, records, plugin)
     _load_part_tables(ctx, source_path, records, export_dir)
@@ -634,6 +636,7 @@ def export_plugin(source_path: str, export_dir: str, masters=(), hybrid: bool = 
               + (f', {shifted} origin-shifted' if shifted else '')
               + (f', {corrected} ref corrections (pitch/Z)' if corrected else ''))
     if hybrid:
+        print('  Hybrid: matching Morroblivion models and ground...')
         apply_hybrid(out, records, ctx, plugin, source_path, masters,
                      morroblivion_exports(export_dir))
     out_dir = str(record_dir(export_dir, plugin))

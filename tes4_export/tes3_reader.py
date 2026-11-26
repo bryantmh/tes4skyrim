@@ -14,6 +14,7 @@ See: docs/commentary/tes4_export_morrowind.md#the-tes3-container
 """
 
 import mmap
+import os
 import struct
 from dataclasses import dataclass, field
 
@@ -54,6 +55,8 @@ class Tes3Record:
     offset: int = -1
     deleted: bool = False
     page: CodePage = WESTERN
+    #: The `Cell` `parse_cell` made of this record, kept for the run.
+    parsed: object = field(default=None, repr=False, compare=False)
 
 
 def is_tes3(path: str) -> bool:
@@ -110,17 +113,33 @@ def get_all_subrecords(rec: Tes3Record, sig: str) -> list:
     return [sub for sub in rec.subrecords if sub.type == sig]
 
 
+#: (path, size, mtime) -> (header, records) of each file read this run; see `forget_reads`.
+_READS = {}
+
+
 def read_file(filepath: str) -> tuple:
     """Read a Morrowind ESM/ESP; return (header_record, records).
 
-    Records keep file order, which is the only ordering TES3 has.
+    Records keep file order, which is the only ordering TES3 has. A file is
+    parsed once per run, however many stages read it; callers must not modify
+    what they get back.
+    See: docs/commentary/performance.md#import-once-per-run
     """
-    with open(filepath, "rb") as fh:
-        mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
-        try:
-            return _parse_file(mm)
-        finally:
-            mm.close()
+    info = os.stat(filepath)
+    key = (os.path.realpath(filepath), info.st_size, info.st_mtime_ns)
+    if key not in _READS:
+        with open(filepath, "rb") as fh:
+            mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+            try:
+                _READS[key] = _parse_file(mm)
+            finally:
+                mm.close()
+    return _READS[key]
+
+
+def forget_reads() -> None:
+    """Drop every file `read_file` kept."""
+    _READS.clear()
 
 
 def _parse_file(mm) -> tuple:

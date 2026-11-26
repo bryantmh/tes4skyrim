@@ -1162,27 +1162,33 @@ class TestConverters:
 
     def test_book_html_font_face_remapped(self):
         """Numeric Oblivion <font face=N> must become Skyrim named fonts."""
-        from tes5_import.record_types.equipment import _fix_book_html
-        assert "<font face='$HandwrittenFont'>" in _fix_book_html('<font face=5>text')
-        assert "<font face='$SkyrimBooks'>" in _fix_book_html('<FONT face=1>text')
-        assert "<font face='$DaedricFont'>" in _fix_book_html('<font face=4>text')
-        assert '</font>' in _fix_book_html('text</font>')
-        assert 'face=5' not in _fix_book_html('<font face=5>text')
+        from tes5_import.record_types.book_text import fix_book_html
+        assert "<font face='$HandwrittenFont'>" in fix_book_html('<font face=5>text')
+        assert "<font face='$SkyrimBooks'>" in fix_book_html('<FONT face=1>text')
+        assert "<font face='$DaedricFont'>" in fix_book_html('<font face=4>text')
+        assert '</font>' in fix_book_html('text</font>')
+        assert 'face=5' not in fix_book_html('<font face=5>text')
 
     def test_book_html_img_prefixed(self):
         """IMG src paths must use img:// with the converted texture path."""
-        from tes5_import.record_types.equipment import _fix_book_html
-        result = _fix_book_html('<IMG src="Book/fancy_font/h_62x62.dds" width=62 height=62>')
+        from tes5_import.record_types.book_text import fix_book_html
+        result = fix_book_html('<IMG src="Book/fancy_font/h_62x62.dds" width=62 height=62>')
         assert "src='img://textures/tes4/menus/Book/fancy_font/h_62x62.dds'" in result
-        # Already-converted paths must not be double-prefixed
-        result2 = _fix_book_html("<IMG src='img://textures/tes4/menus/book/h.dds'>")
+        result2 = fix_book_html("<IMG src='img://textures/tes4/menus/book/h.dds'>")
         assert result2.count('img://') == 1
 
     def test_book_html_no_double_br(self):
         """\\r\\n after <br> must not be converted to <br><br>."""
-        from tes5_import.record_types.equipment import _fix_book_html
-        result = _fix_book_html('<font face=5>\r\nline1<br>\r\nline2')
+        from tes5_import.record_types.book_text import fix_book_html
+        result = fix_book_html('<font face=5>\r\nline1<br>\r\nline2')
         assert '<br><br>' not in result
+
+    def test_scroll_text_is_plain(self):
+        """A scroll's item-card text keeps the book's words and drops its HTML."""
+        from tes5_import.record_types.book_text import plain_text
+        text = ('<DIV ALIGN="center"><FONT COLOR="000000" SIZE="2" FACE="Daedric">'
+                'FROM THE EARTH TO THE AETHER...AND BACK.</FONT><BR>\r\nA &amp; B<br>')
+        assert plain_text(text) == 'FROM THE EARTH TO THE AETHER...AND BACK. A & B'
 
     def test_ligh(self):
         rec = {'Signature': 'LIGH', 'FormID': '00007000', 'RecordFlags': '0',
@@ -7748,8 +7754,8 @@ class TestObjectiveText:
         """The objective field does NOT wrap -- it drops the tail. A shipped
         entry over the cap would be silently truncated on screen."""
         import json
-        from tes5_import.dialogue.objective_text import _DATA_PATH, OBJECTIVE_MAX_CHARS
-        with open(_DATA_PATH, encoding='utf-8') as fh:
+        from tes5_import.dialogue.objective_text import DATA_PATH, OBJECTIVE_MAX_CHARS
+        with open(DATA_PATH, encoding='utf-8') as fh:
             entries = json.load(fh)['entries']
         over = {k: v for k, v in entries.items()
                 if len(v) > OBJECTIVE_MAX_CHARS}
@@ -7775,11 +7781,11 @@ class TestObjectiveText:
         """Keys collapse runs of whitespace, so a source string that differs
         only in spacing still resolves."""
         import json
-        from tes5_import.dialogue.objective_text import (_DATA_PATH,
+        from tes5_import.dialogue.objective_text import (DATA_PATH,
                                                 load_objective_text,
                                                 short_objective)
         load_objective_text(quiet=True)
-        with open(_DATA_PATH, encoding='utf-8') as fh:
+        with open(DATA_PATH, encoding='utf-8') as fh:
             src = next(iter(json.load(fh)['entries']))
         assert short_objective(src.replace(' ', '   ')) == short_objective(src)
 
@@ -7787,8 +7793,8 @@ class TestObjectiveText:
         """An entry earns its place only by CHANGING the line; identical text
         would be pure weight, since the fallback yields the same string."""
         import json
-        from tes5_import.dialogue.objective_text import _DATA_PATH, _key
-        with open(_DATA_PATH, encoding='utf-8') as fh:
+        from tes5_import.dialogue.objective_text import DATA_PATH, _key
+        with open(DATA_PATH, encoding='utf-8') as fh:
             entries = json.load(fh)['entries']
         noop = [k for k, v in entries.items() if _key(k) == _key(v)]
         assert not noop, f"{len(noop)} no-op entries"

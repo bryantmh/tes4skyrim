@@ -23,6 +23,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from asset_convert.game_paths import namespace_for, set_namespace
+from asset_convert.sources import output_files
 from asset_convert.sources.skyrim_assets import find_skyrim_data
 from core.plugin_masters import masters_from_export_header
 from output_layout import paths
@@ -189,6 +190,7 @@ def _load_file(world: World, path: str, plugin_masters: list, own_index: int,
 def _load_scripts(world: World, out_dir) -> None:
     """Add one plugin's compiled script names and parsed sources to `world`."""
     folder = os.path.join(str(out_dir), 'scripts')
+    output_files.unpack(folder)
     if not os.path.isdir(folder):
         return
     world.pex |= {n[:-4].lower() for n in os.listdir(folder) if n.lower().endswith('.pex')}

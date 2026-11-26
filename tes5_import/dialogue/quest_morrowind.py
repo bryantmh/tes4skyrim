@@ -32,7 +32,7 @@ from ..record_types.common import (
     pack_uint32_subrecord,
 )
 from .morrowind_sidecar import DIALOGUE_FILES, export_records
-from .objective_text import OBJECTIVE_MAX_CHARS
+from .objective_text import OBJECTIVE_MAX_CHARS, short_objective
 from .quest import QUST_ALLOW_REPEATED_STAGES
 
 #: `quest id=Plugin.esm|FormID`, which is how the runtime finds the QUST to stage.
@@ -63,11 +63,11 @@ _NAME_TABLES = tuple(
                  'morrowind_quest_names.json'))
 
 
-def journal_quests(side_dir: str) -> dict:
+def journal_quests(side_dir: str, files: tuple = DIALOGUE_FILES) -> dict:
     """`{lower id: {'id', 'name', 'stages': {index: (text, finished)}}}` from
-    a staged sidecar."""
+    a staged sidecar, or from an export when `files` is EXPORT_DIALOGUE."""
     topics_file, infos_file = (os.path.join(side_dir, name)
-                               for name in DIALOGUE_FILES)
+                               for name in files)
     quests = {}
     for rec in export_records(topics_file, ('EditorID', 'DialType')):
         if rec.get('DialType') == 'Journal' and rec.get('EditorID'):
@@ -114,11 +114,16 @@ def editor_id(quest_id: str) -> str:
 
 
 def objective_line(text: str) -> str:
-    """A page shortened to fit NNAM's 71-character cap.
+    """A page's NNAM line, within the 71-character cap.
 
-    The first sentence, else a cut on a word boundary. Morrowind pages are
-    paragraphs with no authored short form, so this derives one.
+    The short line written for the same page in Morroblivion when the
+    objective tables have one, else the first sentence, else a cut on a word
+    boundary.
+    See: docs/commentary/morrowind_runtime.md#objective-lines
     """
+    short = short_objective(text)
+    if short != text:
+        return short
     line = ' '.join(text.split())
     ends = [at for at in (line.find(mark) for mark in '.!?') if at > 0]
     cut = min(ends) if ends else -1

@@ -16,7 +16,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 import convert
-from asset_convert.sources.bsa_pack import LOOSE_ONLY_DIRS, _KNOWN_DIRS
+from asset_convert.sources.bsa_pack import LOOSE_ONLY_DIRS, packed_dirs
 
 
 def _mod_tree(root: pathlib.Path) -> pathlib.Path:
@@ -34,13 +34,10 @@ def _mod_tree(root: pathlib.Path) -> pathlib.Path:
 
 
 def test_skse_is_never_a_packed_misc_dir(tmp_path):
-    """pack_bsas auto-discovers misc dirs; SKSE must not be one of them."""
-    src = _mod_tree(tmp_path)
-    misc = sorted(d.name for d in src.iterdir()
-                  if d.is_dir() and d.name.lower() not in _KNOWN_DIRS
-                  and not d.name.startswith('_bsa_staging_'))
-    assert 'sound' in misc
-    assert not [m for m in misc if m.lower() in LOOSE_ONLY_DIRS]
+    """pack_bsas auto-discovers the folders it packs; SKSE must not be one of them."""
+    dirs = packed_dirs(_mod_tree(tmp_path))
+    assert 'sound' in dirs
+    assert not [m for m in dirs if m.lower() in LOOSE_ONLY_DIRS]
 
 
 def test_zip_carries_the_fragment_loose(tmp_path):

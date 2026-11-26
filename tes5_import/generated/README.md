@@ -32,6 +32,12 @@ one, keyed on `(EditorID, stage_index)`.
 reports which slots the table must still cover, and writes `temp/slots.json`.
 Running it can never regenerate the content, only tell you what is missing.
 
+**`objective_short_text_tes3.json` — 384 short lines for Morrowind, Tribunal and
+Bloodmoon journal pages** that have no exact key in the table above. Built once:
+184 are near matches to Morroblivion's reworded copy of the page and 200 were
+written by hand. Edit it in place; nothing regenerates it.
+See [morrowind_runtime.md](../../docs/commentary/morrowind_runtime.md#objective-lines).
+
 **`morrowind_quest_names_authored.json` — hand-written TES3 quest names.** It
 covers only the journals that author no QSTN name and that the UESP table
 misses, and it wins over the UESP table. Add to it by reading the journal's

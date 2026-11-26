@@ -321,6 +321,34 @@ def test_a_say_with_no_mouth_becomes_a_sound():
         'Vo' + chr(92) + 'Misc' + chr(92) + 'x.mp3')
 
 
+class _PlayerNpcCtx(_SayCtx):
+    """A plugin that, like Morrowind.esm, also carries an NPC_ named `player`."""
+
+    def base_signature(self, record_id: str, want: str = '') -> str:
+        """`NPC_` for the player record as well as for `speaker`."""
+        return 'NPC_' if record_id.lower() in ('speaker', 'player') else ''
+
+    def resolve(self, record_id: str, signature: str = '') -> str:
+        """The player NPC_ resolves too, so only the mouth rule can refuse it."""
+        return '00123456' if record_id.lower() == 'player' else (
+            super().resolve(record_id, signature))
+
+
+def test_the_players_say_is_a_sound_even_with_a_player_npc_record():
+    """`"player"->Say` plays in the player's head; it never becomes a topic.
+
+    Morrowind.esm's own NPC_ `player` made Tarhiel's fall scream a topic
+    gated on that record, which no Skyrim actor is, so it played silence.
+    See: docs/commentary/morrowind_runtime.md#scripted-say
+    """
+    script = Tes3Record(type='SCPT', flags=0, subrecords=[_sub('SCTX', _cstr(
+        '"player"->Say "Vo\\w\\m\\Hit_WM006.mp3" "AAAARGH!"'))])
+    script.record_id = 'fallingScript'
+    out = dialogue_records([script], _PlayerNpcCtx())
+    assert not out['INFO'] and not out['DIAL'], 'the player has no mouth'
+    assert len(out['SOUN']) == 1, 'the recording still plays, as a sound'
+
+
 def test_a_custom_race_bark_names_its_real_speakers():
     """A race the importer cannot voice gates on the actors that HAVE it.
 

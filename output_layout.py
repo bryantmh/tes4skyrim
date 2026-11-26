@@ -7,15 +7,14 @@ none of it what the user installs. The things they DO install were mixed in at
 the same level, so finding the four files that actually ship meant knowing which
 of a dozen entries were products and which were scaffolding.
 
-Everything installable is collected here instead: every mod zip
-(`<plugin>.zip`, `TESGameSelect.zip`, `AutoConvertLOD.zip`, and
-`Body Slots Patch.zip`, the Skyrim load-order patch with its split skin meshes).
+Every mod zip is collected here instead (`<plugin>.zip`, `AutoConvertLOD.zip`,
+and the zips Install & play's Manual install makes of any mod folder).
 
 Deliberately its own tiny module: independent producers write here —
-convert.py's zip and body-patch phases, the tools/release packagers,
-tools/misc/convert_ui.py and the GUI's journal patch — all through
-`write_mod_zip`, and they must not import the whole pipeline to learn one
-folder name.
+convert.py's zip phase, pack_lod and the GUI's Manual install through
+`write_mod_zip`; the load-order builders (runtime DLLs, body patch, Oblivion
+UI, journal patch) write a mod folder in `output/` through `write_mod_folder`
+— and they must not import the whole pipeline to learn one folder name.
 
 The name has a SPACE in it and is user-facing, so it is spelled exactly once,
 here. Note for scanners: nothing in here is a converted plugin. `output/` is
@@ -28,10 +27,15 @@ never mistaken for a converted plugin.
 """
 
 import os
+import shutil
+import sys
 import zipfile
 from pathlib import Path
 
 FINISHED_DIR_NAME = "Finished Mods"
+
+#: In a mod folder: the Install list's saved summary of its files; whatever changes the folder deletes it.
+SUMMARY_NAME = ".tesract_summary.json"
 
 #: The Skyrim body-slot patch: its plugin, and the zip shipping it with the split skin meshes.
 BODY_SLOTS_PATCH = "Body Slots Patch"
@@ -88,6 +92,54 @@ def write_mod_zip(zip_path, members, on_file=None) -> int:
         tmp.unlink(missing_ok=True)
         raise
     return count
+
+
+def _fill_folder(folder: Path, members, on_file) -> None:
+    """Write each (relative path, file path or bytes) of `members` under `folder`."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for count, (rel, source) in enumerate(members, 1):
+        dest = folder / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(source, bytes):
+            dest.write_bytes(source)
+        else:
+            shutil.copy2(source, dest)
+        if on_file is not None:
+            on_file(count, str(rel))
+
+
+def forget_summary(folder) -> None:
+    """Drop `folder`'s saved file summary, so the Install list reads the folder again.
+
+    See: docs/commentary/core_gui.md#install-summaries
+    """
+    Path(folder, SUMMARY_NAME).unlink(missing_ok=True)
+
+
+def write_mod_folder(out_root, name: str, members, on_file=None) -> Path:
+    """Write `members` -- (relative path, file path or bytes) -- as the mod folder `out_root/name`, replacing it.
+
+    Built under `<name>.part` and swapped in, so an interrupted run never leaves half a mod. The zip an older
+    build made of it in Finished Mods is deleted (Manual install zips the folder). Returns the folder.
+    See: docs/commentary/core_gui.md#mod-managers
+    """
+    folder = plugin_out_root(out_root, name)
+    part, old = folder.with_name(f"{name}.part"), folder.with_name(f"{name}.old")
+    shutil.rmtree(part, ignore_errors=True)
+    shutil.rmtree(old, ignore_errors=True)
+    try:
+        _fill_folder(part, members, on_file)
+        if folder.exists():
+            folder.rename(old)
+        part.rename(folder)
+    except BaseException:
+        if old.exists() and not folder.exists():
+            old.rename(folder)
+        shutil.rmtree(part, ignore_errors=True)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+    (Path(out_root) / FINISHED_DIR_NAME / f"{name}.zip").unlink(missing_ok=True)
+    return folder
 
 
 # --- Shared-folder resolution ----------------------------------------------
@@ -160,22 +212,28 @@ def master_record_dir(export_dir, master: str) -> Path:
 #  One handle per plugin
 # ---------------------------------------------------------------------------
 
-#: Where the code and its bundled data are: this checkout, or TESRACT.exe's unpacked copy.
+#: Where the code and its bundled data are: this checkout, or TESRACT.exe's folder.
 REPO_ROOT = Path(__file__).resolve().parent
 #: Set by the first TESRACT.exe process so every process it starts writes to the same folder.
 DATA_ROOT_ENV = "TESRACT_DATA_ROOT"
+#: Beside the compiled app's TESRACT.exe: the folder it writes to, relative to the exe's (".." in a release).
+DATA_ROOT_FILE = "data_root.txt"
 
 
 def _data_root() -> Path:
-    """Where TESRACT writes (export/, output/, logs/, the config): beside TESRACT.exe, else this checkout.
+    """Where TESRACT writes (export/, output/, logs/, the config): from source this checkout; compiled,
+    the folder DATA_ROOT_FILE beside TESRACT.exe names (else the exe's own folder).
 
-    See: docs/commentary/core_gui.md#single-exe
+    See: docs/commentary/core_gui.md#folder-build
     """
     inherited = os.environ.get(DATA_ROOT_ENV)
     if inherited:
         return Path(inherited)
-    compiled = globals().get("__compiled__")
-    root = Path(compiled.containing_dir) if compiled is not None else REPO_ROOT
+    compiled = "__compiled__" in globals()
+    root = Path(sys.executable).resolve().parent if compiled else REPO_ROOT
+    marker = root / DATA_ROOT_FILE
+    if compiled and marker.is_file():
+        root = (root / marker.read_text(encoding="utf-8").strip()).resolve()
     os.environ[DATA_ROOT_ENV] = str(root)
     return root
 
@@ -299,17 +357,15 @@ def _same_dir(a, b) -> bool:
 def asset_cache_chain(export_subdir, filename: str) -> tuple:
     """Every copy of asset cache `filename` this plugin needs, MASTERS FIRST.
 
-    A child plugin caches only the assets it ships, so a master-owned mesh
-    resolves to nothing: its collision, bounds and door panels all go
-    missing at once.  Reading the masters' copies first and the plugin's
-    own last lets an override win a shared key.  A masterless plugin yields
-    a one-element chain.
-
-    The import is local: `core.plugin_masters` imports this module.
+    A child plugin caches only the assets it ships, so the masters' copies
+    come first and the plugin's own last, letting an override win a shared
+    key; a hybrid chain reads the shared mod's copy before all. The imports
+    are local: `core.plugin_masters` and `hybrid_assets` import this module.
     See: docs/commentary/tes5_import_navmesh.md#master-owned-cells
     """
+    from asset_convert.sources.hybrid_assets import cache_chain
     from core.plugin_masters import master_dir, masters_from_export_header
-    chain = []
+    chain = cache_chain(export_subdir, filename)
     for name in masters_from_export_header(str(export_subdir)):
         path = str(assets_for(master_dir(export_subdir, name)) / filename)
         if path not in chain:

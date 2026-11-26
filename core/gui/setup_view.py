@@ -44,8 +44,11 @@ class SetupView:
         mo2 = install.find_mo2(session.cfg.get("mo2Path", ""))
         vortex = install.find_vortex()
         game, _data = checks.skyrim_folders(session.tes5)
+        staging = install.vortex_staging(session.cfg.get("vortex.staging", "")) if vortex else ""
+        targets = [("Mod Organizer 2's mods folder", str(mo2.mods) if mo2 else ""), ("Vortex's staging folder", staging)]
         return {"skyrim": checks.skyrim_items(session, mo2), "tools": checks.tool_items(),
                 "places": checks.place_items(session, mo2, vortex), "mo2": mo2, "vortex": vortex,
+                "drive": install.drive_notice(session.out_root(), targets),
                 "morrowind": checks.morrowind_allowed(checks.skyrim_version(game)),
                 "menus": morrowind.menu_choices(session.cfg)}
 
@@ -53,6 +56,7 @@ class SetupView:
         """Show what was found."""
         ui = self.ctx.ui
         self.mo2, self.vortex, self.morrowind_ok = found["mo2"], found["vortex"], found["morrowind"]
+        ui.drive_notice = found["drive"]
         ui.skyrim_checks = model(found["skyrim"])
         ui.tool_checks = model(found["tools"])
         ui.place_checks = model(found["places"])
@@ -81,6 +85,7 @@ class SetupView:
         values = self.menus.get(name, ([], 0, []))[2]
         if 0 <= index < len(values):
             self.ctx.session.save(morrowind.MENU_KEYS[name], values[index])
+            setattr(self.ctx.ui, name, index)
 
     def _act(self, key: str, button: int) -> None:
         """A button on a Setup line was pressed (1 is the right-hand one, 2 the one beside it)."""
@@ -99,25 +104,31 @@ class SetupView:
             self._folder(key, button)
 
     def _update(self) -> None:
-        """Download the new TESRACT.exe, swap it in, and offer to restart."""
+        """Download the new version beside this one, then offer to restart into it."""
         tag = self.ctx.ui.update_version
         ctx = self.ctx
 
         def _restart(exe):
-            """Start the new exe and close this window."""
+            """Finish the update in a new process and close this window."""
+            ctx.pending_update = None
             exe_update.restart(exe)
             slint.quit_event_loop()
 
-        ctx.confirm(f"Update to {tag}", "Downloads the new TESRACT.exe and replaces this one. Your converted "
-                    "games, settings and logs stay; only the steps the update changed run again.", "Update",
+        def _ready(exe):
+            """Ask whether to restart now; otherwise the update installs when the window closes."""
+            ctx.pending_update = exe
+            ctx.confirm("Restart TESRACT", f"TESRACT {tag} is downloaded. It installs when TESRACT restarts, or "
+                        "when you close it.", "Restart now", "Later", lambda: _restart(exe))
+
+        ctx.confirm(f"Update to {tag}", f"Downloads TESRACT {tag} and replaces this copy's program files. Your "
+                    "converted games, settings and logs stay; only the steps the update changed run again.", "Update",
                     "Not now", lambda: ctx.screens["convert"].start_task(
-                        f"Updating to {tag}", lambda log: exe_update.install_update(tag, log),
-                        lambda exe: ctx.confirm("Restart TESRACT", f"TESRACT {tag} is installed.", "Restart now",
-                                                "Later", lambda: _restart(exe))))
+                        f"Updating to {tag}", lambda log: exe_update.install_update(tag, log), _ready, foreground=True))
 
     def _fetch_xwma(self) -> None:
         """Take xWMAEncode.exe out of Microsoft's SDK installer, then check again."""
-        self.ctx.screens["convert"].start_task("Getting xWMAEncode.exe", checks.fetch_xwma, lambda _r: self.refresh())
+        self.ctx.screens["convert"].start_task("Getting xWMAEncode.exe", checks.fetch_xwma, lambda _r: self.refresh(),
+                                               foreground=True)
 
     def _locate_xwma(self) -> None:
         """Pick xWMAEncode.exe and copy it where the steps look."""
@@ -130,14 +141,12 @@ class SetupView:
         """Change or open one of the folders Setup lists."""
         session = self.ctx.session
         current = {"output": str(session.out_root()),
-                   "staging": install.vortex_folder(session.cfg.get("vortex.staging", ""), "staging"),
-                   "downloads": install.vortex_folder(session.cfg.get("vortex.downloads", ""), "downloads")}
+                   "staging": install.vortex_staging(session.cfg.get("vortex.staging", ""))}
         if button == 2:
             native.open_path(current.get(key, ""))
             return
         titles = {"skyrim": "Skyrim Special Edition's folder", "output": "Folder for converted output",
-                  "mo2": "Mod Organizer 2's folder", "staging": "Vortex's staging folder for Skyrim SE",
-                  "downloads": "Vortex's downloads folder for Skyrim SE"}
+                  "mo2": "Mod Organizer 2's folder", "staging": "Vortex's staging folder for Skyrim SE"}
         folder = self.ctx.pick_folder(titles.get(key, "Folder"))
         if not folder:
             return

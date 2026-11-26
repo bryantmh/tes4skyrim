@@ -12,7 +12,7 @@ can be written: no other record type is read, and no other phase runs.
 See: docs/commentary/tes4_export_morrowind.md#hybrid-companion
 """
 
-from asset_convert.game_paths import namespace_for, set_namespace
+from asset_convert.game_paths import namespace_for, set_borrowed, set_namespace
 from core.plugin_masters import masters_from_export_header
 from output_layout import asset_cache_chain, assets_for
 
@@ -38,6 +38,7 @@ TYPES = NEW_TYPES + ('LTEX',) + WORLD_TYPES
 def import_companion(export_dir: str, output_path: str, output_root: str) -> int:
     """Write the companion exported at `export_dir` to `output_path`; its error count."""
     set_namespace(namespace_for(export_dir))
+    set_borrowed(export_dir)
     set_world_land_extents({})
     masters, _count, ctx = open_masters(export_dir, ['Skyrim.esm'], output_root)
     set_formid_index_offset(len(masters) - len(masters_from_export_header(export_dir)))

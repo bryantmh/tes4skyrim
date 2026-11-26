@@ -7,9 +7,13 @@ plugin ships LOD for it. Each picker scans its inputs once, so every toggle is a
 See: docs/commentary/core_gui.md#load-order
 """
 
-from asset_convert.lod.sibling_lod import (converted_plugins, create_lod_order, defined_worldspaces_by_plugin,
-                                           dependents_of, merge_worldspaces, worldspaces_by_plugin_diagnosed)
+from asset_convert.lod.bake_record import bake_of, is_stale, read_bakes
+from asset_convert.lod.sibling_lod import (LOD_DIR_NAME, converted_plugins, create_lod_order,
+                                           defined_worldspaces_by_plugin, dependents_of, merge_worldspaces,
+                                           worldspaces_by_plugin_diagnosed)
 from core.gui.config import EXPORT_DIR, scan_skyrim_load_order
+from core.plugin_masters import masters_first, masters_from_export_header
+from output_layout import plugin_esm, record_dir
 from tools.esm.make_master import FLAG_ESM, read_header, resolve
 
 # ---------------------------------------------------------------------------
@@ -137,19 +141,27 @@ class MasterPick:
 # ---------------------------------------------------------------------------
 
 class LodPick:
-    """The LOD dialog's state: an ordered, tickable plugin list and a worldspace filter."""
+    """The LOD choice: an ordered, tickable plugin list, and Force (offer worldspaces with no shipped LOD)."""
 
     def __init__(self, session):
         """Seed from the confirmed selection and scan the exports once."""
         names = default_lod_plugins(session)
-        chosen = session.selection.lod_plugins
-        self.order = ([n for n in chosen if n in names] + [n for n in names if n not in chosen]
-                      if chosen else list(names))
-        self.wanted = ({n for n in chosen if n in names} | {n for n in names if n not in chosen}
-                       if chosen else set(names))
-        self.deps, self.ws_by, self.ws_why, self.all_by = _scan_lod(session, names)
-        self.force = False
-        self.ws_state = {}
+        kept = session.selection.lod_order
+        self.order = [n for n in kept if n in names] + [n for n in names if n not in kept]
+        self.wanted = set(names) - set(session.selection.lod_off)
+        self.session, self.names = session, names
+        self.deps, self.ws_by, self.ws_why = _scan_lod(session, names)
+        self.force = session.selection.lod_force
+        self.defined_by = None
+
+    def defined(self) -> dict:
+        """Every worldspace each plugin's converted ESM defines; read on first use, since only Force needs it."""
+        if self.defined_by is None:
+            try:
+                self.defined_by = defined_worldspaces_by_plugin(self.names, EXPORT_DIR, self.session.out_root())
+            except Exception:
+                self.defined_by = {}
+        return self.defined_by
 
     def disabled(self) -> set:
         """Plugins resting on a master the user turned off (deps are already transitive)."""
@@ -175,17 +187,22 @@ class LodPick:
             self.order.insert(dst, self.order.pop(src))
 
     def worlds(self) -> list:
-        """[(worldspace, ticked)] the ticked plugins offer."""
+        """The worldspaces the ticked plugins offer, in order."""
         names = self.checked()
         live = merge_worldspaces(names, self.ws_by)
-        authored = set(live)
         if self.force:
-            live += [w for w in merge_worldspaces(names, self.all_by) if w not in authored]
-        return [(w, self.ws_state.get(w, w in authored)) for w in live]
+            live += [w for w in merge_worldspaces(names, self.defined()) if w not in set(live)]
+        return live
 
-    def toggle_world(self, name: str, on: bool) -> None:
-        """Tick or untick a worldspace."""
-        self.ws_state[name] = on
+    def owners(self, world: str) -> list:
+        """The ticked plugins that ship LOD for `world` (else, under Force, that define it), in order."""
+        names = self.checked()
+        shipped = [n for n in names if world in self.ws_by.get(n, ())]
+        return shipped or [n for n in names if world in self.defined().get(n, ())]
+
+    def all_plugins(self, on: bool) -> None:
+        """Tick or untick every plugin."""
+        self.wanted = set(self.order) if on else set()
 
     def why_empty(self) -> str:
         """Why no worldspace is offered, per plugin."""
@@ -202,35 +219,46 @@ class LodPick:
         return [(n, n in on, n not in off) for n in self.order]
 
     def confirm(self, session) -> str:
-        """Store the choice in the session; returns why it can't be used, or ""."""
+        """Store the choice, masters first as Create LOD applies it; returns why it can't be used, or ""."""
         plugins = self.checked()
-        worlds = [w for w, on in self.worlds() if on]
         if not plugins:
             return "Tick at least one plugin to generate LOD for."
-        if self.worlds() and not worlds:
-            return "Tick at least one worldspace to generate LOD for."
-        session.selection.lod_plugins[:] = plugins
-        session.selection.lod_worldspaces[:] = worlds
+        order = masters_first(self.order, lambda n: masters_from_export_header(str(record_dir(EXPORT_DIR, n))))
+        session.selection.lod_order[:] = order
+        session.selection.lod_plugins[:] = [n for n in order if n in plugins]
+        session.selection.lod_off[:] = [n for n in order if n not in self.wanted]
+        session.selection.lod_force = self.force
         return ""
 
 
 def _scan_lod(session, names: list) -> tuple:
-    """(dependents, worldspaces by plugin, why-empty, every defined worldspace by plugin)."""
+    """(dependents, worldspaces by plugin, why-empty)."""
     try:
         ws_by, ws_why = worldspaces_by_plugin_diagnosed(names, EXPORT_DIR, session.out_root())
-        return (dependents_of(names, EXPORT_DIR), ws_by, ws_why,
-                defined_worldspaces_by_plugin(names, EXPORT_DIR, session.out_root()))
+        return dependents_of(names, EXPORT_DIR), ws_by, ws_why
     except Exception as exc:
-        return ({n: set() for n in names}, {n: [] for n in names},
-                {"": f"Worldspace scan failed: {exc}"}, {})
+        return {n: set() for n in names}, {n: [] for n in names}, {"": f"Worldspace scan failed: {exc}"}
 
 
-def worldspace_owners(session) -> dict:
-    """{worldspace: [converted plugins that ship LOD for it]}, in LOD order."""
-    names = default_lod_plugins(session)
-    _deps, ws_by, _why, _all = _scan_lod(session, names)
-    owners = {}
-    for n in names:
-        for w in ws_by.get(n, ()):
-            owners.setdefault(w, []).append(n)
-    return owners
+def world_rows(session, pick: LodPick) -> list:
+    """[(worldspace, plugins shipping LOD for it, out of date)] for every worldspace `pick` offers.
+
+    See: docs/commentary/core_gui.md#distant-lod-worldspaces
+    """
+    out = session.out_root()
+    lod_dir = out / LOD_DIR_NAME
+    bakes = read_bakes(lod_dir)
+    plugins = pick.checked()
+
+    def _mtime(name):
+        """The converted ESM's time, or None when there is none."""
+        try:
+            return plugin_esm(out, name, EXPORT_DIR).stat().st_mtime
+        except OSError:
+            return None
+
+    rows = []
+    for world in pick.worlds():
+        owners = pick.owners(world)
+        rows.append((world, owners, is_stale(bake_of(lod_dir, bakes, world, plugins), owners, plugins, _mtime)))
+    return rows

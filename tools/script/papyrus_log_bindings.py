@@ -30,6 +30,8 @@ import os
 import re
 from collections import Counter, defaultdict
 
+from asset_convert.sources import output_files
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # "Property P on script S attached to <owner> (FID) cannot be bound because
 #  <form> (FID) is not the right type"
@@ -54,6 +56,7 @@ def load_declared_types(plugin: str) -> dict:
     src_dir = os.path.join(ROOT, 'output', plugin, 'scripts', 'source')
     decl_re = re.compile(r'^\s*([A-Za-z_]\w*)\s+Property\s+(\w+)', re.M)
     out = {}
+    output_files.unpack(src_dir, '.psc')
     if not os.path.isdir(src_dir):
         return out
     for fn in os.listdir(src_dir):

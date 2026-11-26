@@ -12,6 +12,7 @@ import re
 import shutil
 
 from asset_convert.collision.collision_extract import bounds_cache_is_current
+from asset_convert.sources import output_files
 from core.plugin_masters import master_dir, masters_from_export_header
 from output_layout import assets_for
 from script_convert.cross_ref import CrossRefGraph
@@ -30,7 +31,8 @@ def prepare_output_dir(output_dir: str, owner: str, departed=()) -> set:
 
     A folder no other plugin shares is wiped whole, .psc tree and sibling .pex.
     In a shared one only the files on `owner`'s own list go, plus those only
-    a `departed` owner claimed.
+    a `departed` owner claimed. Archived copies are marked for the next pack
+    to drop (`output_files.discard_archived`).
     See: docs/commentary/script_convert.md#wipe-output-dir
     """
     orphaned = drop_owners(output_dir, departed)
@@ -39,13 +41,15 @@ def prepare_output_dir(output_dir: str, owner: str, departed=()) -> set:
     if not shared:
         if os.path.isdir(output_dir):
             shutil.rmtree(output_dir, onexc=_keep_held_dir)
-        stale = [n[:-4] for n in (os.listdir(pex_dir) if os.path.isdir(pex_dir) else [])
-                 if n.lower().endswith('.pex')]
+        stale = {n[:-4] for n in output_files.files_under(pex_dir, '.pex') if '\\' not in n}
+        stale |= {n[:-4] for n in output_files.files_under(output_dir, '.psc')}
     else:
         stale = (read_owned(output_dir, owner) | orphaned) - shared
     for name in stale:
         _remove_quietly(os.path.join(output_dir, name + '.psc'))
         _remove_quietly(os.path.join(pex_dir, name + '.pex'))
+    output_files.discard_archived([os.path.join(folder, name + ext) for name in stale
+                                   for folder, ext in ((output_dir, '.psc'), (pex_dir, '.pex'))])
     os.makedirs(output_dir, exist_ok=True)
     return shared
 

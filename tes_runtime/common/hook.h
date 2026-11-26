@@ -15,6 +15,12 @@ namespace tesruntime {
 // 0 when there is none or more than one.
 std::uintptr_t FindCallTo(std::uintptr_t fn, std::size_t scanLen, std::uintptr_t target);
 
+// Every `E8 rel32` in [fn, fn + scanLen) whose target is `target`, in address
+// order: the first `max` go to `out`. Returns how many there are (0 when the
+// range is not inside .text).
+int FindCallsTo(std::uintptr_t fn, std::size_t scanLen, std::uintptr_t target,
+                std::uintptr_t* out, int max);
+
 // Repoints the call at `callAddr` to `replacement` through a trampoline
 // allocated within rel32 reach of the exe. Returns false and changes nothing
 // on any failure.

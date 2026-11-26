@@ -38,13 +38,16 @@ from asset_convert.havok.npc_anim_morrowind import convert_npc_anims
 from asset_convert.havok.npc_graph_morrowind import (build_npc_graphs,
                                                      remove_npc_graphs)
 from asset_convert.paths import EXPORT
+from asset_convert.sources import output_files
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
-from core.worker_budget import worker_count
+from core.worker_budget import memory_workers, worker_count
 from output_layout import assets_for
 
 _WORKERS = worker_count()
+#: A creature worker's private (commit) MB at 29 workers, measured: 145-175 across Tribunal, Nehrim, FNV, Morrowind.
+CREATURE_WORKER_MB = 170
 
 # Not real creatures: 'boxtest' is a Bethesda test asset; 'endgame' is the
 # KFM-driven Mehrunes Dagon avatar cinematic (morph-controller NIFs PyFFI
@@ -455,21 +458,14 @@ def manifests_under(meshes_dir: str) -> dict:
 
     Keyed on the project file name, which carries the plugin namespace, so
     two plugins' manifests can never collide (hkx_behavior.project_layout).
+    A manifest only the plugin's archives hold counts (`output_files`).
     """
     out = {}
     root = os.path.join(meshes_dir, 'actors', current_namespace())
-    if not os.path.isdir(root):
-        return out
-    for ns in sorted(os.listdir(root)):
-        ns_dir = os.path.join(root, ns)
-        if not os.path.isdir(ns_dir):
-            continue
-        for d in sorted(os.listdir(ns_dir)):
-            mp = os.path.join(ns_dir, d, 'project_manifest.json')
-            if not os.path.exists(mp):
-                continue
-            with open(mp, encoding='utf-8') as f:
-                m = json.load(f)
+    found = output_files.files_under(root, '\\project_manifest.json')
+    for rel in sorted(found):
+        if rel.count('\\') == 2:
+            m = json.loads(output_files.read_source(found[rel]).decode('utf-8'))
             out[m['project_txt'].lower()] = m
     return out
 
@@ -604,7 +600,7 @@ def _convert_pool(dirs, export_dir, out_meshes_dir, workers, namespace,
                      for f, s in sound_data.items()}
     speed_attrs = _speed_attr_by_folder(export_dir)
     projects, errors = {}, {}
-    with ProcessPoolExecutor(max_workers=workers or _WORKERS) as pool:
+    with ProcessPoolExecutor(max_workers=memory_workers(workers or _WORKERS, CREATURE_WORKER_MB)) as pool:
         futs = {pool.submit(_convert_creature, cdir, name, out_meshes_dir,
                             part_sets.get(name.lower()), 30.0,
                             sound_slots.get(name.lower()),
@@ -612,18 +608,18 @@ def _convert_pool(dirs, export_dir, out_meshes_dir, workers, namespace,
                             speed_attrs.get(name.lower(), 0),
                             namespace):
                 name for cdir, name in dirs}
-        for fut in as_completed(futs):
+        for done, fut in enumerate(as_completed(futs), 1):
             name = futs[fut]
             try:
                 manifest = fut.result()
             except Exception as e:
                 errors[name] = f'{type(e).__name__}: {e}'
-                log(f'  [FAIL] {name}: {errors[name]}')
+                log(f'  {done}/{len(futs)} [FAIL] {name}: {errors[name]}')
                 continue
             projects[name] = manifest
             _seat_saddle(out_meshes_dir, manifest)
             n_fail = len(manifest['failures']) + len(manifest['nif_failures'])
-            log(f'  [ok] {name}: {len(manifest["clips"])} clips, '
+            log(f'  {done}/{len(futs)} [ok] {name}: {len(manifest["clips"])} clips, '
                 f'{len(manifest["bodies"])} body nifs'
                 + (f', {n_fail} failures' if n_fail else ''))
     return projects, errors

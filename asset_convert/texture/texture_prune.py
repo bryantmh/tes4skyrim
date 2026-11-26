@@ -2,8 +2,8 @@
 
 Oblivion's BSAs carry textures for content the conversion never emits, and
 copying the texture tree wholesale ships all of it.  `bsa_pack` applies
-`is_excluded` while staging the textures archive; nothing here deletes, and
-`output/` always keeps the full loose tree for testing.
+`is_excluded` while staging the textures archive, and `drop_loose` deletes
+the excluded loose copies with the packed ones.
 
 This is a BLACKLIST of asset categories Skyrim can never load, not a keep-set
 reconstructed from references: a blacklist can only ship a file nothing needs,
@@ -20,9 +20,6 @@ from pathlib import Path
 #: Second path segment (below the game namespace) whose whole subtree is cut.
 _EXCLUDED_DIRS = frozenset({
     'faces',          # FaceGen bakes keyed <formid>_0.dds; Skyrim regenerates
-    'menus',          # Oblivion UI atlases; Skyrim's interface is unrelated
-    'menus80',
-    'menus50',
     'landscapelod',   # superseded by our own LOD bake into AutoConvertLOD
     'distantlod',
 })

@@ -31,13 +31,23 @@ another copy to keep in sync.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import struct
 from pathlib import Path
 
 from asset_convert.lod.terrain_lod import shipped_lod_worldspaces
+from core.plugin_masters import export_source
+from core.worldspace_names import converted_worldspace_edid
+from core.plugin_masters import masters_first
 from core.plugin_masters import masters_from_export_header as master_names
 from tes5_import.base.tes5_reader import FLAG_PERSISTENT, records, walk
+
+#: A CELL dump's parent worldspace line, read as bytes in one pass.
+_PARENT_WRLD = re.compile(rb"\nParentWRLD=[ \t]*([0-9A-Fa-f]+)")
+
+#: Converted Morrowind-format exteriors that always get distant LOD, lowercased.
+ALWAYS_LOD = frozenset({'wrldmorrowind', 'wrldarktwend'})
 
 
 # Shared-folder resolution -- see output_layout. An imported mod's plugins keep
@@ -339,23 +349,10 @@ def _master_rank(names: list[str], export_root: Path) -> dict[str, int]:
 def create_lod_order(names: list[str], export_root: Path) -> list[str]:
     """The default plugin order for a Create LOD run, lowest priority first.
 
-    Two sources, in the order the user asked for:
-
-    1. `plugins.txt` — the real Skyrim load order. Whatever it lists comes
-       FIRST, in exactly its own order, because that is the order the game
-       itself resolves these plugins in and the user chose it.
-    2. Everything else, appended at the bottom, sorted alphabetically but
-       constrained by MASTERS: a plugin never sorts before one of its own
-       masters. Alphabetical alone would let ``AAAPatch.esp`` (mastered on
-       ``Tamriel.esp``) apply first and then be overwritten by the very plugin
-       it patches; sorting by master depth first makes the dependent always
-       land after the thing it depends on.
-
-    This differs from `load_order`, which puts unlisted plugins FIRST so an
-    unpositioned plugin can never outrank a positioned one. That rule is right
-    for a merge the user never looked at. Here the list is shown, reorderable
-    and confirmed before anything runs, so the user's stated preference —
-    plugins.txt first, the rest appended at the bottom — is what is built.
+    `plugins.txt`'s plugins first, in its order; the rest after, by master
+    depth, `.esm` before `.esp`, then name; last, every plugin moves below
+    each of its masters.
+    See: docs/commentary/asset_convert_terrain.md#lod-owner-is-the-base
     """
     rank = {n.lower(): i for i, n in enumerate(plugins_txt_order())}
     listed = sorted((n for n in names if n.lower() in rank),
@@ -366,7 +363,7 @@ def create_lod_order(names: list[str], export_root: Path) -> list[str]:
     # name for a stable, predictable tiebreak.
     rest.sort(key=lambda n: (depth.get(n, 0),
                              not n.lower().endswith('.esm'), n.lower()))
-    return listed + rest
+    return masters_first(listed + rest, lambda n: master_names(str(record_dir(export_root, n))))
 
 
 def worldspaces_by_plugin(names: list[str], export_root: Path,
@@ -412,8 +409,25 @@ def worldspaces_by_plugin_diagnosed(names: list[str], export_root: Path,
         if why:
             reasons[name] = why
 
+    _add_always_lod(names, export_root, out_root, out, reasons)
     _add_edited_worldspaces(names, export_root, out, reasons)
     return out, reasons
+
+
+def _add_always_lod(names, export_root: Path, out_root, out: dict, reasons: dict) -> None:
+    """Give each Morrowind-format plugin the `ALWAYS_LOD` worldspaces its converted ESM defines.
+
+    See: docs/commentary/asset_convert_terrain.md#morrowind-format-worldspaces
+    """
+    for name in names if out_root else ():
+        if export_source(str(record_dir(export_root, name))) != 'TES3':
+            continue
+        esm = _out_root(out_root, name, export_root) / name
+        defined = _defined_edids(esm) if esm.is_file() else ()
+        added = [e for e in defined if e.lower() in ALWAYS_LOD and e not in out.get(name, ())]
+        if added:
+            out.setdefault(name, []).extend(added)
+            reasons.pop(name, None)
 
 
 def _add_edited_worldspaces(names, export_root: Path, out: dict,
@@ -445,24 +459,14 @@ def _edited_worldspace_edids(export_dir: Path) -> frozenset:
     Read from the CELL dump's ParentWRLD, not the converted ESM: this runs
     before the bake, for plugins that may not be converted yet.
     """
-    from asset_convert.lod.terrain_lod import worldspace_edids
+    from asset_convert.lod.terrain_lod import world_renames, worldspace_edids
     cell_txt = Path(export_dir) / 'CELL.txt'
     if not cell_txt.is_file():
         return frozenset()
-    edid_by_fid = worldspace_edids(Path(export_dir))
-    found = set()
-    for line in cell_txt.read_text(encoding='utf-8',
-                                   errors='replace').splitlines():
-        if not line.startswith('ParentWRLD='):
-            continue
-        try:
-            fid = int(line[11:].strip(), 16)
-        except ValueError:
-            continue
-        edid = edid_by_fid.get(fid)
-        if edid:
-            found.add(edid)
-    return frozenset(found)
+    edid_by_fid, renames = worldspace_edids(Path(export_dir)), world_renames(export_dir)
+    return frozenset(converted_worldspace_edid(edid, renames)
+                     for fid in set(_PARENT_WRLD.findall(b'\n' + cell_txt.read_bytes()))
+                     if (edid := edid_by_fid.get(int(fid, 16))))
 
 
 def lod_worldspaces(names: list[str], export_root: Path,
@@ -550,16 +554,9 @@ def owner_map(edids, order: list[str], export_root: Path,
               out_root: Path = None) -> dict:
     """{worldspace EDID: owning plugin}, resolved in ONE pass over the order.
 
-    Two-pass precedence, and the order of the passes is the point: a plugin
-    that SHIPPED LOD for a worldspace outranks any later plugin that merely
-    defines it. That is what keeps Oblivion.esm owning TES4Tamriel rather than
-    Tamriel.esp, which only extends it — sourcing from the extender would drop
-    all of Oblivion's terrain. Pass 2 then covers mod-added worldspaces, which
-    ship no LOD at all and used to be skipped entirely.
-
-    Resolving the whole load order at once rather than per worldspace: the
-    per-worldspace form re-listed every plugin's export dir for each of 80
-    worldspaces.
+    A plugin that shipped LOD for a worldspace owns it; otherwise the first
+    plugin, masters first, whose converted ESM defines it.
+    See: docs/commentary/asset_convert_terrain.md#lod-owner-is-the-base
     """
     wanted = set(edids)
     out: dict = {}
@@ -567,7 +564,7 @@ def owner_map(edids, order: list[str], export_root: Path,
         for e in _shipped_edids(record_dir(export_root, name)) & wanted:
             out.setdefault(e, name)
     if out_root is not None:
-        for name in order:                  # pass 2: defined in the ESM
+        for name in masters_first(order, lambda n: master_names(record_dir(export_root, n))):
             rest = wanted - out.keys()
             if not rest:
                 break

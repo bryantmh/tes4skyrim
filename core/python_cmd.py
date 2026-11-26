@@ -5,7 +5,7 @@ the exe itself is started again with `--tesract-run <module>`, and `run_from_arg
 exe's entry point) imports that module and exits with its `main()`: Nuitka's compiled modules cannot
 be re-run as `__main__` (`runpy` needs their source), so every module started this way keeps its work
 in `main()`. Every place that starts a script goes through `python_cmd`, so the two cannot drift.
-See: docs/commentary/core_gui.md#single-exe
+See: docs/commentary/core_gui.md#folder-build
 """
 
 import importlib

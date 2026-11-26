@@ -1067,18 +1067,25 @@ bool SayLine(const std::string& ref, const std::string& file,
     if (!speaker) return false;
     // Only an actor has a mouth; a door, an activator or the player's own
     // head plays the same recording as a sound from where it stands.
-    void* topic = FindActor(ref) && line->topic.formId && g_refSay
+    const bool mouth = speaker != PlayerRef() && FindActor(ref);
+    void* topic = mouth && line->topic.formId && g_refSay
                       ? Form(&line->topic) : nullptr;
+    int instance = 0;
     if (topic) {
         g_refSay(PapyrusVm(), 0, speaker, topic, nullptr, false);
     } else if (line->sound.empty() ||
-               !PlaySoundAt(ref, line->sound, false, 1.0f)) {
+               !(instance = PlaySoundAt(ref, line->sound, false, 1.0f))) {
         ReportOnce("say line without a voice", file);
         return false;
     }
     g_saying[speaker] = Now() + (line->seconds > 0 ? line->seconds
                                                    : SpokenSeconds(text));
-    Log("game: '%s' says '%s'", ref.c_str(), file.c_str());
+    if (topic) {
+        Log("game: '%s' says '%s' (topic)", ref.c_str(), file.c_str());
+    } else {
+        Log("game: '%s' says '%s' (sound instance %d)", ref.c_str(),
+            file.c_str(), instance);
+    }
     return true;
 }
 

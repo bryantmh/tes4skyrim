@@ -323,7 +323,7 @@ def kill_process_tree(pid: int) -> None:
     """Forcibly kill process `pid` and every descendant it spawned.
 
     Killing only the parent leaves its pool workers and helper .exes (ffmpeg,
-    hkxcmd, BSArch, LODGen) running and holding its stdout pipe open.
+    hkxcmd, LODGen) running and holding its stdout pipe open.
     `taskkill /T` walks the tree by PID.
     """
     if _IS_WIN:

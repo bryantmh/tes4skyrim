@@ -24,7 +24,6 @@ OUTPUT = DATA_ROOT / 'output'
 EXTERNAL = REPO / 'external'
 HKXCMD = REPO / 'external' / 'hkxcmd' / 'hkxcmd.exe'
 HKXCONV = REPO / 'external' / 'hkxconv' / 'hkxconv.exe'
-BSARCH = REPO / 'external' / 'bsarch' / 'BSArch.exe'
 LODGEN = REPO / 'external' / 'lodgen' / 'LODGenx64.exe'
 MOPP_BRIDGE = REPO / 'external' / 'mopp_bridge' / 'dovah_hkp_mesh_mopp_bridge.exe'
 #: xWMAEncode.exe, which the user supplies: kept with their data so a new TESRACT.exe still finds it.

@@ -25,8 +25,8 @@ FORCED_PACKAGES, ARMED_FACTIONS = 'TES4ScriptPackageList', 'TES4ScriptPackageArm
 #: The shared OnEnd fragment that disarms a forced package; its `Armed` property is the package's faction.
 DISARM_SCRIPT = 'TES4_ScriptPackageDone'
 
-#: QUST DNAM flags Start Game Enabled + Starts Enabled, and the top quest priority.
-_HOST_FLAGS, TOP_PRIORITY = 0x0011, 100
+#: QUST DNAM flags Start Game Enabled + Starts Enabled; priority just under the force-greet pool's.
+_HOST_FLAGS, HOST_PRIORITY = 0x0011, 99
 
 
 class PackageHosts:
@@ -91,7 +91,7 @@ def host_record(host_fid: int, alias_sources: dict, count: int, alias_subs: byte
     if scripts:
         subs += pack_subrecord('VMAD', build_vmad_quest_fragments(HOST, [], alias_scripts=scripts,
                                                                   quest_fid=host_fid))
-    subs += pack_subrecord('DNAM', struct.pack('<HBBII', _HOST_FLAGS, TOP_PRIORITY, 0, 0, 0))
+    subs += pack_subrecord('DNAM', struct.pack('<HBBII', _HOST_FLAGS, HOST_PRIORITY, 0, 0, 0))
     subs += pack_subrecord('NEXT', b'')
     subs += pack_uint32_subrecord('ANAM', count) + alias_subs
     return pack_record('QUST', host_fid, 0, subs)

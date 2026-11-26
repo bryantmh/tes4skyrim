@@ -243,6 +243,20 @@ wait 5
 expect player->HasItemEquipped "common_shirt_01_a" == 1
 end
 
+# A hybrid split pair: both halves are generated meshes in the shared Morroblivion mod, textured from the
+# model they were split from. Run with --keep and look at the hands in third person (headless_testing.md
+# #adjusting-a-kept-game); untextured halves show purple.
+case equip_split_gauntlets
+run
+player->AddItem "imperial left gauntlet" 1
+player->AddItem "imperial right gauntlet" 1
+player->Equip "imperial left gauntlet"
+player->Equip "imperial right gauntlet"
+wait 5
+expect player->HasItemEquipped "imperial left gauntlet" == 1
+expect player->HasItemEquipped "imperial right gauntlet" == 1
+end
+
 case scale_one
 run
 player->SetScale 1

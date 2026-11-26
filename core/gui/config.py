@@ -28,7 +28,6 @@ See: docs/reference/pipeline.md#game-data-path-detection
 
 import json
 import os
-import sys
 from pathlib import Path
 
 from core import process_job
@@ -68,8 +67,6 @@ STEPS = [
      "Convert source scripts to Papyrus",        True,  True),
     ("pack",               "--pack-only",          "9. Pack BSAs",
      "Pack assets into BSA archives",             False, True),
-    ("pack_zip",           "--pack-zip-only",      "10. Pack Mod Zip",
-     "Zip mod files for installation",   True,  True),
 ]
 
 def step_names(keys) -> str:
@@ -78,12 +75,6 @@ def step_names(keys) -> str:
     return ', '.join(labels.get(k, k) for k in keys)
 
 
-#: The packing pair, whose default tick state is a user setting, not a constant.
-PACKING_STEPS = ("pack", "pack_zip")
-
-#: conversion_config.json key for that setting. Absent reads as ON.
-PACK_DEFAULT_CONFIG_KEY = "packStepsDefaultOn"
-
 #: conversion_config.json key for the inferred-collision-winding tri-state.
 WINDING_CONFIG_KEY = "collisionWindingFix"
 WINDING_AUTO, WINDING_ON, WINDING_OFF = "auto", "on", "off"
@@ -91,6 +82,8 @@ WINDING_MODES = (WINDING_AUTO, WINDING_ON, WINDING_OFF)
 
 #: conversion_config.json key for the object-LOD detail preset index.
 LOD_DETAIL_CONFIG_KEY = "lodDetail"
+#: conversion_config.json key for the LOD plugin choice: {"order": [...], "off": [...], "force": bool}.
+LOD_CHOICE_CONFIG_KEY = "lodChoice"
 
 #: conversion_config.json key for the navmesh generator (core.navmesh_options.GENERATORS).
 NAVMESH_GENERATOR_CONFIG_KEY = "navmeshGenerator"
@@ -147,8 +140,8 @@ GLOBAL_ACTIONS = [
      "no crash and no log. Applies to a whole master chain at once",
      "To Master", 1),
     ("package_start_mod", "Package Start Mod",
-     "Build the TESGameSelect starter mod (the new-game world selector) and "
-     "zip it into output/Finished Mods, ready to install like any "
+     "Build the TESGameSelect starter mod (the new-game world selector) into "
+     "output/TESGameSelect, ready to install like any "
      "converted plugin. Needs Skyrim installed: the MQ101 override is "
      "spliced from its Skyrim.esm",
      "Pack Start Mod", 1),
@@ -156,9 +149,9 @@ GLOBAL_ACTIONS = [
      "Build the ARMA slot-44 body patch for your Skyrim load order",
      "Body Slot Patch", 2),
     ("package_runtime_dll", "Package SKSE Mod",
-     "Zip the built runtime DLLs (TESRuntime, CreatureRuntime, FalloutRuntime, "
-     "HavokWorldSize and MorrowindRuntime, from tes_runtime/dist) into "
-     "output/Finished Mods, ready to install like any converted plugin",
+     "Write the built runtime DLLs (TESRuntime, ArchiveLoader, CreatureRuntime, FalloutRuntime, "
+     "HavokWorldSize and MorrowindRuntime, from tes_runtime/dist) as the mod folder "
+     "output/TESRuntime, ready to install like any converted plugin",
      "Pack SKSE Mod", 2),
     ("convert_ui", "Convert Oblivion UI",
      "Build the standalone Oblivion UI mod: Skyrim's message boxes and menu "
@@ -178,59 +171,9 @@ def winding_enabled_for(mode: str, plugin: str) -> bool:
     return _winding_default(plugin)
 
 
-def default_on_steps(pack_default: bool = True) -> set:
-    """Step keys that start ticked, given the Pack-by-default setting.
-
-    Deliberately ignores the `default_on` column of STEPS: that column answers
-    "did the user keep the default selection?" for the runner, which is a
-    different question from what the checkboxes start at.
-    """
-    keys = {k for k, *_ in STEPS}
-    if not pack_default:
-        keys -= set(PACKING_STEPS)
-    return keys
-
-
 # ---------------------------------------------------------------------------
 #  Saved settings
 # ---------------------------------------------------------------------------
-
-#: Game -> registry locations holding its install path, most specific first.
-_GAME_REGISTRY_KEYS = {
-    "oblivion": (
-        r"SOFTWARE\WOW6432Node\Bethesda Softworks\Oblivion",
-        r"SOFTWARE\Bethesda Softworks\Oblivion",
-    ),
-    "skyrimse": (
-        r"SOFTWARE\WOW6432Node\Bethesda Softworks\Skyrim Special Edition",
-        r"SOFTWARE\Bethesda Softworks\Skyrim Special Edition",
-    ),
-}
-
-
-def _installed_data_dir(subkey: str) -> str:
-    """The `Data` folder under one registry key's Installed Path, or ""."""
-    import winreg
-
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, subkey) as key:
-            path, _ = winreg.QueryValueEx(key, "Installed Path")
-    except (FileNotFoundError, OSError):
-        return ""
-    data = os.path.join(path, "Data")
-    return data if os.path.isdir(data) else ""
-
-
-def find_game_path(game: str) -> str:
-    """Auto-detect a game's Data folder from the Windows registry, or ""."""
-    if sys.platform != "win32":
-        return ""
-    for subkey in _GAME_REGISTRY_KEYS.get(game, ()):
-        found = _installed_data_dir(subkey)
-        if found:
-            return found
-    return ""
-
 
 def load_config() -> dict:
     """The saved config, or {} when nothing has been saved yet."""

@@ -65,6 +65,8 @@ class ScriptContext:
     quest_delay: float = 0.0
     #: Every record the script is attached to is a BOOK, so its OnActivate means "read".
     on_book: bool = False
+    #: The script sits on an inventory item (constants.CARRIED_SIGNATURES), so its poll also runs while carried.
+    on_item: bool = False
 
     # --- Emission bookkeeping ----------------------------------------------
     #: Quest -> latch variable, for stage timers.  Per-script: a latch

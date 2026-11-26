@@ -14,7 +14,7 @@ from tes5_import.record_types.magic_morrowind import (MW_RUNTIME_EFFECTS, mw_act
                                                       mw_converts, mw_needs_runtime,
                                                       runtime_attribute_index)
 
-#: The TES4 actor value of Acrobatics, which lands on Skyrim's Stamina.
+#: The TES4 actor value of Acrobatics, which lands on Skyrim's JumpingBonus, as Jump does.
 _ACROBATICS = 26
 
 
@@ -36,6 +36,11 @@ def test_an_effect_converts_when_skyrim_or_the_runtime_carries_it():
     assert mw_converts(80, -1)
     assert not mw_converts(83, -1)
     assert mw_converts(83, _ACROBATICS)
+
+
+def test_fortify_acrobatics_raises_what_jump_raises():
+    """Fortify Acrobatics moves the same actor value as the Jump effect, not Stamina."""
+    assert mw_actor_value(83, _ACROBATICS) == mw_actor_value(9, -1)
 
 
 def test_a_scripts_writes_leave_its_own_locals_out():

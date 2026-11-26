@@ -46,13 +46,13 @@ CLI:
     # e.g. python -m asset_convert.nif.grass_profile export/Oblivion.esm \
     #          output/Oblivion.esm/meshes
 """
-from asset_convert.game_paths import current_namespace
-import shutil
+from asset_convert.game_paths import HYBRID_NAMESPACE, current_namespace
 import struct
 import sys
 from pathlib import Path
 
 from asset_convert.game_paths import win_join
+from asset_convert.sources import output_files
 from asset_convert.sources.source_registry import companion_name, record_dir
 from core.plugin_masters import export_root
 from asset_convert.nif.grass_profile_morrowind import add_wind_weights
@@ -361,34 +361,37 @@ def _clear_normal_slot(block):
     return True
 
 
-def _grass_source(rel, output_meshes_root, master_meshes_roots):
-    """(converted NIF for `rel`, whether this plugin owns it), or (None, False)."""
-    roots = [Path(output_meshes_root)] + [Path(r) for r in master_meshes_roots]
+def _grass_source(rel, output_meshes_root, master_meshes_roots, borrowed_root=None):
+    """(converted NIF for `rel`, loose or archived, and whether it is this plugin's loose file), or (None, False).
+
+    `borrowed_root` is the shared hybrid mod's meshes, whose files sit under its own namespace.
+    """
+    roots = [Path(r) / current_namespace() for r in [output_meshes_root, *master_meshes_roots]]
+    roots += [Path(borrowed_root) / HYBRID_NAMESPACE] if borrowed_root else []
     for i, root in enumerate(roots):
-        nif = win_join(root / current_namespace(), rel)
-        if nif.exists():
-            return nif, i == 0
+        nif = win_join(root, rel)
+        if output_files.exists(nif):
+            return nif, i == 0 and nif.is_file()
     return None, False
 
 
-def run(export_dir, output_meshes_root, master_meshes_roots=()):
+def run(export_dir, output_meshes_root, master_meshes_roots=(), borrowed_root=None):
     """Profile + place every GRAS model NIF; (processed, modified, missing).
 
-    output_meshes_root is the plugin meshes root (e.g.
-    output/Oblivion.esm/meshes): converted sources live under its namespace
-    subtree, and profiled COPIES are placed at meshes\\landscape\\grass\\
-    per grass_model_dest().  A model only a master converted is copied from
-    its `master_meshes_roots` entry and profiled as the copy, leaving the
-    master's mesh untouched; one a master already places is left to it.
+    Converted sources live under `output_meshes_root`'s namespace subtree;
+    profiled COPIES go to the shared grass folder per grass_model_dest().
+    A model only a master converted is copied from `master_meshes_roots` and
+    profiled as the copy, and one a master already places is left to it; a
+    borrowed model is read from `borrowed_root` (the shared hybrid mod's meshes).
     """
     output_meshes_root = Path(output_meshes_root)
     paths = load_grass_model_paths(export_dir)
     processed = modified = missing = 0
     for rel in sorted(paths):
-        if any(win_join(Path(r), grass_model_dest(rel)).exists()
+        if any(output_files.exists(win_join(Path(r), grass_model_dest(rel)))
                for r in master_meshes_roots):
             continue
-        nif, owned = _grass_source(rel, output_meshes_root, master_meshes_roots)
+        nif, owned = _grass_source(rel, output_meshes_root, master_meshes_roots, borrowed_root)
         if nif is None:
             missing += 1
             continue
@@ -399,7 +402,7 @@ def run(export_dir, output_meshes_root, master_meshes_roots=()):
         dest.parent.mkdir(parents=True, exist_ok=True)
         if owned and apply_grass_profile(nif):
             modified += 1
-        shutil.copy2(nif, dest)
+        output_files.copy_to(nif, dest)
         if not owned and apply_grass_profile(dest):
             modified += 1
     return processed, modified, missing

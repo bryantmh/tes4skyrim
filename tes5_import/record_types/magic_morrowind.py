@@ -31,7 +31,7 @@ from .magic import (A_ABSORB, A_BOUND_WEAPON, A_CALM, A_CLOAK,
                     A_VALUE_MODIFIER, AV_CARRY_WEIGHT,
                     AV_DAMAGE_RESIST,
                     AV_DETECT_LIFE_RANGE, AV_HEALTH,
-                    AV_INVISIBILITY, AV_MAGICKA, AV_MAGICKA_RATE,
+                    AV_INVISIBILITY, AV_JUMPING_BONUS, AV_MAGICKA, AV_MAGICKA_RATE,
                     AV_MELEE_DAMAGE, AV_NIGHT_EYE, AV_NONE, AV_PARALYSIS,
                     AV_POISON_RESIST, AV_RESIST_DISEASE, AV_RESIST_FIRE,
                     AV_RESIST_FROST, AV_RESIST_MAGIC, AV_RESIST_SHOCK,
@@ -39,7 +39,6 @@ from .magic import (A_ABSORB, A_BOUND_WEAPON, A_CALM, A_CLOAK,
                     AV_WATER_WALKING, DERIVE_AV)
 
 #: Actor values Skyrim has but the Oblivion tables never needed.
-AV_JUMPING_BONUS = 62
 AV_ABSORB_CHANCE = 83
 AV_BLINDNESS = 84
 AV_MOVEMENT_NOISE = 92

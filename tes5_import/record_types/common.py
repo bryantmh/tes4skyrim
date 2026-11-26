@@ -4,7 +4,7 @@ Shared helper functions for TES5 record converters.
 
 import struct
 
-from asset_convert.game_paths import ascii_path, current_namespace
+from asset_convert.game_paths import ascii_path, asset_namespace
 from ..base.mesh_bounds import get_mesh_obnd
 from ..base.obstacles import OBSTACLE_FLAG, is_obstacle
 from ..base.text_reader import get_float, get_formid, get_int, get_str
@@ -40,7 +40,7 @@ def prefix_path(path: str) -> str:
     p = path
     if p.lower().startswith('textures\\') or p.lower().startswith('textures/'):
         p = p[9:]
-    return current_namespace() + '\\' + ascii_path(p)
+    return asset_namespace(p) + '\\' + ascii_path(p)
 
 
 def landscape_texture_path(icon_path: str) -> str:

@@ -205,6 +205,9 @@ void* PlayerControls();
 void InstallStillCalls();
 void HoldStill(void* controller, bool isPlayer);
 void TickStillActors(void* player);
+// Whether an NPC controller's body touches any collision (a contact point);
+// true when it cannot be read. Game thread.
+bool ControllerTouches(void* controller);
 // The summed magnitude of every active instance of a runtime-carried effect
 // on `actor`, read off its active-effect list; with `attribute` set, only the
 // instances of that attribute's variant. Game thread.

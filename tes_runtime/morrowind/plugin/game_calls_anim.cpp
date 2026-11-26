@@ -380,6 +380,10 @@ bool InCombat(std::uint32_t id) {
     return ActorInCombat(RefByRuntimeId(id));
 }
 
+bool OnFloor(std::uint32_t id) {
+    return ControllerTouches(CharController(RefByRuntimeId(id)));
+}
+
 void InstallActorAnimCalls(GameHooks& hooks) {
     g_sendAnimationEvent = Native<void*>("Debug.SendAnimationEvent",
                                          ids::kDebugSendAnimationEvent);
@@ -389,6 +393,7 @@ void InstallActorAnimCalls(GameHooks& hooks) {
     hooks.refPose = RefPoseOf;
     hooks.glideRef = GlideRef;
     hooks.inCombat = InCombat;
+    hooks.onFloor = OnFloor;
 }
 
 }  // namespace

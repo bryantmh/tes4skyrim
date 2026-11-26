@@ -9,9 +9,6 @@ logs/
 temp/
 # TESRACT.exe builds (tools/release/build_exe.py)
 /build/
-/TESRACT.exe
-/TESRACT.exe.old
-/.tesract/
 /references/
 # Private Python environment made by "TES Auto-Convert.cmd".
 /.venv/
@@ -50,6 +47,7 @@ my_navmesh_pins/
 # history, not source: committing it would ship one machine's conversion state
 # to every user and make their upgrade check lie.
 .conversion_state.json
+.release_steps.json
 
 # Per-install settings, and the only file the running app rewrites.  Same
 # rationale: committing it ships one machine's data paths and worker count to

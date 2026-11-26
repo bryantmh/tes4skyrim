@@ -18,19 +18,15 @@ import os
 import shutil
 import struct
 import zlib
+from concurrent.futures import Future, ProcessPoolExecutor
 from pathlib import Path
 import lz4.frame
 from asset_convert.sources.bsa_extract_morrowind import (
-    is_morrowind_bsa, iter_bsa as iter_morrowind_bsa)
+    is_morrowind_bsa, read_table as read_morrowind_table)
+from asset_convert.sources.bsa_extract_worker import extract_chunk
 from asset_convert.sources.bsa_extract_morrowind_sounds import (
     extract_loose_audio)
-from asset_convert.audio.audio_converter import (
-    organize_voice_files,
-)
 from core.worker_budget import worker_count
-
-# Worker count used by all parallel operations in this module.
-_WORKER_COUNT = worker_count()
 
 
 #: Extra archive bases per stem, in probe order. See: docs/commentary/asset_convert_mod_ingest.md#update-bsa
@@ -245,6 +241,9 @@ _ARCH_EMBED_NAME = 0x0100
 #: File size bit that INVERTS the archive's compression default for that file.
 _FILE_COMPRESS = 0x40000000
 
+#: Bits the TES4 BSA hash sets in its low word for these extensions.
+_EXT_HASH_BITS = {'.kf': 0x80, '.nif': 0x8000, '.dds': 0x8080, '.wav': 0x80000000}
+
 
 def read_bsa_directory(fh):
     """Parse the directory of an open TES4/FO3/Skyrim LE/SE BSA (v103/104/105).
@@ -270,6 +269,81 @@ def read_bsa_directory(fh):
         ('\\'.join(filter(None, (folder, name))), size & ~_FILE_COMPRESS, offset,
          default ^ bool(size & _FILE_COMPRESS))
         for (folder, size, offset), name in zip(records, names)]
+
+
+def read_bsa_folders(fh) -> list:
+    """The folder names of an open TES4/FO3/Skyrim LE/SE BSA, skipping every file record and name.
+
+    See: docs/commentary/core_gui.md#idle-steps
+    """
+    head = fh.read(36)
+    if head[:4] != b'BSA\x00':
+        raise ValueError(f'Not a BSA file: {fh.name}')
+    version, dir_offset, _flags, folder_count = struct.unpack_from('<4I', head, 4)
+    fh.seek(dir_offset)
+    record_size = 24 if version >= 105 else 16
+    table = fh.read(record_size * folder_count)
+    counts = [struct.unpack_from('<I', table, i * record_size + 8)[0] for i in range(folder_count)]
+    folders = []
+    for count in counts:
+        folders.append(fh.read(fh.read(1)[0]).rstrip(b'\x00').decode('latin-1').lower())
+        fh.seek(16 * count, 1)
+    return folders
+
+
+def tes4_hash(name: str, folder: bool = False) -> int:
+    """The TES4-family BSA hash of a file or (`folder`) folder name, lower case with backslashes, as stored.
+
+    A folder is hashed whole: `textures\\faces\\oblivion.esm` has no extension.
+    See: docs/commentary/asset_convert_bsa.md#bsa-name-hash
+    """
+    stem, dot, ext = (name, '', '') if folder or '.' not in name else name.rpartition('.')
+    ext = dot + ext
+    low = (ord(stem[-1]) if stem else 0) | ((ord(stem[-2]) << 8) if len(stem) > 2 else 0)
+    low |= (len(stem) << 16) | ((ord(stem[0]) << 24) if stem else 0)
+    low |= _EXT_HASH_BITS.get(ext, 0)
+    high = 0
+    for ch in stem[1:-2]:
+        high = (high * 0x1003F + ord(ch)) & 0xFFFFFFFF
+    tail = 0
+    for ch in ext:
+        tail = (tail * 0x1003F + ord(ch)) & 0xFFFFFFFF
+    return (((high + tail) & 0xFFFFFFFF) << 32) | (low & 0xFFFFFFFF)
+
+
+def bsa_has(bsa_path, rel: str) -> bool:
+    """Whether the TES4-family BSA at `bsa_path` stores `rel`, found by hash and confirmed by name.
+
+    Reads the folder table and one folder's file records, not the whole directory.
+    See: docs/commentary/asset_convert_bsa.md#bsa-name-hash
+    """
+    folder, _, file = rel.lower().replace('/', chr(92)).rpartition(chr(92))
+    with open(bsa_path, 'rb') as fh:
+        head = fh.read(36)
+        if head[:4] != b'BSA\x00':
+            return False
+        version, dir_offset, _flags, folder_count, _, _, names_len, _ = struct.unpack_from('<8I', head, 4)
+        record_size = 24 if version >= 105 else 16
+        fh.seek(dir_offset)
+        table = fh.read(folder_count * record_size)
+        folders = [struct.unpack_from('<QI', table, i * record_size) for i in range(folder_count)]
+        want = tes4_hash(folder, folder=True)
+        at = next((i for i, (h, _c) in enumerate(folders) if h == want), None)
+        if at is None:
+            return False
+        before = 0
+        for _h, count in folders[:at]:
+            fh.seek(fh.read(1)[0] + count * 16, 1)
+            before += count
+        if fh.read(fh.read(1)[0]).rstrip(b'\x00').decode('latin-1').lower() != folder:
+            return False
+        hashes = [struct.unpack('<Q8x', fh.read(16))[0] for _ in range(folders[at][1])]
+        if tes4_hash(file) not in hashes:
+            return False
+        for h, count in folders[at + 1:]:
+            fh.seek(fh.read(1)[0] + count * 16, 1)
+        names = fh.read(names_len).decode('latin-1').split('\x00')
+        return names[before + hashes.index(tes4_hash(file))].lower() == file
 
 
 def iter_bsa(bsa_path, wanted=None):
@@ -303,102 +377,148 @@ def read_bsa_files(bsa_path, wanted_names):
     return {path.lower(): data for path, data in iter_bsa(bsa_path, wanted)}
 
 
-def _open_archive(bsa_path):
-    """An iterator of (path, bytes) for a BSA of any supported generation."""
+#: Stored bytes in one pool task, and the entry count that closes one early.
+_CHUNK_BYTES = 24 * 1024 * 1024
+_CHUNK_FILES = 1500
+
+#: Below this many stored bytes in a run, extracting in-process beats starting a pool.
+_POOL_MIN_BYTES = 16 * 1024 * 1024
+
+
+def _list_entries(bsa_path):
+    """(codec, embedded names, [(path, size, offset, compressed)]) for a BSA of any generation."""
     if is_morrowind_bsa(bsa_path):
-        return iter_morrowind_bsa(bsa_path)
-    return iter_bsa(bsa_path)
+        table = read_morrowind_table(bsa_path)
+        return 'zlib', False, [(name, size, start, False) for name, start, size in table]
+    with open(bsa_path, 'rb') as fh:
+        version, flags, entries = read_bsa_directory(fh)
+    return ('lz4' if version >= 105 else 'zlib',
+            bool(version >= 104 and flags & _ARCH_EMBED_NAME), entries)
 
 
-def extract_bsa(bsa_path, extract_dir, force=False, source_name=None):
-    """Extract assets from a single BSA file.
+def _out_path(base_dir, filepath) -> str:
+    """Where an archive path lands under `base_dir`, one real component per backslash-separated part."""
+    category, rest = split_category(filepath)
+    return str(Path(base_dir, category, *rest.replace('/', '\\').split('\\')))
 
-    Args:
-        bsa_path: Path to BSA file.
-        extract_dir: Root directory for extracted files.
-        force: If True, re-extract even if already done.
-        source_name: Plugin filename (e.g. 'Oblivion.esm') used as a subfolder
-                     under extract_dir to keep multiple sources separate.
 
-    Returns:
-        dict with stats: total_files, extracted, skipped, errors
+def _plan_archive(bsa_path, base_dir, manifest, force):
+    """A job for one archive, or a finished stats dict when it is cached or unreadable.
+
+    A job carries `entries` [(out_path, size, offset, compressed)] to write and
+    counts the lip files it skips.
     """
-    bsa_path = Path(bsa_path)
-    extract_dir = Path(extract_dir)
-    # `source_name` is an already-resolved FOLDER name from the caller,
-    # not a raw plugin name.
-    base_dir = extract_dir / source_name if source_name else extract_dir   # noqa: plugin-path (resolved folder)
-    manifest = load_manifest(base_dir)
-
-    bsa_key  = bsa_path.name
-    bsa_size = bsa_path.stat().st_size
-
-    if not force and bsa_key in manifest['extracted_bsas']:
-        prev = manifest['extracted_bsas'][bsa_key]
-        if prev.get('size') == bsa_size and prev.get('path', str(bsa_path)) == str(bsa_path):
-            print(f"  Skipping {bsa_key} (already extracted, {prev['file_count']} files)")
-            return {'total_files': 0, 'extracted': 0, 'skipped_cached': True,
-                    'skipped': 0, 'errors': 0}
-
+    bsa_key, bsa_size = bsa_path.name, bsa_path.stat().st_size
+    prev = manifest['extracted_bsas'].get(bsa_key)
+    if (not force and prev and prev.get('size') == bsa_size
+            and prev.get('path', str(bsa_path)) == str(bsa_path)):
+        print(f"  Skipping {bsa_key} (already extracted, {prev['file_count']} files)")
+        return {'total_files': 0, 'extracted': 0, 'skipped_cached': True, 'skipped': 0, 'errors': 0}
     print(f"  Extracting {bsa_key} ({bsa_size / 1024 / 1024:.1f} MB)...")
-
-    stats = {'total_files': 0, 'extracted': 0, 'skipped': 0, 'errors': 0,
-             'skipped_cached': False}
-
+    stats = {'total_files': 0, 'extracted': 0, 'skipped': 0, 'errors': 0, 'skipped_cached': False}
     try:
-        file_iter = _open_archive(bsa_path)
+        codec, embedded, listed = _list_entries(bsa_path)
     except Exception as e:
         print(f"    ERROR opening BSA {bsa_key}: {e}")
         return stats
+    wanted = [e for e in listed if should_extract_file(e[0])]
+    stats.update(total_files=len(listed), skipped=len(listed) - len(wanted))
+    entries = [(_out_path(base_dir, path), size, offset, comp)
+               for path, size, offset, comp in sorted(wanted, key=lambda e: e[2])]
+    return {'stats': stats, 'path': bsa_path, 'size': bsa_size, 'codec': codec,
+            'embedded': embedded, 'entries': entries, 'shadowed': 0}
 
-    for filepath, file_data in file_iter:
-        stats['total_files'] += 1
 
-        if not should_extract_file(filepath):
-            stats['skipped'] += 1
-            continue
+def _drop_shadowed(jobs) -> None:
+    """Remove every entry a later entry (this archive's or a later one's) overwrites on disk.
 
-        category, rest = split_category(filepath)
+    Serial extraction let the last writer win; dropping the earlier ones makes
+    the parallel result the same whatever order the workers run in.
+    """
+    seen = set()
+    for job in reversed(jobs):
+        kept = []
+        for entry in reversed(job['entries']):
+            key = entry[0].lower()
+            if key in seen:
+                job['shadowed'] += 1
+            else:
+                seen.add(key)
+                kept.append(entry)
+        job['entries'] = kept[::-1]
 
-        # BSA internal paths are always Bethesda/Windows-style backslash-
-        # separated, regardless of host OS -- os.sep is '/' on Linux, so a
-        # plain '/'-only replace leaves every inner backslash as a literal
-        # character in one flat filename instead of real subdirectories.
-        # Split explicitly and rejoin with Path so every segment becomes a
-        # real path component on any platform.
-        out_path = base_dir / category
-        for part in rest.replace('/', '\\').split('\\'):
-            out_path = out_path / part
 
-        try:
-            os.makedirs(out_path.parent, exist_ok=True)
-            # UNLINK first, never truncate in place.  An ordered merge seeds
-            # its base by HARD-LINKING (mod_ingest.seed_from_export), so an
-            # extracted file can share an inode with the base export tree --
-            # `write_bytes` alone would truncate through the link and rewrite
-            # export/<base>/ with this mod's content.  Breaking the link is
-            # what the tree's other two writers already do (_place_payload,
-            # _link_or_copy); this one has to match them.
-            if out_path.is_file():
-                out_path.unlink()
-            out_path.write_bytes(file_data)
-            stats['extracted'] += 1
-        except Exception as e:
-            stats['errors'] += 1
-            if stats['errors'] <= 10:
-                print(f"    ERROR writing {filepath}: {e}")
+def _chunks(entries):
+    """`entries` cut into runs of about `_CHUNK_BYTES` stored bytes, in order."""
+    run, weight = [], 0
+    for entry in entries:
+        run.append(entry)
+        weight += entry[1]
+        if weight >= _CHUNK_BYTES or len(run) >= _CHUNK_FILES:
+            yield run
+            run, weight = [], 0
+    if run:
+        yield run
 
-    manifest['extracted_bsas'][bsa_key] = {
-        'path': str(bsa_path),
-        'size': bsa_size,
-        'file_count': stats['extracted'],
-        'total_in_bsa': stats['total_files'],
-    }
+
+def _submit(pool, job, chunk):
+    """Run one chunk on the pool, or in-process (a finished future) when there is none."""
+    args = (str(job['path']), job['codec'], job['embedded'], chunk)
+    if pool is not None:
+        return pool.submit(extract_chunk, *args)
+    done = Future()
+    done.set_result(extract_chunk(*args))
+    return done
+
+
+def _finish_archive(job, futures, base_dir, manifest) -> dict:
+    """Collect an archive's chunk results, record it in the manifest and return its stats."""
+    stats, shown = job['stats'], 0
+    for future in futures:
+        extracted, corrupt, errors, messages = future.result()
+        stats['extracted'] += extracted
+        stats['errors'] += errors
+        stats['total_files'] -= corrupt
+        for message in messages[:max(0, 10 - shown)]:
+            print(f"    ERROR writing {message}")
+        shown += len(messages)
+    stats['extracted'] += job['shadowed']
+    manifest['extracted_bsas'][job['path'].name] = {
+        'path': str(job['path']), 'size': job['size'],
+        'file_count': stats['extracted'], 'total_in_bsa': stats['total_files']}
     save_manifest(base_dir, manifest)
-
     print(f"    Extracted {stats['extracted']} files, "
           f"skipped {stats['skipped']}, errors {stats['errors']}")
     return stats
+
+
+def extract_archives(bsa_paths, extract_dir, force=False, source_name=None) -> list:
+    """Extract several archives into `extract_dir/<source_name>/`; one stats dict per archive, in order.
+
+    Every archive's files are decompressed and written by a process pool, each
+    worker reading its own byte ranges; later archives still win a path clash.
+    Stats: total_files, extracted, skipped, errors, skipped_cached.
+    See: docs/commentary/asset_convert_bsa.md#parallel-extraction
+    """
+    base_dir = Path(extract_dir, source_name or '')
+    manifest = load_manifest(base_dir)
+    plans = [_plan_archive(Path(b), base_dir, manifest, force) for b in bsa_paths]
+    jobs = [p for p in plans if 'entries' in p]
+    _drop_shadowed(jobs)
+    stored = sum(e[1] for job in jobs for e in job['entries'])
+    pool = ProcessPoolExecutor(worker_count()) if stored >= _POOL_MIN_BYTES else None
+    try:
+        pending = {id(job): [_submit(pool, job, c) for c in _chunks(job['entries'])] for job in jobs}
+        return [_finish_archive(p, pending[id(p)], base_dir, manifest) if 'entries' in p else p
+                for p in plans]
+    finally:
+        if pool is not None:
+            pool.shutdown()
+
+
+def extract_bsa(bsa_path, extract_dir, force=False, source_name=None):
+    """Extract one BSA; `extract_archives` for a single archive. Returns its stats dict."""
+    return extract_archives([bsa_path], extract_dir, force, source_name)[0]
 
 
 def extract_assets_for_file(source_file, data_path, extract_dir, force=False):
@@ -444,9 +564,7 @@ def extract_assets_for_file(source_file, data_path, extract_dir, force=False):
         asset_dir_name = source_file
     _warn_mixed_sources(Path(extract_dir) / asset_dir_name, data_path, bsa_files)
 
-    for bsa_file in bsa_files:
-        stats = extract_bsa(bsa_file, extract_dir, force=force,
-                            source_name=asset_dir_name)
+    for stats in extract_archives(bsa_files, extract_dir, force=force, source_name=asset_dir_name):
         if stats.get('skipped_cached'):
             totals['bsas_cached'] += 1
         else:
@@ -573,7 +691,7 @@ if __name__ == '__main__':
                            args.extract_dir, force=args.force)
 
     if args.organize_voice:
-        from asset_convert.audio.audio_converter import find_voice_map
+        from asset_convert.audio.audio_converter import find_voice_map, organize_voice_files
         source_dir = Path(args.extract_dir) / args.source_file
         dest_dir = Path(args.organize_voice)
         organize_voice_files(source_dir, dest_dir, args.source_file,

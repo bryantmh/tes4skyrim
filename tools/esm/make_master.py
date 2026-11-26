@@ -42,7 +42,7 @@ import os
 import struct
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from output_layout import paths
+from output_layout import forget_summary, paths
 
 FLAG_ESM = 0x00000001
 FLAG_ESL = 0x00000200
@@ -52,6 +52,22 @@ FLAGS_OFFSET = 8          # byte offset of the flags dword in the TES4 header
 # Engine reference handle cap: 2**20 handles. Every reference in a non-ESM
 # plugin is persistent and permanently occupies one.
 HANDLE_CAP = 1 << 20
+
+
+#: The config key holding the plugins the user chose to flag ESM; a rebuilt plugin on it is flagged again.
+CONFIG_KEY = "masterPlugins"
+
+
+def reflag_if_chosen(path, config: dict) -> bool:
+    """Flag the plugin at `path` ESM when its name is on the config's chosen list; True when it was.
+
+    See: docs/commentary/core_gui.md#load-order
+    """
+    chosen = {name.lower() for name in config.get(CONFIG_KEY, ())}
+    if os.path.basename(path).lower() not in chosen or not os.path.isfile(path):
+        return False
+    set_flag(path, True)
+    return True
 
 
 def read_header(path):
@@ -78,13 +94,17 @@ def read_header(path):
 
 
 def set_flag(path, enable):
-    """Set or clear the ESM bit in place. Returns (old_flags, new_flags)."""
+    """Set or clear the ESM bit in place, so Install & play rereads the plugin's mod. Returns (old_flags, new_flags).
+
+    See: docs/commentary/core_gui.md#install-summaries
+    """
     flags, _ = read_header(path)
     new = (flags | FLAG_ESM) if enable else (flags & ~FLAG_ESM)
     if new != flags:
         with open(path, 'r+b') as fh:
             fh.seek(FLAGS_OFFSET)
             fh.write(struct.pack('<I', new))
+        forget_summary(os.path.dirname(os.path.abspath(path)))
     return flags, new
 
 

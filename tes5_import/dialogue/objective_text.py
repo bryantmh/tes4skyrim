@@ -47,9 +47,13 @@ import os
 _SHORT = {}
 
 #: The curated (EditorID, stage) -> short line table. See generated/README.md.
-_DATA_PATH = os.path.join(
+DATA_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     'generated', 'objective_short_text.json')
+
+#: The curated short lines for TES3 journal pages with no exact key in DATA_PATH.
+TES3_DATA_PATH = os.path.join(os.path.dirname(DATA_PATH),
+                              'objective_short_text_tes3.json')
 
 #: The objective field renders at most this many characters.
 OBJECTIVE_MAX_CHARS = 71
@@ -60,25 +64,24 @@ def _key(text: str) -> str:
     return ' '.join((text or '').split())
 
 
-def load_objective_text(path: str = None, quiet: bool = False) -> int:
-    """Load the curated table. Returns the number of entries loaded.
+def _table_entries(path: str) -> dict:
+    """`{normalized source text: short line}` from one table, {} if absent."""
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding='utf-8') as fh:
+        entries = json.load(fh)['entries']
+    return {_key(k): v for k, v in entries.items()
+            if isinstance(v, str) and v.strip()}
+
+
+def load_objective_text(quiet: bool = False) -> int:
+    """Load the curated table and the TES3 one. Returns the entry count.
 
     Safe to call repeatedly; import_main calls it once and worker pools inherit
     the populated dict through the fork/initializer path.
     """
     global _SHORT
-    path = path or _DATA_PATH
-    if not os.path.exists(path):
-        if not quiet:
-            print(f"  Objective text: table not found ({path}), "
-                  f"objectives will use the full journal entry")
-        _SHORT = {}
-        return 0
-    with open(path, encoding='utf-8') as fh:
-        raw = json.load(fh)
-    entries = raw.get('entries', raw) if isinstance(raw, dict) else raw
-    _SHORT = {_key(k): v for k, v in entries.items()
-              if isinstance(v, str) and v.strip()}
+    _SHORT = {**_table_entries(TES3_DATA_PATH), **_table_entries(DATA_PATH)}
     if not quiet:
         print(f"  Objective text: {len(_SHORT)} short objective lines")
     return len(_SHORT)

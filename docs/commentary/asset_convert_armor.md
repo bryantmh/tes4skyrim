@@ -1063,8 +1063,19 @@ re-bound to the shared skeleton ([#nif-skin-retargeting](#nif-skin-retargeting))
 Shields are never skinned -- the root carries `Prn=Shield` and the Oblivion
 shield path takes it ([#shield-attachment](#shield-attachment)).
 
-The result is written as a Morrowind-version NIF beside the source meshes, so
-every downstream stage sees the same shape of input it always has.
+The result is written as a Morrowind-version NIF, so the batch converter sees
+the same shape of input it always has.
+
+### <a id="assembled-outside-the-export"></a>Assembled outside the export
+
+The export is a fixed dump, so the assembled meshes go to a temporary tree at
+the same relative paths (`armor\morrowind\<m|f>\...`, names only the exporter
+mints) and are converted from there into the plugin's output
+(`_convert_assembled`); the plugin's own textures and its masters' are searched
+first (`batch_convert(extra_textures=...)`). They used to be written into the
+plugin's export tree beside its authored meshes, which a second Meshes run then
+rewrote: 268 files in `export/Morrowind.esm` changed on every run. An older
+build's copies there are deleted.
 
 ### <a id="unresolved-skin-root"></a>Bind pose: bone skin transforms alone
 

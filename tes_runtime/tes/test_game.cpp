@@ -235,12 +235,14 @@ bool MoveLanding();
 // to: turning the player as the conversation opens closes it. The re-approach comes before the 3D test: an actor
 // that has gone through a door is unloaded, and the player must follow it (run 53a, Martin at Cloud Ruler). One
 // sitting down or getting up is waited for, as the engine ignores the click then (run 57f: Martin seat-hopping
-// at the camp).
+// at the camp). An actor whose conversation with the player is already open has nothing left to click: its own
+// force greet came first (mq05_baurus_book, 11-24: Baurus greets in the checkpoint's load gap).
 bool Activate(const std::string& id) {
     void* ref = RefNamed(id);
     void* player = Player();
     if (!ref || !player || !g_c.activate || !g_c.is3DLoaded) return false;
     const bool actor = At<std::uint8_t>(ref, kFormType) == kFormTypeActor;
+    if (actor && Talking() && TalkingWith(id)) return true;
     if (actor && SomeoneSpeaking()) return false;
     if (actor && MoveLanding()) return false;
     if (actor && !CanTalkFrom(ref, player, id)) {

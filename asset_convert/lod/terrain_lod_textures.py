@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 
 from asset_convert.game_paths import find_nocase, win_join
+from asset_convert.sources import output_files
 from output_layout import plugin_out_root
 from tes5_import.base.tes5_reader import masters, records
 
@@ -264,13 +265,14 @@ def load_texture_rgb(rel_path: str, tex_root, size: int = 64):
             # rp is backslash-form (it comes from the TXST record's TX00/TX01),
             # so it needs an explicit split -- see asset_convert/game_paths.py.
             fpath = win_join(root, rp)
-            if not fpath.exists():
+            if not output_files.exists(fpath):
                 fpath = find_nocase(root, rp)
             if fpath is None:
                 continue
             try:
                 from PIL import Image
-                im = Image.open(fpath).convert('RGB').resize((size, size), Image.LANCZOS)
+                with output_files.open_binary(fpath) as fh:
+                    im = Image.open(fh).convert('RGB').resize((size, size), Image.LANCZOS)
                 img = np.asarray(im, dtype=np.uint8)
                 break
             except Exception:

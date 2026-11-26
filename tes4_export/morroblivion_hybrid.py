@@ -6,25 +6,29 @@ swaps when `morroblivion_whitelist.json` approves its Morroblivion replacement,
 or when that replacement carries furniture markers. A wearable swaps its worn
 and ground models when the whitelist approves Morroblivion's worn model of the
 same item; a one-hand piece wears its half of Morroblivion's two-handed item.
-Every swapped mesh, and each texture it names, is copied into the plugin's own
-asset tree, so the plugin ships them.
+Every swapped mesh, its hand-made LOD and each texture they name are listed as
+borrowed, and a kept vanilla mesh takes its pair's hand-made LOD.
 
 See: docs/commentary/tes4_export_morrowind.md#hybrid-mode
 """
 
+import filecmp
 import json
 import os
 import shutil
+import tempfile
 from collections import Counter
 from pathlib import Path
 
-from asset_convert.character.hand_pairs import split_models
+from asset_convert.character.hand_pairs import SPLIT_DIR, split_models
 from asset_convert.character.morrowind_coverage import SIDED_SLOTS
 from asset_convert.character.skyrim_overrides import SBP_59_RIGHT_HAND
-from asset_convert.nif.morroblivion_textures import HYBRID_MANIFEST, KEEP_NAME, map_dir, read_map, texture_key
+from asset_convert.nif.morroblivion_textures import KEEP_NAME, map_dir, read_map, texture_key
 from asset_convert.nif.sse_nif import NifFormat, read_nif
 from asset_convert.nif.tex_paths import as_dds, texture_rel_path
 from asset_convert.sources import source_registry
+from asset_convert.lod.lod_gen import LOD_SUFFIXES
+from asset_convert.sources.hybrid_assets import LODS, MANIFEST, SPLIT_OWNER, SPLITS, write_borrowed
 from asset_convert.sources.morrowind_assets import find_archived_file, source_meshes
 from asset_convert.texture.texture_prune import write_manifest
 from output_layout import asset_root, assets_for, record_dir
@@ -34,6 +38,7 @@ from .morroblivion import MorroblivionModels, archive_path, body_parts, fix_plac
 from .morroblivion_ground import GROUND_NAME, MorroblivionGround, icon_stem, match_ground, twin_stem, write_pairs
 from .morroblivion_origin import OriginShifts
 from .morroblivion_pairs import right_ids
+from .morroblivion_weather import copy_weathers
 from .morroblivion_texture_map import MESH_PREFIX, map_is_current, prove_map
 from .morrowind_ids import encode_editor_id
 from .morrowind_patch import patch_masters, supplied_index
@@ -43,8 +48,11 @@ from .tes3_reader import get_subrecord
 #: The reviewed pairs: [{kind, vanilla, morroblivion, decision, note}].
 WHITELIST = Path(__file__).with_name('morroblivion_whitelist.json')
 
-#: The copied files of the last hybrid export, in the plugin's record dir.
-MANIFEST_NAME = HYBRID_MANIFEST
+#: The borrowed files of the last hybrid export, in the plugin's record dir.
+MANIFEST_NAME = MANIFEST
+
+#: The split items of the last hybrid export, in the plugin's record dir.
+SPLITS_NAME = SPLITS
 
 #: The vanilla master the texture map pairs meshes through.
 VANILLA_ESM = 'Morrowind.esm'
@@ -64,6 +72,9 @@ WEARABLES = ('ARMO', 'CLOT')
 
 #: Bytes every furniture-marker NIF holds.
 FURNITURE_MARKER = b'BSFurnitureMarker'
+
+#: The folder an Oblivion `_far` mesh's low-resolution textures sit in, under `textures`.
+LOWRES = 'lowres' + chr(92)
 
 #: Extensions a plugin's own copy of a texture may carry.
 _TEXTURE_EXTS = ('.dds', '.tga', '.bmp')
@@ -132,10 +143,10 @@ class HybridModels:
         self.index = supplied_index(export_root, exports)
         self.world, self.worn = load_whitelist()
         self.items = _items(export_root, exports)
-        self.roots = [asset_root(export_root, n)
-                      for n in reversed(patch_masters(export_root, exports))]
-        self.named = set()
-        self._furniture, self._halves, self._vanilla = {}, {}, None
+        self.owners = list(reversed(patch_masters(export_root, exports)))
+        self.roots = owner_roots(export_root, exports)
+        self.named, self.split_items = set(), []
+        self._furniture, self._halves, self._vanilla, self._split_dir = {}, {}, None, None
 
     def mesh_roots(self) -> list:
         """The Morroblivion trees replacement meshes are read from."""
@@ -144,6 +155,14 @@ class HybridModels:
     def find(self, rel: str):
         """The Morroblivion file at meshes-relative `rel`, or None."""
         return find_under(self.mesh_roots(), rel)
+
+    def owner_of(self, part: str, rel: str):
+        """(owner plugin, file) of the first Morroblivion tree holding `part`/`rel`, or None."""
+        for owner, root in zip(self.owners, self.roots):
+            found = find_under([root / part], rel)
+            if found:
+                return owner, found
+        return None
 
     def swapped_in(self, model: str) -> bool:
         """Whether `model` is a Morroblivion mesh no vanilla path also names."""
@@ -192,11 +211,20 @@ class HybridModels:
         return {k: halves[k][int(side)] if k in halves else v for k, v in item.items()}
 
     def _split(self, item: dict, log) -> dict:
-        """{key: (left, right)} halves of a two-handed item, written once under the plugin's meshes."""
+        """{key: (left, right)} halves of a two-handed item; the halves go to a temporary folder only."""
         key = archive_path(item[WEARABLE_KEYS[0]])
         if key not in self._halves:
-            self._halves[key] = split_models(item, self.mesh_roots(), self.dest / 'meshes', log)
+            if self._split_dir is None:
+                self._split_dir = Path(tempfile.mkdtemp(prefix='hybrid_split_'))
+            self._halves[key] = split_models(item, self.mesh_roots(), self._split_dir, log)
+            if self._halves[key]:
+                self.split_items.append({'models': dict(item), 'owners': self.owners})
         return self._halves[key]
+
+    def forget_halves(self) -> None:
+        """Delete the temporary folder the split halves were tried in."""
+        if self._split_dir is not None:
+            shutil.rmtree(self._split_dir, ignore_errors=True)
 
     def halves(self) -> set:
         """Every split half written so far, as meshes-relative paths."""
@@ -297,13 +325,21 @@ def _master_bases(folder: str):
             yield from parse_export_file(os.path.join(folder, name))
 
 
+def owner_roots(export_root: str, exports) -> list:
+    """The asset roots of Morroblivion's plugins and their masters, the ones borrowed from first."""
+    return [asset_root(export_root, n) for n in reversed(patch_masters(export_root, exports))]
+
+
 def with_maps(rel: str) -> set:
     """A diffuse `.dds` path with its normal and glow maps beside it; a copy skips any not shipped."""
     return {rel, rel[:-4] + '_n.dds', rel[:-4] + '_g.dds'}
 
 
 def _nif_textures(path: Path) -> set:
-    """Every texture a NIF names, as `textures`-relative .dds paths, with their normal and glow maps."""
+    """Every texture a NIF names, as `textures`-relative .dds paths, with their maps and a `lowres` one's twin.
+
+    See: docs/commentary/asset_convert_shader.md#lowres-textures
+    """
     out = set()
     for block in read_nif(str(path)).blocks:
         names = []
@@ -313,7 +349,7 @@ def _nif_textures(path: Path) -> set:
             names.extend(t for t in block.textures if t)
         for name in names:
             rel = as_dds(texture_rel_path(bytes(name).decode('latin-1'))).lower()
-            out |= with_maps(rel)
+            out |= with_maps(rel) | with_maps(rel.removeprefix(LOWRES))
     return out
 
 
@@ -362,28 +398,35 @@ def vanilla_esm(export_root: str) -> str:
 
 def apply_hybrid(out: dict, records, ctx, plugin: str, source_path: str, masters,
                  exports, progress=print) -> None:
-    """Swap the approved models and land textures in `out`, correct placements, and copy what they need.
+    """Swap the approved models and land textures in `out`, correct placements, and list what they borrow.
 
     `masters` are the plugin's (name, export dir) pairs; `exports` the
-    converted Morroblivion plugins the replacements come from.
+    converted Morroblivion plugins the replacements come from. No asset is
+    written: the borrowed files are listed for the shared mod.
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-shared-assets
     """
     root = ctx.export_root
     hybrid = HybridModels(root, exports, source_path, plugin)
-    master_meshes = [assets_for(path) / 'meshes' for _name, path in masters]
-    ctx.origin_shifts = origin_shifts(hybrid, master_meshes)
-    counts = remap_models(out, records, ctx, hybrid)
-    corrected = correct_placements(out, [path for _name, path in masters], hybrid)
-    ground = MorroblivionGround(root, exports)
-    pairs = match_ground(out, ctx, ground, hybrid.vanilla)
-    lands, land_textures = swap_ground(out, hybrid, ground, pairs)
-    write_pairs(record_dir(root, plugin), out, pairs)
-    if not map_is_current(root, exports):
-        prove_map(root, exports, vanilla_esm(root), hybrid.index, progress)
-    twins = map_twins(hybrid)
-    meshes, textures = copy_assets(hybrid, master_meshes, twins | land_textures, progress)
+    try:
+        master_meshes = [assets_for(path) / 'meshes' for _name, path in masters]
+        ctx.origin_shifts = origin_shifts(hybrid, master_meshes)
+        counts = remap_models(out, records, ctx, hybrid)
+        corrected = correct_placements(out, [path for _name, path in masters], hybrid)
+        ground = MorroblivionGround(root, exports)
+        pairs = match_ground(out, ctx, ground, hybrid.vanilla)
+        lands, land_textures = swap_ground(out, hybrid, ground, pairs)
+        write_pairs(record_dir(root, plugin), out, pairs)
+        if not map_is_current(root, exports):
+            prove_map(root, exports, vanilla_esm(root), hybrid.index, progress)
+        twins = map_twins(hybrid)
+        skies = {archive_path(t).lower() for t in copy_weathers(out, ctx, source_path, exports)}
+        meshes, textures = borrow_assets(hybrid, master_meshes, twins | land_textures | skies, progress)
+    finally:
+        hybrid.forget_halves()
     progress(f"  Morroblivion (hybrid): {counts['world']} world and {counts['worn']} worn "
-             f"models swapped, {lands} land textures, {corrected} ref corrections; copied "
-             f'{meshes} meshes, {textures} textures, {len(twins)} map texture files with their normal and glow maps')
+             f"models swapped, {lands} land textures, {corrected} ref corrections; borrows "
+             f'{meshes} meshes and {textures} textures ({len(twins)} map texture files)'
+             + (f'; copied the Morroblivion weathers ({len(skies)} sky textures)' if skies else ''))
 
 
 def _ships_own_texture(hybrid: HybridModels, key: str) -> bool:
@@ -404,62 +447,123 @@ def find_under(roots, rel: str):
     return None
 
 
-def copy_assets(hybrid: HybridModels, master_roots, twins=(), log=print) -> tuple:
-    """Copy each named mesh, its textures and the `twins` textures into the plugin's tree.
+def borrow_assets(hybrid: HybridModels, master_roots, twins=(), log=print) -> tuple:
+    """List each named mesh with its hand-made LOD, the textures they name and `twins` as borrowed; (meshes, textures).
 
-    A file a master's tree already holds is left to the master. Returns
-    (meshes copied, textures copied); every copy is listed in the manifest.
+    A file the plugin's own tree or a master's holds is theirs, never borrowed.
+    A split half is borrowed from no owner: the shared mod generates it, with
+    the textures of the model it is split from. A vanilla mesh the plugin keeps
+    takes its Morroblivion pair's LOD mesh (`kept_lods`).
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-lod-meshes
     """
-    copied, textures = [], set(twins)
-    own = hybrid.dest / 'meshes'
-    for rel in sorted(hybrid.named | hybrid.halves()):
-        source = hybrid.find(rel) or find_under([own], rel)
-        if source is None or find_under(master_roots, rel):
-            continue
-        _copy(source, own, rel, copied)
-        try:
-            textures |= _nif_textures(source)
-        except Exception as exc:
-            log(f'  [hybrid] {rel}: textures unread ({type(exc).__name__})')
-    meshes = len(copied)
-    master_textures = [Path(r).parent / 'textures' for r in master_roots]
-    tex_roots = [r / 'textures' for r in hybrid.roots]
-    for rel in sorted(textures):
-        found = None if find_under(master_textures, rel) else find_under(tex_roots, rel)
+    rows, textures = {}, set(twins)
+    own = [hybrid.dest / 'meshes'] + list(master_roots)
+    for rel in sorted(hybrid.named):
+        found = None if find_under(own, rel) else hybrid.owner_of('meshes', rel)
         if found:
-            _copy(found, hybrid.dest / 'textures', rel, copied)
-    write_copies(hybrid.export_root, hybrid.plugin, copied)
-    return meshes, len(copied) - meshes
+            textures |= _borrow_mesh(rows, rel, found, log)
+            lod = lod_of(hybrid, rel)
+            textures |= _borrow_mesh(rows, lod[0], lod[1], log) if lod else set()
+    lods = kept_lods(hybrid)
+    for _owner, src in lods.values():
+        textures |= _textures_of(hybrid.find(src), src, log)
+    for model in sorted({m for item in hybrid.split_items for m in item['models'].values()}):
+        found = hybrid.owner_of('meshes', model)
+        textures |= _textures_of(found[1], model, log) if found else set()
+    for rel in sorted(hybrid.halves()):
+        rows[_posix('meshes', rel)] = SPLIT_OWNER
+    meshes = len(rows)
+    own_textures = [Path(r).parent / 'textures' for r in own]
+    for rel in sorted(textures):
+        found = None if find_under(own_textures, rel) else hybrid.owner_of('textures', rel)
+        if found:
+            rows[_posix('textures', rel)] = found[0]
+    write_borrowed(record_dir(hybrid.export_root, hybrid.plugin), rows, hybrid.split_items, lods)
+    return meshes + len(lods), len(rows) - meshes
 
 
-def _copy(source: Path, root: Path, rel: str, copied: list) -> None:
-    """Copy `source` to `root`/`rel` (unless it is that file) and list it as a copy."""
-    target = root / archive_path(rel).replace(chr(92), '/')
-    if target.resolve() != source.resolve():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
-    copied.append(target.relative_to(root.parent).as_posix())
+def lod_of(hybrid: HybridModels, rel: str):
+    """(meshes rel, (owner, file)) of the hand-made LOD mesh Morroblivion ships beside mesh `rel`, or None."""
+    for suffix in LOD_SUFFIXES:
+        lod = rel[:-4] + suffix + '.nif'
+        found = hybrid.owner_of('meshes', lod)
+        if found:
+            return lod, found
+    return None
 
 
-def write_copies(export_root: str, plugin: str, copied: list) -> None:
-    """Record the files this export copied, beside the plugin's records."""
-    path = record_dir(export_root, plugin) / MANIFEST_NAME
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(''.join(f'{p}\n' for p in sorted(set(copied))), encoding='utf-8')
+def kept_lods(hybrid: HybridModels) -> dict:
+    """{plugin meshes rel: (owner, Morroblivion meshes rel)}: the paired LOD of each vanilla mesh the plugin keeps.
+
+    Only a mesh the plugin ships as vanilla's file, unswapped and with no LOD
+    of its own, takes one; its references keep the vanilla placement.
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-lod-meshes
+    """
+    out = {}
+    for rel in sorted(hybrid.models.owners):
+        model = archive_path(hybrid.models.replacement(rel, hybrid.index))
+        lod = lod_of(hybrid, model) if model else None
+        if lod and _keeps_vanilla(hybrid, rel):
+            dest = rel[:-4] + lod[0][len(model) - 4:]
+            if not find_under([hybrid.dest / 'meshes'], dest):
+                out[dest] = (lod[1][0], lod[0])
+    return out
 
 
-def remove_copies(export_root: str, plugin: str) -> int:
-    """Delete the files an earlier hybrid export copied, and its kept-texture list; how many were removed."""
+def _keeps_vanilla(hybrid: HybridModels, rel: str) -> bool:
+    """Whether the plugin ships vanilla mesh `rel` itself, as vanilla's file, and does not swap it."""
+    shipped = hybrid.models.owns(rel) and (hybrid.vanilla or hybrid.ships_vanilla(MESH_PREFIX + rel))
+    return shipped and not hybrid.world_model(rel)
+
+
+def _borrow_mesh(rows: dict, rel: str, found: tuple, log) -> set:
+    """List mesh `rel` as borrowed from `found` (owner, file); the textures it names."""
+    rows[_posix('meshes', rel)] = found[0]
+    return _textures_of(found[1], rel, log)
+
+
+def _textures_of(path: Path, rel: str, log) -> set:
+    """The textures mesh `path` names, or none when it cannot be read."""
+    try:
+        return _nif_textures(path)
+    except Exception as exc:
+        log(f'  [hybrid] {rel}: textures unread ({type(exc).__name__})')
+        return set()
+
+
+def _posix(part: str, rel: str) -> str:
+    """`rel` under `part` ('meshes' or 'textures') as a forward-slash path."""
+    return part + '/' + archive_path(rel).replace(chr(92), '/')
+
+
+def remove_copies(export_root: str, plugin: str, sources) -> tuple:
+    """Delete an older build's copies from the plugin's tree; (deleted, kept), and drop the borrowed lists.
+
+    An old list has no tab. A copy goes when it is byte-identical to its file
+    under `sources` (Morroblivion's asset roots) or is a generated split half;
+    any other file is kept, since it may be the plugin's own.
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-shared-assets
+    """
     folder = record_dir(export_root, plugin)
     path = folder / MANIFEST_NAME
-    removed = 0
-    if path.is_file():
-        root = assets_for(folder)
-        for rel in path.read_text(encoding='utf-8').splitlines():
-            if rel and (root / rel).is_file():
-                (root / rel).unlink()
-                removed += 1
-        path.unlink()
-    (folder / KEEP_NAME).unlink(missing_ok=True)
-    (folder / GROUND_NAME).unlink(missing_ok=True)
-    return removed
+    lines = path.read_text(encoding='utf-8').splitlines() if path.is_file() else ()
+    deleted = kept = 0
+    for rel in (line for line in lines if line and chr(9) not in line):
+        target = assets_for(folder) / rel
+        if target.is_file() and _old_copy(target, rel, sources):
+            target.unlink()
+            deleted += 1
+        elif target.is_file():
+            kept += 1
+    for name in (MANIFEST_NAME, SPLITS_NAME, LODS, KEEP_NAME, GROUND_NAME):
+        (folder / name).unlink(missing_ok=True)
+    return deleted, kept
+
+
+def _old_copy(target: Path, rel: str, sources) -> bool:
+    """Whether `target` is an older build's copy: a split half, or its source's bytes."""
+    part, _sep, below = rel.partition('/')
+    if part == 'meshes' and below.lower().startswith(SPLIT_DIR.replace(chr(92), '/') + '/'):
+        return True
+    source = find_under([Path(r) / part for r in sources], below)
+    return bool(source) and filecmp.cmp(source, target, shallow=False)

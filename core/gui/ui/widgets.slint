@@ -9,11 +9,15 @@ export component Btn {
     in property <bool> small: false;
     in property <bool> enabled: true;
     callback clicked();
-    min-height: small ? 28px : 36px;
-    max-height: self.min-height;
+    property <length> box-height: small ? 28px : 36px;
+    min-height: box-height;
+    preferred-height: box-height;
+    vertical-stretch: 0;
     max-width: label.preferred-width + (kind == "link" ? 0px : (small ? 20px : 32px));
     horizontal-stretch: 0;
     Rectangle {
+        height: box-height;
+        y: (root.height - box-height) / 2;
         border-radius: Theme.r-md;
         border-width: kind == "link" ? 0px : 1px;
         border-color: kind == "primary" ? Theme.accent : Theme.line;
@@ -34,8 +38,41 @@ export component Btn {
         }
     }
     touch := TouchArea {
+        height: box-height;
+        y: (root.height - box-height) / 2;
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A small trash-can button; `label` names it for screen readers and the UI walk.
+export component TrashBtn {
+    in property <string> label: "Clear";
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Rectangle {
+        border-radius: Theme.r-md;
+        background: touch.has-hover ? Theme.surface-2 : transparent;
+    }
+    Path {
+        x: 6px;
+        y: 6px;
+        width: 16px;
+        height: 16px;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: touch.has-hover ? Theme.bad : Theme.muted;
+        stroke-width: 1.4px;
+        fill: transparent;
+        commands: "M 2 4 L 14 4 M 6 4 L 6 2 L 10 2 L 10 4 M 3.5 4 L 4.5 14.5 L 11.5 14.5 L 12.5 4 M 6.5 7 L 6.5 12 M 9.5 7 L 9.5 12";
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
 }
@@ -46,8 +83,9 @@ export component Pill {
     horizontal-stretch: 0;
     vertical-stretch: 0;
     min-height: 22px;
+    max-width: pill-row.preferred-width;
     Rectangle { border-radius: 11px; background: Theme.tone-bg(tone); }
-    HorizontalLayout {
+    pill-row := HorizontalLayout {
         padding-left: 10px;
         padding-right: 10px;
         spacing: 6px;
@@ -63,13 +101,24 @@ export component Pill {
     }
 }
 
+// A tick box. It shows `checked` as given and never flips itself: `toggled` asks for the other state, and
+// the owner sets `checked`, so the box cannot drift from what the program holds.
 export component Tick {
-    in-out property <bool> checked;
+    in property <bool> checked;
     in property <bool> enabled: true;
+    in property <string> label;
     callback toggled(bool);
     width: 18px;
-    height: 18px;
+    min-height: 18px;
+    preferred-height: 18px;
+    vertical-stretch: 0;
+    accessible-role: checkbox;
+    accessible-checked: root.checked;
+    accessible-label: root.label;
+    accessible-action-default => { if (root.enabled) { root.toggled(!root.checked); } }
     Rectangle {
+        height: 18px;
+        y: (root.height - 18px) / 2;
         border-radius: 4px;
         border-width: 1.5px;
         border-color: checked ? Theme.accent : Theme.muted;
@@ -78,15 +127,18 @@ export component Tick {
         Text { text: checked ? "✓" : ""; color: Theme.accent-fg; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     }
     TouchArea {
+        height: 18px;
+        y: (root.height - 18px) / 2;
         enabled: root.enabled;
         mouse-cursor: pointer;
-        clicked => { root.checked = !root.checked; root.toggled(root.checked); }
+        clicked => { root.toggled(!root.checked); }
     }
 }
 
+// A row of choices. Like Tick it shows `current` as given and never moves itself: the owner sets it.
 export component Seg {
     in property <[string]> options;
-    in-out property <int> current;
+    in property <int> current;
     callback selected(int);
     horizontal-stretch: 0;
     Rectangle { border-radius: Theme.r-md; border-width: 1px; border-color: Theme.line; background: Theme.surface-2; }
@@ -105,7 +157,7 @@ export component Seg {
                 padding-bottom: 5px;
                 Text { text: opt; font-size: 13px; font-weight: 500; color: i == current ? Theme.accent : Theme.fg; vertical-alignment: center; }
             }
-            TouchArea { mouse-cursor: pointer; clicked => { root.current = i; root.selected(i); } }
+            TouchArea { mouse-cursor: pointer; clicked => { root.selected(i); } }
         }
     }
 }

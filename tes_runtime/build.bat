@@ -1,5 +1,5 @@
 @echo off
-REM Build every runtime DLL into dist\: TESRuntime, CreatureRuntime,
+REM Build every runtime DLL into dist\: TESRuntime, ArchiveLoader, CreatureRuntime,
 REM FalloutRuntime, HavokWorldSize and MorrowindRuntime. Each project also
 REM builds alone with its own build.bat.
 REM
@@ -12,7 +12,7 @@ if errorlevel 1 exit /b 1
 if not exist "%~dp0dist" mkdir "%~dp0dist"
 
 set FAILED=
-for %%P in (tes creature fallout havok_world_size morrowind) do (
+for %%P in (tes archive_loader creature fallout havok_world_size morrowind) do (
     echo.
     echo [build] ==== %%P ====
     call "%~dp0%%P\build.bat"

@@ -41,7 +41,7 @@ TOAST_SECONDS = 2.6
 LINKS = {"github": version_info.REPO_URL, "youtube": "https://www.youtube.com/@bryanthinton",
          "discord": "https://discord.gg/NTkCDfYUru"}
 #: The steps of the rail: (key, title).
-RAIL = (("setup", "Setup"), ("choose", "Choose"), ("convert", "Convert"), ("loadorder", "Load order"),
+RAIL = (("setup", "Setup"), ("choose", "Choose"), ("convert", "Convert"), ("loadorder", "Shared mods"),
         ("install", "Install & play"))
 #: Skyrim builds and what each supports, as the versions dialog shows them.
 VERSIONS = (("1.6 and 1.7", "Full support · Steam, GOG, Epic"),
@@ -82,32 +82,39 @@ class Ctx:
         self.posted = queue.Queue()
         self.toast_until = 0.0
         self.on_yes = None
+        self.on_alt = None
         self.pick = None
         self.screens = {}
         self.ticks = 0
         self.busy = 0
+        self.pending_update = None
 
     def post(self, fn) -> None:
         """Run `fn` on the UI thread at the next tick; safe from any thread."""
         self.posted.put(fn)
 
-    def work(self, fn, done=None, failed=None) -> None:
-        """Run `fn()` on a worker thread, then `done(result)` (or `failed(error)`) on the UI thread."""
+    def work(self, fn, done=None, failed=None, counted: bool = True) -> None:
+        """Run `fn()` on a worker thread, then `done(result)` (or `failed(error)`) on the UI thread.
+
+        `counted` jobs hold the window back at startup; a network check passes False.
+        """
+        step = int(counted)
+
         def _run():
             """The worker body: every failure is reported, never raised."""
             try:
                 result = fn()
             except Exception as exc:
-                self.post(lambda err=exc: self._finish((failed or self.fail), err))
+                self.post(lambda err=exc: self._finish((failed or self.fail), err, step))
                 return
-            self.post(lambda: self._finish(done, result))
+            self.post(lambda: self._finish(done, result, step))
 
-        self.busy += 1
+        self.busy += step
         threading.Thread(target=_run, daemon=True).start()
 
-    def _finish(self, then, value) -> None:
+    def _finish(self, then, value, step: int) -> None:
         """A worker's job ended: count it done, then hand `value` to `then` (on the UI thread)."""
-        self.busy -= 1
+        self.busy -= step
         if then is not None:
             then(value)
 
@@ -125,11 +132,11 @@ class Ctx:
         self.ui.info_title, self.ui.info_text = title, text
         self.ui.dialog = "info"
 
-    def confirm(self, title: str, text: str, yes: str, no: str, on_yes) -> None:
-        """Ask a yes/no question; `on_yes()` runs only on yes."""
+    def confirm(self, title: str, text: str, yes: str, no: str, on_yes, alt: str = "", on_alt=None) -> None:
+        """Ask a yes/no question; `on_yes()` runs only on yes, `on_alt()` on the optional third button `alt`."""
         self.ui.confirm_title, self.ui.confirm_text = title, text
-        self.ui.confirm_yes, self.ui.confirm_no = yes, no
-        self.on_yes = on_yes
+        self.ui.confirm_yes, self.ui.confirm_no, self.ui.confirm_alt = yes, no, alt
+        self.on_yes, self.on_alt = on_yes, on_alt
         self.ui.dialog = "confirm"
 
     def open_pick(self, pick) -> None:
@@ -185,6 +192,10 @@ class Pick:
         """The main button was pressed; close the dialog when done."""
         ctx.ui.dialog = ""
 
+    def cancel(self, ctx) -> None:
+        """Cancel was pressed; close the dialog."""
+        ctx.ui.dialog = ""
+
     def extra_clicked(self, ctx) -> None:
         """The extra button was pressed."""
 
@@ -204,6 +215,12 @@ def _bind_common(ctx) -> None:
         if yes and ctx.on_yes is not None:
             ctx.on_yes()
 
+    def _confirm_alt():
+        """Close the question and run its third button."""
+        ui.dialog = ""
+        if ctx.on_alt is not None:
+            ctx.on_alt()
+
     def _pick_toggle(i, on):
         """Forward a tick and repaint."""
         ctx.pick.toggle(i, on)
@@ -216,9 +233,11 @@ def _bind_common(ctx) -> None:
 
     ui.close_dialog = lambda: setattr(ui, "dialog", "")
     ui.confirm_answer = _confirm
+    ui.confirm_alt_clicked = _confirm_alt
     ui.pick_toggle = _pick_toggle
     ui.pick_all = _pick_all
     ui.pick_accept = lambda: ctx.pick.accept(ctx)
+    ui.pick_cancel = lambda: ctx.pick.cancel(ctx)
     ui.pick_extra_clicked = lambda: ctx.pick.extra_clicked(ctx)
     ui.go = ctx.go
     ui.open_link = lambda key: native.open_url(LINKS[key])
@@ -236,19 +255,19 @@ class Advanced:
         """Wire the dialog; `steps_owner` (the Choose screen) supplies the automatic steps."""
         self.ctx = ctx
         self.owner = steps_owner
-        ui, s = ctx.ui, ctx.session
+        self.listed = []
+        ui = ctx.ui
         ui.adv_step = self._step
-        ui.adv_steps_all = lambda on: self._set_steps([k for k, *_ in STEPS] if on else [])
+        ui.adv_steps_all = lambda on: self._set_steps(self.owner.listed_steps() if on else [])
         ui.adv_auto = self._auto
         ui.adv_mesh_folders = lambda: self.owner.open_mesh_folders()
         ui.set_parallax = self._parallax
-        ui.set_tex_only = lambda on: setattr(s, "tex_only", on)
-        ui.set_winding = lambda i: self._save("winding", ("auto", "on", "off")[i], "collisionWindingFix")
-        ui.set_navgen = lambda i: self._save("navgen", ("corridor", "lattice")[i], "navmeshGenerator")
-        ui.set_nav_cache = lambda on: self._save("cache_dl", on, "navmeshCacheDownload")
+        ui.set_tex_only = lambda on: self._show_and_set("tex_only", on)
+        ui.set_winding = lambda i: self._pick("winding", i, ("auto", "on", "off")[i], "collisionWindingFix")
+        ui.set_navgen = lambda i: self._pick("navgen", i, ("corridor", "lattice")[i], "navmeshGenerator")
+        ui.set_nav_cache = lambda on: self._show_and_save("nav_cache", "cache_dl", on, "navmeshCacheDownload")
         ui.set_workers = lambda i: self._save("workers", i, "workers")
         ui.set_logs_kept = self._logs_kept
-        ui.set_pack_default = lambda on: (self._save("pack_default", on, "packStepsDefaultOn"), self.owner.replan())
 
     def show(self) -> None:
         """Fill every tab from the session and open the dialog."""
@@ -264,7 +283,6 @@ class Advanced:
                                   + [str(n) for n in range(1, s.cpu_max + 1)])
         ui.workers = s.workers
         ui.logs_kept = str(s.cfg.get("logRunsKept", 20))
-        ui.pack_default = s.pack_default
         ui.mesh_folders = self.owner.mesh_folder_label()
         ui.dialog = "advanced"
 
@@ -272,16 +290,17 @@ class Advanced:
         """The Steps tab: the next run's steps, ticked."""
         auto, manual = self.owner.auto_steps(), self.ctx.session.selection.steps
         on = set(manual) if manual is not None else set(auto)
-        self.ctx.ui.adv_steps = model(pick_row(f"{i + 1}. {label.split('. ', 1)[-1]}", key in on,
-                                               "owed" if key in auto else "")
-                                      for i, (key, _f, label, *_r) in enumerate(STEPS))
+        self.listed = self.owner.listed_steps()
+        labels = {key: label.split(". ", 1)[-1] for key, _f, label, *_r in STEPS}
+        self.ctx.ui.adv_steps = model(pick_row(f"{i + 1}. {labels[key]}", key in on, "owed" if key in auto else "")
+                                      for i, key in enumerate(self.listed))
         self.ctx.ui.adv_steps_note = ("Your choice for the ticked plugins." if manual is not None
                                       else "Automatic: only what the ticked plugins owe.")
 
     def _step(self, index: int, on: bool) -> None:
         """Tick or untick one step, which makes the choice manual."""
         current = self.owner.current_steps()
-        key = STEPS[index][0]
+        key = self.listed[index]
         self._set_steps([k for k in current if k != key] + ([key] if on else []))
 
     def _set_steps(self, keys) -> None:
@@ -299,6 +318,7 @@ class Advanced:
     def _parallax(self, i: int) -> None:
         """Parallax on or off; textures-only needs it."""
         self._save("parallax", bool(i), PARALLAX_CONFIG_KEY)
+        self.ctx.ui.parallax = i
         if not i:
             self.ctx.session.tex_only = False
             self.ctx.ui.tex_only = False
@@ -313,6 +333,21 @@ class Advanced:
         setattr(self.ctx.session, attr, value)
         self.ctx.session.save(key, value)
 
+    def _pick(self, attr: str, index: int, value, key: str) -> None:
+        """Save a choice and show it on its switch (property `attr`)."""
+        self._save(attr, value, key)
+        setattr(self.ctx.ui, attr, index)
+
+    def _show_and_set(self, attr: str, on: bool) -> None:
+        """Set a session flag kept for this run only, and its tick."""
+        setattr(self.ctx.session, attr, on)
+        setattr(self.ctx.ui, attr, on)
+
+    def _show_and_save(self, prop: str, attr: str, on: bool, key: str) -> None:
+        """Save a setting and show it on its tick."""
+        self._save(attr, on, key)
+        setattr(self.ctx.ui, prop, on)
+
 
 class Navmesh:
     """The navmesh editor dialog: the server, its pins folder, re-running Import."""
@@ -323,10 +358,10 @@ class Navmesh:
         self.server = navmesh_editor.EditorServer()
         self.start_import = start_import
         ui = ctx.ui
-        ui.nav_toggle = lambda: (self.server.stop() if self.server.running() else self.server.start(), self.paint())
-        ui.nav_open = lambda: native.open_url(self.server.url) if self.server.url else None
+        ui.nav_toggle = self._toggle
+        ui.nav_open = self._open
         ui.nav_pins = self._pins
-        ui.nav_import = lambda: (setattr(ui, "dialog", ""), self.start_import(ui.nav_plugin))
+        ui.nav_import = self._import
 
     def show(self, plugin: str) -> None:
         """Open the dialog, starting the server if it is not running."""
@@ -342,6 +377,24 @@ class Navmesh:
         ui.nav_state, ui.nav_tone = self.server.state()
         ui.nav_url, ui.nav_last = self.server.url, self.server.last
         ui.pins_dir = navmesh_pins_dir()
+
+    def _toggle(self) -> None:
+        """Start or stop the editor server."""
+        if self.server.running():
+            self.server.stop()
+        else:
+            self.server.start()
+        self.paint()
+
+    def _open(self) -> None:
+        """Open the running editor in the browser."""
+        if self.server.url:
+            native.open_url(self.server.url)
+
+    def _import(self) -> None:
+        """Close the dialog and run Import for the plugin it names."""
+        self.ctx.ui.dialog = ""
+        self.start_import(self.ctx.ui.nav_plugin)
 
     def _pins(self) -> None:
         """Pick another pins folder; a running server restarts to use it."""
@@ -378,8 +431,8 @@ def _bind_about(ctx) -> None:
             ctx.toast("You have the newest version")
 
     ui.check_updates = _check
-    ctx.work(lambda: version_info.check_for_update(), lambda r: setattr(ui, "update_version",
-                                                                         r["latest"] if r["available"] else ""))
+    ctx.work(lambda: version_info.check_for_update(),
+             lambda r: setattr(ui, "update_version", r["latest"] if r["available"] else ""), counted=False)
 
 
 # ---------------------------------------------------------------------------
@@ -456,8 +509,9 @@ def build():
 
 
 def _start_checks(ctx) -> None:
-    """The first checks: Setup's, which go on to fill every other screen, and the old-version clean-up."""
+    """The first reads, side by side: Setup (then Choose, Install), Shared mods, the clean-up."""
     ctx.screens["setup"].refresh(first=True)
+    ctx.screens["loadorder"].refresh()
     ctx.work(exe_update.clean_after_update)
 
 
@@ -516,4 +570,6 @@ def run_window(splash) -> int:
     timer.stop()
     ctx.screens["convert"].cancel()
     ctx.screens["navmesh"].server.stop()
+    if ctx.pending_update is not None:
+        exe_update.restart(ctx.pending_update, start=False)
     return 0

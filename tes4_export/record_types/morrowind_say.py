@@ -44,6 +44,9 @@ _MIN_ATT, _MAX_ATT = 20, 20
 #: The record types a `Say` can move a mouth on.
 _ACTORS = ('NPC_', 'CREA')
 
+#: The id a script names the player by; a plugin may also carry an NPC_ of that id.
+_PLAYER = 'player'
+
 
 def _script_actors(records) -> dict:
     """{lowercased script id: [actor record ids]} for every scripted actor."""
@@ -87,11 +90,19 @@ def say_calls(records) -> dict:
     return out
 
 
+def _mouth_signature(who: str, ctx) -> str:
+    """The speaker's base record type, or '' for the player, who has no mouth.
+
+    See: docs/commentary/morrowind_runtime.md#scripted-say
+    """
+    return '' if who.lower() == _PLAYER else ctx.base_signature(who)
+
+
 def _actor_fids(speakers: list, ctx) -> list:
     """The FormID of each speaker that converts to an actor, in call order."""
     fids = []
     for who in speakers:
-        signature = ctx.base_signature(who)
+        signature = _mouth_signature(who, ctx)
         form_id = ctx.resolve(who, signature) if signature in _ACTORS else ''
         if form_id and form_id not in fids:
             fids.append(form_id)
@@ -100,7 +111,7 @@ def _actor_fids(speakers: list, ctx) -> list:
 
 def _has_mouthless_speaker(speakers: list, ctx) -> bool:
     """Whether a door, an activator, the player or nobody at all says the line."""
-    return not speakers or any(ctx.base_signature(who) not in _ACTORS
+    return not speakers or any(_mouth_signature(who, ctx) not in _ACTORS
                                for who in speakers)
 
 

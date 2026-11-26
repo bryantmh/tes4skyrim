@@ -147,7 +147,7 @@ def tool_items() -> list:
         out.append(item("tool:" + name, name, f"Needed by {', '.join(steps)}: {purpose}. {how.splitlines()[0]}",
                         "Missing", "warn", highlight=True))
     if not missing:
-        out.append(item("bundled", "Bundled tools", "FFmpeg, Papyrus compiler, hkxcmd, LODGen, BSArch", "Ready", "good"))
+        out.append(item("bundled", "Bundled tools", "FFmpeg, Papyrus compiler, hkxcmd, LODGen", "Ready", "good"))
     return out
 
 
@@ -192,7 +192,7 @@ def _free(path) -> str:
 
 
 def place_items(session, mo2, vortex: str) -> list:
-    """The output folder, Mod Organizer 2 and Vortex with its two folders."""
+    """The output folder, Mod Organizer 2 and Vortex with its staging folder."""
     out = [item("output", "Output", f"{session.out_root()} · {_free(session.out_root())}", "", "idle", "Change",
                 "Open", mono=True)]
     out.append(item("mo2", "Mod Organizer 2", mo2.describe() if mo2 else "Not found. Point to its folder if you use it.",
@@ -201,10 +201,9 @@ def place_items(session, mo2, vortex: str) -> list:
     if not vortex:
         return out + [item("vortex", "Vortex", "Not found.", "Not found", "idle")]
     out.append(item("vortex", "Vortex", vortex, "Found", "good", mono=True))
-    for kind, title in (("staging", "Vortex staging folder"), ("downloads", "Vortex downloads folder")):
-        folder = install.vortex_folder(session.cfg.get(f"vortex.{kind}", ""), kind)
-        out.append(item(kind, title, folder or "Not set", "" if folder else "Not set", "idle" if folder else "warn",
-                        "Change", "Open" if folder else "", mono=bool(folder)))
+    folder = install.vortex_staging(session.cfg.get("vortex.staging", ""))
+    out.append(item("staging", "Vortex staging folder", folder or "Not set", "" if folder else "Not set",
+                    "idle" if folder else "warn", "Change", "Open" if folder else "", mono=bool(folder)))
     return out
 
 

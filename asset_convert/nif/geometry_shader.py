@@ -25,6 +25,7 @@ from asset_convert.nif.shaders import (ALPHA_BLEND_ENABLED, ALPHA_DST_ONE,
                                        collect_shader_inputs, collect_uv_ctrls,
                                        has_spec_mask, plan_flipbook_atlas,
                                        resolve_texture, resolve_normal_for)
+from asset_convert.collision.collision_original import current_mesh
 from asset_convert.nif.morroblivion_textures import ALPHA_TEST_ENABLE, substitute, twin_cutoff
 from asset_convert.nif.nif_flags import NIF_FLAGS
 from asset_convert.nif.tex_paths import (path_bytes, path_text,
@@ -563,7 +564,7 @@ def _twin_alpha(alpha_prop, diffuse_path, stats):
 
     See: docs/commentary/asset_convert_texture.md#twin-alpha-cutoff
     """
-    cutoff = twin_cutoff(diffuse_path)
+    cutoff = twin_cutoff(diffuse_path, current_mesh())
     if cutoff is None or alpha_prop is None or int(alpha_prop.flags) & ALPHA_TEST_ENABLE:
         return alpha_prop
     bits, threshold = cutoff

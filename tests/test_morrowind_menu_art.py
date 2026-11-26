@@ -8,7 +8,6 @@ See: docs/commentary/morrowind_runtime.md#the-real-menu
 
 import os
 import subprocess
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -94,7 +93,7 @@ def test_the_built_menu_is_never_tracked():
         pytest.skip('not a git checkout')
     assert got.stdout.split() == [], (
         f'{got.stdout.split()} is tracked -- the menu is composed from the '
-        f'player\'s own install when TESRuntime.zip is packaged')
+        f'player\'s own install when TESRuntime is packaged')
 
 
 def _menu_paths() -> list:
@@ -115,10 +114,10 @@ def test_the_build_folder_holds_only_the_movies():
 
 
 def _packaged(tmp_path, choice: tuple = (None, None)) -> list:
-    """TESRuntime packaged into `tmp_path` in menu `style`: its members."""
+    """TESRuntime packaged into `tmp_path` in menu `style`: the files of its mod folder, /-separated."""
     assert pkg.package(tmp_path, export_root=tmp_path / 'export', choice=choice) == 0
-    with zipfile.ZipFile(tmp_path / 'Finished Mods' / 'TESRuntime.zip') as zf:
-        return zf.namelist()
+    folder = tmp_path / 'TESRuntime'
+    return [p.relative_to(folder).as_posix() for p in folder.rglob('*') if p.is_file()]
 
 
 def test_packaging_without_an_install_ships_the_skyrim_style(tmp_path):
@@ -141,20 +140,18 @@ def test_a_forced_morrowind_style_without_an_install_skips_the_menus(tmp_path):
 def test_packaging_adds_every_composed_menu(tmp_path, monkeypatch):
     """With an install, the dialogue, stats and level-up movies go straight in."""
     fake = [(arc, arc.name.encode()) for arc in _menu_paths()]
-    monkeypatch.setattr(pkg, 'morrowind_menus', lambda _root, _choice: fake)
+    monkeypatch.setattr(pkg, 'morrowind_menus', lambda _root, _choice, _chargen=None: fake)
     monkeypatch.setattr(pkg, 'resolve', lambda _root, *_choice: (STYLE_SKYRIM, None))
     names = _packaged(tmp_path)
-    with zipfile.ZipFile(tmp_path / 'Finished Mods' / 'TESRuntime.zip') as zf:
-        for arc, data in fake:
-            assert arc.as_posix() in names and zf.read(arc.as_posix()) == data
+    for arc, data in fake:
+        assert arc.as_posix() in names and (tmp_path / 'TESRuntime' / arc).read_bytes() == data
 
 
 def test_the_character_sheet_ships_turned_on(tmp_path):
-    """TESRuntime.zip carries MorrowindRuntime.ini: the sheet and its skill cap on, on C."""
+    """The TESRuntime mod carries MorrowindRuntime.ini: the sheet and its skill cap on, on C."""
     arc = 'SKSE/Plugins/MorrowindRuntime/MorrowindRuntime.ini'
     assert arc in _packaged(tmp_path)
-    with zipfile.ZipFile(tmp_path / 'Finished Mods' / 'TESRuntime.zip') as zf:
-        lines = zf.read(arc).decode('ascii').splitlines()
+    lines = (tmp_path / 'TESRuntime' / arc).read_text(encoding='ascii').splitlines()
     assert '[CharacterSheet]' in lines and 'Hotkey=67' in lines
     assert 'Enabled=1' in lines and 'SkillCap=1' in lines
 

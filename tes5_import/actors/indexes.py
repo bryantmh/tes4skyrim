@@ -42,8 +42,8 @@ def _load_sound_identity(by_type: dict, master_export: dict) -> None:
 
 
 def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
-                        step_done) -> None:
-    """Populate every actor and creature index, in dependency order."""
+                        step_done, out_root: str = None) -> None:
+    """Populate every actor and creature index, in dependency order; `out_root` holds the converted outputs."""
     master_export = ctx.master_export if ctx else None
 
     _load_door_sounds(by_type, export_dir)
@@ -76,7 +76,7 @@ def build_actor_indexes(by_type: dict, writer, export_dir: str, ctx,
         print(f'  Navmesh obstacles: {n_obstacles} script(s) only ever disable their own object')
 
     build_creature_races(by_type, writer, export_dir, master_export)
-    n_piles = build_creature_death_piles(writer)
+    n_piles = build_creature_death_piles(writer, out_root)
     if n_piles:
         print(f'  Creature death piles: {n_piles} ACTI '
               f'(authored ectoplasm, replaces the vanilla ash pile)')

@@ -663,3 +663,14 @@ def test_hold_fragment_sits_beside_the_done_fragment():
     slot = pool_package('Slot', 0x01000F01, 0, 0x01000F02, force_greet_inputs((1, 0)), pkdt, hold=True)
     flee = pool_package('Flee', 0x01000F03, 0, 0x01000F02, force_greet_inputs((1, 0)), pkdt)
     assert b'Fragment_Hold' in _vmad(slot) and b'Fragment_Hold' not in _vmad(flee)
+
+
+def test_forced_greet_pool_outranks_the_package_host():
+    """A script's StartConversation slot (pool) beats the actor's own list on the host (SE03A Kiliban).
+
+    See: docs/commentary/tes5_import_package.md#package-hosts
+    """
+    from tes5_import.dialogue import force_greets
+    from tes5_import.packages import hosts
+    assert force_greets.POOL_PRIORITY == 100
+    assert hosts.HOST_PRIORITY < force_greets.POOL_PRIORITY

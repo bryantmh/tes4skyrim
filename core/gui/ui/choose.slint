@@ -3,7 +3,7 @@
 import { ListView, LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Ui } from "state.slint";
-import { Btn, Box, Divider, SectionLabel, Heading, Muted, Pill, Tick, Chip } from "widgets.slint";
+import { Btn, Box, Divider, SectionLabel, Heading, Muted, Pill, Tick, Chip, TrashBtn } from "widgets.slint";
 
 component GameCard {
     in property <string> name;
@@ -49,14 +49,22 @@ component ModeAsk {
                 border-width: i == Ui.pending-mode ? 2px : 1px;
                 border-color: i == Ui.pending-mode ? Theme.accent : Theme.line;
                 background: Theme.surface;
+                opacity: opt.ok ? 1 : 0.5;
+                horizontal-stretch: 1;
+                preferred-width: 0px;
                 VerticalLayout {
                     padding: 14px;
                     spacing: 6px;
-                    Text { text: opt.name; font-weight: 600; font-size: 15px; color: Theme.fg; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: opt.name; font-weight: 600; font-size: 15px; color: Theme.fg; vertical-alignment: center; }
+                        if opt.tag != "": Pill { text: opt.tag; tone: "good"; }
+                        Rectangle { }
+                    }
                     Text { text: opt.lines; font-size: 13px; color: Theme.muted; wrap: word-wrap; }
-                    Text { text: opt.need; font-size: 12.5px; color: Theme.fg; wrap: word-wrap; }
+                    Text { text: opt.need; font-size: 12.5px; color: opt.ok ? Theme.fg : Theme.warn; wrap: word-wrap; }
                 }
-                TouchArea { mouse-cursor: pointer; clicked => { Ui.pending-mode = i; } }
+                TouchArea { enabled: opt.ok; mouse-cursor: opt.ok ? pointer : default; clicked => { Ui.pending-mode = i; } }
             }
         }
         HorizontalLayout {
@@ -64,7 +72,7 @@ component ModeAsk {
             Btn {
                 text: Ui.mode-options.length > 0 ? "Use " + Ui.mode-options[Ui.pending-mode].name : "Use";
                 kind: "primary";
-                enabled: Ui.game-error == "";
+                enabled: Ui.game-error == "" && Ui.mode-options.length > 0 && Ui.mode-options[Ui.pending-mode].ok;
                 clicked => { Ui.use-mode(Ui.pending-mode); }
             }
             Muted { text: Ui.mode-note; vertical-alignment: center; }
@@ -82,10 +90,11 @@ component PluginList {
                     padding-left: 16px;
                     padding-right: 16px;
                     spacing: 12px;
-                    Tick { y: (parent.height - 18px) / 2; checked: false; toggled(on) => { Ui.tick-shown(on); } }
+                    Tick { checked: Ui.all-shown-ticked; label: "All shown"; toggled(on) => { Ui.tick-shown(on); } }
                     Text { text: "PLUGIN"; color: Theme.muted; font-size: 11px; font-weight: 600; vertical-alignment: center; width: 45%; }
                     Text { text: "FROM"; color: Theme.muted; font-size: 11px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 2; preferred-width: 0px; }
                     Text { text: "STATUS"; color: Theme.muted; font-size: 11px; font-weight: 600; vertical-alignment: center; width: 130px; }
+                    Rectangle { width: 60px; }
                 }
             }
             Divider { }
@@ -93,14 +102,15 @@ component PluginList {
                 height: 330px;
                 for row[i] in Ui.plugins: Rectangle {
                     height: 38px;
-                    background: row.locked ? Theme.accent-soft : transparent;
+                    opacity: row.locked ? 0.5 : 1;
+                    TouchArea { enabled: !row.locked; mouse-cursor: pointer; clicked => { Ui.toggle-plugin(i, !row.checked); } }
                     HorizontalLayout {
                         padding-left: 16px;
                         padding-right: 16px;
                         spacing: 12px;
                         Tick {
-                            y: (parent.height - 18px) / 2;
                             checked: row.checked;
+                            label: row.name;
                             enabled: !row.locked;
                             toggled(on) => { Ui.toggle-plugin(i, on); }
                         }
@@ -137,6 +147,11 @@ component PluginList {
                             if row.parts: Btn { text: "Parts"; kind: "link"; small: true; clicked => { Ui.plugin-parts(i); } }
                         }
                         VerticalLayout { width: 130px; alignment: center; HorizontalLayout { alignment: start; Pill { text: row.status; tone: row.tone; } } }
+                        VerticalLayout {
+                            width: 60px;
+                            alignment: center;
+                            if row.clearable: HorizontalLayout { alignment: start; TrashBtn { clicked => { Ui.clear-plugin(i); } } }
+                        }
                     }
                     Divider { y: 0; width: parent.width; visible: i > 0; }
                 }
@@ -167,8 +182,17 @@ export component ChooseView {
                     clicked => { strip.content-x = min(0px, strip.content-x + 444px); }
                 }
             }
+            TouchArea {
+            height: 112px;
+            scroll-event(e) => {
+                if strip.content-width <= strip.visible-width { return reject; }
+                strip.content-x = max(strip.visible-width - strip.content-width,
+                    min(0px, strip.content-x + e.delta-y + e.delta-x));
+                accept
+            }
             strip := ScrollView {
-                height: 112px;
+                width: parent.width;
+                height: parent.height;
                 content-width: cards.preferred-width;
                 content-height: 96px;
                 cards := HorizontalLayout {
@@ -196,6 +220,7 @@ export component ChooseView {
                     TouchArea { mouse-cursor: pointer; clicked => { Ui.add-game(); } }
                 }
                 }
+            }
             }
             VerticalLayout {
                 width: 36px;

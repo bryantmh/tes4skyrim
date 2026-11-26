@@ -1,4 +1,5 @@
-"""Install & play: MO2, Vortex staging and downloads, and reading Vortex's own settings.
+"""Install & play: the mod list, hardlink or copy installs, reinstall, uninstall, zips, MO2, Vortex, and
+reading Vortex's own settings.
 
 Every folder here is a temporary one: nothing touches a real MO2 instance or Vortex.
 """
@@ -7,34 +8,58 @@ import json
 import os
 import struct
 import sys
-import zipfile
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.gui import install, vortex_state
+from core.gui import install_mods as mods
+from output_layout import finished_dir, write_mod_folder
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _zip(folder, name, files):
-    """A finished-mod zip holding `files` ({path: bytes})."""
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{name}.zip"
-    with zipfile.ZipFile(path, "w") as zf:
-        for member, data in files.items():
-            zf.writestr(member, data)
+def _write(path, data=b"x"):
+    """Write one file, making its folders."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
     return path
 
 
-def _finished(tmp_path):
-    """Three finished mods in an output folder: LOD, a game and the runtime."""
-    folder = tmp_path / "output" / "Finished Mods"
-    _zip(folder, "AutoConvertLOD", {"meshes/lod/a.nif": b"x"})
-    _zip(folder, "Nehrim", {"Nehrim.esm": b"TES4", "textures/a.dds": b"x"})
-    _zip(folder, "TESRuntime", {"SKSE/Plugins/TESRuntime.dll": b"MZ"})
-    return tmp_path / "output"
+def _output(tmp_path):
+    """An output folder: two game mods, the start mod, LOD, two load-order mods and two folders that are not mods."""
+    out = tmp_path / "output"
+    _write(out / "Nehrim.esm" / "Nehrim.esm", b"TES4")
+    _write(out / "Nehrim.esm" / "Nehrim.esm.manifest.json")
+    _write(out / "Nehrim.esm" / "Nehrim.esm.voicemap.txt")
+    _write(out / "Nehrim.esm" / "music_tracks.json")
+    _write(out / "Nehrim.esm" / "meshes" / "a.nif")
+    _write(out / "Nehrim.esm" / "SKSE" / "Plugins" / "x.json")
+    _write(out / "Tamriel Rebuilt 25.08.12" / "TR_Mainland.esm")
+    _write(out / "Tamriel Rebuilt 25.08.12" / "TR_Mainland - Hybrid.esp")
+    _write(out / "TESGameSelect" / "TESGameSelect.esp")
+    _write(out / "TESGameSelect" / "TESGameSelect_NoNehrimStart.esp")
+    _write(out / "AutoConvertLOD" / "meshes" / "lod" / "t.nif")
+    _write(out / "thelostspires" / "scripts" / "a.pex")
+    _write(out / "ZZZ Merged Sibling LOD" / "Merged.esp")
+    write_mod_folder(out, "TESRuntime", [("SKSE/Plugins/TESRuntime.dll", b"MZ"), ("SKSE/readme.txt", b"hi")])
+    write_mod_folder(out, "Oblivion UI", [("Interface/messagebox.swf", b"FWS")])
+    return out
+
+
+def _by_name(out):
+    """{name: Mod} for an output folder."""
+    return {m.name: m for m in mods.list_mods(out)}
+
+
+def _install(out, mods_dir, names, log=None):
+    """Install the named mods into `mods_dir`; returns the logged lines."""
+    lines = []
+    wanted = [(m, mods.files(m)) for n, m in _by_name(out).items() if n in names]
+    install.install_all(mods_dir, wanted, out, log or lines.append)
+    return lines
 
 
 def _portable_mo2(tmp_path):
@@ -53,57 +78,344 @@ def _portable_mo2(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Order and status
+# The list
 # ---------------------------------------------------------------------------
 
-def test_finished_zips_put_the_runtime_first_and_lod_last(tmp_path):
-    """The runtime loads first and LOD overrides everything, whatever their names sort as."""
-    out = _finished(tmp_path)
-    assert [z.stem for z in install.finished_zips(out)] == ["TESRuntime", "Nehrim", "AutoConvertLOD"]
+def test_every_converted_mod_is_listed_in_install_order(tmp_path):
+    """Folders with a plugin and the load-order folders are mods; the runtime is first and LOD last."""
+    names = [m.name for m in mods.list_mods(_output(tmp_path))]
+    assert names == ["TESRuntime", "Nehrim.esm", "Oblivion UI", "Tamriel Rebuilt 25.08.12", "TESGameSelect",
+                     "AutoConvertLOD"]
 
 
-def test_a_rebuilt_zip_reads_as_an_update(tmp_path):
-    """The marker records the zip's size and time, so a rebuilt zip is offered again."""
-    out = _finished(tmp_path)
-    mods = tmp_path / "mods"
-    zips = install.finished_zips(out)
-    assert install.folder_status(mods, zips[1]) == "new"
-    install.folder_install(mods, zips, lambda _line: None)
-    assert install.folder_status(mods, zips[1]) == "installed"
-    _zip(zips[1].parent, "Nehrim", {"Nehrim.esm": b"TES4 rebuilt"})
-    assert install.folder_status(mods, zips[1]) == "update"
+def test_a_zip_without_its_folder_is_not_a_mod(tmp_path):
+    """Only folders are mods: a zip an older build left in Finished Mods is not listed."""
+    out = tmp_path / "output"
+    mods.write_mod_zip(finished_dir(out) / "Body Slots Patch.zip", [("a.esp", b"TES4")])
+    assert mods.list_mods(out) == []
+
+
+def test_a_mod_folder_is_swapped_in_whole_and_retires_the_old_zip(tmp_path):
+    """Rebuilding replaces every file (a vanished one goes) and deletes the zip an older build made."""
+    out = tmp_path / "output"
+    stale = finished_dir(out) / "TESRuntime.zip"
+    mods.write_mod_zip(stale, [("old.dll", b"MZ")])
+    write_mod_folder(out, "TESRuntime", [("SKSE/Plugins/Old.dll", b"MZ")])
+    source = _write(tmp_path / "TESRuntime.dll", b"new")
+    folder = write_mod_folder(out, "TESRuntime", [("SKSE/Plugins/TESRuntime.dll", source), ("a.ini", b"x")])
+    assert [e[0] for e in mods.files(_by_name(out)["TESRuntime"])] == ["SKSE/Plugins/TESRuntime.dll", "a.ini"]
+    assert (folder / "SKSE" / "Plugins" / "TESRuntime.dll").read_bytes() == b"new"
+    assert not stale.exists() and sorted(p.name for p in out.iterdir()) == ["Finished Mods", "TESRuntime"]
+
+
+def test_an_interrupted_mod_folder_leaves_the_old_one(tmp_path):
+    """A build failing halfway leaves the previous folder and no half-written one."""
+    out = tmp_path / "output"
+    write_mod_folder(out, "Oblivion UI", [("Interface/a.swf", b"old")])
+
+    def _boom(_count, _name):
+        """Fail after the first file, as an interrupted run would."""
+        raise KeyboardInterrupt
+
+    try:
+        write_mod_folder(out, "Oblivion UI", [("Interface/a.swf", b"new"), ("Interface/b.swf", b"x")], _boom)
+    except KeyboardInterrupt:
+        pass
+    assert sorted(p.name for p in out.iterdir()) == ["Oblivion UI"]
+    assert (out / "Oblivion UI" / "Interface" / "a.swf").read_bytes() == b"old"
+
+
+def test_files_leave_out_what_only_the_converter_reads(tmp_path):
+    """Sidecars and the developer patch stay out; assets and plugins stay in."""
+    by = _by_name(_output(tmp_path))
+    assert [e[0] for e in mods.files(by["Nehrim.esm"])] == ["Nehrim.esm", "SKSE/Plugins/x.json", "meshes/a.nif"]
+    assert [e[0] for e in mods.files(by["TESGameSelect"])] == ["TESGameSelect.esp"]
+
+
+def test_plugins_list_masters_first():
+    """A hybrid .esp sorts before its .esm by name, but loads after it."""
+    assert mods.plugins(["A - Hybrid.esp", "A.esm", "meshes/x.esp"]) == ["A.esm", "A - Hybrid.esp"]
+
+
+def test_module_constants_match_the_converter():
+    """The names copied here to avoid heavy imports are the converter's own."""
+    from asset_convert.lod.sibling_lod import LOD_DIR_NAME, MERGED_DIR_NAME
+    from tools.release.make_nehrim_no_start_patch import PATCH_NAME
+    assert mods.LAST == (LOD_DIR_NAME,)
+    assert MERGED_DIR_NAME.lower() in mods.NOT_MODS
+    assert PATCH_NAME.lower() in mods.SIDECAR_NAMES
+
+
+# ---------------------------------------------------------------------------
+# Hardlinks and the copy fallback
+# ---------------------------------------------------------------------------
+
+def test_install_hardlinks_the_output_files(tmp_path):
+    """The installed file and the output file are one file on disk."""
+    out = _output(tmp_path)
+    mods_dir = tmp_path / "mods"
+    _install(out, mods_dir, {"Nehrim.esm"})
+    src, dst = out / "Nehrim.esm" / "meshes" / "a.nif", mods_dir / "Nehrim.esm" / "meshes" / "a.nif"
+    assert os.path.samefile(src, dst)
+    marker = install.read_marker(mods_dir, "Nehrim.esm")
+    assert marker["mode"] == "link" and marker["files"] == ["Nehrim.esm", "SKSE/Plugins/x.json", "meshes/a.nif"]
+    assert not (mods_dir / "Nehrim.esm" / "Nehrim.esm.manifest.json").exists()
+
+
+def test_install_copies_file_by_file_when_linking_fails(tmp_path, monkeypatch):
+    """Another drive (os.link raising) copies each file, says so, and records the mode."""
+    out = _output(tmp_path)
+
+    def _no_link(*_args, **_kw):
+        """What Windows raises for a link across drives."""
+        raise OSError(17, "The system cannot move the file to a different disk drive")
+
+    monkeypatch.setattr(os, "link", _no_link)
+    mods_dir = tmp_path / "mods"
+    lines = _install(out, mods_dir, {"Nehrim.esm"})
+    src, dst = out / "Nehrim.esm" / "meshes" / "a.nif", mods_dir / "Nehrim.esm" / "meshes" / "a.nif"
+    assert dst.read_bytes() == src.read_bytes() and not os.path.samefile(src, dst)
+    assert install.read_marker(mods_dir, "Nehrim.esm")["mode"] == "copy"
+    assert any("copying the rest" in line for line in lines)
+
+
+def test_an_archive_only_mod_hardlinks_its_archives_and_not_the_packers_records(tmp_path):
+    """A packed output folder (plugin, archives, root files) installs its archives like any file."""
+    out = tmp_path / "output"
+    names = ["S.esm", "S.bsa", "S - Textures.bsa", "S - Part 2.bsa", "SKSE/Plugins/s.json"]
+    for rel in names + [".bsa_pack_manifest.json", ".bsa_pack_discarded.txt"]:
+        _write(out / "S" / rel)
+    _install(out, tmp_path / "mods", {"S"})
+    assert install.read_marker(tmp_path / "mods", "S")["files"] == sorted(names)
+    assert all(os.path.samefile(out / "S" / r, tmp_path / "mods" / "S" / r) for r in names)
+
+
+def test_install_says_so_up_front_when_the_drives_differ(tmp_path, monkeypatch):
+    """A target known to be on another drive copies without trying links."""
+    out = _output(tmp_path)
+    monkeypatch.setattr(install, "same_volume", lambda *_a: False)
+    lines = _install(out, tmp_path / "mods", {"TESGameSelect"})
+    assert "another drive" in lines[0]
+    assert install.read_marker(tmp_path / "mods", "TESGameSelect")["mode"] == "copy"
+
+
+def test_a_load_order_mod_is_hardlinked_like_any_other(tmp_path):
+    """The runtime is a folder now: its files are linked, nothing is extracted."""
+    out = _output(tmp_path)
+    mods_dir = tmp_path / "mods"
+    _install(out, mods_dir, {"TESRuntime"})
+    dll = "SKSE/Plugins/TESRuntime.dll"
+    assert os.path.samefile(out / "TESRuntime" / dll, mods_dir / "TESRuntime" / dll)
+    marker = install.read_marker(mods_dir, "TESRuntime")
+    assert marker["files"] == [dll, "SKSE/readme.txt"] and marker["mode"] == "link"
+
+
+# ---------------------------------------------------------------------------
+# Status, reinstall, uninstall
+# ---------------------------------------------------------------------------
+
+def test_status_follows_the_output(tmp_path):
+    """New, then installed, then update once a file changes, then installed again after reinstalling."""
+    out = _output(tmp_path)
+    mods_dir = tmp_path / "mods"
+    mod = _by_name(out)["Nehrim.esm"]
+    assert install.mod_status(mods_dir, mod, mods.summarize(mods.files(mod))) == "new"
+    _install(out, mods_dir, {"Nehrim.esm"})
+    assert install.mod_status(mods_dir, mod, mods.summarize(mods.files(mod))) == "installed"
+    _write(out / "Nehrim.esm" / "meshes" / "b.nif")
+    assert install.mod_status(mods_dir, mod, mods.summarize(mods.files(mod))) == "update"
+    _install(out, mods_dir, {"Nehrim.esm"})
+    assert install.mod_status(mods_dir, mod, mods.summarize(mods.files(mod))) == "installed"
+
+
+def test_reinstall_adds_new_files_and_removes_vanished_ones(tmp_path):
+    """After a reconversion: the new file is linked, the deleted one is gone, empty folders too."""
+    out = _output(tmp_path)
+    mods_dir = tmp_path / "mods"
+    _install(out, mods_dir, {"Nehrim.esm"})
+    (out / "Nehrim.esm" / "SKSE" / "Plugins" / "x.json").unlink()
+    _write(out / "Nehrim.esm" / "textures" / "new.dds")
+    _install(out, mods_dir, {"Nehrim.esm"})
+    dest = mods_dir / "Nehrim.esm"
+    assert (dest / "textures" / "new.dds").is_file()
+    assert not (dest / "SKSE").exists()
+    assert install.read_marker(mods_dir, "Nehrim.esm")["files"] == ["Nehrim.esm", "meshes/a.nif", "textures/new.dds"]
+
+
+def test_reinstall_replaces_a_file_rewritten_in_the_output(tmp_path):
+    """A reconversion that rewrites a file (new inode) gets relinked, not left pointing at the old data."""
+    out = _output(tmp_path)
+    mods_dir = tmp_path / "mods"
+    _install(out, mods_dir, {"Nehrim.esm"})
+    src = out / "Nehrim.esm" / "meshes" / "a.nif"
+    src.unlink()
+    src.write_bytes(b"new data")
+    _install(out, mods_dir, {"Nehrim.esm"})
+    assert (mods_dir / "Nehrim.esm" / "meshes" / "a.nif").read_bytes() == b"new data"
+
+
+def test_uninstall_removes_only_the_links_and_leaves_output_and_users_files(tmp_path):
+    """Output files survive; a file the user added to the mod folder survives with its folder."""
+    out = _output(tmp_path)
+    mods_dir = tmp_path / "mods"
+    _install(out, mods_dir, {"Nehrim.esm", "TESGameSelect", "TESRuntime"})
+    (mods_dir / "Nehrim.esm" / "mine.txt").write_text("keep", encoding="utf-8")
+    _write(mods_dir / "SkyUI" / "SkyUI.esp")
+    assert install.uninstall_mod(mods_dir, "Nehrim.esm", lambda _line: None) == ["Nehrim.esm"]
+    assert install.uninstall_mod(mods_dir, "TESGameSelect", lambda _line: None) == ["TESGameSelect.esp"]
+    assert install.uninstall_mod(mods_dir, "SkyUI", lambda _line: None) == []
+    assert sorted(p.name for p in mods_dir.iterdir()) == ["Nehrim.esm", "SkyUI", "TESRuntime"]
+    assert [p.name for p in (mods_dir / "Nehrim.esm").iterdir()] == ["mine.txt"]
+    assert (out / "Nehrim.esm" / "Nehrim.esm").read_bytes() == b"TES4"
+    assert (out / "Nehrim.esm" / "meshes" / "a.nif").is_file()
+    assert (out / "TESGameSelect" / "TESGameSelect.esp").is_file()
+
+
+def test_uninstall_of_an_old_extracted_install_removes_its_folder(tmp_path):
+    """A mod from an older TESRACT (marker without a file list) is a plain copy: removed whole."""
+    mods_dir = tmp_path / "mods"
+    _write(mods_dir / "Old" / "Old.esm")
+    (mods_dir / "Old" / install.MARKER).write_text(json.dumps({"zip": "Old.zip"}), encoding="utf-8")
+    assert install.uninstall_mod(mods_dir, "Old", lambda _line: None) == []
+    assert not (mods_dir / "Old").exists()
+
+
+def test_a_marker_cannot_make_uninstall_leave_the_mod_folder(tmp_path):
+    """A listed path with .. is refused, so nothing outside the mod is deleted."""
+    mods_dir = tmp_path / "mods"
+    victim = _write(tmp_path / "victim.txt")
+    _write(mods_dir / "Bad" / "a.txt")
+    (mods_dir / "Bad" / install.MARKER).write_text(json.dumps({"files": ["../../victim.txt"]}), encoding="utf-8")
+    try:
+        install.uninstall_mod(mods_dir, "Bad", lambda _line: None)
+    except ValueError:
+        pass
+    assert victim.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Zips
+# ---------------------------------------------------------------------------
+
+def test_zip_state_and_build_only_when_missing_or_stale(tmp_path):
+    """Missing builds; ready is left alone; a newer file or a changed file set makes it stale."""
+    out = _output(tmp_path)
+    mod = _by_name(out)["Nehrim.esm"]
+    assert mods.zip_state(mod, mods.summarize(mods.files(mod))) == "missing"
+    mods.build_zip(mod, mods.files(mod), out, lambda _line: None)
+    assert mods.zip_state(mod, mods.summarize(mods.files(mod))) == "ready"
+    assert mods._zip_names(mod.zip) == [e[0] for e in mods.files(mod)]
+    earlier = time.time() - 3600
+    os.utime(mod.zip, (earlier, earlier))
+    assert mods.zip_state(mod, mods.summarize(mods.files(mod))) == "stale"
+    mods.build_zip(mod, mods.files(mod), out, lambda _line: None)
+    assert mods.zip_state(mod, mods.summarize(mods.files(mod))) == "ready"
+    (out / "Nehrim.esm" / "meshes" / "a.nif").unlink()
+    assert mods.zip_state(mod, mods.summarize(mods.files(mod))) == "stale"
+
+
+def test_a_zip_with_only_plugins_and_skse_is_stale(tmp_path):
+    """The converter's own pack-zip leaves meshes out when they are loose: it is rebuilt complete."""
+    out = _output(tmp_path)
+    mod = _by_name(out)["Nehrim.esm"]
+    mods.write_mod_zip(finished_dir(out) / mod.zip.name, [("Nehrim.esm", out / "Nehrim.esm" / "Nehrim.esm")])
+    assert mods.zip_state(mod, mods.summarize(mods.files(mod))) == "stale"
+
+
+def test_manual_install_zips_a_load_order_mod_from_its_folder(tmp_path):
+    """The runtime and the UI, once only zips, are zipped on demand like every other mod folder."""
+    out = _output(tmp_path)
+    for name in ("TESRuntime", "Oblivion UI"):
+        mod = _by_name(out)[name]
+        entries = mods.files(mod)
+        assert mods.zip_state(mod, mods.summarize(entries)) == "missing"
+        assert mods.build_zip(mod, entries, out, lambda _line: None) == finished_dir(out) / f"{name}.zip"
+        assert mods.zip_state(mod, mods.summarize(entries)) == "ready"
+        assert mods._zip_names(mod.zip) == [e[0] for e in entries]
+
+
+# ---------------------------------------------------------------------------
+# Setup's drive notice
+# ---------------------------------------------------------------------------
+
+def test_drive_notice_names_both_drives(tmp_path, monkeypatch):
+    """Setup tells the user which drive to put the output on."""
+    monkeypatch.setattr(install, "same_volume", lambda a, b: str(b).startswith("D"))
+    text = install.drive_notice(r"D:\out", [("Mod Organizer 2's mods folder", r"C:\MO2\mods"), ("Vortex", r"D:\v")])
+    assert "C:" in text and "copy the files instead of hardlinking" in text and "Vortex" not in text
+
+
+def test_drive_notice_is_empty_on_one_drive(tmp_path):
+    """Same drive, or a manager that is not installed: nothing to say."""
+    assert install.drive_notice(tmp_path, [("MO2", str(tmp_path / "mods")), ("Vortex", "")]) == ""
 
 
 # ---------------------------------------------------------------------------
 # Mod Organizer 2
 # ---------------------------------------------------------------------------
 
-def test_mo2_install_enables_mods_in_order_and_keeps_the_users_own(tmp_path, monkeypatch):
-    """Ours go on top of modlist.txt, LOD highest; the user's mods and plugins stay."""
+def test_mo2_install_lists_mods_in_order_and_keeps_the_users_own(tmp_path, monkeypatch):
+    """Ours go on top of modlist.txt, LOD highest; plugins load masters first; the user's own stay."""
     monkeypatch.setattr(install, "mo2_running", lambda: False)
-    out = _finished(tmp_path)
+    out = _output(tmp_path)
     mo2 = install.find_mo2(str(_portable_mo2(tmp_path)))
-    install.mo2_install(mo2, install.finished_zips(out), lambda _line: None)
+    every = mods.list_mods(out)
+    install.mo2_install(mo2, [(m, mods.files(m)) for m in every], every, out, lambda _line: None)
     profile = mo2.profile_dir()
     modlist = (profile / "modlist.txt").read_text(encoding="utf-8").splitlines()
-    assert modlist[1:] == ["+AutoConvertLOD", "+Nehrim", "+TESRuntime", "+SkyUI"]
-    assert (profile / "plugins.txt").read_text(encoding="utf-8").splitlines() == ["*SkyUI_SE.esp", "*Nehrim.esm"]
-    assert (mo2.mods / "Nehrim" / "Nehrim.esm").read_bytes() == b"TES4"
-    assert json.loads((mo2.mods / "Nehrim" / install.MARKER).read_text(encoding="utf-8"))["zip"] == "Nehrim.zip"
+    assert modlist[1:] == ["+AutoConvertLOD", "+TESGameSelect", "+Tamriel Rebuilt 25.08.12", "+Oblivion UI",
+                           "+Nehrim.esm", "+TESRuntime", "+SkyUI"]
+    plugins = (profile / "plugins.txt").read_text(encoding="utf-8").splitlines()
+    assert plugins[0] == "*SkyUI_SE.esp" and "*TR_Mainland.esm" in plugins
+    assert plugins.index("*TR_Mainland.esm") < plugins.index("*TR_Mainland - Hybrid.esp")
+    assert os.path.samefile(out / "Nehrim.esm" / "Nehrim.esm", mo2.mods / "Nehrim.esm" / "Nehrim.esm")
+
+
+def test_a_later_partial_install_keeps_lod_on_top(tmp_path, monkeypatch):
+    """Installing one more mod does not put it above the LOD that was already installed."""
+    monkeypatch.setattr(install, "mo2_running", lambda: False)
+    out = _output(tmp_path)
+    mo2 = install.find_mo2(str(_portable_mo2(tmp_path)))
+    every = mods.list_mods(out)
+    by = _by_name(out)
+    for names in (["AutoConvertLOD"], ["Nehrim.esm"]):
+        install.mo2_install(mo2, [(by[n], mods.files(by[n])) for n in names], every, out, lambda _line: None)
+    modlist = (mo2.profile_dir() / "modlist.txt").read_text(encoding="utf-8").splitlines()
+    assert modlist[1:4] == ["+AutoConvertLOD", "+Nehrim.esm", "+SkyUI"]
+
+
+def test_mo2_uninstall_of_one_mod_removes_only_its_folder_and_lines(tmp_path, monkeypatch):
+    """Uninstalling Tamriel Rebuilt drops its folder, its modlist line and both its plugins' lines; the rest stay."""
+    monkeypatch.setattr(install, "mo2_running", lambda: False)
+    out = _output(tmp_path)
+    mo2 = install.find_mo2(str(_portable_mo2(tmp_path)))
+    every = mods.list_mods(out)
+    install.mo2_install(mo2, [(m, mods.files(m)) for m in every], every, out, lambda _line: None)
+    profile = mo2.profile_dir()
+    _write(profile / "loadorder.txt", b"Skyrim.esm\nTR_Mainland.esm\nTR_Mainland - Hybrid.esp\nNehrim.esm\n")
+    install.mo2_uninstall(mo2, ["Tamriel Rebuilt 25.08.12"], lambda _line: None)
+    assert not (mo2.mods / "Tamriel Rebuilt 25.08.12").exists() and (mo2.mods / "Nehrim.esm" / "Nehrim.esm").is_file()
+    assert (profile / "modlist.txt").read_text(encoding="utf-8").splitlines()[1:] == [
+        "+AutoConvertLOD", "+TESGameSelect", "+Oblivion UI", "+Nehrim.esm", "+TESRuntime", "+SkyUI"]
+    assert (profile / "plugins.txt").read_text(encoding="utf-8").splitlines() == [
+        "*SkyUI_SE.esp", "*Nehrim.esm", "*TESGameSelect.esp"]
+    assert (profile / "loadorder.txt").read_text(encoding="utf-8").splitlines() == ["Skyrim.esm", "Nehrim.esm"]
 
 
 def test_mo2_uninstall_removes_only_what_tesract_installed(tmp_path, monkeypatch):
-    """The user's own mod folder, list line and plugin line survive."""
+    """Every mod of ours uninstalled one by one: the user's own mod folder, list line and plugin line survive."""
     monkeypatch.setattr(install, "mo2_running", lambda: False)
-    out = _finished(tmp_path)
+    out = _output(tmp_path)
     mo2 = install.find_mo2(str(_portable_mo2(tmp_path)))
-    install.mo2_install(mo2, install.finished_zips(out), lambda _line: None)
-    removed = install.mo2_uninstall(mo2, lambda _line: None)
-    assert sorted(removed) == ["AutoConvertLOD", "Nehrim", "TESRuntime"]
+    every = mods.list_mods(out)
+    install.mo2_install(mo2, [(m, mods.files(m)) for m in every], every, out, lambda _line: None)
+    for mod in every:
+        install.mo2_uninstall(mo2, [mod.name], lambda _line: None)
     assert sorted(p.name for p in mo2.mods.iterdir()) == ["SkyUI"]
     profile = mo2.profile_dir()
     assert (profile / "modlist.txt").read_text(encoding="utf-8").splitlines()[1:] == ["+SkyUI"]
     assert (profile / "plugins.txt").read_text(encoding="utf-8").splitlines() == ["*SkyUI_SE.esp"]
+    assert (out / "Nehrim.esm" / "Nehrim.esm").read_bytes() == b"TES4"
 
 
 def test_mo2_install_refuses_while_mo2_runs(tmp_path, monkeypatch):
@@ -111,7 +423,7 @@ def test_mo2_install_refuses_while_mo2_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(install, "mo2_running", lambda: True)
     mo2 = install.find_mo2(str(_portable_mo2(tmp_path)))
     try:
-        install.mo2_install(mo2, [], lambda _line: None)
+        install.mo2_install(mo2, [], [], tmp_path, lambda _line: None)
     except RuntimeError as exc:
         assert "Close Mod Organizer" in str(exc)
     else:
@@ -122,14 +434,46 @@ def test_mo2_install_refuses_while_mo2_runs(tmp_path, monkeypatch):
 # Vortex
 # ---------------------------------------------------------------------------
 
-def test_vortex_downloads_copies_each_zip_once(tmp_path):
-    """A copied zip reads as installed until it is rebuilt."""
-    out = _finished(tmp_path)
-    downloads = tmp_path / "downloads" / "skyrimse"
-    zips = install.finished_zips(out)
-    install.vortex_downloads(downloads, zips, lambda _line: None)
-    assert sorted(p.name for p in downloads.iterdir()) == ["AutoConvertLOD.zip", "Nehrim.zip", "TESRuntime.zip"]
-    assert all(install.download_status(downloads, z) == "installed" for z in zips)
+def test_vortex_registration_escapes_dots_and_writes_json_values():
+    """Vortex's path parser splits on dots, so a mod name's dots are escaped; values are JSON text."""
+    args = install.vortex_set_args(["Tamriel Rebuilt 25.08.12"], "2026-01-01T00:00:00.000Z")
+    assert args[0] == "-s" and len(args) == 14
+    assert args[1] == r'persistent.mods.skyrimse.Tamriel Rebuilt 25\.08\.12.id="Tamriel Rebuilt 25.08.12"'
+    assert 'persistent.mods.skyrimse.Tamriel Rebuilt 25\\.08\\.12.state="installed"' in args
+    assert any(a.endswith('.attributes.installTime="2026-01-01T00:00:00.000Z"') for a in args)
+    assert install.vortex_del_args(["A.b"]) == ["--del", r"persistent.mods.skyrimse.A\.b"]
+
+
+def test_vortex_cli_refuses_while_vortex_runs_and_batches(tmp_path, monkeypatch):
+    """Closed Vortex gets the arguments in batches (without ELECTRON_RUN_AS_NODE); an open one is refused."""
+    calls = []
+
+    class _Done:
+        """A finished process."""
+
+        returncode, stderr = 0, ""
+
+    monkeypatch.setattr(install.subprocess, "run", lambda cmd, **kw: calls.append((cmd, kw)) or _Done())
+    monkeypatch.setenv("ELECTRON_RUN_AS_NODE", "1")
+    monkeypatch.setattr(install, "running", lambda _image: True)
+    try:
+        install.vortex_cli("V.exe", ["-s", "a=1"], lambda _line: None)
+    except RuntimeError as exc:
+        assert "Close Vortex" in str(exc)
+    assert not calls
+    monkeypatch.setattr(install, "running", lambda _image: False)
+    args = install.vortex_set_args([f"m{i}" for i in range(20)])
+    install.vortex_cli("V.exe", args, lambda _line: None)
+    batches = -(-len(args) // (2 * install.VORTEX_PAIRS))
+    assert len(calls) == batches > 1 and [a for cmd, _ in calls for a in cmd[1:]] == args
+    assert all("ELECTRON_RUN_AS_NODE" not in kw["env"] for _cmd, kw in calls)
+
+
+def test_vortex_owns_only_its_own_staging_folder(monkeypatch):
+    """A folder picked in Setup that Vortex does not use is not registered."""
+    monkeypatch.setattr(vortex_state, "staging_folder", lambda _game, *_a: r"C:\Mods\Staging")
+    assert install.vortex_owns("c:/mods/staging")
+    assert not install.vortex_owns(r"D:\Elsewhere")
 
 
 def _log_record(seq, writes):
@@ -193,3 +537,66 @@ def test_snappy_copies_back_references():
     """A literal then a 1-byte-offset copy repeats it, as LevelDB blocks use."""
     data = bytes([8, 0b00001100]) + b"abcd" + bytes([0b00000001, 4])
     assert vortex_state.snappy(data) == b"abcdabcd"
+
+
+def test_a_row_is_ticked_again_whenever_it_newly_needs_work():
+    """Ticked when first listed with work, untick holds while nothing changes, ticked again once it updates."""
+    from types import SimpleNamespace
+
+    from core.gui.install_view import InstallView, Row
+
+    view = InstallView.__new__(InstallView)
+    view.seen, view.checked, view._show = {}, set(), lambda: None
+    mod = SimpleNamespace(name="Tamriel")
+    InstallView._paint(view, [Row(mod, {"mtime": 1}, "installed")])
+    assert view.checked == set()
+    InstallView._paint(view, [Row(mod, {"mtime": 2}, "update")])
+    assert view.checked == {"Tamriel"}
+    view.checked.clear()
+    InstallView._paint(view, [Row(mod, {"mtime": 2}, "update")])
+    assert view.checked == set()
+    InstallView._paint(view, [Row(mod, {"mtime": 3}, "update")])
+    assert view.checked == {"Tamriel"}
+
+
+def test_a_hybrid_run_drops_the_shared_mods_summary_and_an_install_saves_a_fresh_one(tmp_path):
+    """A hybrid plugin's run forgets the shared Hybrid Assets summary; installing saves the files it read."""
+    from types import SimpleNamespace
+
+    import convert
+    from asset_convert.sources import hybrid_assets
+    from output_layout import SUMMARY_NAME
+
+    export, out = tmp_path / "export", tmp_path / "output"
+    (export / "Hybrid.esm").mkdir(parents=True)
+    (export / "Hybrid.esm" / hybrid_assets.MANIFEST).write_text("{}")
+    shared = out / hybrid_assets.MOD_NAME
+    shared.mkdir(parents=True)
+    (shared / SUMMARY_NAME).write_text("{}")
+    convert._forget_summaries(["Plain.esm"], SimpleNamespace(output_dir=str(out), export_dir=str(export)))
+    assert (shared / SUMMARY_NAME).is_file()
+    convert._forget_summaries(["Hybrid.esm"], SimpleNamespace(output_dir=str(out), export_dir=str(export)))
+    assert not (shared / SUMMARY_NAME).is_file()
+
+    (shared / "a.dds").write_bytes(b"x")
+    mod = SimpleNamespace(folder=shared)
+    saved = mods.save_summary(mod, mods.files(mod))
+    assert saved["count"] == 1 and mods.summary(mod) == saved
+
+
+def test_the_rail_counts_what_the_button_installs_and_an_install_unticks_its_mods():
+    """Both say how many ticked mods an install acts on; a finished install unticks the ones it placed."""
+    from types import SimpleNamespace
+
+    from core.gui.install_view import InstallView, Row
+
+    view = InstallView.__new__(InstallView)
+    view.index, view.ctx = 1, SimpleNamespace(session=SimpleNamespace(cfg={"vortex.staging": "x"}))
+    view.target, view._setup = (lambda: "x"), (lambda: SimpleNamespace(mo2=None, vortex=None))
+    view.rows = [Row(SimpleNamespace(name=n), {}, s) for n, s in (("A", "installed"), ("B", "update"), ("C", "new"))]
+    view.checked = {"A", "B", "C"}
+    assert view.rail_state() == ("warn", "3 to install") and len(view._todo()) == 3
+    view.refresh = lambda: None
+    view.ctx.info = lambda *a: None
+    InstallView._installed(view, "zips", ["A", "B"])
+    assert view.checked == {"C"} and view.rail_state() == ("warn", "1 to install")

@@ -533,7 +533,9 @@ COMMAND_ROWS = {
     'additem': Cmd('AddItem', MAP, flags='actor_only objref_shared'),
     'removeitem': Cmd('RemoveItem', MAP, flags='actor_only objref_shared'),
     'getitemcount': Cmd('GetItemCount', MAP, flags='actor_only objref_self objref_shared'),
-    'equipitem': Cmd('EquipItem', MAP, flags='actor_only'),
+    #: Never adds a missing item, as Oblivion's. See: docs/commentary/script_convert.md#equipitem-never-adds
+    'equipitem': Cmd('TES4Polyfill.EquipOwned({ref}, {p0}, {b1})', ACTOR, types={0: 'Form'}, defaults={1: '0'},
+                     flags='actor_arg'),
     'unequipitem': Cmd('UnequipItem', MAP, flags='actor_only'),
     'getnumitems': Cmd('GetNumItems', MAP),
     'getinventoryobject': Cmd('GetNthForm', MAP),
@@ -650,11 +652,14 @@ COMMAND_ROWS = {
     'removeitemns': Cmd('RemoveItem', MAP),
     'addspellns': Cmd('AddSpell', MAP),
     'removespellns': Cmd('RemoveSpell', MAP),
-    'equipitemsilent': Cmd('EquipItem', MAP),
-    'equipitemns': Cmd('EquipItem', MAP),
+    'equipitemsilent': Cmd('TES4Polyfill.EquipOwned({ref}, {p0}, {b1}, True)', ACTOR, types={0: 'Form'},
+                          defaults={1: '0'}, flags='actor_arg'),
+    'equipitemns': Cmd('TES4Polyfill.EquipOwned({ref}, {p0}, {b1}, True)', ACTOR, types={0: 'Form'},
+                      defaults={1: '0'}, flags='actor_arg'),
     'unequipitemns': Cmd('UnequipItem', MAP),
     #: abSilent on the same native. See: docs/commentary/script_convert.md#argument-that-looks-ignorable
-    'equipitem2ns': Cmd('EquipItem', MAP),
+    'equipitem2ns': Cmd('TES4Polyfill.EquipOwned({ref}, {p0}, {b1}, True)', ACTOR, types={0: 'Form'},
+                       defaults={1: '0'}, flags='actor_arg'),
     'unequipitem2': Cmd('UnequipItem', MAP),
     'unequipitem2ns': Cmd('UnequipItem', MAP),
     'unequipitemsilent': Cmd('UnequipItem', MAP),
@@ -671,7 +676,8 @@ COMMAND_ROWS = {
     #: See: docs/commentary/script_convert.md#equivalent-in-a-different-subsystem
     'ismodloaded': Cmd('TES4Polyfill.IsModLoaded', MAP, bare=True),
     #: See: docs/commentary/script_convert.md#zero-arg-reads-need-function-map
-    'equipitem2': Cmd('EquipItem', MAP),
+    'equipitem2': Cmd('TES4Polyfill.EquipOwned({ref}, {p0}, {b1})', ACTOR, types={0: 'Form'}, defaults={1: '0'},
+                      flags='actor_arg'),
     #: See: docs/commentary/script_convert.md#receiver-and-argument-not-interchangeable
     'isplugininstalled': Cmd('TES4Polyfill.IsPluginInstalled', MAP, bare=True),
     #: Debug.Trace is Papyrus's own log write, the same capability.

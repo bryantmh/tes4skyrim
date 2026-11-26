@@ -51,13 +51,4 @@ export global Theme {
         return sunken;
     }
 
-    public pure function log-color(tag: string) -> color {
-        if (tag == "err") { return bad; }
-        if (tag == "warn") { return warn; }
-        if (tag == "ok") { return good; }
-        if (tag == "head") { return accent; }
-        if (tag == "cmd") { return info; }
-        if (tag == "dim") { return muted; }
-        return fg;
-    }
 }

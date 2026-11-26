@@ -71,6 +71,11 @@ python -m tools.live.repeat_case --cases <folder> --case <case> --times 3 --inst
   of the case before X; `--from X --to X` runs only X. `repeat_case` never writes
   checkpoints: refresh a stale one with `mwtest --checkpoints --from X --to X`.
 - `--keep` leaves the game running afterwards (for `shot` and console probes).
+- 🛑 **A kept game is adjusted through the bridge, never by editing the case and relaunching.**
+  Camera, pose, items, anything else to set up before a `shot`:
+  `Bridge(pipe=test_instance.PIPE).console(...)` / `.call(...)`, seconds per change. Third person:
+  `call(id=55565, args_=[0, 0, 0])` (Game.ForceThirdPerson), then `tfc` and move the player in front.
+  [Details](../../../docs/commentary/headless_testing.md#adjusting-a-kept-game).
 - A run takes minutes (the whole Morrowind main quest < 10 min); `--timeout` is
   only a hang cap. A quiet runtime log for 180 s ends the run as "GAME HUNG".
 - 🛑 **Never start a run without a fallback timer.** Every background run gets

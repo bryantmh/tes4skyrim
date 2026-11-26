@@ -180,7 +180,7 @@ def test_pack_sweeps_a_sibling_stems_old_archives(tmp_path):
                  'Addon_loader.esl', 'Other.bsa'):
         (out / name).write_bytes(b'x')
     _sweep_stale(out, 'Mod', ['Addon'],
-                 {'packed': [str(out / 'Mod.bsa')], 'loaders': []})
+                 {'packed': [str(out / 'Mod.bsa')], 'kept': []})
     assert sorted(p.name for p in out.iterdir()) == ['Mod.bsa', 'Other.bsa']
 
 
@@ -369,17 +369,15 @@ def test_creature_projects_are_inherited_from_a_master(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_pack_bsas_is_called_with_the_export_root_not_a_record_dir():
-    """`phase_pack` holds both roots; it must pass each to its own slot."""
+    """`phase_pack` resolves the output folder from the export ROOT, never a record dir."""
     import inspect
     import convert
 
     src = inspect.getsource(convert.phase_pack)
-    assert 'export_root=export_root' in src, (
+    assert 'export_root=str(DATA_ROOT / "export")' in src, (
         'phase_pack no longer passes the export ROOT; the output folder '
         'will resolve from a record dir and the pack will abort')
-    assert 'export_dir=str(export_dir)' in src, (
-        'phase_pack must still pass the RECORD dir for the texture '
-        'keep-set -- the two roots are not interchangeable')
+    assert 'record_dir' not in src
 
 
 def test_book_inam_passes_the_asset_root_to_the_ownership_split():

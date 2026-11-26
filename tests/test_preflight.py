@@ -19,6 +19,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import convert_cli
 import preflight
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,12 +41,7 @@ def test_convert_phase_names_match_preflight():
     A typo here is silent: check_phases() would skip the phase entirely and the
     dependency would go unchecked.
     """
-    src = open(os.path.join(ROOT, 'convert.py'), encoding='utf-8').read()
-    block = re.search(r"_selected = \[name for name, on in \((.*?)\n    \) if on\]",
-                      src, re.S)
-    assert block, "could not find the phase-selection block in convert.py"
-    names = re.findall(r"\('([a-z_]+)',", block.group(1))
-    assert names, "no phase names parsed out of convert.py"
+    names = [step for step, _flag in convert_cli.STEP_FLAGS]
     for n in names:
         assert n in preflight._REQUIREMENTS, \
             f"convert.py selects unknown phase {n!r}"
@@ -187,10 +183,9 @@ def test_convert_prints_the_version_warning_without_aborting():
     src = open(os.path.join(ROOT, 'convert.py'), encoding='utf-8').read()
     assert 'python_version_warning()' in src
     assert 'format_python_warning' in src
-    # The only early return in the preflight block is the dependency gate.
-    block = src.split('# ── Dependency preflight')[1].split('success = True')[0]
+    block = src.split('def _preflight(')[1].split(chr(10) + 'def ')[0]
     returns = re.findall(r'return (\S+)', block)
-    assert returns == ['preflight.RC_MISSING_DEP'], \
+    assert returns == ['None', 'preflight.RC_MISSING_DEP'], \
         f'unexpected early return in the preflight block: {returns}'
 
 
@@ -293,7 +288,6 @@ def test_committed_binaries_are_not_listed_as_things_to_install():
 @pytest.mark.parametrize('rel', [
     'external/papyrus-compiler/papyrus.exe',
     'external/hkxcmd/hkxcmd.exe',
-    'external/bsarch/BSArch.exe',
     'external/lodgen/LODGenx64.exe',
     'external/mopp_bridge/dovah_hkp_mesh_mopp_bridge.exe',
 ])

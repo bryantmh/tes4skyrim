@@ -36,6 +36,9 @@ PATCH_STEPS = ('export', 'meshes', 'creatures', 'import', 'sounds', 'scripts')
 #: Steps that honor `--only`; any other step with it would silently rebuild everything.
 SCOPED_STEPS = frozenset({'creatures'})
 
+#: Steps that write files the plugin's archives hold; a run with any of them ends by packing.
+PACKED_OUTPUT_STEPS = frozenset({'meshes', 'speedtrees', 'creatures', 'import', 'sounds', 'scripts'})
+
 #: (flag, help) for every `--*-only` step flag.
 _ONLY_FLAGS = (
     ("--export-only", "Parse TES4 binary -> key/value text cache"),
@@ -55,16 +58,23 @@ _ONLY_FLAGS = (
 
 
 def selected_steps(args) -> list:
-    """The steps this run executes, in run order."""
+    """The steps this run executes, in run order; any `PACKED_OUTPUT_STEPS` step brings the pack.
+
+    See: docs/commentary/asset_convert_bsa.md#archive-only-output
+    """
     if args.build_morrowind_patch:
-        return list(PATCH_STEPS)
-    only = [step for step, flag in STEP_FLAGS if getattr(args, flag)]
-    return only or [step for step, _flag in STEP_FLAGS if step not in NOT_DEFAULT]
+        chosen = set(PATCH_STEPS)
+    else:
+        chosen = ({step for step, flag in STEP_FLAGS if getattr(args, flag)}
+                  or {step for step, _flag in STEP_FLAGS if step not in NOT_DEFAULT})
+    if chosen & PACKED_OUTPUT_STEPS:
+        chosen.add('pack_bsa')
+    return [step for step, _flag in STEP_FLAGS if step in chosen]
 
 
 def unscoped_steps(args, steps: list) -> list:
-    """The selected steps `--only` cannot narrow; empty when it was not given."""
-    return [step for step in steps if step not in SCOPED_STEPS] if args.only else []
+    """The selected steps `--only` cannot narrow; empty when it was not given. The pack is incremental."""
+    return [step for step in steps if step not in SCOPED_STEPS | {'pack_bsa'}] if args.only else []
 
 
 def apply_config_overrides(args, config: dict) -> None:
@@ -72,6 +82,8 @@ def apply_config_overrides(args, config: dict) -> None:
     and hand the source text encoding setting to every stage."""
     if args.no_engine_branches:
         config["speedtreeEngineBranches"] = False
+    if args.keep_loose:
+        config["deleteLooseAfterPack"] = False
     if args.morrowind_source:
         config[MORROWIND_SOURCE_KEY] = args.morrowind_source
     if args.source_encoding:
@@ -86,7 +98,8 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Default pipeline (no --*-only): export + import + extract + assets\n"
-            "Each --*-only flag runs exactly that step and nothing else."
+            "Each --*-only flag runs exactly that step, then packs the BSAs\n"
+            "when the step writes files they hold."
         ),
     )
     _add_run_args(parser)
@@ -116,6 +129,10 @@ def _add_run_args(parser) -> None:
                              "plugin converts")
     parser.add_argument("--output-dir", metavar="PATH",
                         help="Output directory (default: output/ in project root)")
+    parser.add_argument("--keep-loose", action="store_true",
+                        help="After packing, keep the loose copies of the packed "
+                             "files (default: deleted, unless "
+                             "\"deleteLooseAfterPack\": false in the config)")
     parser.add_argument("--no-engine-branches", action="store_true",
                         help="Force the pure-Python SpeedTree generator. "
                              "Engine branches (from the game's own code) are "

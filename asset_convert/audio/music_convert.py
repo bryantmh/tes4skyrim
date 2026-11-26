@@ -43,6 +43,7 @@ from output_layout import asset_root as _asset_root, plugin_out_root
 
 from asset_convert.audio.audio_converter import find_ffmpeg, find_xwmaencode
 from asset_convert import paths
+from asset_convert.sources import output_files
 
 _DEFAULT_EXPORT = paths.EXPORT
 
@@ -338,7 +339,7 @@ def convert_music(
         # the duration is recorded for diagnostics (no record reads it).
         info = probe_audio(ffmpeg, src)
         rate = pick_bitrate(info['kbps'], info['channels'])
-        cached = dst.is_file() and dst.stat().st_size > 0 and not force
+        cached = (output_files.signature(dst) or [0])[0] > 0 and not force
         ok = True if cached else convert_music_file(src, dst, ffmpeg,
                                                     xwmaencode, rate)
         return src, dst, rel, ok, cached, info['duration'], rate, info['kbps']

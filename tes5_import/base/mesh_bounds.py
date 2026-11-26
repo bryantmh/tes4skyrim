@@ -25,7 +25,7 @@ import json
 import os
 from typing import Dict, Optional, Tuple
 
-from asset_convert.game_paths import ascii_path
+from asset_convert.game_paths import alias_borrowed, ascii_path
 
 OBNDTuple = Tuple[int, int, int, int, int, int]
 
@@ -75,6 +75,7 @@ def load_mesh_bounds(cache_path, quiet: bool = False) -> int:
         if not quiet:
             print(f"  Mesh bounds: no cache in {paths}, using type defaults")
         return 0
+    merged = alias_borrowed(merged)
     _MESH_BOUNDS = {k: tuple(v[:6]) for k, v in merged.items()}
     _MESH_PHYSICS = {k: int(v[6]) for k, v in merged.items() if len(v) > 6}
     if not quiet:

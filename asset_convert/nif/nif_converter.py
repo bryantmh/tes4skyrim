@@ -38,6 +38,7 @@ from pathlib import Path
 import numpy as np
 
 from asset_convert import paths
+from asset_convert.sources import output_files
 from asset_convert.nif.geometry_sanitize import sanitize_geometry_data
 from asset_convert.nif.nif_materials_morrowind import carry_havok_material
 from asset_convert.nif.nif_converter_morrowind import (
@@ -1296,7 +1297,7 @@ def _build_flip_atlases(stats, dst_path):
     from asset_convert.nif import flipbook
     for job in jobs.values():
         out = _texture_out_path(out_root, job['atlas_rel'])
-        if os.path.isfile(out):
+        if output_files.exists(out):
             continue
         try:
             flipbook.build_flip_atlas(job['files'], out)
@@ -1319,7 +1320,7 @@ def _build_height_maps(stats, dst_path):
     from asset_convert.texture import parallax
     for job in jobs.values():
         out = _texture_out_path(out_root, job['height_rel'])
-        if not os.path.isfile(out):
+        if not output_files.exists(out):
             parallax.build_height_map(job['src'], out)
 
 

@@ -46,6 +46,7 @@ from output_layout import (asset_root as _asset_root, plugin_out_root,
                            record_dir)
 from asset_convert.game_paths import find_nocase, namespace_for
 from asset_convert import paths
+from asset_convert.sources import output_files
 
 #: Assumed when a caller omits extract_dir; the source registry lives here.
 _DEFAULT_EXPORT = paths.EXPORT
@@ -466,7 +467,7 @@ def convert_sounds(
                 dst = snd_dst / rel.with_suffix('.wav')   # SSE cannot read mp3
             else:
                 dst = snd_dst / rel                       # .wav/.xwm: as-is
-            if dst.exists():
+            if output_files.exists(dst):
                 continue
             jobs.append((src, dst))
 
@@ -688,25 +689,26 @@ def prune_stale_voice_files(touched_dirs: set, intended: set,
     `plugin_roots` are the `Sound/Voice/<plugin>` directories this run owns;
     their VTYP subfolders are swept too, since a voice-type relocation empties
     the old folder entirely. Only files with a voice extension are removed.
+    Files only the plugin's archives hold are swept too (`output_files`).
     See: docs/commentary/asset_convert_audio.md#pruning-stale-voice-output
     """
-    sweep = set(touched_dirs)
+    sweep = {os.path.normcase(str(d)): Path(d) for d in touched_dirs}
     for root in (plugin_roots or ()):
-        if root.is_dir():
-            sweep.update(d.resolve() for d in root.iterdir() if d.is_dir())
+        for rel in output_files.files_under(root):
+            if '\\' in rel:
+                sub = Path(root).resolve() / rel.split('\\', 1)[0]
+                sweep.setdefault(os.path.normcase(str(sub)), sub)
+    wanted = {os.path.normcase(str(p)) for p in intended}
     removed = []
-    for d in sorted(sweep):
-        if not d.is_dir():
-            continue
-        for f in d.iterdir():
-            if not f.is_file():
-                continue
-            if f.suffix.lower() not in _VOICE_OUTPUT_EXTS:
-                continue
-            if f.resolve() in intended:
+    for key in sorted(sweep):
+        d = sweep[key]
+        found = output_files.files_under(d)
+        for name in sorted(rel for rel in found if '\\' not in rel):
+            f = Path(found[name]) if isinstance(found[name], str) else d / name
+            if f.suffix.lower() not in _VOICE_OUTPUT_EXTS or os.path.normcase(str(f)) in wanted:
                 continue
             try:
-                f.unlink()
+                output_files.discard(f)
                 removed.append(f)
             except OSError as exc:
                 print(f'  WARN could not remove stale {f.name}: {exc}')
@@ -914,7 +916,7 @@ def _queue_voice_file(src: Path, dst_path: Path, text, plan: dict) -> None:
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     plan['intended'].add(dst_path.resolve())
     plan['touched'].add(dst_path.parent.resolve())
-    if dst_path.exists():
+    if output_files.exists(dst_path):
         plan['stats']['skipped'] += 1
     else:
         plan['jobs'].append((src, dst_path, text))

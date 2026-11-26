@@ -24,7 +24,7 @@ from tes5_import.base.text_reader import parse_export_file
 from .export_morrowind import morroblivion_exports, write_export, write_header
 from .morroblivion import archive_path
 from .morroblivion_ground import MorroblivionGround, read_pairs
-from .morroblivion_hybrid import FURNITURE_MARKER, MANIFEST_NAME, find_under
+from .morroblivion_hybrid import FURNITURE_MARKER, MANIFEST_NAME, find_under, owner_roots
 from .morrowind_ids import remap_form_id
 from .morrowind_patch import patch_formid
 from .record_types.common import escape_value
@@ -103,9 +103,9 @@ def _by_editor_id(companions, names, signature: str) -> dict:
             if r.get('EditorID') and r.get('FormID')}
 
 
-def _marker_meshes(masters):
-    """A test of whether a mesh path is a furniture mesh in any master's tree, reading each file once."""
-    roots = [assets_for(path) / 'meshes' for _name, path in masters]
+def _marker_meshes(masters, borrowed):
+    """A test of whether a mesh path is a furniture mesh in any master's tree or a `borrowed` root, reading each once."""
+    roots = [assets_for(path) / 'meshes' for _name, path in masters] + [r / 'meshes' for r in borrowed]
     seen = {}
 
     def is_marker(model: str) -> bool:
@@ -139,7 +139,7 @@ def furniture(layout: dict, flags: dict) -> tuple:
     bases = {r['FormID']: known[r['EditorID'].lower()]
              for r in _records(layout['masters'], names, BASE_TYPES)
              if r.get('FormID') and r.get('EditorID', '').lower() in known}
-    is_marker = _marker_meshes(layout['masters'] + [layout['own']])
+    is_marker = _marker_meshes(layout['masters'] + [layout['own']], layout['borrowed'])
     out = []
     for rec in _records([layout['own']], names, BASE_TYPES):
         base, edid = rec.get('FormID'), rec.get('EditorID') or rec.get('FormID')
@@ -209,7 +209,8 @@ def export_companion(export_dir: str, plugin: str, progress=print) -> bool:
     entries = companion_masters(export_dir, plugin)
     names = [name for name, _path in entries]
     at = names.index(plugin)
-    layout = {'names': names, 'masters': entries[:at], 'own': entries[at], 'companions': entries[at + 1:]}
+    layout = {'names': names, 'masters': entries[:at], 'own': entries[at], 'companions': entries[at + 1:],
+              'borrowed': owner_roots(export_dir, morroblivion_exports(export_dir))}
     bases, furn = furniture(layout, _morroblivion_flags(export_dir))
     refs = placements(layout, bases)
     grasses, lands = grass(layout, MorroblivionGround(export_dir, morroblivion_exports(export_dir)))

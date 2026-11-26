@@ -325,7 +325,7 @@ one copy. See [the menu must render itself](../commentary/morrowind_runtime.md#t
 
 - Extend `asset_convert/ui/morrowind_menu_art.py` and `tools/generators/gen_morrowind_menu_swf.py` with the stats-window layout from OpenMW's `openmw_stats_window.layout`.
 - Frame and boxes use `menu_thick_border_*` and `menu_thin_border_*`; colors come from `Morrowind.ini` `[FontColor]`; text uses Morrowind's own font (as the dialogue menu already does).
-- Composed by `tools/release/package_runtime_dll.py` into `TESRuntime.zip`, never committed.
+- Composed by `tools/release/package_runtime_dll.py` into the `TESRuntime` mod folder, never committed.
 - **Content:** Health/Magicka/Stamina/Level bars; Level, Race, Perk points, Attribute rules; Nehrim's Experience, Learning points and Spell grade; the 8 attributes; skills as Skyrim + extras; Nehrim abilities and crafts; Character and Statistics tabs; tooltips; the attribute level-up step.
 
 #### <a id="m3-store"></a>M3. Stat store (player and NPCs)
@@ -426,7 +426,7 @@ Oblivion work reuses it rather than building a second one.
 leaves the game working.
 
 1. **One sheet, every game.** The store, buffs, cap, leveling, tooltips and
-   menus stay in MorrowindRuntime (it ships in the same `TESRuntime.zip`) and
+   menus stay in MorrowindRuntime (it ships in the same `TESRuntime` mod) and
    switch on when any converted game with attributes is installed, not only
    Morrowind. Which game's rules apply comes from `TESGS_CurrentGame` ([M7](#m7-options)).
    No code is copied into TESRuntime: parts are ported from OpenMW (GPL), so

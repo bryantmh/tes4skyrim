@@ -390,94 +390,78 @@ class CrossRefGraph:
     """Builds FormID->EditorID and EditorID->ScriptName lookup tables."""
 
     def __init__(self):
+        """Empty tables, filled by load_from_export and build_script_indexes."""
+        self._init_records()
+        self._init_scripts()
+        self._init_tables()
+
+    def _init_records(self):
+        """Tables about records: names, bases, scripts, cells and models."""
         self.formid_to_edid: dict[str, str] = {}
         self.edid_to_formid: dict[str, str] = {}
         #: Source worldspace EDID -> converted EDID; see core/worldspace_names.py.
         self.worldspace_renames: dict[str, str] = renames_for()
-        self.script_formid_to_edid: dict[str, str] = {}
-        self.script_formid_to_type: dict[str, int] = {}
-        self.record_scri: dict[str, str] = {}  # record FormID -> SCRI FormID
-        self.record_type: dict[str, str] = {}  # record FormID -> record Signature
-        # record FormID -> Model.MODL path as authored (backslashes, any case).
-        # Lets the script converter ask the CONVERTED mesh what its physics are
-        # (held-until-scripted trap/breakaway), which the animation-group name
-        # cannot tell it — see the playgroup release in converter.py.
+        #: Record FormID -> SCRI FormID.
+        self.record_scri: dict[str, str] = {}
+        #: Record FormID -> record signature.
+        self.record_type: dict[str, str] = {}
+        #: Record FormID -> Model.MODL as authored, so the converter can ask the converted mesh about its physics.
         self.record_model: dict[str, str] = {}
-        # CELL FormID -> (is_interior, parent WRLD FormID, grid X, grid Y).
-        # Backs the exterior half of get_cell_family (see there).
+        #: CELL FormID -> (is_interior, parent WRLD FormID, grid X, grid Y), for get_cell_family's exteriors.
         self.cell_geom: dict[str, tuple] = {}
-        # BOOK records with an ENAM: written as SCRL, so `Book` would not bind.
+        #: BOOK records with an ENAM: written as SCRL, so `Book` would not bind.
         self.enchanted_books: set[str] = set()
-        self.record_base: dict[str, str] = {}  # placed ref FormID -> base record FormID (NAME)
-        # base FormID (upper) -> its ONE placed ref FormID; lazily inverted
-        # from record_base by unique_placed_ref().
+        #: Placed ref FormID -> base record FormID (NAME).
+        self.record_base: dict[str, str] = {}
+        #: Base FormID (upper) -> its ONE placed ref FormID; inverted lazily by unique_placed_ref().
         self._base_to_unique_ref: 'dict[str, str] | None' = None
         #: Placed ref FormID -> its ENABLE PARENT's FormID (XESP), what `getParentRef` returns.
         self.record_parent: dict[str, str] = {}
+        self.quest_edids: set[str] = set()
+        #: Lowercased EditorIDs of quests whose stages may be set again (TES4 Allow Repeated Stages).
+        self.repeat_stage_quests: set[str] = set()
+        #: Lowercased quest EditorID -> the stage indices that have a stage fragment.
+        self.fragment_stages: dict[str, set] = {}
+        #: FormIDs of scripts attached to a DOOR flagged Oblivion Gate.
+        self.gate_scripts: set[str] = set()
+        self.npc_formids: set[str] = set()
+
+    def _init_scripts(self):
+        """Tables read off script source: variables, cross-script writes and reads."""
+        self.script_formid_to_edid: dict[str, str] = {}
+        self.script_formid_to_type: dict[str, int] = {}
         #: (script EditorID, variable), lowercase, that ANOTHER script assigns (`set Owner.var to X`).
         self.remote_writes: set[tuple[str, str]] = set()
         #: (script, variable) pairs another script adds to: the owner carries an add helper for each.
         self.remote_adds: set[tuple[str, str]] = set()
         #: Variable names assigned through an owner no script could be found for; these veto by name.
         self.remote_write_names: set[str] = set()
-        self.quest_edids: set[str] = set()
-        #: Lowercased EditorIDs of quests whose stages may be set again (TES4 Allow Repeated Stages).
-        self.repeat_stage_quests: set[str] = set()
-        #: Lowercased quest EditorID -> the stage indices that have a stage fragment.
-        self.fragment_stages: dict[str, set] = {}
         #: Lowercased Papyrus names of this plugin's own scripts (a master's compiled copy may predate a helper).
         self.own_scripts: set[str] = set()
-        #: FormIDs of scripts attached to a DOOR flagged Oblivion Gate.
-        self.gate_scripts: set[str] = set()
-        self.npc_formids: set[str] = set()
-        # Cross-script ref-as-int analysis: set of (script_name_lower, var_name_lower)
-        # where the TES4 `ref` variable is only ever assigned/compared with integers
+        #: (script, var) lowercase: a `ref` variable only ever assigned or compared as an integer.
         self.ref_as_int: set[tuple[str, str]] = set()
-        # Cross-script ref-as-BASE-FORM analysis: (script_low, var_low) where the
-        # `ref` variable is assigned a BASE record (a MISC/SPEL/WEAP/... item),
-        # not a placed reference. Papyrus rejects those into an ObjectReference
-        # variable, and the assignment can live in a DIFFERENT script than the
-        # declaration (moXscrXtrapXwritedynamicdata writes probe MISCs into
-        # moXscrXtrapXmemorystorage.XCURRENTprobeID), so the owning script
-        # cannot detect it alone. Such a variable is declared Form.
+        #: (script, var) lowercase: a `ref` variable assigned a BASE record, possibly by another script; declared Form.
         self.ref_as_base_form: set[tuple[str, str]] = set()
-        # Per-script ref-typed variable names (populated by build_ref_as_int_map)
+        #: Script lowercase -> its ref-typed variable names (build_ref_as_int_map).
         self.script_ref_vars: dict[str, set[str]] = {}
-        # Per-script ALL variable declarations: script_name_lower -> dict(var_low -> type_str)
+        #: Script lowercase -> {variable lowercase: declared type}.
         self.script_all_vars: dict[str, dict[str, str]] = {}
-        # Per-script `ref` variables the script itself uses as an ACTOR, i.e. it
-        # calls an Actor-only method on them (`myRef.startcombat`).  Those are
-        # the only remote ref vars a writer may downcast with `as Actor`; a ref
-        # var that only ever holds a marker (MQ16OblivionGate1Script's
-        # mySpawnMarker) stays ObjectReference and the cast would null it out.
+        #: Script lowercase -> ref variables it calls an Actor-only method on: the only ones a writer may cast `as Actor`.
         self.script_actor_vars: dict[str, set[str]] = {}
-        # MGEF EditorID (lower) -> (EffectShader fid, EnchantEffect fid, school int)
-        # Used to convert pme/PlayMagicEffectVisuals into EffectShader.Play().
+
+    def _init_tables(self):
+        """Tables about magic, globals, packages and movement."""
+        #: MGEF EditorID (lower) -> (EffectShader fid, EnchantEffect fid, school int), for PlayMagicEffectVisuals.
         self.mgef_shaders: dict[str, tuple[str, str, int]] = {}
-        # SPEL EditorID (lower) -> [(effect code, actor value int), ...]
-        # Used to convert IsSpellTarget into a HasMagicEffect check on the
-        # spell's first converted (Skyrim) magic effect.
+        #: SPEL EditorID (lower) -> [(effect code, actor value int), ...], for IsSpellTarget.
         self.spell_effects: dict[str, list[tuple[str, int]]] = {}
-        # GLOB EditorID (lower) -> TES4 FNAM type char ('s' short, 'l' long,
-        # 'f' float).  Decides whether a GetValue() read needs an `as Int`:
-        # truncating a float global silently breaks fractional comparisons.
+        #: GLOB EditorID (lower) -> TES4 FNAM type char; a float global read needs no `as Int`.
         self.global_types: dict[str, str] = {}
-        # GLOB EditorID (lower) -> FLTV value as authored by the plugin.
-        # Needed because several TES4 timing idioms hardcode a REAL-SECONDS
-        # constant that the author tuned against their own TimeScale (see
-        # the chime debounce).  Nehrim ships TimeScale
-        # 10, Oblivion 30, so the same script means different things in each.
+        #: GLOB EditorID (lower) -> FLTV as authored (TimeScale-tuned real-seconds idioms read it).
         self.global_values: dict[str, float] = {}
-        # PACK FormID -> PKDT.Type (0 Find, 1 Follow, 2 Escort, 3 Eat,
-        # 4 Sleep, 5 Wander, 6 Travel, 7 Accompany, 8 Use Item At, 9 Ambush,
-        # 10 Flee Not Combat, 11 Cast Magic — xEdit wbPackageTypeEnum).
-        # TES4 `GetCurrentAIPackage` returns this code; Skyrim's
-        # Actor.GetCurrentPackage() returns the Package form instead and no
-        # Papyrus native exposes a package's type, so a numeric comparison is
-        # reconstructed as a disjunction over the actor's own packages of that
-        # type (get_actor_packages_of_type).
+        #: PACK FormID -> PKDT.Type, so GetCurrentAIPackage comparisons become a test over the actor's packages.
         self.pack_type: dict[str, int] = {}
-        # NPC_/CREA FormID -> [PACK FormID, ...] in AIPackage[n] order.
+        #: NPC_/CREA FormID -> [PACK FormID, ...] in AIPackage[n] order.
         self.actor_packages: dict[str, list] = {}
         #: NPC_/CREA FormID -> authored DATA.Speed attribute.
         self.actor_speed: dict[str, int] = {}

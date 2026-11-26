@@ -10,9 +10,8 @@ loose menu files and BSAs, not inside any ESM, so there is nothing per-plugin
 to convert. It is a GLOBAL action (the GUI's "Convert Oblivion UI" button), run once,
 producing one shared artefact.
 
-    output/Oblivion UI/Interface/messagebox.swf     working copy, loose
-    output/Oblivion UI/Interface/cursormenu.swf     working copy, loose
-    output/Finished Mods/Oblivion UI.zip            installable, Data-rooted
+    output/Oblivion UI/Interface/messagebox.swf     the mod folder, Data-rooted
+    output/Oblivion UI/Interface/cursormenu.swf     (Install & play installs or zips it)
 
 Usage:
   python tools/misc/convert_ui.py
@@ -43,7 +42,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from asset_convert.ui import ui_cursor
 from asset_convert.ui import ui_menus
 from asset_convert.sources.bsa_extract import read_bsa_files
-from output_layout import DATA_ROOT, finished_dir, write_mod_zip
+from output_layout import DATA_ROOT, write_mod_folder
 
 MOD_NAME = "Oblivion UI"
 MESSAGE_BOX_SWF = r'interface\messagebox.swf'
@@ -217,28 +216,19 @@ def convert(out_root: Path, oblivion_data=None, skyrim_data=None,
               f'bytes')
         print()
 
-    # -- write the working copies, then the installable archive.
-    mod_root = Path(out_root) / MOD_NAME
-    interface = mod_root / 'Interface'
-    interface.mkdir(parents=True, exist_ok=True)
-    for name, data in built.items():
-        (interface / name).write_bytes(data)
-
-    zip_path = finished_dir(out_root) / f'{MOD_NAME}.zip'
-    write_mod_zip(zip_path, [(str(Path('Interface') / name), interface / name)
-                             for name in built])
+    mod_root = write_mod_folder(out_root, MOD_NAME, [(str(Path('Interface') / name), data)
+                                                     for name, data in built.items()])
 
     if preview and messagebox:
-        png = mod_root / 'preview.png'
+        png = Path(out_root) / f'{MOD_NAME} preview.png'
         _write_preview(png, textures, layout)
         print(f'  Preview: {png}')
 
     for name in sorted(built):
-        print(f'  Loose:  {interface / name}')
-    print(f'  Zipped: {zip_path} ({zip_path.stat().st_size:,} bytes)')
+        print(f'  Written: {mod_root / "Interface" / name}')
     print()
-    print('Install it like any other converted mod: the archive root is the '
-          'Data folder.')
+    print('Install it on Install & play like any other converted mod: the '
+          'folder is rooted at the Data folder.')
     replaced = ', '.join('Interface\\' + n for n in sorted(built))
     print(f'It replaces {len(built)} file(s) -- {replaced} -- so it conflicts '
           'only with other mods that replace those same movies.')

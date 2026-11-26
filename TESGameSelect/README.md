@@ -46,7 +46,7 @@ Nothing is prebuilt in this repo — the plugin is built on demand, because its
 python tools/release/package_start_mod.py
 ```
 
-Either produces `output/Finished Mods/TESGameSelect.zip`, whose root IS the
+Either produces the mod folder `output/TESGameSelect/`, whose root IS the
 `Data` folder, so it installs like any other converted mod:
 
 ```

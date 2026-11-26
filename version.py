@@ -83,9 +83,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 VERSION_FILE = SCRIPT_DIR / "VERSION"
 STATE_FILE   = DATA_ROOT / ".conversion_state.json"
+#: See: docs/commentary/version_upgrade_planning.md#saved-table
+TABLE_FILE   = DATA_ROOT / ".release_steps.json"
 
 # What VERSION reads in a working checkout, where the tree sits between tags.
 DEV_VERSION = "0.0-dev"
+#: A compiled development build's VERSION stamp: `_git_version`'s `<tag>+g<short sha>`.
+BUILD_STAMP = re.compile(r"\d+\.\d+\+g[0-9a-f]+")
 
 # ── Remote endpoints ────────────────────────────────────────────────────────
 # Where releases are published.  A source drop has no git remote to derive this
@@ -119,32 +123,20 @@ _UA = {"User-Agent": "tes4skyrim-update-check",
 # ---------------------------------------------------------------------------
 
 def _read_version_file() -> str | None:
-    """The release stamped into VERSION by `git archive`, or None.
+    """The version stamped into VERSION, or None for the `$Format:` placeholder or a `git archive` describe
+    string (`0.581-4-gaaef46e`, an untagged commit: DEV_VERSION is truer than its nearest tag).
 
-    VERSION is an `export-subst` template (`.gitattributes`).  In a real
-    checkout it still holds the raw `$Format:...$` placeholder, and in an
-    archive built from an UNTAGGED commit `%(describe:tags)` expands to a
-    describe string like `0.581-4-gaaef46e` rather than a bare tag.
-
-    Both are rejected here as "not a release stamp":
-
-      * The placeholder is not a version at all -- returning it would put
-        `$Format:%(describe:tags)$` in the title bar and make every comparison
-        fail.  `_git_version()` answers correctly for a checkout anyway.
-      * A describe string means the archive was cut from a commit that is not a
-        release.  `current_version` falls through to git (absent here) and then
-        to DEV_VERSION, which reads as a development build -- true, and better
-        than presenting an unreleased commit as its nearest tag.
+    Accepted: a bare release tag (`git archive` at a tag, or a release build) and BUILD_STAMP, the
+    `<tag>+g<sha>` a compiled development build stamps from `_git_version`, which has no `.git` to ask.
+    See: docs/commentary/core_gui.md#folder-build
     """
     try:
         text = VERSION_FILE.read_text(encoding="utf-8").strip()
     except OSError:
         return None
-    if not text or text.startswith("$Format:"):
+    if not text or text.startswith("$Format:") or not version_key(_base_tag(text)):
         return None
-    # Only a bare release tag counts; `_base_tag` strips describe suffixes, so
-    # a value that survives it unchanged is exactly a tag.
-    return text if text == _base_tag(text) and version_key(text) else None
+    return text if text == _base_tag(text) or BUILD_STAMP.fullmatch(text) else None
 
 
 def _head_commit(git_dir: Path) -> str | None:
@@ -373,6 +365,22 @@ def _load_state() -> dict:
     return _lift_global_steps(state)
 
 
+#: (file stamp, parsed state) of the last read-only state read.
+_READ: list = [None, None]
+
+
+def _read_state() -> dict:
+    """The state for READING only (never mutate it): one parse is shared while the file's stamp is unchanged."""
+    try:
+        st = STATE_FILE.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    if _READ[0] != stamp:
+        _READ[1], _READ[0] = _load_state(), stamp
+    return _READ[1]
+
+
 def _lift_global_steps(state: dict) -> dict:
     """Move a legacy per-plugin record of a GLOBAL step to the shared key.
 
@@ -427,6 +435,25 @@ def _save_state(state: dict) -> None:
             pass
 
 
+def forget_plugin(plugin: str) -> bool:
+    """Drop `plugin`'s step and source records, so it reads as never converted; True when it had any.
+
+    Reads the file as written (not `_load_state`, which lifts global steps in memory), so nothing but
+    this plugin's two entries changes.
+    """
+    try:
+        with open(STATE_FILE, encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    key = _plugin_key(plugin)
+    found = [section.pop(key) for section in (state.get("steps"), state.get("sources"))
+             if isinstance(section, dict) and key in section]
+    if found:
+        _save_state(state)
+    return bool(found)
+
+
 def record_step_run(step_key: str, plugin: str | None,
                     version: str | None = None,
                     data_path: str | None = None) -> None:
@@ -470,7 +497,7 @@ def record_step_run(step_key: str, plugin: str | None,
 
 def source_path_for(plugin: str | None) -> str | None:
     """The TES4 data directory *plugin* was last converted from, if recorded."""
-    sources = _load_state().get("sources", {})
+    sources = _read_state().get("sources", {})
     if not isinstance(sources, dict):
         return None
     got = sources.get(_plugin_key(plugin))
@@ -520,7 +547,7 @@ def steps_run_at(plugin: str | None) -> dict[str, str]:
     two wins, so history recorded under the old scheme is not thrown away and
     does not make the step look stale again.
     """
-    steps = _load_state().get("steps", {})
+    steps = _read_state().get("steps", {})
     merged: dict[str, str] = {}
     got = steps.get(_plugin_key(plugin))
     if isinstance(got, dict):
@@ -627,6 +654,10 @@ def steps_table(timeout: int = 8, refresh: bool = False
     """
     if _TABLE[0] is not None and not refresh:
         return _TABLE[0]
+    saved = None if refresh else _saved_table()
+    if saved is not None:
+        _TABLE[0] = (saved, True)
+        return _TABLE[0]
 
     table: dict[str, list[str]] = {}
     reachable = False
@@ -655,7 +686,26 @@ def steps_table(timeout: int = 8, refresh: bool = False
         reachable = False
 
     _TABLE[0] = (table, reachable)
+    if table:
+        _save_table(table)
     return _TABLE[0]
+
+
+def _saved_table() -> dict | None:
+    """The saved table if it lists this build's release (releases never change once cut), else None."""
+    try:
+        table = json.loads(TABLE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return table if isinstance(table, dict) and _base_tag(current_version()) in table else None
+
+
+def _save_table(table: dict) -> None:
+    """Keep the table for the next start (a failed write only costs a fetch)."""
+    try:
+        TABLE_FILE.write_text(json.dumps(table, indent=1), encoding="utf-8")
+    except OSError:
+        pass
 
 
 

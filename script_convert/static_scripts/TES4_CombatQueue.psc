@@ -90,8 +90,10 @@ Event OnUpdate()
         EndIf
       EndIf
     Else
+      Actor foe = attacker.GetCombatTarget()
       Release(attacker)
       TES4Polyfill.EndCombat(attacker, attackerFaction)
+      NoteStop(attacker, foe)
     EndIf
   EndWhile
   Draining = False
@@ -99,6 +101,49 @@ Event OnUpdate()
     RegisterForSingleUpdate(3.0)
   EndIf
 EndEvent
+
+; Actors stopped in the last second and the foe each was fighting.
+Actor[] StoppedActors
+Actor[] StoppedFoes
+Float[] StoppedAt
+
+; Note `akActor`'s stop. When an actor it fought each other with was stopped within a second, the
+; two stop together as TES4's one-frame stops did: every fight against either ends, the one a
+; last swing restarts included. See docs/commentary/script_convert.md#se02-gatekeeper-killed-by-his-ally
+Function NoteStop(Actor akActor, Actor akFoe)
+  If !StoppedActors
+    StoppedActors = new Actor[8]
+    StoppedFoes = new Actor[8]
+    StoppedAt = new Float[8]
+  EndIf
+  Float now = Utility.GetCurrentRealTime()
+  Actor player = Game.GetPlayer()
+  Int i = 0
+  While i < 8
+    Actor other = StoppedActors[i]
+    If other && other != akActor && akActor != player && other != player && now - StoppedAt[i] < 1.0 && (StoppedFoes[i] == akActor || akFoe == other)
+      akActor.StopCombatAlarm()
+      other.StopCombatAlarm()
+    EndIf
+    i += 1
+  EndWhile
+  Int slot = OldestStop()
+  StoppedActors[slot] = akActor
+  StoppedFoes[slot] = akFoe
+  StoppedAt[slot] = now
+EndFunction
+
+Int Function OldestStop()
+  Int oldest = 0
+  Int i = 1
+  While i < 8
+    If StoppedAt[i] < StoppedAt[oldest]
+      oldest = i
+    EndIf
+    i += 1
+  EndWhile
+  Return oldest
+EndFunction
 
 ; TES4's melee alert (Oblivion.exe 0x622d40): an attacker whose path failed stands ready and
 ; re-plans every 3 s, where Skyrim's ends the fight. A held attacker out of combat, with it and

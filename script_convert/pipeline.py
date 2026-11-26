@@ -17,7 +17,7 @@ from core.worker_budget import worker_count
 from asset_convert.game_paths import (current_namespace,
                                       set_namespace)
 from script_convert.constants import (sanitize_name, papyrus_script_name,
-                                     REMOTE_HOLD, REMOTE_RELEASE,
+                                     CARRIED_SIGNATURES, REMOTE_HOLD, REMOTE_RELEASE,
                                      SERVICE_MENU_CALL, UDF_WIDE_TYPES,
                                      is_generated_script_type, script_prefix)
 from script_convert.conversation_sequence import (
@@ -565,7 +565,9 @@ def primed_converter(rec: dict, xref: CrossRefGraph, source: str) -> ScriptConve
     conv.set_scro_aliases(resolve_scro_aliases(source, scro_list(rec), xref))
     conv.sc.quest_delay = _WORKER_CTX.get('quest_delays', {}).get(
         formid.upper(), 0.0)
-    conv.sc.on_book = xref.attached_signatures(formid) == {'BOOK'}
+    attached = xref.attached_signatures(formid)
+    conv.sc.on_book = attached == {'BOOK'}
+    conv.sc.on_item = bool(attached & CARRIED_SIGNATURES)
     return conv
 
 

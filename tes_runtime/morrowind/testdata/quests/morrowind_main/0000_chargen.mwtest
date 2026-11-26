@@ -118,3 +118,12 @@ button 0
 until 600 CharGenState == -1
 until 600 GetPCCell "Seyda Neen, Census and Excise Office" == 0
 end
+
+# Up the road to where Tarhiel is placed in the sky (Position stands in for the
+# walk): his journal's fallingScript drops him once the player is within 2000
+# of it, and with no AI package he still falls as Morrowind drops him.
+case chargen_tarhiel
+run
+player->Position -16747 -59500 1500 0
+until 600 "agronian guy"->GetPos Z < 2500
+end

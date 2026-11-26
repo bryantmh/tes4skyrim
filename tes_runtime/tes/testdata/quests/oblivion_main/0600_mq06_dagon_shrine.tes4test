@@ -63,7 +63,8 @@ until 300 GetStage MQ06 >= 60
 end
 
 # Out of the caverns (70, MQ06Script) and back to Cloud Ruler Temple; the ride is the player's travel. Jauffre's
-# greeting (INFO 00020073, MQ06 >= 60) sets 80 and offers "No. Mankar Camoran escaped with it."; Martin: "No. But I
+# greeting (INFO 00020073, MQ06 >= 60) sets 80 and offers "No. Mankar Camoran escaped with it.", whose answer offers
+# "Maybe. I have the Mysterium Xarxes." (INFO 0008B617; Goodbye stays locked until it is answered); Martin: "No. But I
 # have the Mysterium Xarxes." offers "Can the Xarxes lead us to Camoran?" (INFO 0008B619), which sets 100.
 case mq06_return_martin
 defend
@@ -74,6 +75,7 @@ approach JauffreRef
 talk JauffreRef
 until 300 GetStage MQ06 >= 80
 ask "No. Mankar Camoran escaped with it."
+ask "Maybe. I have the Mysterium Xarxes."
 bye if open
 run
 player.moveto MartinRef

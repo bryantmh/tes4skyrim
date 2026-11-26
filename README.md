@@ -86,6 +86,104 @@ exists, it asks whether to rebuild it.
 
 ---
 
+## Tested questlines
+
+Share of each game's journal quests that automated playthroughs have advanced. Counts are quests tested; ✅ = the questline passes start to finish multiple times in a row. A questline's total includes branches one playthrough can't take (killing instead of sparing, alternate routes), so a complete run doesn't reach 100%.
+
+An untested quest is not an unconverted one. Every quest in a game runs on the same converted dialogue, scripts, AI and navigation, so each passing questline also proves out the machinery the untested ones use. **Confidence** is how likely an untested quest in that game is to work: a game can be high confidence with a low percentage.
+
+<!-- quest-coverage:start -->
+**Oblivion** `██░░░░░░░░░░░░░░░░░░` 20 / 218 (9%), confidence: **medium**
+- ✅ Main quest: 17 / 17
+- Fighters Guild: 0 / 22
+- Mages Guild: 0 / 23
+- Thieves Guild: 1 / 25
+- Dark Brotherhood: 0 / 34
+- Daedric shrines: 1 / 15
+- Misc: 1 / 82
+
+**Shivering Isles** `█████░░░░░░░░░░░░░░░` 9 / 34 (26%), confidence: **medium**
+- Main quest: 9 / 19
+- Misc: 0 / 15
+
+**Nehrim** `██░░░░░░░░░░░░░░░░░░` 8 / 84 (10%), confidence: **low**
+- Main quest: 5 / 44
+- Misc: 3 / 40
+
+**Morrowind** `█████░░░░░░░░░░░░░░░` 154 / 632 (24%), confidence: **high**
+- ✅ Main quest: 48 / 104
+- ✅ Great House Hlaalu: 31 / 31
+- Great House Redoran: 1 / 39
+- Great House Telvanni: 0 / 32
+- Fighters Guild: 0 / 32
+- Mages Guild: 0 / 34
+- ✅ Thieves Guild: 30 / 31
+- ✅ Tribunal Temple: 30 / 31
+- Imperial Cult: 0 / 96
+- Imperial Legion: 0 / 22
+- Morag Tong: 0 / 49
+- ✅ Daedric shrines: 7 / 7
+- ✅ Vampire clans: 6 / 13
+- Misc: 1 / 111
+
+**Tribunal** `███████████░░░░░░░░░` 31 / 59 (53%), confidence: **high**
+- ✅ Main quest: 21 / 31
+- Misc: 10 / 28
+
+**Bloodmoon** `███████████░░░░░░░░░` 36 / 68 (53%), confidence: **high**
+- ✅ Main quest: 18 / 44
+- ✅ Raven Rock: 17 / 23
+- Misc: 1 / 1
+
+**Arktwend** `████████░░░░░░░░░░░░` 47 / 123 (38%), confidence: **high**
+- ✅ Main quest: 46 / 100
+- Misc: 1 / 23
+
+**Morroblivion** `░░░░░░░░░░░░░░░░░░░░` 1 / 599 (0%), confidence: **medium**
+- Main quest: 1 / 61
+- Great House Hlaalu: 0 / 32
+- Great House Redoran: 0 / 39
+- Great House Telvanni: 0 / 30
+- Fighters Guild: 0 / 32
+- Mages Guild: 0 / 34
+- Thieves Guild: 0 / 32
+- Tribunal Temple: 0 / 24
+- Imperial Cult: 0 / 31
+- Imperial Legion: 0 / 21
+- Morag Tong: 0 / 52
+- Daedric shrines: 0 / 7
+- Vampire clans: 0 / 14
+- Tribunal: 0 / 19
+- Bloodmoon: 0 / 42
+- Raven Rock: 0 / 24
+- Misc: 0 / 105
+
+**Tamriel Rebuilt** `█░░░░░░░░░░░░░░░░░░░` 37 / 1,322 (3%), confidence: **high**
+- Great House Hlaalu: 0 / 70
+- Great House Redoran: 0 / 16
+- ✅ Great House Telvanni: 31 / 41
+- Fighters Guild: 0 / 92
+- Mages Guild: 0 / 30
+- Thieves Guild: 0 / 60
+- Tribunal Temple: 0 / 110
+- Imperial Cult: 0 / 24
+- Imperial Legion: 0 / 52
+- Morag Tong: 0 / 37
+- Daedric shrines: 0 / 9
+- Vampire clans: 0 / 18
+- East Empire Company: 0 / 34
+- Blades: 0 / 6
+- Misc: 6 / 723
+
+**Fallout 3, Fallout: New Vegas** `░░░░░░░░░░░░░░░░░░░░` none yet
+
+**All games** `██░░░░░░░░░░░░░░░░░░` 343 / 3,139 (11%)
+<!-- quest-coverage:end -->
+
+Details: [docs/audits/quest_test_coverage.md](docs/audits/quest_test_coverage.md).
+
+---
+
 ## Quick start
 
 ### Setting up
@@ -147,20 +245,21 @@ them. If a master has not been converted yet, the import says so.
 
 ### What to install
 
-Everything you install ends up in **`output/Finished Mods/`**. Install these with
-your mod manager:
+Install & play lists every mod to install, each a folder in `output/`; it installs
+them into Mod Organizer 2 or Vortex, or zips them into **`output/Finished Mods/`**
+for a manual install:
 
-- One `.zip` per converted game or mod, from **Run Selected Steps**
-- `TESRuntime.zip`, from **Pack SKSE Mod**, required (see [TESRuntime](#tesruntime-skse-plugin)). It needs
+- One folder per converted game or mod, from **Run Selected Steps**
+- `TESRuntime`, from **Pack SKSE Mod**, required (see [TESRuntime](#tesruntime-skse-plugin)). It needs
   [SKSE](https://skse.silverlock.org/) and the
   [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444)
   installed, and the game launched through SKSE (`skse64_loader.exe`, or your mod
   manager's SKSE entry). Without them the runtime DLLs never load.
-- `TESGameSelect.zip`, from **Pack Start Mod**: the new-game menu (see [Starting a converted game](#starting-a-converted-game))
-- `Body Slots Patch.zip`, from **Body Slot Patch**
-- `AutoConvertLOD.zip`, from **Create LOD** then **Pack LOD**: the distant view. Install it after the mods it covers.
+- `TESGameSelect`, from **Pack Start Mod**: the new-game menu (see [Starting a converted game](#starting-a-converted-game))
+- `Body Slots Patch`, from **Body Slot Patch**
+- `AutoConvertLOD`, from **Create LOD**: the distant view. Install it after the mods it covers.
 
-The rest of `output/` is working space. Don't install anything from it directly.
+The rest of `output/` is working space.
 
 ### Upgrading
 
@@ -182,7 +281,7 @@ detected at runtime and simply never appear in the menu, so any subset works.
 
 Build it with the **Pack Start Mod** button (or `python
 tools/release/package_start_mod.py`) to get
-`output/Finished Mods/TESGameSelect.zip`, then install it like any other
+the mod folder `output/TESGameSelect`, then install it like any other
 converted mod and enable `TESGameSelect.esp`.
 Because it overrides `MQ101`, it conflicts with other alternate-start mods
 (Live Another Life, Skyrim Unbound, Alternate Perspective) — use one at a time.
@@ -202,7 +301,7 @@ cow tes4tamriel 20 20
 
 ### TESRuntime (SKSE plugin)
 
-`TESRuntime.zip` holds the converter's own SKSE plugins, one DLL each. They need
+`TESRuntime` holds the converter's own SKSE plugins, one DLL each. They need
 [SKSE](https://skse.silverlock.org/) and the
 [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444);
 HavokWorldSize alone needs only SKSE.
@@ -284,7 +383,7 @@ python convert.py -f Oblivion.esm --pack-zip-only      # Zip plugin + BSAs → o
 python convert.py --modify-body-meshes                 # Build ARMA slot-44 patch (takes no -f)
 python tools/release/create_lod.py                             # Bake ALL LOD once (takes no -f)
 python tools/release/pack_lod.py                               # Zip the baked LOD mod
-python tools/release/package_start_mod.py                      # Zip the TESGameSelect starter mod
+python tools/release/package_start_mod.py                      # Build the TESGameSelect starter mod folder
 python convert.py -f Oblivion.esm --mesh-bounds-only   # Rescan mesh bounds → OBND cache
 ```
 
@@ -357,8 +456,8 @@ everything you have converted:
 | **Create LOD** | Generate all object and terrain LOD in one pass, into a standalone `output/AutoConvertLOD/` mod. The button opens a panel choosing which plugins and worldspaces to include; the plugin order decides which one wins a contested tile (defaults to your `plugins.txt` order). **Install it after the mods it covers.** |
 | **Pack LOD** | Zip `output/AutoConvertLOD/` into `output/Finished Mods/AutoConvertLOD.zip` for installation. |
 | **Body Slot Patch** | Build the ARMA slot-44 body patch for your whole Skyrim load order (*select plugins...* chooses which), as `output/Finished Mods/Body Slots Patch.zip`. |
-| **Start Mod** | Zip the prebuilt TESGameSelect starter mod (see *Starting a converted game*) to `output/Finished Mods/TESGameSelect.zip`. |
-| **Package SKSE Mod** | Zip the five runtime plugins (see *TESRuntime*) to `output/Finished Mods/TESRuntime.zip`. |
+| **Start Mod** | Build the TESGameSelect starter mod (see *Starting a converted game*) into `output/TESGameSelect/`. |
+| **Package SKSE Mod** | Write the runtime plugins (see *TESRuntime*) as the mod folder `output/TESRuntime/`. |
 | **Convert to Master** | Flag converted plugins as masters. A non-master plugin has every reference treated as always-active, and the engine hangs on the main menu past about a million of them. Applies to a whole master chain at once. |
 | **Convert Oblivion UI** | *(Build menu)* Build a standalone mod that reskins Skyrim's message boxes and cursor with Oblivion's artwork, read from your Oblivion install. |
 

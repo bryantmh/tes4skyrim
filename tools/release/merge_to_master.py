@@ -75,8 +75,7 @@ def is_dirty() -> bool:
 def cache_is_current() -> bool:
     """Does every publishable cache match the working tree's navmesh sources?"""
     from tools.navmesh import navmesh_cache as nc
-    from tools.navmesh import navmesh_cache_hook as hook
-    return all(hook.cache_matches_tag(p, nc.source_tag(p))
+    return all(nc.cache_matches_tag(p, nc.source_tag(p))
                for p in nc.discover_plugins())
 
 

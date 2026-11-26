@@ -1,6 +1,6 @@
 """Item/object converters: STAT, ACTI, MISC, KEYM, DOOR, FLOR, FURN, GRAS, TREE, LIGH, SLGM, ANIO, CONT."""
 
-from asset_convert.game_paths import current_namespace
+from asset_convert.game_paths import borrowed_dirs, current_namespace
 from asset_convert.nif.furniture_markers import ENTRY_BEHIND
 import os
 import struct
@@ -388,10 +388,11 @@ def get_base_origin_shift(base_fid: str) -> float:
 
 
 def _mesh_trees(meshes_dir, record_dir, ctx) -> list:
-    """(meshes, record dir), masters after; lazy import: pipeline imports us."""
+    """(meshes, record dir), masters after, then the trees a hybrid chain borrows from; lazy import: pipeline imports us."""
     from ..pipeline import master_export_dirs
     return [(meshes_dir, record_dir)] + [(str(assets_for(d) / 'meshes'), d)
-                                         for d in master_export_dirs(ctx)]
+                                         for d in master_export_dirs(ctx)] + [
+        (str(assets_for(d) / 'meshes'), d) for d in borrowed_dirs()]
 
 
 def _index_origin_shifts(pairs, model_shift: dict) -> int:

@@ -63,7 +63,7 @@ RULES: list[tuple[str, list[str]]] = [
     (r"^asset_convert/(?:\w+/)*(body_slots|mesh_cut)\.py", ["3. Meshes", "Body Slot Patch"]),
     (r"^tools/creature/patch_body_slots\.py",           ["Body Slot Patch"]),
     (r"^asset_convert/(?:\w+/)*skin_replacement\.py",   ["3. Meshes", "Body Slot Patch"]),
-    (r"^asset_convert/(?:\w+/)*(bsa_pack)\.py",         ["9. Pack BSAs"]),
+    (r"^asset_convert/(?:\w+/)*(bsa_pack|bsa_write)\.py", ["9. Pack BSAs"]),
     (r"^asset_convert/(?:\w+/)*texture_prune\.py",      ["3. Meshes"]),
     (r"^asset_convert/(?:\w+/)*skyrim_assets\.py",
                                                ["3. Meshes", "5. Creatures",

@@ -10,7 +10,7 @@ See: docs/commentary/script_convert.md#wipe-output-dir
 
 import os
 
-from asset_convert.sources import source_registry
+from asset_convert.sources import output_files, source_registry
 from core.plugin_masters import export_root
 
 #: Suffix of the per-plugin list of scripts written into a shared `scripts/` folder.
@@ -30,10 +30,10 @@ def owned_list_path(source_dir, owner: str) -> str:
 def read_owned(source_dir, owner: str) -> set:
     """The script names `owner`'s last run wrote; empty when it kept no list."""
     try:
-        with open(owned_list_path(source_dir, owner), encoding='utf-8') as fh:
-            return {line.strip() for line in fh if line.strip()}
+        text = output_files.read_bytes(owned_list_path(source_dir, owner)).decode('utf-8')
     except OSError:
         return set()
+    return {line.strip() for line in text.splitlines() if line.strip()}
 
 
 def write_owned(source_dir, owner: str, names) -> None:
@@ -45,13 +45,15 @@ def write_owned(source_dir, owner: str, names) -> None:
 def listed_owners(source_dir) -> list:
     """Every owner with a list beside the `scripts/source/` tree `source_dir`."""
     pex_dir = os.path.dirname(str(source_dir))
-    names = os.listdir(pex_dir) if os.path.isdir(pex_dir) else []
-    return [n[:-len(OWNED_SUFFIX)] for n in names if n.endswith(OWNED_SUFFIX)]
+    loose = [n for n in (os.listdir(pex_dir) if os.path.isdir(pex_dir) else []) if n.endswith(OWNED_SUFFIX)]
+    archived = [n for n in output_files.files_under(pex_dir, OWNED_SUFFIX) if '\\' not in n]
+    names = {n.casefold(): n for n in archived} | {n.casefold(): n for n in loose}
+    return sorted(n[:-len(OWNED_SUFFIX)] for n in names.values())
 
 
 def sibling_owned(source_dir, owner: str) -> set:
     """Every script name another plugin sharing this folder claims."""
-    others = [o for o in listed_owners(source_dir) if o != owner]
+    others = [o for o in listed_owners(source_dir) if o.casefold() != owner.casefold()]
     return set().union(*(read_owned(source_dir, o) for o in others))
 
 
@@ -77,6 +79,6 @@ def drop_owners(source_dir, owners) -> set:
     """Delete `owners`' lists; returns the script names they claimed."""
     names = set().union(*(read_owned(source_dir, o) for o in owners))
     for owner in owners:
-        os.remove(owned_list_path(source_dir, owner))
+        output_files.discard(owned_list_path(source_dir, owner))
         print(f'  Dropped the script list of departed member {owner}')
     return names

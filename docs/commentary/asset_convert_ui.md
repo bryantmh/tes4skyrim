@@ -34,8 +34,9 @@ button, next to "Create LOD" and "Pack Start Mod" — and writes its own mod:
 ```
 output/Oblivion UI/Interface/messagebox.swf
 output/Oblivion UI/Interface/cursormenu.swf
-output/Finished Mods/Oblivion UI.zip
 ```
+
+Install & play installs that folder, or zips it for a manual install.
 
 ---
 

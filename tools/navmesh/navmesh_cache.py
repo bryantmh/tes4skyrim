@@ -78,6 +78,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.subprocess_flags import POPEN_FLAGS
+from output_layout import DATA_ROOT
 
 MANIFEST_NAME = 'navmesh_cache_manifest.json'
 CACHE_DIRNAME = 'navmesh_geom_cache'
@@ -93,11 +94,18 @@ DOWNLOAD_CONFIG_KEY = 'navmeshCacheDownload'
 # ---------------------------------------------------------------------------
 
 def repo_root() -> str:
+    """The code checkout, where git runs."""
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def data_root() -> str:
+    """Where export/, temp/ and the drop-in folder live: the checkout from source, beside app/ in TESRACT.exe."""
+    return str(DATA_ROOT)
+
+
 def export_dir(plugin: str) -> str:
-    return os.path.join(repo_root(), 'export', plugin)
+    """`export/<plugin>/`, where its collision and navmesh caches sit."""
+    return os.path.join(data_root(), 'export', plugin)
 
 
 def cache_dir(plugin: str) -> str:
@@ -148,7 +156,7 @@ def discover_plugins(all_plugins: bool = False) -> list[str]:
     Pass all_plugins=True for local inspection (`verify` with no --plugin),
     where seeing every cache is the point and nothing gets uploaded.
     """
-    root = os.path.join(repo_root(), 'export')
+    root = os.path.join(data_root(), 'export')
     if not os.path.isdir(root):
         return []
     found = sorted(d for d in os.listdir(root)
@@ -876,8 +884,8 @@ def install(plugin: str, tag: str | None, zip_path: str | None,
                 print('Run `gh auth login` once, or download %s from the '
                       'release page and pass --zip.' % asset_name(plugin))
             return INSTALL_FAILED
-        os.makedirs(os.path.join(repo_root(), 'temp'), exist_ok=True)
-        tmp_zip = os.path.join(repo_root(), 'temp', asset_name(plugin))
+        os.makedirs(os.path.join(data_root(), 'temp'), exist_ok=True)
+        tmp_zip = os.path.join(data_root(), 'temp', asset_name(plugin))
         # Always resolve an explicit cache release.  Two traps otherwise:
         # `--tag 0.56` would look for a release literally named '0.56' (there
         # is none — the code ships as a tag), and a bare `gh release download`
@@ -1004,7 +1012,7 @@ DROPIN_DIRNAME = 'navmesh_cache'
 
 
 def dropin_dir() -> str:
-    return os.path.join(repo_root(), DROPIN_DIRNAME)
+    return os.path.join(data_root(), DROPIN_DIRNAME)
 
 
 def find_dropins(plugin: str) -> list[str]:
@@ -1114,6 +1122,23 @@ def _local_version_key() -> tuple | None:
     return None if key is None or key == (0, 0) else key
 
 
+def cache_matches_tag(plugin: str, tag: str | None) -> bool:
+    """Was the cache built by the CURRENT navmesh code? Its CACHE_TAG stamp equals `tag`; never by mtime.
+
+    An unstamped cache counts as stale. Lives here, not in the git hook, so a conversion never
+    imports the hook (which reads `pool.py`'s source, absent from TESRACT.exe).
+    See: docs/commentary/tes5_import_navmesh.md#the-shared-navmesh-cache--design-rationale
+    """
+    if tag is None:
+        return False
+    stamp = os.path.join(cache_dir(plugin), 'CACHE_TAG')
+    try:
+        with open(stamp) as fh:
+            return fh.read().strip() == tag
+    except OSError:
+        return False
+
+
 def download_allowed(config: dict) -> bool:
     """False when the saved setting or NO_DOWNLOAD_ENV_VAR turns the download off."""
     opted_out = os.environ.get(NO_DOWNLOAD_ENV_VAR, '').strip().lower() in ('1', 'true')
@@ -1143,8 +1168,7 @@ def auto_install(plugin: str, quiet: bool = False,
     exactly what would have happened without any of this.
     """
     try:
-        from tools.navmesh import navmesh_cache_hook as _hook
-        if _hook.cache_matches_tag(plugin, source_tag(plugin)):
+        if cache_matches_tag(plugin, source_tag(plugin)):
             # Say so.  Silence here is indistinguishable from the feature being
             # broken -- users reported "it does not download" for a cache that
             # was simply already in place and working perfectly.
@@ -1285,8 +1309,8 @@ def auto_install(plugin: str, quiet: bool = False,
                       % (_local_version_str(), plugin))
             return False
 
-        os.makedirs(os.path.join(repo_root(), 'temp'), exist_ok=True)
-        tmp = os.path.join(repo_root(), 'temp', asset_name(plugin))
+        os.makedirs(os.path.join(data_root(), 'temp'), exist_ok=True)
+        tmp = os.path.join(data_root(), 'temp', asset_name(plugin))
         if not quiet:
             # Announce loudly and BEFORE the transfer starts.  This is a
             # ~115 MB download in the middle of a conversion; a user watching

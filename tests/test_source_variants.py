@@ -113,8 +113,8 @@ def test_copies_lists_every_folder_home_first(tmp_path):
 
 def test_same_named_archive_from_another_folder_re_extracts(tmp_path, monkeypatch):
     """A cached archive is only reused when it came from the same path."""
-    monkeypatch.setattr(bsa_extract, '_open_archive',
-                        lambda _path: iter([('meshes\\a.nif', b'x')]))
+    monkeypatch.setattr(bsa_extract, '_list_entries',
+                        lambda _path: ('zlib', False, [('meshes\\a.nif', 1, 0, False)]))
     first = _install(tmp_path, 'A', ['Fallout - Meshes.bsa']) / 'Fallout - Meshes.bsa'
     second = _install(tmp_path, 'B', ['Fallout - Meshes.bsa']) / 'Fallout - Meshes.bsa'
     out = tmp_path / 'export'
@@ -138,11 +138,13 @@ def test_mixed_sources_are_named(tmp_path):
 
 
 def test_selected_steps():
-    """The default run leaves out zip packing; an --*-only flag runs just that step."""
+    """The default run leaves out zip packing; an --*-only flag runs that step, then the pack if it writes assets."""
     assert 'pack_zip' not in selected_steps(build_parser().parse_args([]))
-    assert selected_steps(build_parser().parse_args(['--meshes-only'])) == ['meshes']
+    assert selected_steps(build_parser().parse_args(['--meshes-only'])) == ['meshes', 'pack_bsa']
+    assert selected_steps(build_parser().parse_args(['--export-only'])) == ['export']
+    assert selected_steps(build_parser().parse_args(['--lod-only'])) == ['lod']
     assert selected_steps(build_parser().parse_args(
         ['--build-morrowind-patch', 'D:/MW/Data Files'])) == [
-            'export', 'meshes', 'creatures', 'import', 'sounds', 'scripts']
+            'export', 'meshes', 'creatures', 'import', 'sounds', 'scripts', 'pack_bsa']
     args = build_parser().parse_args(['--data-dir', 'D:/X/Data', '-f', 'A.esm'])
     assert args.data_dir == 'D:/X/Data'

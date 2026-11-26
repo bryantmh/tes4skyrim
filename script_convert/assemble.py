@@ -30,6 +30,7 @@ from script_convert.poll_motion import relative_sets
 from script_convert.movie_last import movie_last
 from script_convert.redress import armor_names, redress_runs
 from script_convert.release_order import release_into_package
+from script_convert.trigger_events import trigger_events
 from script_convert.emit import script as _script
 from script_convert.tes4 import nodes as N
 from script_convert.unequip_guard import unequip_guard
@@ -636,48 +637,14 @@ def events(conv, tree, extends: str, skip_poll: bool = False) -> list:
     out = (_carried_read(conv, tree, extends, merged, order)
            + _record_last_activator(conv, merged, order)
            + _track_holder(conv, tree, merged, order))
+    trigger = BLOCK_MAP['ontrigger']
     for header in order:
         opener, closer = header
-        if opener == BLOCK_MAP['ontrigger'][0]:
-            out += _one_trigger_at_a_time(opener, closer, merged[header])
+        if header == trigger:
+            out += trigger_events(opener, closer, merged[header], BLOCK_MAP['ontriggerenter'] in merged)
         else:
             out += [opener] + merged[header] + [closer, '']
-        # TES4's `begin OnTrigger` runs EVERY FRAME an object is inside the
-        # volume.  Skyrim splits that: OnTriggerEnter is the entry frame and
-        # OnTrigger the repeat, so a converted OnTrigger body alone never runs
-        # on entry.  Emitting BOTH keeps each event's meaning, and the entry
-        # event just calls the repeat one so the body exists once.  Skipped
-        # when the script authors its own OnTriggerEnter -- Papyrus allows one
-        # definition per event and the author's body is authoritative.
-        if (opener == BLOCK_MAP['ontrigger'][0]
-                and BLOCK_MAP['ontriggerenter'] not in merged):
-            out += ['Event OnTriggerEnter(ObjectReference akActionRef)',
-                    '  ; Entry frame: Skyrim sends OnTriggerEnter, not '
-                    'OnTrigger (vanilla Tripwire/PressurePlate do the same).  '
-                    'Repeat ticks still arrive on OnTrigger.',
-                    '  OnTrigger(akActionRef)',
-                    'EndEvent',
-                    '']
     return out
-
-
-def _one_trigger_at_a_time(opener: str, closer: str, body: list) -> list:
-    """OnTrigger that skips an event while the previous one still runs.
-
-    TES4 finished each frame's OnTrigger before the next began.  Papyrus runs
-    every event on its own thread, and a thread waiting on a game call lets
-    the next one in, so a one-time block that sets its flag at the end ran
-    once per overlapping event.  The body is a function so a TES4 `return`
-    inside it still clears the busy flag.
-
-    See: docs/commentary/script_convert.md#one-trigger-at-a-time
-    """
-    return (['Bool TES4_TriggerBusy = False', '', opener,
-             '  If TES4_TriggerBusy', '    Return', '  EndIf',
-             '  TES4_TriggerBusy = True', '  TES4_OnTriggerBody(akActionRef)',
-             '  TES4_TriggerBusy = False', closer, '',
-             'Function TES4_OnTriggerBody(ObjectReference akActionRef)']
-            + body + ['EndFunction', ''])
 
 
 def _record_last_activator(conv, merged: dict, order: list) -> list:
@@ -785,6 +752,7 @@ def _track_holder(conv, tree, merged: dict, order: list) -> list:
         return []
     arm = _arm(conv, conv._get_update_interval(), True)
     passes = [f'  {_MENU_PASSES}()'] if _menu_passes(conv, tree) else []
+    passes += [f'  {_CARRIED_PASSES}()'] if _carried_passes(conv) else []
     for header, holder in _HOLDER_EVENTS:
         if header not in merged:
             merged[header] = []
@@ -882,7 +850,7 @@ def poll(conv, tree, extends: str) -> list:
     # finishes replaces it with the real interval.
     out += _arm(conv, _INSURANCE_SECS, load_gated)
 
-    passes = _menu_passes(conv, tree)
+    passes = _menu_passes(conv, tree) or _carried_passes(conv)
     sc.poll_return_prefix = _return_arm(conv, interval, load_gated, passes)
     body = _poll_body(conv, tree, extends, interval, load_gated)
     sc.poll_return_prefix = ''
@@ -893,8 +861,10 @@ def poll(conv, tree, extends: str) -> list:
     arm = done + _arm(conv, interval, load_gated)
     if not passes:
         return out + body + ([] if _ends_in_return(body) else arm) + ['EndEvent', '']
-    return (out + [f'  {_POLL_PASS}()'] + arm + ['EndEvent', '', f'Function {_POLL_PASS}()']
-            + body + ['EndFunction', ''] + _menu_pass_loop(interval))
+    noted = [f'  {_LAST_PASS} = Utility.GetCurrentRealTime()'] if _carried_passes(conv) else []
+    return (out + [f'  {_POLL_PASS}()'] + noted + arm
+            + ['EndEvent', '', f'Function {_POLL_PASS}()'] + body + ['EndFunction', '']
+            + _pass_loops(conv, tree, interval))
 
 
 #: When the pass now running started (real seconds), 0 between passes.
@@ -1039,6 +1009,48 @@ def _menu_pass_loop(interval: str) -> list:
             '  While TES4_mine == TES4_MenuPassRun && Utility.IsInMenuMode()',
             f'    {_POLL_PASS}()',
             f'    Utility.WaitMenuMode({interval})',
+            '  EndWhile',
+            'EndFunction', '']
+
+
+#: Runs the poll body while the item sits in a loaded holder's inventory; a newer run ends an older one.
+_CARRIED_PASSES = 'TES4_CarriedPasses'
+
+#: Real time OnUpdate last finished a pass; the carried loop idles while it is recent.
+_LAST_PASS = 'TES4_LastPass'
+
+
+def _carried_passes(conv) -> bool:
+    """Must an inventory item's GameMode poll run from its own holder events?"""
+    return _carried(conv) and conv.sc.on_item
+
+
+def _pass_loops(conv, tree, interval: str) -> list:
+    """The loops that run `TES4_PollPass` without an update registration."""
+    loops = _menu_pass_loop(interval) if _menu_passes(conv, tree) else []
+    return loops + (_carried_pass_loop(interval) if _carried_passes(conv) else [])
+
+
+def _carried_pass_loop(interval: str) -> list:
+    """TES4_CarriedPasses: a poll pass every `interval` seconds while a loaded holder carries the item.
+
+    An item that never lay in the world has no native object in an inventory, so
+    its update registration fails; TES4 ran its GameMode there every frame.
+    `Utility.Wait` stands still in menus, as GameMode did; the loop idles while
+    OnUpdate passes run (an item that has a native object).
+
+    See: docs/commentary/script_convert.md#carried-gamemode-runs-in-event
+    """
+    return ['Int TES4_CarryRun', f'Float {_LAST_PASS} = 0.0', '',
+            f'Function {_CARRIED_PASSES}()',
+            '  TES4_CarryRun += 1',
+            '  Int TES4_mine = TES4_CarryRun',
+            f'  While TES4_mine == TES4_CarryRun && {_HOLDER_VAR}',
+            f'    If Utility.GetCurrentRealTime() - {_LAST_PASS} > 2 * {interval} && '
+            f'TES4Polyfill.SafeGameModeGate({_HOLDER_VAR})',
+            f'      {_POLL_PASS}()',
+            '    EndIf',
+            f'    Utility.Wait({interval})',
             '  EndWhile',
             'EndFunction', '']
 

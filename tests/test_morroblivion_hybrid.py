@@ -6,10 +6,16 @@ from types import SimpleNamespace
 from asset_convert.character.morrowind_armor import _assembled
 from asset_convert.nif import morroblivion_textures as mbt
 from asset_convert.nif.grass_profile import load_grass_model_paths
+from asset_convert.nif.tex_paths import full_res_twin
 from asset_convert.sources import source_registry
 from tes4_export import morroblivion_companion as companion
 from tes4_export.morroblivion_ground import MorroblivionGround, match_ground, write_pairs
-from tes4_export.morroblivion_hybrid import _swap_world, load_whitelist, swap_ground, with_maps
+from tes4_export.morroblivion_weather import copy_weathers
+from asset_convert import game_paths
+from asset_convert.sources import hybrid_assets
+from tes4_export import morroblivion_hybrid as hybrid_mod
+from tes4_export.morroblivion_hybrid import (MANIFEST_NAME, _swap_world, load_whitelist, remove_copies, swap_ground,
+                                             with_maps)
 
 
 def _rows(tmp_path, rows):
@@ -86,7 +92,7 @@ def test_companion_reuses_master_furniture_and_restates_edits(tmp_path):
     (bm / 'meshes' / 'f' / 'stool.nif').write_bytes(b'..BSFurnitureMarker..')
     layout = {'names': ['Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm', 'Morrowind - Morroblivion Hybrid.esp'],
               'masters': [('Morrowind.esm', str(mw))], 'own': ('Bloodmoon.esm', str(bm)),
-              'companions': [('Morrowind - Morroblivion Hybrid.esp', str(comp))]}
+              'companions': [('Morrowind - Morroblivion Hybrid.esp', str(comp))], 'borrowed': []}
     bases, furn = companion.furniture(layout, {'f\\stool.nif': '5'})
     assert bases['00000001'] == '03ABCDEF' and bases['02000002'].startswith('04')
     assert [f for f, _l in furn] == [bases['02000002']] and 'MNAM.Flags=5' in furn[0][1]
@@ -179,3 +185,148 @@ def test_the_owners_grass_pass_places_its_companions_grass(tmp_path):
     _export(tmp_path / 'Morrowind.esm' / 'Morrowind - Morroblivion Hybrid.esp', 'Master[0]=Morrowind.esm\n',
             {'GRAS': [{'FormID': '01000009', 'Model.MODL': 'Morroblivion/Grass/G1.nif'}]})
     assert load_grass_model_paths(str(tmp_path / 'Morrowind.esm')) == {'morroblivion/grass/g1.nif'}
+
+
+def test_an_older_builds_copies_go_only_when_they_match_their_source(tmp_path):
+    """An old copy list names files a build copied into the export: identical ones and split halves go, the rest stay.
+
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-shared-assets
+    """
+    folder, source = tmp_path / 'P.esp', tmp_path / 'Morrowind_ob.esm'
+    for rel, own, src in (('meshes/a.nif', b'n', b'n'), ('textures/t.dds', b'mine', b'theirs'),
+                          ('meshes/armor/split/g_left.nif', b'h', None)):
+        (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+        (folder / rel).write_bytes(own)
+        if src is not None:
+            (source / rel).parent.mkdir(parents=True, exist_ok=True)
+            (source / rel).write_bytes(src)
+    (folder / MANIFEST_NAME).write_text('meshes/a.nif\ntextures/t.dds\nmeshes/armor/split/g_left.nif\n',
+                                        encoding='utf-8')
+    assert remove_copies(str(tmp_path), 'P.esp', [source]) == (2, 1)
+    assert (folder / 'textures' / 't.dds').read_bytes() == b'mine'
+    assert not (folder / 'meshes' / 'a.nif').exists() and not (folder / MANIFEST_NAME).exists()
+
+
+def test_a_borrowed_path_ships_under_the_shared_namespace(tmp_path, monkeypatch):
+    """Records and meshes name a borrowed file in the shared mod; the plugin's own files keep its namespace."""
+    own = tmp_path / 'Morrowind.esm'
+    _export(own, 'Source=TES3\n', {})
+    hybrid_assets.write_borrowed(own, {'meshes/morro/chair.nif': 'Morrowind_ob.esm',
+                                       'textures/morro/txuchair.dds': 'Morrowind_ob.esm'}, [])
+    monkeypatch.setenv(game_paths.BORROWED_ENV, '')
+    game_paths.set_namespace('morrowind')
+    game_paths.set_borrowed(own)
+    try:
+        assert game_paths.asset_namespace('Morro\\Chair.NIF') == hybrid_assets.NAMESPACE
+        assert game_paths.asset_namespace('morro\\TxUChair.tga') == hybrid_assets.NAMESPACE
+        assert game_paths.asset_namespace('f\\chair.nif') == 'morrowind'
+        cache = game_paths.alias_borrowed({'morroblivion/morro/chair.nif': 1, 'morrowind/f/x.nif': 2,
+                                           'morrowind/morro/chair.nif': 3})
+        assert cache['morroblivion/morro/chair.nif'] == 1 and cache['morrowind/morro/chair.nif'] == 3
+    finally:
+        game_paths.set_borrowed('')
+        game_paths.set_namespace(game_paths.DEFAULT_NAMESPACE)
+
+
+def test_a_split_items_textures_are_borrowed_with_its_halves(tmp_path, monkeypatch):
+    """A split half has no owner, so the textures of the model it is split from are borrowed for it."""
+    owner = tmp_path / 'Morrowind_ob.esm'
+    for rel in ('meshes/armor/g.nif', 'textures/armor/g.dds'):
+        (owner / rel).parent.mkdir(parents=True, exist_ok=True)
+        (owner / rel).write_bytes(b'x')
+    _export(tmp_path / 'P.esm', 'Source=TES3\n', {})
+    monkeypatch.setattr(hybrid_mod, '_nif_textures', lambda path: {'armor\\g.dds'})
+
+    def owner_of(part, rel):
+        """The owner's file at `part`/`rel`, if any."""
+        found = hybrid_mod.find_under([owner / part], rel)
+        return ('Morrowind_ob.esm', found) if found else None
+    hybrid = SimpleNamespace(named={'armor\\split\\g_left_0.nif'}, halves=lambda: {'armor\\split\\g_left_0.nif'},
+                             owner_of=owner_of, dest=tmp_path / 'P.esm', export_root=str(tmp_path), plugin='P.esm',
+                             split_items=[{'models': {'Male.BipedModel.MODL': 'armor\\g.nif'}, 'owners': []}],
+                             models=SimpleNamespace(owners={}))
+    assert hybrid_mod.borrow_assets(hybrid, []) == (1, 1)
+    assert hybrid_assets.read_borrowed(tmp_path / 'P.esm')['textures/armor/g.dds'] == 'Morrowind_ob.esm'
+
+
+def test_hand_made_lods_are_borrowed_for_swapped_and_kept_meshes(tmp_path, monkeypatch):
+    """A swapped mesh's LOD is borrowed beside it; a kept vanilla mesh takes its pair's LOD under its own name.
+
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-lod-meshes
+    """
+    owner = tmp_path / 'Morrowind_ob.esm'
+    for rel in ('meshes/morro/ruin.nif', 'meshes/morro/ruin_far.nif', 'meshes/morro/canton_far.nif',
+                'meshes/morro/rock_far.nif', 'textures/morro/stone.dds'):
+        (owner / rel).parent.mkdir(parents=True, exist_ok=True)
+        (owner / rel).write_bytes(b'x')
+    plugin = tmp_path / 'Morrowind.esm'
+    _export(plugin, 'Source=TES3\n', {})
+    monkeypatch.setattr(hybrid_mod, '_nif_textures', lambda path: hybrid_mod.with_maps('morro\\stone.dds'))
+
+    def owner_of(part, rel):
+        """The owner's file at `part`/`rel`, if any."""
+        found = hybrid_mod.find_under([owner / part], rel)
+        return ('Morrowind_ob.esm', found) if found else None
+    pairs = {'x\\ruin.nif': 'morro\\ruin.nif', 'x\\canton.nif': 'morro\\canton.nif', 'x\\rock.nif': 'morro\\rock.nif'}
+    models = SimpleNamespace(owners=dict.fromkeys(pairs, ['id']), owns=lambda rel: rel != 'x\\rock.nif',
+                             replacement=lambda rel, index: pairs[rel])
+    hybrid = SimpleNamespace(named={'morro\\ruin.nif'}, halves=set, owner_of=owner_of, dest=plugin,
+                             export_root=str(tmp_path), plugin='Morrowind.esm', split_items=[], models=models,
+                             index=None, vanilla=True, find=lambda rel: hybrid_mod.find_under([owner / 'meshes'], rel),
+                             world_model=lambda rel: 'morro\\ruin.nif' if rel == 'x\\ruin.nif' else '')
+    assert hybrid_mod.borrow_assets(hybrid, []) == (3, 1)
+    rows = hybrid_assets.read_borrowed(plugin)
+    assert {'meshes/morro/ruin.nif', 'meshes/morro/ruin_far.nif', 'textures/morro/stone.dds'} == set(rows)
+    assert hybrid_assets.read_lods(plugin) == {'x\\canton_far.nif': ('Morrowind_ob.esm', 'morro\\canton_far.nif')}
+
+
+def test_a_lowres_texture_falls_back_to_its_borrowed_twin(tmp_path, monkeypatch):
+    """A `_far` mesh's missing `lowres` texture resolves to its full-res twin in the shared mod when borrowed.
+
+    See: docs/commentary/asset_convert_shader.md#lowres-textures
+    """
+    own = tmp_path / 'Morrowind.esm'
+    _export(own, 'Source=TES3\n', {})
+    hybrid_assets.write_borrowed(own, {'textures/morro/stone.dds': 'Morrowind_ob.esm'}, [])
+    monkeypatch.setenv(game_paths.BORROWED_ENV, '')
+    game_paths.set_namespace('morrowind')
+    game_paths.set_borrowed(own)
+    try:
+        assert full_res_twin('Textures\\morrowind\\lowres\\morro\\stone.dds') == 'Textures\\morroblivion\\morro\\stone.dds'
+        assert full_res_twin('Textures\\morrowind\\lowres\\x\\own.dds') == 'Textures\\morrowind\\x\\own.dds'
+    finally:
+        game_paths.set_borrowed('')
+        game_paths.set_namespace(game_paths.DEFAULT_NAMESPACE)
+
+
+def test_a_hybrid_root_copies_the_weathers_with_morrowinds_own_sounds(tmp_path):
+    """The sky is Morroblivion's, the sounds the ones Morrowind.ini names, and regions and world point at the copies.
+
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-weathers
+    """
+    _export(tmp_path / 'Morrowind_ob.esm', 'Master[0]=Oblivion.esm\n', {
+        'WTHR': [{'FormID': '01000001', 'EditorID': 'mwClear', 'DNAM.UpperCloudLayer': 'Sky/Clear.dds'},
+                 {'FormID': '01000002', 'EditorID': 'mwRain', 'SoundCount': '1', 'Sound[0].FormID': '00086579',
+                  'Sound[0].Type': '1'}],
+        'CLMT': [{'FormID': '01000003', 'EditorID': 'mwMorrowindClimate', 'WeatherCount': '2',
+                  'Weather[0].FormID': '01000001', 'Weather[0].Chance': '60',
+                  'Weather[1].FormID': '01000002', 'Weather[1].Chance': '40'}]})
+    data = tmp_path / 'Game' / 'Data Files'
+    data.mkdir(parents=True)
+    (tmp_path / 'Game' / 'Morrowind.ini').write_text('[Weather Rain]\nRain Loop Sound ID=Rain\n'
+                                                     'Ambient Loop Sound ID=None\n', encoding='cp1252')
+    out = {'SOUN': [('00000A01', ['EditorID=Rain'])],
+           'REGN': [('00000B01', ['RegionData[0].Weather[0].MorrowindType=4'])],
+           'WRLD': [('00000C01', ['CNAM.Vanilla=00000812'])]}
+    ctx = SimpleNamespace(master_names=[], export_root=str(tmp_path),
+                          index=SimpleNamespace(lookup_editor_id=lambda _e: None),
+                          derive=lambda key: {'morroblivionweather:mwclear': '00000D01',
+                                              'morroblivionweather:mwrain': '00000D02'}.get(key.lower(), '00000D03'))
+    skies = copy_weathers(out, ctx, str(data / 'Morrowind.esm'), ['Morrowind_ob.esm'])
+    rain = dict(l.split('=', 1) for l in dict(out['WTHR'])['00000D02'])
+    assert rain['SoundCount'] == '1' and rain['Sound[0].FormID'] == '00000A01' and rain['Sound[0].Type'] == '1'
+    climate = out['CLMT'][0][1]
+    assert 'Weather[0].FormID=00000D01' in climate and 'Weather[1].FormID=00000D02' in climate
+    assert out['REGN'][0][1] == ['RegionData[0].Weather[0].FormID=00000D02']
+    assert out['WRLD'][0][1] == ['CNAM.Climate=00000D03']
+    assert skies == ['Sky/Clear.dds']

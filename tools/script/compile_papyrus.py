@@ -17,6 +17,7 @@ from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
+from asset_convert.sources import output_files
 from core.subprocess_flags import windows_cmd
 
 def find_compiler():
@@ -69,7 +70,8 @@ def compile_one(args):
         return ('err', 'UNKNOWN', combined[:200], f.name)
     return ('ok', None, None, f.name)
 
-def main():
+def _parse_args():
+    """The command line."""
     parser = argparse.ArgumentParser(description='Compile Papyrus scripts')
     parser.add_argument('--src', default=str(_PROJECT_ROOT / 'output' / 'oblivion.esm' / 'scripts' / 'source'))
     parser.add_argument('--out', default=str(_PROJECT_ROOT / 'temp' / 'pex'))
@@ -79,11 +81,16 @@ def main():
                              'when compiling a subset that names other converted types)')
     parser.add_argument('--errors-detail', action='store_true', help='Show sample file per error category')
     parser.add_argument('--workers', type=int, default=max(1, (os.cpu_count() or 4) - 1))
-    args = parser.parse_args()
+    return parser.parse_args()
 
+
+def main():
+    """Compile every `.psc` in `--src`, archived ones included, and summarize the errors."""
+    args = _parse_args()
     compiler = find_compiler()
     headers = args.headers or find_skyrim_headers()
     src_dir = Path(args.src)
+    output_files.unpack(src_dir, '.psc')
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 

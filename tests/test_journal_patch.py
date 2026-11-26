@@ -117,19 +117,19 @@ def test_report_headline():
     assert report_status([SKIPPED]) == ('Nothing Patched', 'warn')
 
 
-def test_mod_zip_holds_the_patched_journal(tmp_path):
-    """The loaded journal is zipped under Interface/, and the game folder is
-    left exactly as it was."""
+def test_mod_folder_holds_the_patched_journal(tmp_path):
+    """The loaded journal is written under Interface/ in the mod folder, and
+    the game folder is left exactly as it was."""
     data, out = tmp_path / 'Data', tmp_path / 'output'
     (data / 'Interface').mkdir(parents=True)
     original = _quests_page_movie()
     (data / 'Interface' / 'quest_journal.swf').write_bytes(original)
-    results, zip_path = build_journal_mod(str(data), out)
+    results, folder = build_journal_mod(str(data), out)
     assert [o for o, _ in results] == [PATCHED, SKIPPED]
-    assert zip_path == out / 'Finished Mods' / f'{MOD_NAME}.zip'
-    with zipfile.ZipFile(zip_path) as zf:
-        assert zf.namelist() == ['Interface/quest_journal.swf']
-        assert is_patched(zf.read('Interface/quest_journal.swf'))
+    assert folder == out / MOD_NAME
+    assert os.listdir(folder / 'Interface') == ['quest_journal.swf']
+    assert is_patched((folder / 'Interface' / 'quest_journal.swf').read_bytes())
+    assert not (out / 'Finished Mods').exists()
     assert os.listdir(data / 'Interface') == ['quest_journal.swf']
     assert (data / 'Interface' / 'quest_journal.swf').read_bytes() == original
 
@@ -137,9 +137,9 @@ def test_mod_zip_holds_the_patched_journal(tmp_path):
 def test_nothing_to_patch_writes_no_zip(tmp_path):
     """With no journal installed there is no mod to write."""
     (tmp_path / 'Data').mkdir()
-    results, zip_path = build_journal_mod(str(tmp_path / 'Data'), tmp_path)
-    assert zip_path is None and [o for o, _ in results] == [SKIPPED, SKIPPED]
-    assert not (tmp_path / 'Finished Mods').exists()
+    results, folder = build_journal_mod(str(tmp_path / 'Data'), tmp_path)
+    assert folder is None and [o for o, _ in results] == [SKIPPED, SKIPPED]
+    assert not (tmp_path / MOD_NAME).exists()
 
 
 def test_mod_zip_swaps_in_whole(tmp_path):

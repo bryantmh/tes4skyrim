@@ -13,6 +13,7 @@ from output_layout import asset_cache_chain
 import gc
 import glob
 import hashlib
+import json
 import math
 import operator
 import os
@@ -698,6 +699,9 @@ _TAG_EXCLUDE = frozenset({
     'worker.py', '__init__.py', 'lookup_grid.py', 'seeding.py', 'phase.py',
 })
 
+#: Beside this module in TESRACT.exe: {generator: tag} hashed from the build's sources.
+BAKED_TAGS = 'navmesh_tags.json'
+
 #: Native source directory deciding cell geometry; its .cpp/.h are hashed with the Python, never the .pyd.
 _TAG_NATIVE = 'navgrow'
 
@@ -764,8 +768,8 @@ def collision_cache_chain(export_dir: str) -> tuple:
     return asset_cache_chain(export_dir, 'collision_cache.bin')
 
 
-def tag_sources() -> list:
-    """The Python sources the current generator's tag hashes.
+def tag_sources(lattice=None) -> list:
+    """The Python sources a generator's tag hashes (the configured one when `lattice` is None).
 
     The corridor's (the published cache, gated on push) are the top-level
     navmesh modules only; the lattice adds its own package, which never
@@ -773,27 +777,18 @@ def tag_sources() -> list:
     """
     here = os.path.dirname(os.path.abspath(__file__))
     srcs = glob.glob(os.path.join(here, '*.py'))
-    if navmesh_generator() != CORRIDOR:
+    if navmesh_generator() != CORRIDOR if lattice is None else lattice:
         srcs += glob.glob(os.path.join(here, 'lattice', '*.py'))
     return sorted(s for s in srcs if os.path.basename(s) not in _TAG_EXCLUDE)
 
 
-def navmesh_geom_cache(collision_cache: str):
-    """(cache_dir, tag) for the on-disk navmesh geometry cache, or None.
-
-    The tag hashes `tag_sources` and the native march, so editing navmesh
-    code misses every entry.  Each generator has its own folder (the
-    corridor's is the published one), so switching never overwrites the
-    other's entries.  Collision enters per-cell via `from_pgrd._geom_hash`.
-    Sources are hashed with LF newlines.
-
-    See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
-    """
-    if not collision_cache or not os.path.exists(collision_cache):
+def source_tag(lattice: bool):
+    """The tag hashed from this checkout's sources, or None where they are absent (TESRACT.exe)."""
+    srcs = tag_sources(lattice)
+    if not srcs:
         return None
-    lattice = navmesh_generator() != CORRIDOR
     h = hashlib.sha1(b'lattice' if lattice else b'')
-    for src in tag_sources():
+    for src in srcs:
         try:
             with open(src, 'rb') as fh:
                 h.update(fh.read().replace(b'\r\n', b'\n'))
@@ -801,10 +796,38 @@ def navmesh_geom_cache(collision_cache: str):
             return None
     for body in _native_tag_sources():
         h.update(body)
+    return h.hexdigest()
+
+
+def baked_tag(lattice: bool):
+    """The tag `tools/release/build_exe.py` hashed from the build's sources and shipped in BAKED_TAGS, or None."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), BAKED_TAGS), encoding='utf-8') as fh:
+            return json.load(fh).get('lattice' if lattice else CORRIDOR)
+    except (OSError, ValueError):
+        return None
+
+
+def navmesh_geom_cache(collision_cache: str):
+    """(cache_dir, tag) for the on-disk navmesh geometry cache, or None.
+
+    The tag hashes `tag_sources` and the native march, so editing navmesh
+    code misses every entry; TESRACT.exe has no sources and reads the tag its
+    build shipped.  Each generator has its own folder (the corridor's is the
+    published one).  Collision enters per-cell via `from_pgrd._geom_hash`.
+
+    See: docs/commentary/tes5_import_navmesh.md#pool-orchestration
+    """
+    if not collision_cache or not os.path.exists(collision_cache):
+        return None
+    lattice = navmesh_generator() != CORRIDOR
+    tag = source_tag(lattice) or baked_tag(lattice)
+    if tag is None:
+        return None
     folder = 'navmesh_geom_cache' + ('_lattice' if lattice else '')
     cache_dir = os.path.join(os.path.dirname(collision_cache), folder)
     os.makedirs(cache_dir, exist_ok=True)
-    return cache_dir, h.hexdigest()
+    return cache_dir, tag
 
 
 def stamp_navmesh_cache_tag(geom_cache) -> None:

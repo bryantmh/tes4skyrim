@@ -325,7 +325,10 @@ comes from what actually solved 46 recent bugs
   Morrowind-format plugins have no scripts stage. Morrowind changes are tested via
   the compat patch, `Tamriel_Data.esm` and `TR_Mainland.esm`, always with
   `--morrowind-source morroblivion`.
-- 🛑 **Never pack a BSA**: the user tests loose files.
+- **Plugin outputs ship as archives** (`S.bsa`, then `S - Part 2.bsa`, `S - Part 3.bsa`, ...; script
+  sources included); the pack deletes the loose copies. Plugin-less outputs (LOD, asset-only mods, the UI) stay loose. Use `--keep-loose` when you need
+  loose files; read output through `asset_convert/sources/output_files.py`, never by assuming a loose path
+  ([archive-only output](docs/commentary/asset_convert_bsa.md#archive-only-output)).
 - **Don't start a build until you're sure the fix is correct:** edits finished,
   targeted tests passed, your own diff re-read.
 - <a id="build-every-file"></a>**Build every stage your changes touch before

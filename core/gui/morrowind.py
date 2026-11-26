@@ -21,15 +21,20 @@ from tes4_export.morrowind_patch import PATCH_NAME, PATCH_SOURCES, patch_exists,
 #: The modes in the order offered: (key, name, what it converts, what it needs).
 MODES = (
     (SOURCE_VANILLA, "Vanilla",
-     "Morrowind, Tribunal and Bloodmoon as authored, with Morrowind's own meshes and textures",
+     "Morrowind exactly as authored.",
      "Needs nothing else"),
     (SOURCE_MORROBLIVION, "Morroblivion",
-     f"Converts against Morroblivion and {PATCH_NAME}, built automatically",
+     "Builds a compatibility patch with the records and assets Morroblivion lacks from Morrowind, so any "
+     "Morrowind mod can be converted to run on Morroblivion.",
      "Needs Morrowind_ob.esm converted first"),
-    (SOURCE_HYBRID, "Vanilla + Morroblivion meshes",
-     "Morrowind records as authored; reviewed Morroblivion meshes, furniture and higher-resolution textures",
+    (SOURCE_HYBRID, "Hybrid",
+     "Morrowind as authored, with a selection of Morroblivion's assets and records added.",
      "Needs Morrowind_ob.esm converted first"),
 )
+#: The mode the menus mark as recommended.
+RECOMMENDED = SOURCE_HYBRID
+#: conversion_config.json key: True once the user answered the mode question in this GUI.
+MODE_ASKED_KEY = "morrowindModeAsked"
 
 #: Menu look choices: (config value, label, the art it needs or None).
 LOOKS = ((STYLE_MORROWIND, "Morrowind", ICONS_MORROWIND), (STYLE_SKYRIM, "Skyrim", None))
@@ -47,6 +52,11 @@ def saved_mode(cfg: dict):
     """The mode the user chose, or None when they have never been asked."""
     value = str(cfg.get(MORROWIND_SOURCE_KEY, "")).strip().lower()
     return value if value in {m[0] for m in MODES} else None
+
+
+def mode_asked(cfg: dict) -> bool:
+    """True once the mode question was answered here; a mode saved by the old GUI still asks, preselected."""
+    return bool(cfg.get(MODE_ASKED_KEY)) and saved_mode(cfg) is not None
 
 
 def mode_index(key) -> int:
@@ -67,6 +77,18 @@ def needs_morroblivion(key) -> bool:
 def needs_patch(key) -> bool:
     """True for the mode that converts against the compatibility patch."""
     return key == SOURCE_MORROBLIVION
+
+
+def mode_skips(key, plugin: str) -> bool:
+    """True when mode `key` never converts `plugin`: Morroblivion's patch stands in for Morrowind's own masters."""
+    return needs_patch(key) and plugin.lower() in {p.lower() for p in PATCH_SOURCES}
+
+
+def mode_options() -> list:
+    """Each mode as a ModeOpt row; a mode is usable once what it needs is converted."""
+    converted = morroblivion_converted()
+    return [{"key": k, "name": n, "lines": lines, "need": need, "ok": converted or not needs_morroblivion(k),
+             "tag": "Recommended" if k == RECOMMENDED else ""} for k, n, lines, need in MODES]
 
 
 def morroblivion_converted() -> bool:

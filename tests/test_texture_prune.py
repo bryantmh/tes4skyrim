@@ -19,10 +19,11 @@ class TestExcludedCategories:
         assert tp.is_excluded('tes4/faces/oblivion.esm/0001a2b3_0.dds')
         assert tp.is_excluded('nehrim/faces/nehrim.esm/000f00d_1.dds')
 
-    def test_oblivion_ui_atlases_are_excluded(self):
-        """Skyrim's interface shares no art with Oblivion's."""
+    def test_menu_art_is_packed(self):
+        """Book pages name `img://textures/<ns>/menus/book/...`, so the menus trees ship."""
+        assert not tp.is_excluded('nehrim/menus/book/mysteriumxarxespg1.dds')
         for d in ('menus', 'menus80', 'menus50'):
-            assert tp.is_excluded('tes4/%s/icons/quest.dds' % d)
+            assert not tp.is_excluded('tes4/%s/icons/quest.dds' % d)
 
     def test_superseded_lod_is_excluded(self):
         """Our own bake into AutoConvertLOD replaces the shipped tiles."""
@@ -35,7 +36,7 @@ class TestExcludedCategories:
 
     def test_only_the_second_segment_matches(self):
         """A blacklisted word deeper in the path is somebody's real asset."""
-        assert not tp.is_excluded('tes4/architecture/menus/signpost.dds')
+        assert not tp.is_excluded('tes4/architecture/faces/signpost.dds')
         assert not tp.is_excluded('tes4/clutter/faces/mask01.dds')
 
 

@@ -17,6 +17,7 @@ Three separate callable steps:
       Assumes extract_bsas has already been run."""
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 from core.plugin_masters import masters_from_export_header
@@ -28,10 +29,9 @@ from asset_convert.nif import grass_profile
 from asset_convert.nif import morroblivion_textures
 from asset_convert.character import hair_pipeline
 from asset_convert.texture import landscape_normals
-from asset_convert.texture import image_transcode
-from asset_convert.texture import luminance_textures
 from asset_convert.collision import mesh_scan_fragments
 from asset_convert.nif import magic_art, nif_batch
+from asset_convert.nif.shaders import master_texture_roots
 from asset_convert.speedtree import spt_converter
 from asset_convert.texture import texture_prune
 from asset_convert.character.morrowind_armor import assemble_armor
@@ -41,6 +41,9 @@ from asset_convert.collision import resting_items_plan
 from asset_convert.nif import door_plan
 from asset_convert.nif import fixture_plan
 from asset_convert.nif import furniture_travel
+from asset_convert.hybrid_build import build_borrowed
+from asset_convert.sources.hybrid_assets import MOD_NAME, is_hybrid
+from asset_convert.texture.texture_repair import repair_texture_tree
 
 
 # Shared-folder resolution lives in output_layout (one module, three
@@ -203,7 +206,20 @@ def _mesh_plan(rec_dirs: list) -> dict:
     return plan
 
 
-def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, export_root, plugin,
+def mesh_plan(export_root, plugin) -> dict:
+    """The conversion plan every member of `plugin`'s mod calls for, with its resting-items index."""
+    members = _exported_members(export_root, plugin)
+    if len(members) > 1:
+        print(f"  Mesh plan from every member of the mod: {', '.join(members)}")
+    plan = _mesh_plan([record_dir(export_root, m) for m in members])
+    resting, stocked = resting_items_plan.write_index(export_root, members)
+    plan[resting_items_plan.RESTING_KEY] = resting
+    print(f"  Resting items plan: {stocked} fixture models share a cell "
+          f"with an item")
+    return plan
+
+
+def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, plan,
                        mesh_subdirs, parallax, textures_only):
     """Run the NIF batch over `mesh_src`; return its stats dict.
 
@@ -215,14 +231,6 @@ def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, export_root, plugin,
     cleared first.
     See: docs/commentary/tes5_import_pipeline.md#producer-emitted-mesh-entries
     """
-    members = _exported_members(export_root, plugin)
-    if len(members) > 1:
-        print(f"  Mesh plan from every member of the mod: {', '.join(members)}")
-    plan = _mesh_plan([record_dir(export_root, m) for m in members])
-    resting, stocked = resting_items_plan.write_index(export_root, members)
-    plan[resting_items_plan.RESTING_KEY] = resting
-    print(f"  Resting items plan: {stocked} fixture models share a cell "
-          f"with an item")
     mesh_scan_fragments.clear_fragments(asset_dir)
     return nif_batch.batch_convert(
         str(mesh_src), output_dir=str(mesh_dst),
@@ -233,6 +241,29 @@ def _convert_mesh_tree(mesh_src, mesh_dst, asset_dir, export_root, plugin,
         textures_only=textures_only,
         scan_dir=None if textures_only else str(asset_dir),
     )
+
+
+def _convert_assembled(rec_dir, mesh_src: Path, mesh_dst: Path, plan: dict, options: tuple,
+                       mesh_stats: dict) -> None:
+    """Assemble Morrowind's worn armor in a temporary tree and convert it beside the plugin's meshes.
+
+    `options` is (mesh_subdirs, parallax, textures_only); the result folds into `mesh_stats`.
+    See: docs/commentary/asset_convert_armor.md#assembled-outside-the-export
+    """
+    mesh_subdirs, parallax, textures_only = options
+    with tempfile.TemporaryDirectory(prefix='assembled_armor_') as tree:
+        if not assemble_armor(rec_dir, mesh_src, tree):
+            return
+        result = nif_batch.batch_convert(
+            tree, output_dir=str(mesh_dst), fix_textures=True, subdir_filter=mesh_subdirs, wearable_plan=plan,
+            parallax=parallax, textures_only=textures_only,
+            scan_dir=None if textures_only else str(mesh_src.parent),
+            extra_textures=(str(mesh_src.parent / 'textures'), *master_texture_roots(mesh_src)))
+    for key, value in result.items():
+        if isinstance(value, int) and isinstance(mesh_stats.get(key, 0), int):
+            mesh_stats[key] = mesh_stats.get(key, 0) + value
+        elif isinstance(value, set):
+            mesh_stats.setdefault(key, set()).update(value)
 
 
 def convert_meshes(source_file, extract_dir='export', output_dir='output',
@@ -268,11 +299,13 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
     print("NIF Mesh Conversion")
     print("=" * 60)
     mesh_src = asset_dir / 'meshes'
-    assemble_armor(rec_dir, mesh_src)
+    plan = mesh_plan(extract_dir, source_name)
     if mesh_src.exists():
         stats['mesh_conversion'] = _convert_mesh_tree(
-            mesh_src, plugin_dir / 'meshes' / ns, asset_dir, extract_dir,
-            source_name, mesh_subdirs, parallax, textures_only)
+            mesh_src, plugin_dir / 'meshes' / ns, asset_dir, plan,
+            mesh_subdirs, parallax, textures_only)
+        _convert_assembled(rec_dir, mesh_src, plugin_dir / 'meshes' / ns, plan,
+                           (mesh_subdirs, parallax, textures_only), stats['mesh_conversion'])
         if parallax:
             _write_parallax_notice(plugin_dir)
         _persist_mesh_manifests(stats['mesh_conversion'], asset_dir,
@@ -282,6 +315,7 @@ def convert_meshes(source_file, extract_dir='export', output_dir='output',
         stats['mesh_conversion'] = {'converted': 0, 'skipped': 0, 'errors': 0}
     if mesh_subdirs:
         return stats
+    stats['borrowed'] = build_borrowed(rec_dir, output_dir, plugin_dir, plan, parallax, textures_only)
 
     if not textures_only:
         _profile_hair_and_grass(
@@ -326,10 +360,12 @@ def _profile_hair_and_grass(rec_dir, plugin_dir, stats, skip_hair,
 
     A grass model may be a master's converted mesh, found under `master_meshes`.
     """
+    print("  Hair and grass...")
     if not skip_hair:
         stats['hair'] = hair_pipeline.run(rec_dir, plugin_dir / 'meshes')
     processed, modified, missing = grass_profile.run(
-        rec_dir, plugin_dir / 'meshes', master_meshes)
+        rec_dir, plugin_dir / 'meshes', master_meshes,
+        plugin_dir.parent / MOD_NAME / 'meshes' if is_hybrid(rec_dir) else None)
     stats['grass_profile'] = {
         'processed': processed, 'modified': modified, 'missing': missing}
     print(f"  Grass models: {processed} placed under landscape\\grass"
@@ -355,7 +391,6 @@ def _copy_and_fix_textures(asset_dir, plugin_dir, ns, stats, rec_dir):
     is a no-op.
     See: docs/commentary/asset_convert_texture.md#landscape-normal-maps-dxt1-shiny
     """
-    from asset_convert.texture import parallax as _parallax
     tex_src = asset_dir / 'textures'
     if not tex_src.exists():
         return
@@ -363,43 +398,7 @@ def _copy_and_fix_textures(asset_dir, plugin_dir, ns, stats, rec_dir):
     stats['textures_copied'] = _copy_tree(tex_src, tex_dst)
     print(f"  Textures: {stats['textures_copied']} files -> {tex_dst}")
 
-    tc_found, tc_written, tc_failed = image_transcode.run(tex_dst)
-    stats['tga_transcoded'] = tc_written
-    if tc_found:
-        print(f"  Loose TGA/BMP: {tc_found} found, {tc_written} "
-              f"transcoded to DDS"
-              + (f", {tc_failed} failed" if tc_failed else ""))
-
-    lum_checked, lum_fixed = luminance_textures.run(tex_dst)
-    stats['luminance_textures_fixed'] = lum_fixed
-    print(f"  Luminance textures: {lum_checked} L8 found, "
-          f"{lum_fixed} expanded to BGRA")
-
-    checked, fixed = landscape_normals.run(tex_dst / 'landscape')
-    stats['landscape_normals_fixed'] = fixed
-    print(f"  Landscape normals: {checked} checked, {fixed} given the mask")
-
-    n_checked, n_fixed, n_kinds = landscape_normals.normalize_specular_alpha(
-        tex_dst, skip=(os.sep + 'landscape' + os.sep,))
-    if owns_namespace(rec_dir):
-        landscape_normals.write_default_normal(tex_dst.parent)
-    stats['spec_alpha_fixed'] = n_fixed
-    print(f"  Specular masks: {n_checked} normal maps checked, {n_fixed} "
-          f"given a constant mask "
-          f"(alpha {landscape_normals.DEFAULT_MASK_ALPHA}/255)")
-    if n_kinds:
-        print('    ' + ', '.join(f'{k}={v}'
-                                 for k, v in sorted(n_kinds.items())))
-
-    _n, _skip, _kept, _saved = _parallax.strip_diffuse_alpha(
-        tex_dst, keep=stats.get('mesh_conversion', {}).get(
-            'alpha_opacity_diffuse', ()))
-    if _n or _skip or _kept:
-        stats['parallax_diffuse_bc1'] = _n
-        print(f"  Parallax diffuse: {_n} DXT5->DXT1 "
-              f"({_saved / (1024 * 1024):.1f} MB saved)"
-              + (f", {_kept} kept (read as opacity)" if _kept else "")
-              + (f", {_skip} already stripped" if _skip else ""))
+    repair_texture_tree(tex_dst, stats, owns_namespace(rec_dir))
 
 
 def convert_speedtrees(source_file, extract_dir='export', output_dir='output',

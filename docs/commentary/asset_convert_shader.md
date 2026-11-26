@@ -347,7 +347,9 @@ mod ships ONLY under `lowres`. Dropping the segment pointed them at nothing.
 So the shape's diffuse and authored normal keep the authored `lowres` path when
 `resolve_source_texture` finds its source, and otherwise take the full-res twin
 (`resolve_texture` in `shaders.py`); when neither exists the twin is kept. A
-derived `_n`/`_g` map for a `lowres` diffuse also tries the twin's.
+derived `_n`/`_g` map for a `lowres` diffuse also tries the twin's. A twin a hybrid chain borrows
+resolves into the shared mod's namespace
+([hybrid LOD meshes](tes4_export_morrowind.md#hybrid-lod-meshes)).
 
 **A leading `data\` is stripped.** It is an authoring slip Oblivion tolerates (it
 resolves paths from the Data folder either way) and Skyrim does not. Measured

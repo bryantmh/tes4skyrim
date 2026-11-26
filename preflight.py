@@ -176,7 +176,7 @@ def _bundled_exe(rel: str, name: str, purpose: str,
     it somewhere.
 
     Off Windows these bundled .exe files run under Wine (subprocess_flags.
-    windows_cmd wraps every invocation) -- verified by hand against BSArch,
+    windows_cmd wraps every invocation) -- verified by hand against
     hkxcmd, papyrus.exe, LODGenx64.exe and the mopp bridge under Wine 11.0, all
     running correctly with ordinary Linux paths as arguments. So the exe itself
     being present is not sufficient there; wine has to be on PATH too.
@@ -374,12 +374,7 @@ _REQUIREMENTS = {
         lambda: _pip('numpy', 'numpy', 'Mesh math'),
     ],
 
-    'pack_bsa': [
-        lambda: _bundled_exe(
-            'external/bsarch/BSArch.exe', 'BSArch.exe',
-            'Packing the converted assets into Skyrim BSA archives',
-            'Or set "bsarchPath" in conversion_config.json to a copy elsewhere.'),
-    ],
+    'pack_bsa': [],
 
     'pack_zip': [],
 

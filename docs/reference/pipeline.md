@@ -143,6 +143,27 @@ non-Windows host has no `winreg` at all, and a Windows user whose registry
 entry points at the wrong install needs a way to override it. Both keys are
 empty by default, so on a normal Windows box this changes nothing.
 
+**First start: finding every source game.** `installed_game_dirs` lists the
+install folders three launchers record: Bethesda's registry keys (only some games
+write one; Steam Morrowind does not), GOG's `GOG.com\Games` keys, and every Steam
+library in `libraryfolders.vdf`. It keeps an install whose `Data` or `Data Files`
+folder holds a root master in a format the converter reads (`is_source_plugin`):
+
+| Header | Game | Kept |
+|---|---|---|
+| `TES3` | Morrowind | yes |
+| `TES4`, 20 bytes (HEDR at offset 20) | Oblivion, Nehrim | yes |
+| `TES4`, 24 bytes, form version < 43, HEDR 0.94 or ≥ 1.2 | Fallout 3, New Vegas | yes |
+| form version 43/44 | Skyrim LE/SE | no |
+| form version 131 or 0, HEDR 0.95/1.0 | Fallout 4 | no |
+
+The format check matters because the name alone misleads: converted copies of
+`Oblivion.esm`/`Morrowind.esm` sit in Skyrim's Data folder, and Fallout 4
+conversion mods ship `Fallout3.esm`/`FalloutNV.esm` in Fallout 4's own format.
+It reads one header per master (no folder walk) and measured 35 ms. The GUI runs
+it once (`gamesAsked` in the config), then asks which folders to keep; an
+unticked one is hidden like a removed game.
+
 ### Unreferenced textures are dropped at PACK time, never deleted
 
 Oblivion's BSAs carry textures for content the conversion never emits, so the
@@ -200,7 +221,7 @@ python -m pytest tests/test_import.py -v          # targeted tests only
 ```
 
 `tes4DataPath` / `tes5DataPath` (Oblivion's and Skyrim SE's `Data` folders)
-and `bsarchPath` (an explicit BSArch.exe location) are also read from here —
+are also read from here —
 see [Running off Windows](#running-off-windows) for why these matter more on
 Linux/Mac than on Windows.
 
@@ -237,7 +258,10 @@ outside the install is still saved in full.
 (`convert_cli.apply_config_overrides`): `--morrowind-source vanilla|morroblivion|hybrid`
 picks the Morrowind export mode, so an agent can build Arktwend in authored mode
 and Tamriel Rebuilt in Morroblivion mode back to back without touching the
-saved setting; `--no-engine-branches` forces the Python SpeedTree generator.
+saved setting; `--no-engine-branches` forces the Python SpeedTree generator;
+`--keep-loose` keeps the loose copies of packed files after the Pack step
+(saved: `"deleteLooseAfterPack": false`; see
+[archive-only output](../commentary/asset_convert_bsa.md#archive-only-output)).
 
 **A hybrid companion plugin** `<plugin> - Morroblivion Hybrid.esp` (furniture
 and grass) is written by each hybrid plugin's own Export and Import steps, into
@@ -298,9 +322,9 @@ else does — every bundled tool, code path and config key behaves identically
 either way.
 
 1. **Install Wine.** `subprocess_flags.windows_cmd()` transparently prepends
-   `wine` to every invocation of a bundled `.exe` (BSArch, hkxcmd, the papyrus
+   `wine` to every invocation of a bundled `.exe` (hkxcmd, the papyrus
    compiler, LODGen, the Havok mopp bridge) when not on Windows — callers never
-   branch on platform themselves. Verified by hand under Wine 11.0: all five
+   branch on platform themselves. Verified by hand under Wine 11.0 (BSArch too, before our own archive writer replaced it): all five
    run correctly with ordinary Linux paths as arguments, no prefix or drive
    mapping needed for any of them, with ONE exception -- `hkxcmd.exe` parses
    its own argv and treats a leading `/` as a switch prefix, silently

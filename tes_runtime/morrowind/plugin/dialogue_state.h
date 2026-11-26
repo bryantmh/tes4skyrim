@@ -552,6 +552,8 @@ struct GameHooks {
     void (*glideRef)(std::uint32_t runtimeFormId, const float pose[6],
                      float seconds) = nullptr;
     bool (*inCombat)(std::uint32_t runtimeFormId) = nullptr;
+    // Whether the actor touches any collision; true when it cannot be read.
+    bool (*onFloor)(std::uint32_t runtimeFormId) = nullptr;
     // `GetAttacked`: an actor struck by another it was not already fighting
     // stays attacked, as OpenMW's `CreatureStats::mAttacked`.
     // See: docs/commentary/morrowind_runtime.md#disease-queries

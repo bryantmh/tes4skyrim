@@ -32,6 +32,7 @@ and ARMA has no footstep SNDD yet.
 
 from asset_convert.game_paths import find_nocase
 from asset_convert.havok.behavior_vocabulary import movement_type_names
+from asset_convert.sources import output_files
 import os
 import struct
 
@@ -262,21 +263,30 @@ DEFAULT_ASH_PILE_GHOST = 0x00101048
 _CREA_PILE_ACTI = {}
 
 
-def _pile_mesh_bounds(proj, pile_name):
-    """Integer OBND bounds of an emitted death-pile NIF, or None.
+def _pile_mesh_file(proj, pile_name, out_root):
+    """The first output folder's death-pile NIF under `out_root`, loose or archived, or None.
+
+    See: docs/commentary/asset_convert_bsa.md#archive-only-output
+    """
+    if not out_root or not os.path.isdir(out_root):
+        return None
+    rel = ('meshes', proj.get('body_dir', ''), pile_name)
+    for plugin in sorted(os.listdir(out_root)):
+        folder = os.path.join(out_root, plugin)
+        path = find_nocase(folder, *rel) or os.path.join(folder, '\\'.join(rel))
+        if output_files.exists(path):
+            return path
+    return None
+
+
+def _pile_mesh_bounds(proj, pile_name, out_root):
+    """Integer OBND bounds of an emitted death-pile NIF in `out_root`, or None.
 
     Read from the shipped mesh rather than assumed: the two piles differ by
     4x in size, and the activation target the engine builds from OBND has to
     cover the geometry the player is looking at.
     """
-    import os
-
-    rel = ('meshes', proj.get('body_dir', ''), pile_name)
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    out = os.path.join(root, 'output')
-    plugins = sorted(os.listdir(out)) if os.path.isdir(out) else []
-    found = (find_nocase(os.path.join(out, plugin), *rel) for plugin in plugins)
-    path = next((p for p in found if p), None)
+    path = _pile_mesh_file(proj, pile_name, out_root)
     if path is None:
         return None
     try:
@@ -284,7 +294,7 @@ def _pile_mesh_bounds(proj, pile_name):
         apply_patches()
         from pyffi.formats.nif import NifFormat
         data = NifFormat.Data()
-        with open(path, 'rb') as f:
+        with output_files.open_binary(path) as f:
             data.read(f)
     except Exception:
         return None
@@ -320,7 +330,7 @@ def _pile_mesh_bounds(proj, pile_name):
             [int(math.ceil(v)) for v in hi])
 
 
-def build_creature_death_piles(writer) -> int:
+def build_creature_death_piles(writer, out_root: str = None) -> int:
     """One ACTI per dissolving creature, pointing at its EXTRACTED pile mesh.
 
     The pile an Oblivion ghost leaves is authored geometry inside its own
@@ -351,7 +361,7 @@ def build_creature_death_piles(writer) -> int:
         edid = f'TES4Cr{folder.capitalize()}DeathPile'
         fid = generated_formid(writer, 'ACTI', edid, 'CREA_PILE', folder)
         subs = pack_string_subrecord('EDID', edid)
-        bounds = _pile_mesh_bounds(proj, pile)
+        bounds = _pile_mesh_bounds(proj, pile, out_root)
         if bounds is None:
             subs += pack_obnd(-24, -24, -4, 24, 24, 16)
         else:

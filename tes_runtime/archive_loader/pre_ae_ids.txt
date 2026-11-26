@@ -1,0 +1,4 @@
+# The ids ArchiveLoader resolves on the pre-AE builds (SE 1.5.97, VR 1.4.15): all of them.
+# See: docs/commentary/tes_runtime_archives.md#pre-ae-builds
+kMountPluginArchives
+kLoadArchive

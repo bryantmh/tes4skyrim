@@ -260,6 +260,15 @@ Two defects surfaced while verifying and were fixed in the same pass:
   copying the ENCH's effect list onto it (SCRL carries its effects directly),
   and `import_main` files each record by the signature its own bytes carry
   rather than by a per-signature `TYPE_MAP` entry.
+
+  <a id="scroll-text"></a>**A scroll's DESC is plain text**
+  (`book_text.plain_text`). The book's text is HTML, and the inventory item
+  card renders none: it drops the angle brackets and quoted values and prints
+  the rest, so Icarian Flight read "DIV ALIGNFONT COLORFROM THE EARTH ... /FONTBR"
+  in game. The words are kept, with tags removed, line breaks as spaces and
+  entities decoded. Every vanilla SCRL's DESC is empty; the card then shows
+  the effect text instead. A BOOK keeps its HTML, which the BookMenu renders
+  (`book_text.fix_book_html`).
 - **`tools/esm/tes5_esm_reader.py` had EFIT Area/Duration swapped**, which made
   every dump of a converted spell look wrong. TES5 EFIT is Magnitude, **Area**,
   **Duration** (xEdit `wbEFIT`); settled by census — all **427 vanilla ALCH

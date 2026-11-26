@@ -34,14 +34,18 @@ import sys
 import time
 
 from asset_convert.lod.esm_scan import plugin_masters
+from asset_convert.sources import output_files
+from asset_convert.sources.hybrid_assets import MOD_NAME as HYBRID_MOD, is_hybrid
+from output_layout import record_dir
 from core.chargen_source import candidates
 from core.subprocess_flags import POPEN_FLAGS
 from source_paths import find_game_path
 from tools.live import crash_capture, fail_snapshot, hidden_launch, instance_lock, obs_record, silences, tes4_cases
 from tools.live.game_bridge import Bridge, BridgeError
 from tools.navmesh import navmesh_rescue
-from tools.release.package_runtime_dll import (EXPORT_ROOT, MOD_NAME, MODS, chargen_table,
-                                               configured_choice, morrowind_menus)
+from tools.release.package_runtime_dll import (EXPORT_ROOT, chargen_table, configured_choice,
+                                               morrowind_menus)
+from tools.release.runtime_files import MOD_NAME, MODS
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 #: Instance 1's folder; instance N > 1 lives in "<this> N" with its own pipe and desktop.
@@ -226,28 +230,71 @@ def write_profile(root: str, plugins) -> None:
         f.write(''.join('*%s\n' % name for name in plugins))
 
 
-def link_mod(name: str, data: str) -> list:
-    """Links the converted `output/<name>` tree into `data` and COPIES the plugins at its root.
+def link_mod(name: str, data: str, linked: set = None) -> list:
+    """Links the converted `output/<name>` tree (or the absolute folder `name`) into `data`, COPYING root plugins/archives.
 
-    The game holds a plugin open, so a linked one made the next import fail at
-    its final rename. The root's other files are build records, not game data.
+    The game holds a plugin or archive open, so a linked one made the next
+    import or pack fail at its final rename. The root's other files are build
+    records, not game data. Loose files an earlier link left at paths the
+    archives now hold are removed, or they would override the archives;
+    `linked` collects every file a build links, across its mods.
     See: docs/commentary/headless_testing.md#parallel-instances
     """
-    root = os.path.join(REPO, 'output', name)
+    root = name if os.path.isabs(name) else os.path.join(REPO, 'output', name)
     if not os.path.isdir(root):
         sys.exit('no converted output at %s' % root)
     plugins = []
+    linked = set() if linked is None else linked
     for folder, _, files in os.walk(root):
         rel = os.path.relpath(folder, root)
         for file in files:
             is_plugin = file.lower().endswith(('.esm', '.esp', '.esl'))
-            if rel == '.' and not is_plugin:
+            if rel == '.' and not (is_plugin or file.lower().endswith('.bsa')):
                 continue
-            place = copy_runtime_file if rel == '.' else link
-            if rel == '.':
+            dst = os.path.normpath(os.path.join(data, rel, file))
+            if rel != '.':
+                link(os.path.join(folder, file), dst)
+                linked.add(os.path.normcase(dst))
+            elif is_plugin:
                 plugins.append(file)
-            place(os.path.join(folder, file), os.path.normpath(os.path.join(data, rel, file)))
+                copy_runtime_file(os.path.join(folder, file), dst)
+            else:
+                copy_if_changed(os.path.join(folder, file), dst)
+    drop_shadowing_links(root, data, linked)
     return plugins
+
+
+def copy_if_changed(src: str, dst: str) -> None:
+    """Copies `src` to `dst` unless a copy of the same size and time is there already."""
+    if os.path.isfile(dst):
+        a, b = os.stat(src), os.stat(dst)
+        if (a.st_size, a.st_mtime_ns) == (b.st_size, b.st_mtime_ns):
+            return
+    copy_runtime_file(src, dst)
+
+
+def drop_shadowing_links(root: str, data: str, linked: set) -> int:
+    """Removes files in `data` at paths the archives of output folder `root` hold but this link did not place.
+
+    They are links an earlier build made to loose copies since deleted; left
+    in place they would override the archives.
+
+    See: docs/commentary/asset_convert_bsa.md#archive-only-output
+    """
+    try:
+        with open(os.path.join(root, output_files.MANIFEST_NAME), encoding='utf-8') as f:
+            archived = json.load(f).get('files', {})
+    except (OSError, ValueError):
+        return 0
+    dropped = 0
+    for rel in archived:
+        dst = os.path.normpath(os.path.join(data, *rel.split('\\')))
+        if os.path.normcase(dst) not in linked and os.path.isfile(dst):
+            os.remove(dst)
+            dropped += 1
+    if dropped:
+        print('removed %d stale loose link(s) the archives of %s replace' % (dropped, os.path.basename(root)))
+    return dropped
 
 
 def copy_runtime_file(src: str, dst: str) -> None:
@@ -327,14 +374,32 @@ def link_extra_skse(data: str, dlls) -> None:
         f.write('\n'.join(os.path.basename(dll) for dll in dlls))
 
 
+def plugins_of(mods) -> list:
+    """The plugin files at the root of each converted output folder in `mods`."""
+    roots = [m if os.path.isabs(m) else os.path.join(REPO, 'output', m) for m in mods]
+    return [f for root in roots if os.path.isdir(root) for f in os.listdir(root)
+            if f.lower().endswith(('.esm', '.esp', '.esl'))]
+
+
+def hybrid_mods(plugins, mods) -> list:
+    """[the shared hybrid assets mod] when a hybrid-mode plugin needs it.
+
+    See: docs/commentary/headless_testing.md#hybrid-shared-assets
+    """
+    if HYBRID_MOD in mods or not os.path.isdir(os.path.join(REPO, 'output', HYBRID_MOD)):
+        return []
+    return [HYBRID_MOD] if any(is_hybrid(record_dir(EXPORT_ROOT, p)) for p in plugins) else []
+
+
 def build(steam_exe: bool, plugins, mods=(), skse_plugins=()) -> None:
     """Links the vanilla game, SKSE, the bridge and each converted mod, and writes the profile."""
     root = steam_dir()
     data = os.path.join(INSTANCE, 'Data')
     unlink_plugins(data)
     enabled = list(plugins)
-    for mod in mods:
-        enabled += link_mod(mod, data)
+    linked = set()
+    for mod in list(mods) + hybrid_mods(plugins_of(mods), mods):
+        enabled += link_mod(mod, data, linked)
     if mods:
         link_runtime(data, enabled)
     link(os.path.join(root, 'SkyrimSE.exe') if steam_exe else UNPACKED_EXE,
@@ -1219,7 +1284,7 @@ def parse_args():
     b.add_argument('--steam-exe', action='store_true', help="use Steam's exe, not the unpacked one")
     b.add_argument('--plugin', action='append', default=[], help='plugin to link and enable')
     b.add_argument('--mod', action='append', default=[],
-                   help='converted output/ folder to link, plugins enabled, with the runtime DLLs')
+                   help='converted output/ folder (or an absolute output folder) to link, plugins enabled, with the runtime DLLs')
     b.add_argument('--skse-plugin', action='append', default=[], metavar='DLL',
                    help='third-party SKSE plugin DLL to link for this build only (e.g. a recording run)')
     s = sub.add_parser('shot', help='screenshot the hidden game window')

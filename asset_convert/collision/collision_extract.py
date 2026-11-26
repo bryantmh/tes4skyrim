@@ -61,9 +61,10 @@ Cache: two-phase, mirroring mesh_bounds.
     load_collision(cache_path)             — in each navmesh worker
 """
 
-from asset_convert.game_paths import ascii_path, current_namespace
+from asset_convert.game_paths import alias_borrowed, ascii_path, borrowed_roots, current_namespace
 from output_layout import assets_for
 import hashlib
+import io
 import json
 import math
 import os
@@ -76,6 +77,7 @@ from typing import Dict, List, Optional
 
 from asset_convert.collision.door_geometry import door_closed_geometry, mat_mul, quat_mat
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
+from asset_convert.sources import output_files
 from core.worker_budget import worker_count
 from pyffi.formats.nif import NifFormat
 
@@ -316,12 +318,15 @@ def extract_nif_collision(nif_path: str) -> Optional[dict]:
     return collision_from_data(read_nif_data(nif_path))
 
 
-def read_nif_data(nif_path: str):
-    """Parse a NIF into a pyffi Data object.
+def read_nif_data(nif_path):
+    """Parse a NIF (a path, or an `output_files` archive Member) into a pyffi Data object.
 
     Split out so one parse can feed several analyses (bounds + collision).
     """
     data = NifFormat.Data()
+    if isinstance(nif_path, output_files.Member):
+        data.read(io.BytesIO(output_files.read_member(nif_path)))
+        return data
     with open(nif_path, 'rb') as fh:
         data.read(fh)
     return data
@@ -849,19 +854,12 @@ def _deserialize(raw: bytes) -> Dict[str, dict]:
 
 
 def _list_nifs(mesh_dir_norm: str):
-    """[(abs_path, rel_key)] for every .nif under *mesh_dir_norm*.
+    """[(path or archive Member, '/'-joined lowercase key)] per .nif, loose or packed.
 
-    rel_key is lowercase with forward slashes, relative to the mesh root — the
-    same key the import pipeline builds via _navm_model_key().
+    See: docs/commentary/asset_convert_bsa.md#archive-only-output
     """
-    out = []
-    for root, _dirs, files in os.walk(mesh_dir_norm):
-        for fname in files:
-            if fname.lower().endswith('.nif'):
-                abs_path = os.path.join(root, fname)
-                rel = os.path.relpath(abs_path, mesh_dir_norm)
-                out.append((abs_path, rel.lower().replace('\\', '/')))
-    return out
+    return [(src, rel.replace('\\', '/')) for rel, src in
+            sorted(output_files.files_under(mesh_dir_norm, '.nif').items())]
 
 
 def scan_mesh_data(mesh_dir: str, collision_cache: str, bounds_cache: str,
@@ -880,7 +878,7 @@ def scan_mesh_data(mesh_dir: str, collision_cache: str, bounds_cache: str,
     See: docs/commentary/tes5_import_pipeline.md#producer-emitted-mesh-entries
     """
     mesh_dir_norm = os.path.normpath(mesh_dir)
-    if not os.path.isdir(mesh_dir_norm):
+    if not output_files.is_dir(mesh_dir_norm):
         print(f"  Mesh scan: mesh dir not found ({mesh_dir}), skipping")
         return 0, 0
 
@@ -997,7 +995,7 @@ def _closed_door_entry(args):
 
 
 def _door_axis_jobs(export_plugin_dir: str) -> list:
-    """(original NIF path, '<ns>/<model>') for every DOOR base that exists.
+    """(original NIF path, '<ns>/<model>') for every DOOR base that exists, in the plugin's tree or one it borrows from.
 
     DOOR.txt is a RECORD file while `meshes` is an ASSET tree; they share a
     folder only in a flat export, so the mesh root resolves via assets_for.
@@ -1008,9 +1006,10 @@ def _door_axis_jobs(export_plugin_dir: str) -> list:
     if not os.path.exists(door_txt) or not os.path.isdir(root):
         return []
     jobs = []
+    roots = [root] + borrowed_roots('meshes')
     for mdl in sorted(_door_model_paths(door_txt)):
-        path = os.path.join(root, *mdl.split('/'))
-        if os.path.exists(path):
+        path = next((p for p in (os.path.join(r, *mdl.split('/')) for r in roots) if os.path.exists(p)), None)
+        if path:
             jobs.append((path, current_namespace() + '/' + mdl))
     return jobs
 
@@ -1112,7 +1111,7 @@ def load_collision(cache_path, quiet: bool = False) -> int:
                 print(f"  Collision: could not load cache ({exc})")
     if not loaded:
         return 0
-    _COLLISION, _DIGESTS = merged, {}
+    _COLLISION, _DIGESTS = alias_borrowed(merged), {}
     if not quiet:
         print(f"  Collision: loaded {len(_COLLISION)} entries "
               f"from {loaded} cache(s)")

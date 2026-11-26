@@ -651,6 +651,29 @@ byte-identical (ESMs and every sidecar table).
   spawner bypasses the stub only when the executable IS `sys.executable`, by
   launching `sys._base_executable` with `__PYVENV_LAUNCHER__` set, so
   `subprocess_flags._worker_executable` does the same for the console-less one.
+- <a id="memory-gate"></a>**Pools size to free commit, and feed tasks through a memory gate.**
+  The real failure is commit exhaustion (WinError 1450, see
+  [blas-threads-commit](#blas-threads-commit)), not physical RAM: Windows pages long
+  before RAM is the limit, and "available physical" dips on a merely busy machine
+  (Morrowind's meshes left 588 MB physical free with no failure). So
+  `worker_budget.memory_workers(workers, mb)` caps a pool at what free commit
+  (`ullAvailPageFile`: commit limit minus committed), less `RESERVE_MB` (2 GB), holds at
+  that step's measured commit per worker; `MemoryGate` hands a pool its next task only
+  while free commit is above the reserve, or nothing is running, so a machine that runs
+  short does fewer at once and never stops. It is the one exception to "never limit
+  workers": the count still defaults to the cores, and only commit that is actually
+  short lowers it. It always says so: one `  Memory: N of M workers (commit free X GB)`
+  line when the cap lowers a pool, `  Memory: holding tasks (...)` when the gate first
+  holds, and a held-seconds summary when the pool is fed; a healthy machine prints
+  nothing. Per-worker figures come from `temp/profile/runs/*.cpu.tsv` (run PRIVATE MB
+  is commit) as `(private - largest process) / (processes - 2)`, the maximum over rows
+  inside the meshes / creatures section with 8 or more processes, at 29 workers:
+  meshes 231-262 MB (Tribunal, Nehrim, FNV; Morrowind 390, Bloodmoon 283),
+  creatures 145-175 MB. `MESH_WORKER_MB` is 260 (gated) and `CREATURE_WORKER_MB` 170
+  (sized at start: it submits every folder at once). The 31 GB / 61 GB-commit-limit
+  dev machine has 28 GB commit free idle, so 29 mesh workers (7.5 GB) never trip it.
+  Navmesh and sound workers stay small (about 10 MB each), but ElsweyrAnequina's
+  import parent held 12.6 GB for Oblivion.esm's export.
 
 ## FormID determinism — the save-game contract (rewritten 2026-08-17)
 <a id="formid-determinism-save-game-contract"></a>

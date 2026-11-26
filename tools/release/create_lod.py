@@ -35,6 +35,7 @@ Usage:
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -43,16 +44,29 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from core.subprocess_flags import configure_multiprocessing
 from core.process_job import create_pool_job
 from core.heavy_lock import hold_heavy_lock
-from output_layout import DATA_ROOT, assets_for
+from core.plugin_masters import masters_first, masters_from_export_header
+from asset_convert.sources import hybrid_assets
+from asset_convert.lod.bake_record import record_bake
+from output_layout import DATA_ROOT, assets_for, forget_summary, record_dir
 
 configure_multiprocessing()
 create_pool_job()
 
 
 def _supplier_asset_dirs(names, out_root, export_root, _out_root) -> list:
-    """Converted output roots holding meshes/textures a tile may need."""
+    """Converted output roots holding meshes/textures a tile may need, the shared hybrid mod last.
+
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-shared-assets
+    """
     return [_out_root(out_root, n, export_root) for n in names
-            if _out_root(out_root, n, export_root).is_dir()]
+            if _out_root(out_root, n, export_root).is_dir()] + _hybrid_dir(names, out_root, export_root)
+
+
+def _hybrid_dir(names, out_root, export_root) -> list:
+    """The shared Morroblivion Hybrid Assets output when a supplier borrows from it."""
+    shared = Path(out_root) / hybrid_assets.MOD_NAME
+    borrows = any(hybrid_assets.chain_dirs(record_dir(export_root, n)) for n in names)
+    return [shared] if borrows and shared.is_dir() else []
 
 
 def _all_plugin_dirs(out_root: Path, lod_dir: Path) -> list:
@@ -63,17 +77,20 @@ def _all_plugin_dirs(out_root: Path, lod_dir: Path) -> list:
     own MASTER ships the shared flat normal.
     See: docs/commentary/asset_convert_terrain.md#terrain-lod-texture-lookup
     """
+    from asset_convert.sources import output_files
     return sorted(
         d for d in Path(out_root).iterdir()
         if d.is_dir() and d != lod_dir
-        and any((d / n).is_dir() for n in ('textures', 'Textures')))
+        and any(output_files.is_dir(d / n) for n in ('textures', 'Textures')))
 
 
 def _supplier_overlay_dirs(names, out_root, export_root, _out_root,
                            record_dir) -> list:
-    """Overlay-manifest dirs, index-aligned with `_supplier_asset_dirs`."""
+    """Overlay-manifest dirs, index-aligned with `_supplier_asset_dirs` (the shared mod's caches last)."""
     return [assets_for(record_dir(export_root, n)) for n in names
-            if _out_root(out_root, n, export_root).is_dir()]
+            if _out_root(out_root, n, export_root).is_dir()] + [
+        hybrid_assets.cache_dir(record_dir(export_root, names[0]))
+        for _shared in _hybrid_dir(names, out_root, export_root)]
 
 
 def _plan_jobs(wanted, owners, plugins, touched, out_root, export_root,
@@ -123,7 +140,6 @@ def _plan_jobs(wanted, owners, plugins, touched, out_root, export_root,
 def _use_owner_namespace(export_root: str, owner: str) -> None:
     """Install `owner`'s asset namespace for the job about to bake."""
     from asset_convert.game_paths import namespace_for, set_namespace
-    from output_layout import record_dir
     set_namespace(namespace_for(record_dir(export_root, owner)))
 
 
@@ -150,18 +166,30 @@ def _clear_stale_tiles(lod_dir, edid: str) -> int:
 
 
 def _bake_worldspace(job, ctx) -> bool:
-    """Generate one worldspace's object and terrain LOD.
+    """Generate one worldspace's object and terrain LOD, recording the bake only when both succeed.
 
-    `ctx` holds what every job shares: the output roots and the two
-    generators. The namespace is installed here because ONE process bakes
-    every plugin's worldspaces.
+    `ctx` holds what every job shares: the output roots, the plugin order and
+    the two generators. The namespace is installed here because ONE process
+    bakes every plugin's worldspaces.
     See: docs/commentary/asset_convert_terrain.md#write-lodgen-input-master-modes
+    See: docs/commentary/core_gui.md#distant-lod-worldspaces
     """
-    edid, owner, owner_esm, overlays, contributors, suppliers = job
-    lod_dir, out_root, export_root = ctx['lod_dir'], ctx['out_root'], ctx['export_root']
+    edid, owner, contributors = job[0], job[1], job[4]
+    lod_dir, started = ctx['lod_dir'], time.time()
     print("-" * 54)
     print(f"  {edid}  (records: {owner})")
     print("-" * 54)
+    record_bake(lod_dir, edid, started)
+    ok = _generate_worldspace(job, ctx)
+    if ok:
+        record_bake(lod_dir, edid, started, ctx['plugins'], [owner] + contributors)
+    return ok
+
+
+def _generate_worldspace(job, ctx) -> bool:
+    """Clear `job`'s old tiles, then run the object and terrain generators; True when both succeed."""
+    edid, owner, owner_esm, overlays, contributors, suppliers = job
+    lod_dir, out_root, export_root = ctx['lod_dir'], ctx['out_root'], ctx['export_root']
     _use_owner_namespace(export_root, owner)
 
     stale = _clear_stale_tiles(lod_dir, edid)
@@ -228,10 +256,11 @@ def _parse_args():
 def _select_plugins(args, available, export_root, create_lod_order) -> list:
     """Return the selected plugins for this run, lowest priority first.
 
-    An explicit `--plugins` order is honoured verbatim: it IS the conflict
-    resolution, and the GUI dialog lets the user arrange it by hand. Names with
-    no converted output are dropped rather than failing the run, so a stale
-    saved selection never blocks the plugins that ARE built.
+    An explicit `--plugins` order is the conflict resolution the user arranged,
+    kept except that a plugin never sits above one of its masters (the game
+    cannot load it so). Names with no converted output are dropped rather than
+    failing the run, so a stale saved selection never blocks those built.
+    See: docs/commentary/asset_convert_terrain.md#lod-owner-is-the-base
     """
     if not args.plugins:
         return create_lod_order(available, export_root)
@@ -239,7 +268,7 @@ def _select_plugins(args, available, export_root, create_lod_order) -> list:
     missing = [p for p in args.plugins if p not in available]
     if missing:
         print(f"  Not converted, skipping: {', '.join(missing)}")
-    return plugins
+    return masters_first(plugins, lambda n: masters_from_export_header(str(record_dir(export_root, n))))
 
 
 def _touched_worldspaces(plugins, out_root, export_root, _out_root,
@@ -317,6 +346,7 @@ def main() -> int:
                 else DATA_ROOT / "output")
     export_root = DATA_ROOT / "export"
     lod_dir = out_root / LOD_DIR_NAME
+    forget_summary(lod_dir)
 
     _print_header(out_root, lod_dir, drop_staged_meshes(lod_dir))
     plugins = _select_plugins(args, converted_plugins(out_root), export_root,
@@ -352,6 +382,7 @@ def main() -> int:
 
     ctx = {
         'lod_dir': lod_dir, 'out_root': out_root, 'export_root': export_root,
+        'plugins': plugins,
         'generate_lod': generate_lod,
         'generate_terrain_lod': generate_terrain_lod,
         'merge_cloud_bank': merge_cloud_bank,

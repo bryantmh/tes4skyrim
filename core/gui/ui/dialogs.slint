@@ -55,16 +55,17 @@ component PickList {
             height: parent.height;
             for row[i] in rows: Rectangle {
                 height: 38px;
+                TouchArea { enabled: row.enabled; mouse-cursor: pointer; clicked => { root.toggled(i, !row.checked); } }
                 HorizontalLayout {
                     padding-left: 12px;
                     padding-right: 12px;
                     spacing: 10px;
-                    Tick { y: (parent.height - 18px) / 2; checked: row.checked; enabled: row.enabled; toggled(on) => { root.toggled(i, on); } }
+                    Tick { checked: row.checked; label: row.name; enabled: row.enabled; toggled(on) => { root.toggled(i, on); } }
                     Text { text: row.name; color: row.enabled ? Theme.fg : Theme.muted; font-size: 13px; vertical-alignment: center; overflow: elide; }
-                    if row.detail != "": Text { text: row.detail; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-alignment: right; overflow: elide; }
-                    if row.tag != "": VerticalLayout { alignment: center; Pill { text: row.tag; tone: "info"; } }
-                    if root.reorder: Btn { text: "↑"; small: true; enabled: i > 0; clicked => { root.moved(i, i - 1); } }
-                    if root.reorder: Btn { text: "↓"; small: true; enabled: i < rows.length - 1; clicked => { root.moved(i, i + 1); } }
+                    if row.detail != "": Text { text: row.detail; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-alignment: right; overflow: elide; preferred-width: 0px; horizontal-stretch: 1; }
+                    if row.tag != "": VerticalLayout { alignment: center; horizontal-stretch: 0; Pill { text: row.tag; tone: "info"; } }
+                    if root.reorder: VerticalLayout { alignment: center; Btn { text: "↑"; small: true; enabled: i > 0; clicked => { root.moved(i, i - 1); } } }
+                    if root.reorder: VerticalLayout { alignment: center; Btn { text: "↓"; small: true; enabled: i < rows.length - 1; clicked => { root.moved(i, i + 1); } } }
                 }
                 Divider { y: 0; width: parent.width; visible: i > 0; }
             }
@@ -101,6 +102,7 @@ component ConfirmDialog inherits Sheet {
     Text { text: Ui.confirm-text; color: Theme.fg; wrap: word-wrap; }
     Footer {
         Btn { text: Ui.confirm-no; clicked => { Ui.confirm-answer(false); } }
+        if Ui.confirm-alt != "": Btn { text: Ui.confirm-alt; clicked => { Ui.confirm-alt-clicked(); } }
         Btn { text: Ui.confirm-yes; kind: "primary"; clicked => { Ui.confirm-answer(true); } }
     }
 }
@@ -118,7 +120,7 @@ component PickDialog inherits Sheet {
     if Ui.pick-warn != "": Text { text: Ui.pick-warn; color: Theme.warn; font-size: 12.5px; wrap: word-wrap; }
     Footer {
         if Ui.pick-extra != "": Btn { text: Ui.pick-extra; clicked => { Ui.pick-extra-clicked(); } }
-        Btn { text: "Cancel"; clicked => { Ui.close-dialog(); } }
+        Btn { text: "Cancel"; clicked => { Ui.pick-cancel(); } }
         Btn { text: Ui.pick-ok; kind: "primary"; clicked => { Ui.pick-accept(); } }
     }
 }
@@ -126,34 +128,26 @@ component PickDialog inherits Sheet {
 component LodDialog inherits Sheet {
     title: "Distant LOD";
     blurb: "Lower in the list wins where two plugins change the same land.";
-    sheet-width: 820px;
+    sheet-width: 640px;
     Option {
         title: "Detail";
         detail: "Triangles in distant objects";
         ComboBox { model: Ui.lod-details; current-index: Ui.lod-detail; selected => { Ui.lod-set-detail(self.current-index); } }
     }
-    HorizontalLayout {
-        spacing: 16px;
-        VerticalLayout {
-            spacing: 6px;
-            Text { text: "Plugins"; font-weight: 600; color: Theme.fg; font-size: 13px; }
-            PickList { rows: Ui.lod-plugins; reorder: true; toggled(i, on) => { Ui.lod-toggle-plugin(i, on); } moved(a, b) => { Ui.lod-move(a, b); } }
-        }
-        VerticalLayout {
-            spacing: 6px;
-            Text { text: "Worldspaces"; font-weight: 600; color: Theme.fg; font-size: 13px; }
-            if Ui.lod-worlds.length > 0: PickList { rows: Ui.lod-worlds; toggled(i, on) => { Ui.lod-toggle-world(i, on); } }
-            if Ui.lod-worlds.length == 0: Muted { text: Ui.lod-why; }
-            HorizontalLayout {
-                spacing: 8px;
-                Tick { checked: Ui.lod-force; toggled(on) => { Ui.lod-set-force(on); } }
-                Text { text: "Include worldspaces without distant land"; font-size: 13px; color: Theme.fg; vertical-alignment: center; }
-            }
-        }
+    Option {
+        title: "Worldspaces without distant land";
+        detail: "Also offer worldspaces the plugins never gave distant LOD";
+        Tick { checked: Ui.lod-force; label: "Worldspaces without distant land"; toggled(on) => { Ui.lod-set-force(on); } }
     }
+    HorizontalLayout {
+        spacing: 6px;
+        Text { text: "Plugins"; font-weight: 600; color: Theme.fg; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+        Btn { text: "All"; small: true; clicked => { Ui.lod-all-plugins(true); } }
+        Btn { text: "None"; small: true; clicked => { Ui.lod-all-plugins(false); } }
+    }
+    PickList { rows: Ui.lod-plugins; reorder: true; toggled(i, on) => { Ui.lod-toggle-plugin(i, on); } moved(a, b) => { Ui.lod-move(a, b); } }
     Footer {
         Btn { text: "Reset"; clicked => { Ui.lod-reset(); } }
-        Btn { text: "Pack only"; clicked => { Ui.lod-pack-only(); } }
         Btn { text: "Done"; kind: "primary"; clicked => { Ui.lod-accept(); } }
     }
 }
@@ -186,7 +180,7 @@ component ImportDialog inherits Sheet {
     if Ui.import-warn != "": Text { text: Ui.import-warn; color: Theme.bad; font-size: 12.5px; wrap: word-wrap; }
     if Ui.import-keep-text != "": HorizontalLayout {
         spacing: 8px;
-        Tick { checked: Ui.import-keep; toggled(on) => { Ui.import-keep = on; } }
+        Tick { checked: Ui.import-keep; label: "Keep the archive"; toggled(on) => { Ui.import-keep = on; } }
         Text { text: Ui.import-keep-text; font-size: 13px; color: Theme.fg; wrap: word-wrap; vertical-alignment: center; }
     }
     Footer {
@@ -202,38 +196,67 @@ component ModeDialog inherits Sheet {
         VerticalLayout {
             for opt[i] in Ui.mode-options: VerticalLayout {
                 if i > 0: Divider { }
-                HorizontalLayout {
-                    padding: 10px;
-                    padding-left: 12px;
-                    spacing: 10px;
-                    Rectangle {
-                        width: 16px;
-                        height: 16px;
-                        y: 4px;
-                        border-radius: 8px;
-                        border-width: 1.5px;
-                        border-color: i == Ui.mode-choice ? Theme.accent : Theme.muted;
-                        Rectangle { width: 8px; height: 8px; border-radius: 4px; background: i == Ui.mode-choice ? Theme.accent : transparent; }
+                Rectangle {
+                    opacity: opt.ok ? 1 : 0.5;
+                    HorizontalLayout {
+                        padding: 10px;
+                        padding-left: 12px;
+                        spacing: 10px;
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            y: 4px;
+                            border-radius: 8px;
+                            border-width: 1.5px;
+                            border-color: i == Ui.mode-choice ? Theme.accent : Theme.muted;
+                            Rectangle { width: 8px; height: 8px; border-radius: 4px; background: i == Ui.mode-choice ? Theme.accent : transparent; }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: opt.name; font-weight: 600; color: Theme.fg; vertical-alignment: center; }
+                                if opt.tag != "": Pill { text: opt.tag; tone: "good"; }
+                                Rectangle { }
+                            }
+                            Text { text: opt.lines; font-size: 12.5px; color: Theme.muted; wrap: word-wrap; }
+                            Text { text: opt.need; font-size: 12px; color: opt.ok ? Theme.fg : Theme.warn; wrap: word-wrap; }
+                        }
                     }
-                    VerticalLayout {
-                        Text { text: opt.name; font-weight: 600; color: Theme.fg; }
-                        Text { text: opt.lines; font-size: 12.5px; color: Theme.muted; wrap: word-wrap; }
-                        Text { text: opt.need; font-size: 12.5px; color: Theme.fg; wrap: word-wrap; }
-                    }
+                    TouchArea { enabled: opt.ok; mouse-cursor: opt.ok ? pointer : default; clicked => { Ui.mode-choice = i; } }
                 }
-                TouchArea { mouse-cursor: pointer; clicked => { Ui.mode-choice = i; } }
+                // The patch belongs to Morroblivion mode alone, so its rebuild box sits in that card.
+                if opt.key == "morroblivion" && Ui.patch-state != "": HorizontalLayout {
+                    padding-left: 38px;
+                    padding-right: 10px;
+                    padding-bottom: 10px;
+                    spacing: 8px;
+                    Tick {
+                        enabled: i == Ui.mode-choice;
+                        checked: Ui.patch-rebuild && i == Ui.mode-choice;
+                        label: "Rebuild the compatibility patch";
+                        toggled(on) => { Ui.patch-rebuild = on; }
+                    }
+                    Text {
+                        text: "Rebuild the compatibility patch";
+                        font-size: 12.5px;
+                        color: i == Ui.mode-choice ? Theme.fg : Theme.muted;
+                        vertical-alignment: center;
+                        TouchArea { enabled: i == Ui.mode-choice; mouse-cursor: pointer; clicked => { Ui.patch-rebuild = !Ui.patch-rebuild; } }
+                    }
+                    Text { text: Ui.patch-state; font-size: 12px; color: Theme.muted; vertical-alignment: center; horizontal-stretch: 1; }
+                }
             }
         }
     }
-    if Ui.patch-state != "": HorizontalLayout {
-        spacing: 8px;
-        Text { text: Ui.patch-state; font-size: 13px; color: Theme.fg; wrap: word-wrap; vertical-alignment: center; }
-        Tick { y: (parent.height - 18px) / 2; checked: Ui.patch-rebuild; toggled(on) => { Ui.patch-rebuild = on; } }
-        Text { text: "Rebuild it"; font-size: 13px; color: Theme.fg; vertical-alignment: center; }
-    }
     Footer {
         Btn { text: "Cancel"; clicked => { Ui.close-dialog(); } }
-        Btn { text: "Switch mode"; kind: "primary"; clicked => { Ui.mode-switch(); } }
+        Btn {
+            text: "Switch mode";
+            kind: "primary";
+            enabled: Ui.mode-options.length > 0 && Ui.mode-options[Ui.mode-choice].ok;
+            clicked => { Ui.mode-switch(); }
+        }
     }
 }
 
@@ -242,58 +265,62 @@ component AdvancedDialog inherits Sheet {
     blurb: "Automatic unless changed here.";
     sheet-width: 720px;
     Seg { options: ["Steps", "Meshes", "Navmesh", "Performance"]; current: Ui.adv-tab; selected(i) => { Ui.adv-tab = i; } }
-    if Ui.adv-tab == 0: VerticalLayout {
-        spacing: 8px;
-        HorizontalLayout {
-            Muted { text: Ui.adv-steps-note; vertical-alignment: center; }
+    // One height for every tab (the Steps tab's: its header row and list), so switching tabs never resizes the sheet.
+    VerticalLayout {
+        alignment: start;
+        min-height: 440px;
+        max-height: self.min-height;
+        if Ui.adv-tab == 0: VerticalLayout {
+            spacing: 8px;
             HorizontalLayout {
-                alignment: end;
-                spacing: 6px;
-                Btn { text: "All"; small: true; clicked => { Ui.adv-steps-all(true); } }
-                Btn { text: "None"; small: true; clicked => { Ui.adv-steps-all(false); } }
+                Muted { text: Ui.adv-steps-note; vertical-alignment: center; }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 6px;
+                    Btn { text: "All"; small: true; clicked => { Ui.adv-steps-all(true); } }
+                    Btn { text: "None"; small: true; clicked => { Ui.adv-steps-all(false); } }
+                }
+            }
+            PickList { rows: Ui.adv-steps; list-height: 400px; toggled(i, on) => { Ui.adv-step(i, on); } }
+        }
+        if Ui.adv-tab == 1: VerticalLayout {
+            Option { title: "Folders"; detail: "Under meshes\\"; Btn { text: Ui.mesh-folders; small: true; clicked => { Ui.adv-mesh-folders(); } } }
+            Divider { }
+            Option { title: "Parallax"; detail: Ui.parallax-note; Seg { options: ["Off", "On"]; current: Ui.parallax; selected(i) => { Ui.set-parallax(i); } } }
+            Divider { }
+            Option {
+                title: "Textures only";
+                detail: "For PGPatcher: textures and height maps, no meshes. Needs parallax.";
+                Tick { checked: Ui.tex-only; label: "Textures only"; enabled: Ui.parallax == 1; toggled(on) => { Ui.set-tex-only(on); } }
+            }
+            Divider { }
+            Option {
+                title: "Collision fix";
+                detail: "Automatic: on for plugins known to need it";
+                Seg { options: ["Automatic", "Always on", "Always off"]; current: Ui.winding; selected(i) => { Ui.set-winding(i); } }
             }
         }
-        PickList { rows: Ui.adv-steps; list-height: 400px; toggled(i, on) => { Ui.adv-step(i, on); } }
-    }
-    if Ui.adv-tab == 1: VerticalLayout {
-        Option { title: "Folders"; detail: "Under meshes\\"; Btn { text: Ui.mesh-folders; small: true; clicked => { Ui.adv-mesh-folders(); } } }
-        Divider { }
-        Option { title: "Parallax"; detail: Ui.parallax-note; Seg { options: ["Off", "On"]; current: Ui.parallax; selected(i) => { Ui.set-parallax(i); } } }
-        Divider { }
-        Option {
-            title: "Textures only";
-            detail: "For PGPatcher: textures and height maps, no meshes. Needs parallax.";
-            Tick { checked: Ui.tex-only; enabled: Ui.parallax == 1; toggled(on) => { Ui.set-tex-only(on); } }
+        if Ui.adv-tab == 2: VerticalLayout {
+            Option { title: "Generator"; detail: "Used the next time Import runs"; Seg { options: ["Corridor", "Lattice"]; current: Ui.navgen; selected(i) => { Ui.set-navgen(i); } } }
+            Divider { }
+            Option { title: "Shared cache"; detail: "Download navmeshes others already built"; Tick { checked: Ui.nav-cache; label: "Shared cache"; toggled(on) => { Ui.set-nav-cache(on); } } }
         }
-        Divider { }
-        Option {
-            title: "Collision fix";
-            detail: "Automatic: on for plugins known to need it";
-            Seg { options: ["Automatic", "Always on", "Always off"]; current: Ui.winding; selected(i) => { Ui.set-winding(i); } }
-        }
-    }
-    if Ui.adv-tab == 2: VerticalLayout {
-        Option { title: "Generator"; detail: "Used the next time Import runs"; Seg { options: ["Corridor", "Lattice"]; current: Ui.navgen; selected(i) => { Ui.set-navgen(i); } } }
-        Divider { }
-        Option { title: "Shared cache"; detail: "Download navmeshes others already built"; Tick { checked: Ui.nav-cache; toggled(on) => { Ui.set-nav-cache(on); } } }
-    }
-    if Ui.adv-tab == 3: VerticalLayout {
-        Option { title: "Workers"; detail: "Processes at once. More is faster and uses more memory."; ComboBox { model: Ui.worker-options; current-index: Ui.workers; selected => { Ui.set-workers(self.current-index); } } }
-        Divider { }
-        Option {
-            title: "Run logs kept";
-            detail: "Older logs are deleted. 0 turns run logs off.";
-            LineEdit { width: 80px; text: Ui.logs-kept; accepted(t) => { Ui.set-logs-kept(t); } edited(t) => { Ui.set-logs-kept(t); } }
-            Btn { text: "Open logs"; small: true; clicked => { Ui.open-folder("logs"); } }
-        }
-        Divider { }
-        Option { title: "Pack by default"; detail: "Pack BSAs and the mod zip after converting"; Tick { checked: Ui.pack-default; toggled(on) => { Ui.set-pack-default(on); } } }
-        Divider { }
-        Option {
-            title: "Folders";
-            detail: "";
-            Btn { text: "Output"; small: true; clicked => { Ui.open-folder("output"); } }
-            Btn { text: "Finished Mods"; small: true; clicked => { Ui.open-folder("finished"); } }
+        if Ui.adv-tab == 3: VerticalLayout {
+            Option { title: "Workers"; detail: "Processes at once. More is faster and uses more memory."; ComboBox { model: Ui.worker-options; current-index: Ui.workers; selected => { Ui.set-workers(self.current-index); } } }
+            Divider { }
+            Option {
+                title: "Run logs kept";
+                detail: "Older logs are deleted. 0 turns run logs off.";
+                LineEdit { width: 80px; text: Ui.logs-kept; accepted(t) => { Ui.set-logs-kept(t); } edited(t) => { Ui.set-logs-kept(t); } }
+                Btn { text: "Open logs"; small: true; clicked => { Ui.open-folder("logs"); } }
+            }
+            Divider { }
+            Option {
+                title: "Folders";
+                detail: "";
+                Btn { text: "Output"; small: true; clicked => { Ui.open-folder("output"); } }
+                Btn { text: "Finished Mods"; small: true; clicked => { Ui.open-folder("finished"); } }
+            }
         }
     }
     Footer {

@@ -63,8 +63,9 @@ end
 # 30). ("The Amulet is gone." belongs to his greetings before 27; run 23b.) The player opens the chest as soon as
 # they land: Jauffre reaching it sets 27 by himself (OnPackageDone MQ04JauffreToAmulet), and a chest opened in the
 # middle of his greeting cut off its choice (run 39d, after a fixed `wait 120`; again at once in 39e, when he was
-# 70 ticks away). So the player leaves whatever conversation is open and talks to him afresh: the 27 greeting is
-# not say-once and offers its choice again.
+# 70 ticks away). When his 27 force greet (MQ04JauffreGreetPlayer) is already open with its choice, the player
+# answers it there: since the exit hold, Goodbye is locked while a choice is offered (as in Oblivion). Otherwise
+# the player walks up and talks; the 27 greeting is not say-once and offers its choice again.
 case mq04_amulet_gone
 defend JauffreRef
 run
@@ -74,8 +75,6 @@ activate MQ04AmuletChestRef
 until 300 GetStage MQ04 >= 25
 close ContainerMenu
 until 1800 GetStage MQ04 >= 27
-bye if open
-wait 60
 approach JauffreRef
 talk JauffreRef
 ask "I found Martin. He is safe."

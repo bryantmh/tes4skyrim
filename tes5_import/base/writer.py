@@ -992,6 +992,10 @@ class PluginWriter:
             self._top_groups[group_sig].append(record_bytes)
             self._record_count += 1
 
+    def records_of(self, group_sig: str) -> list:
+        """The packed top-level records added so far under `group_sig`."""
+        return [b for b in self._top_groups.get(group_sig, ()) if b[:4] != b'GRUP']
+
     def top_records(self):
         """Yield every top-level record's bytes, never a pre-built GRUP."""
         for blobs in self._top_groups.values():

@@ -1,56 +1,198 @@
-"""Installing the finished mods with a mod manager: Mod Organizer 2 directly, Vortex by handing it
-each archive, or neither (the zips stay in Finished Mods).
+"""Installing the converted mods with a mod manager, without zips: each mod's files are hardlinked from
+output/ into the manager's mods or staging folder (copied file by file when that folder is on another
+drive).
 
-MO2: each zip is extracted into the instance's mods folder under its own name, added enabled to
-the profile's modlist.txt in install order (the LAST installed gets the highest priority, so LOD
-wins), and its plugins are enabled in plugins.txt. A `tesract.json` beside each mod records which
-zip it came from, so an unchanged zip is not reinstalled and uninstall removes only our mods.
-MO2 rewrites these files when it exits, so it must be closed while we write them.
+A `tesract.json` in each installed mod lists exactly the files placed, and the stamp of the source they
+came from. Reinstalling places new files and removes the ones the source no longer has; uninstalling one
+mod removes only its listed files (a hardlink removed leaves the output file alone). MO2 lists the mods in
+the profile's modlist.txt and plugins.txt, in install order (the LAST installed has the highest
+priority, so LOD wins); MO2 rewrites those when it exits, so it must be closed while we write them.
+Vortex lists a mod only once it is in its state database, so the mods are registered through Vortex's
+own `--set` command line, with Vortex closed; a deployed mod's files leave the Data folder first.
 See: docs/commentary/core_gui.md#mod-managers
 """
 
 import configparser
+import datetime
 import json
 import os
 import shutil
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
-from core.gui import vortex_state
+from core.gui import install_mods as mods, vortex_deploy, vortex_state
 from core.subprocess_flags import POPEN_FLAGS
-from output_layout import FINISHED_DIR_NAME
 
-#: Written into each mod folder we install: the zip's name, size and time.
+#: Written into each mod folder we install: the files placed and the source's stamp.
 MARKER = "tesract.json"
-#: Plugin file extensions MO2 lists in plugins.txt.
-PLUGIN_EXTS = (".esm", ".esp", ".esl")
-#: Mods that go first and last; every converted game sits between, in name order.
-FIRST, LAST = ("TESRuntime",), ("AutoConvertLOD",)
 #: The MO2 executable title SKSE is launched through.
 SKSE_TITLE = "SKSE"
 #: Vortex's id for Skyrim Special Edition.
 VORTEX_GAME = "skyrimse"
+#: Files between progress lines while placing a big mod.
+LOG_EVERY = 5000
+#: `-s`/`--del` pairs per Vortex start: 24 worked on a real Vortex, 100 exited -1 with nothing changed.
+VORTEX_PAIRS = 24
+#: Vortex's state key of the folder it found a game in.
+VORTEX_GAME_PATH = "settings###gameMode###discovered###{game}###path"
+#: Vortex's state path of a game's "deployment needed" flag.
+VORTEX_NEED_DEPLOY = "persistent.deployment.needToDeploy.{game}"
 
 # ---------------------------------------------------------------------------
-#  What to install
+#  Placing files
 # ---------------------------------------------------------------------------
 
 
-def finished_zips(out_root) -> list:
-    """Every zip in Finished Mods, in install order: the runtime first, LOD last."""
-    folder = Path(out_root) / FINISHED_DIR_NAME
-    zips = sorted(folder.glob("*.zip"), key=lambda p: p.stem.lower()) if folder.is_dir() else []
-    first = [z for name in FIRST for z in zips if z.stem == name]
-    last = [z for name in LAST for z in zips if z.stem == name]
-    return first + [z for z in zips if z not in first and z not in last] + last
+def volume(path) -> int:
+    """The volume id of the nearest existing folder at or above `path`, or -1 when none can be read."""
+    path = Path(path).absolute()
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    try:
+        return path.stat().st_dev
+    except OSError:
+        return -1
 
 
-def _stamp(zip_path: Path) -> dict:
-    """What identifies one build of a zip."""
-    st = zip_path.stat()
-    return {"zip": zip_path.name, "size": st.st_size, "mtime": int(st.st_mtime)}
+def same_volume(a, b) -> bool:
+    """Whether two paths are on one drive, so hardlinks between them can work."""
+    return volume(a) == volume(b) != -1
+
+
+def drive_notice(out_root, targets: list) -> str:
+    """Setup's warning for each (label, folder) of `targets` on another drive than `out_root`; "" when none."""
+    out = Path(out_root)
+    lines = []
+    for label, folder in targets:
+        if folder and not same_volume(out, folder):
+            there = Path(folder).drive or str(folder)
+            lines.append(f"The output folder is on {out.absolute().drive or out}, but {label} ({folder}) is on "
+                         f"{there}. Installing will copy the files instead of hardlinking them; put the output "
+                         f"folder on {there} to avoid that.")
+    return " ".join(lines)
+
+
+def _same_copy(src: Path, dst: Path) -> bool:
+    """Whether `dst` is a copy of `src` by size and time."""
+    a, b = src.stat(), dst.stat()
+    return a.st_size == b.st_size and a.st_mtime_ns == b.st_mtime_ns
+
+
+def _place(src: Path, dst: Path, link: bool) -> bool:
+    """Make `dst` a hardlink to `src` (a copy when `link` is false or linking fails); True when it is a hardlink."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        if os.path.samefile(src, dst):
+            return True
+        if not link and _same_copy(src, dst):
+            return False
+        dst.unlink()
+    if link:
+        try:
+            os.link(src, dst)
+            return True
+        except OSError:
+            pass
+    shutil.copy2(src, dst)
+    return False
+
+
+def _place_tree(entries: list, dest: Path, link: bool, log) -> str:
+    """Place every file of a folder mod under `dest`; returns "link" or "copy" for what was done."""
+    for i, (rel, src, _size, _mtime) in enumerate(entries, 1):
+        if link and not _place(src, dest / rel, True):
+            link = False
+            log("  Hardlinks are not possible here: copying the rest")
+        elif not link:
+            _place(src, dest / rel, False)
+        if i % LOG_EVERY == 0:
+            log(f"  {i:,} of {len(entries):,}")
+    return "link" if link else "copy"
+
+
+def read_marker(mods_dir, name: str) -> dict:
+    """The marker of an installed mod, or {} when it is not installed by us."""
+    try:
+        return json.loads((Path(mods_dir) / name / MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _inside(dest: Path, rel: str) -> Path:
+    """`dest / rel`, refusing anything that would leave `dest`."""
+    target = (dest / rel).resolve()
+    if dest.resolve() not in target.parents:
+        raise ValueError(f"{rel} is outside {dest}")
+    return target
+
+
+def _prune(dest: Path, rels) -> None:
+    """Remove the folders `rels` left empty, deepest first, and `dest` itself when nothing else is in it."""
+    folders = {dest / Path(rel).parent for rel in rels}
+    for folder in sorted({p for f in folders for p in [f, *f.parents] if dest in p.parents or p == dest},
+                         key=lambda p: len(p.parts), reverse=True):
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
+
+
+def _remove_files(dest: Path, rels) -> None:
+    """Delete the listed files under `dest` (hardlinks: only the link goes), then the folders they emptied."""
+    for rel in rels:
+        _inside(dest, rel).unlink(missing_ok=True)
+    _prune(dest, rels)
+
+
+def install_mod(mods_dir, mod: mods.Mod, entries: list, link: bool, log) -> list:
+    """Install one mod under `mods_dir`; returns its plugins (masters first)."""
+    dest = Path(mods_dir) / mod.name
+    old = read_marker(mods_dir, mod.name)
+    if old and "files" not in old:
+        shutil.rmtree(dest, ignore_errors=True)
+    _remove_files(dest, set(old.get("files", ())) - {e[0] for e in entries})
+    dest.mkdir(parents=True, exist_ok=True)
+    log(f"Installing {mod.name}: {len(entries):,} files")
+    how = _place_tree(entries, dest, link, log)
+    rels = [e[0] for e in entries]
+    (dest / MARKER).write_text(json.dumps({"stamp": mods.summarize(entries), "files": rels, "mode": how}),
+                               encoding="utf-8")
+    return mods.plugins(rels)
+
+
+def install_all(mods_dir, wanted: list, out_root, log) -> dict:
+    """Install every (mod, entries) of `wanted` under `mods_dir`; returns {name: plugins}.
+
+    Links when output and `mods_dir` share a drive; otherwise copies, and says so.
+    """
+    link = same_volume(out_root, mods_dir)
+    if not link:
+        log(f"{mods_dir} is on another drive than the output folder: copying instead of hardlinking")
+    Path(mods_dir).mkdir(parents=True, exist_ok=True)
+    return {mod.name: install_mod(mods_dir, mod, entries, link, log) for mod, entries in wanted}
+
+
+def mod_status(mods_dir, mod: mods.Mod, summary: dict) -> str:
+    """"new", "update" or "installed" for one mod in a mods folder."""
+    marker = read_marker(mods_dir, mod.name)
+    if not marker:
+        return "new"
+    return "installed" if marker.get("stamp") == summary else "update"
+
+
+def uninstall_mod(mods_dir, name: str, log) -> list:
+    """Remove mod `name` we installed under `mods_dir` (only its listed files); returns its plugins."""
+    marker, dest = read_marker(mods_dir, name), Path(mods_dir) / name
+    if not marker:
+        return []
+    log(f"Removing {name} from {mods_dir}")
+    if "files" in marker:
+        (dest / MARKER).unlink(missing_ok=True)
+        _remove_files(dest, marker["files"])
+    else:
+        shutil.rmtree(dest, ignore_errors=True)
+    return mods.plugins(marker.get("files", ()))
 
 
 # ---------------------------------------------------------------------------
@@ -144,34 +286,18 @@ def find_mo2(saved: str = ""):
     return None
 
 
-def mo2_running() -> bool:
-    """True while ModOrganizer.exe is running."""
+def running(image: str) -> bool:
+    """True while a program named `image` (for example ModOrganizer.exe) is running."""
     if sys.platform != "win32":
         return False
-    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ModOrganizer.exe", "/NH"], capture_output=True,
+    out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/NH"], capture_output=True,
                          text=True, **POPEN_FLAGS).stdout
-    return "ModOrganizer.exe" in out
+    return image in out
 
 
-def folder_status(mods_dir, zip_path: Path) -> str:
-    """"new", "update" or "installed" for one finished zip in a mods folder (MO2's or Vortex's staging)."""
-    try:
-        stamp = json.loads((Path(mods_dir) / zip_path.stem / MARKER).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return "new"
-    return "installed" if stamp == _stamp(zip_path) else "update"
-
-
-def _extract(zip_path: Path, dest: Path) -> list:
-    """Replace `dest` with the zip's contents; returns the plugins at its root."""
-    tmp = dest.with_name(dest.name + ".tesract-tmp")
-    shutil.rmtree(tmp, ignore_errors=True)
-    with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(tmp)
-    shutil.rmtree(dest, ignore_errors=True)
-    tmp.rename(dest)
-    (dest / MARKER).write_text(json.dumps(_stamp(zip_path)), encoding="utf-8")
-    return sorted(p.name for p in dest.iterdir() if p.suffix.lower() in PLUGIN_EXTS)
+def mo2_running() -> bool:
+    """True while ModOrganizer.exe is running."""
+    return running("ModOrganizer.exe")
 
 
 def _lines(path: Path) -> list:
@@ -204,52 +330,39 @@ def _write_plugins(profile: Path, plugins: list) -> None:
         order.write_text("\n".join(kept + plugins) + "\n", encoding="utf-8")
 
 
-def mo2_install(mo2: Mo2, zips: list, log) -> None:
-    """Install or update every zip in MO2, in order. Raises when MO2 is open."""
+def mo2_install(mo2: Mo2, wanted: list, order: list, out_root, log) -> None:
+    """Install `wanted` (mod, entries) pairs in MO2 and list every mod of ours in install order.
+
+    `order` is every mod in install order: the profile lists all of ours, so a later partial install
+    keeps LOD above the rest. Raises when MO2 is open.
+    """
     if mo2_running():
         raise RuntimeError("Close Mod Organizer first: it rewrites its mod list when it exits.")
-    plugins = folder_install(mo2.mods, zips, log)
+    install_all(mo2.mods, wanted, out_root, log)
+    ours = [m.name for m in order if read_marker(mo2.mods, m.name)]
+    plugins = [p for name in ours for p in mods.plugins(read_marker(mo2.mods, name).get("files", ()))]
     profile = mo2.profile_dir()
     profile.mkdir(parents=True, exist_ok=True)
-    _write_modlist(profile, [z.stem for z in zips])
+    _write_modlist(profile, ours)
     _write_plugins(profile, plugins)
 
 
-def folder_install(mods_dir, zips: list, log) -> list:
-    """Extract every zip into its own folder under `mods_dir`; returns the plugins they hold."""
-    plugins = []
-    for zip_path in zips:
-        log(f"Installing {zip_path.stem}")
-        plugins += _extract(zip_path, Path(mods_dir) / zip_path.stem)
-    return plugins
+def mo2_uninstall(mo2: Mo2, names: list, log) -> None:
+    """Remove the mods `names` we installed from MO2, and their lines from the profile's lists.
 
-
-def folder_uninstall(mods_dir, log) -> list:
-    """Delete every mod folder we installed under `mods_dir`; returns their names."""
-    mods_dir = Path(mods_dir)
-    names = [p.parent.name for p in mods_dir.glob(f"*/{MARKER}")] if mods_dir.is_dir() else []
-    for name in names:
-        log(f"Removing {name}")
-        shutil.rmtree(mods_dir / name, ignore_errors=True)
-    return names
-
-
-def mo2_uninstall(mo2: Mo2, log) -> list:
-    """Remove every mod we installed from MO2; returns their names."""
+    MO2's virtual Data folder deploys nothing into the game, so this is the whole uninstall. Raises when MO2 is open.
+    """
     if mo2_running():
         raise RuntimeError("Close Mod Organizer first: it rewrites its mod list when it exits.")
-    markers = list(mo2.mods.glob(f"*/{MARKER}")) if mo2.mods.is_dir() else []
-    plugins = {p.name.lower() for m in markers for p in m.parent.iterdir() if p.suffix.lower() in PLUGIN_EXTS}
-    names = folder_uninstall(mo2.mods, log)
+    plugins = {p.lower() for name in names for p in uninstall_mod(mo2.mods, name, log)}
+    names = {n.lower() for n in names}
     profile = mo2.profile_dir()
-    gone = {n.lower() for n in names}
-    for file_name, test in (("modlist.txt", lambda ln: ln[1:].strip().lower() in gone),
+    for file_name, test in (("modlist.txt", lambda ln: ln[1:].strip().lower() in names),
                             ("plugins.txt", lambda ln: ln.lstrip("*").strip().lower() in plugins),
                             ("loadorder.txt", lambda ln: ln.strip().lower() in plugins)):
         path = profile / file_name
         if path.exists():
             path.write_text("\n".join(ln for ln in _lines(path) if not test(ln)) + "\n", encoding="utf-8")
-    return names
 
 
 def mo2_launch(mo2: Mo2) -> bool:
@@ -265,10 +378,6 @@ def mo2_launch(mo2: Mo2) -> bool:
 #  Vortex
 # ---------------------------------------------------------------------------
 
-#: Vortex's state key for the downloads root; each game downloads into its own subfolder.
-DOWNLOADS_KEY = "settings###downloads###path"
-
-
 def find_vortex() -> str:
     """Vortex.exe, from the nxm handler it registers or its default folder; "" when absent."""
     candidates = [Path(nxm_handler()),
@@ -277,37 +386,105 @@ def find_vortex() -> str:
     return next((str(p) for p in candidates if p.name.lower() == "vortex.exe" and p.is_file()), "")
 
 
-def vortex_folder(saved: str, kind: str) -> str:
-    """The saved staging or downloads folder, else the one Vortex's own settings name, else ""."""
-    if saved:
-        return saved
-    if kind == "staging":
-        return vortex_state.staging_folder(VORTEX_GAME)
-    root = vortex_state.read_setting(DOWNLOADS_KEY)
-    if not isinstance(root, str) or not root:
-        return ""
-    userdata = str(vortex_state.STATE_DIR.parent)
-    return os.path.normpath(os.path.join(root.replace("{USERDATA}", userdata), VORTEX_GAME))
+def vortex_staging(saved: str) -> str:
+    """The saved staging folder, else the one Vortex's own settings name, else ""."""
+    return saved or vortex_state.staging_folder(VORTEX_GAME)
 
 
-def download_status(downloads, zip_path: Path) -> str:
-    """"new", "update" or "installed" (copied) for one zip in Vortex's downloads folder."""
-    target = Path(downloads) / zip_path.name
-    if not target.is_file():
-        return "new"
-    here, there = target.stat(), zip_path.stat()
-    same = here.st_size == there.st_size and int(here.st_mtime) == int(there.st_mtime)
-    return "installed" if same else "update"
+def vortex_owns(staging: str) -> bool:
+    """Whether `staging` is the staging folder Vortex itself uses (so registering mods there makes sense)."""
+    own = vortex_state.staging_folder(VORTEX_GAME)
+    return bool(own) and os.path.normcase(os.path.normpath(own)) == os.path.normcase(os.path.normpath(staging))
 
 
-def vortex_downloads(downloads, zips: list, log) -> None:
-    """Copy each zip into Vortex's downloads folder, where Vortex offers to install it."""
-    Path(downloads).mkdir(parents=True, exist_ok=True)
-    for zip_path in zips:
-        log(f"Copying {zip_path.name} to Vortex's downloads")
-        shutil.copy2(zip_path, Path(downloads) / zip_path.name)
+def _vortex_key(name: str, *leaf: str) -> str:
+    """Vortex's dotted state path of a mod's field (dots in the name escaped as Vortex's parser expects)."""
+    return ".".join(["persistent", "mods", VORTEX_GAME, name.replace(".", r"\."), *leaf])
+
+
+def vortex_fields(name: str, when: str) -> dict:
+    """{state path: value} making Vortex list `name` (a folder in its staging) as an installed mod."""
+    leaves = {("id",): name, ("installationPath",): name, ("state",): "installed", ("type",): "",
+              ("attributes", "name"): name, ("attributes", "logicalFileName"): name,
+              ("attributes", "installTime"): when}
+    return {_vortex_key(name, *leaf): value for leaf, value in leaves.items()}
+
+
+def vortex_set_args(names: list, when: str = "") -> list:
+    """The `-s path=value` arguments registering each mod in Vortex (the values are JSON)."""
+    when = when or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    pairs = [f"{path}={json.dumps(value)}" for name in names for path, value in vortex_fields(name, when).items()]
+    return [arg for pair in pairs for arg in ("-s", pair)]
+
+
+def vortex_del_args(names: list) -> list:
+    """The `--del path` arguments removing each mod's registration from Vortex."""
+    return [arg for name in names for arg in ("--del", _vortex_key(name))]
+
+
+def vortex_cli(exe: str, args: list, log) -> None:
+    """Run Vortex's own command line (it edits its state and quits); Vortex must be closed."""
+    if running("Vortex.exe"):
+        raise RuntimeError("Close Vortex first: it holds its mod list open and rewrites it when it exits.")
+    env = {k: v for k, v in os.environ.items() if k != "ELECTRON_RUN_AS_NODE"}
+    for i in range(0, len(args), VORTEX_PAIRS * 2):
+        done = subprocess.run([exe, *args[i:i + VORTEX_PAIRS * 2]], capture_output=True, text=True, timeout=120,
+                              env=env, **POPEN_FLAGS)
+        if done.returncode:
+            log(f"Vortex exited with {done.returncode}: {done.stderr.strip()[-300:]}")
+
+
+def vortex_register(exe: str, names: list, log) -> None:
+    """List the installed mods in Vortex, so it shows them on its next start."""
+    log("Registering the mods with Vortex")
+    vortex_cli(exe, vortex_set_args(names), log)
+
+
+def vortex_unregister(exe: str, names: list, log) -> None:
+    """Take the uninstalled mods out of Vortex's list."""
+    log("Removing the mods from Vortex")
+    vortex_cli(exe, vortex_del_args(names), log)
+
+
+def vortex_data_dir(fallback: str) -> str:
+    """The Data folder Vortex deploys Skyrim SE into (its found game folder's), else `fallback`."""
+    game = vortex_state.read_setting(VORTEX_GAME_PATH.format(game=VORTEX_GAME))
+    return str(Path(game) / "Data") if isinstance(game, str) and game else fallback
+
+
+def _vortex_notice(name: str, done) -> str:
+    """What the user must still do in Vortex after `name` left Data, or ""."""
+    lines = []
+    if done.redeploy:
+        lines.append(f"{len(done.redeploy):,} file(s) {name} replaced are also in other mods, for example "
+                     f"{done.redeploy[0]}. Open Vortex and deploy to put them back.")
+    if done.kept:
+        lines.append(f"{len(done.kept):,} file(s) of {name} were changed in the Data folder after Vortex deployed "
+                     f"them, so they were left there, for example {done.kept[0]}.")
+    return " ".join(lines)
+
+
+def vortex_uninstall(exe: str, staging: str, data_dir: str, name: str, log) -> str:
+    """Uninstall mod `name` from Vortex's own staging: its deployed files out of `data_dir`, its folder, its entry.
+
+    Vortex must be closed. Returns what the user must still do in Vortex, or "".
+    See: docs/commentary/core_gui.md#vortex-deployed-uninstall
+    """
+    if running("Vortex.exe"):
+        raise RuntimeError("Close Vortex first: it holds its mod list open and rewrites it when it exits.")
+    done = vortex_deploy.undeploy(data_dir, staging, name, VORTEX_GAME) if data_dir else vortex_deploy.Undeployed()
+    if done.removed:
+        log(f"Took {done.removed:,} deployed file(s) of {name} out of {data_dir}")
+    uninstall_mod(staging, name, log)
+    if exe:
+        vortex_unregister(exe, [name], log)
+        if done.redeploy:
+            vortex_cli(exe, ["-s", f"{VORTEX_NEED_DEPLOY.format(game=VORTEX_GAME)}=true"], log)
+    return _vortex_notice(name, done)
 
 
 def vortex_launch(vortex: str) -> None:
-    """Open Vortex on Skyrim Special Edition, where the mods are deployed and the game started."""
+    """Open Vortex on Skyrim Special Edition, where the mods are enabled, deployed and the game started."""
     subprocess.Popen([vortex, "--game", VORTEX_GAME])
+
+

@@ -67,7 +67,14 @@ class Cell:
 
 
 def parse_cell(rec: Tes3Record) -> Cell:
-    """A CELL record split into its header fields and its references."""
+    """A CELL record split into its header fields and its references, parsed once per record."""
+    if rec.parsed is None:
+        rec.parsed = _split_cell(rec)
+    return rec.parsed
+
+
+def _split_cell(rec: Tes3Record) -> Cell:
+    """Walk a CELL record's subrecords into a new `Cell`."""
     cell = Cell()
     ref = None
     seen_data = False

@@ -19,11 +19,9 @@ for all of them; its phase banners say which step is running.
 See: docs/reference/pipeline.md#run-logs
 """
 
-import json
 import os
 import queue
 import re
-import sys
 import threading
 import time
 from pathlib import Path
@@ -35,7 +33,8 @@ from core.python_cmd import python_cmd
 from core.gui.config import EXPORT_DIR, GLOBAL_ACTIONS, REPO_ROOT, STEPS, load_config, navmesh_pins_dir, run_process
 from core.phase_info import STEP_BY_BANNER
 from core.process_job import RC_CANCELLED
-from output_layout import BODY_SLOTS_PATCH, DATA_ROOT, FINISHED_DIR_NAME, plugin_esm
+from output_layout import BODY_SLOTS_PATCH, FINISHED_DIR_NAME, plugin_esm
+from tools.release.runtime_files import DIALOGUE_MENU, MOD_NAME, packaged_state
 
 # ---------------------------------------------------------------------------
 #  Classifying a log line
@@ -338,27 +337,34 @@ def convert_cmd(session, plugins: list, steps: list, winding: bool) -> list:
     return _with_out(cmd, session.output)
 
 
-def group_plugins(session, owed: dict) -> list:
-    """[(plugins, steps, winding)] grouping plugins that owe the same steps and fix setting.
+def group_plugins(session, owed: dict, masters=None) -> list:
+    """[(plugins, steps, winding)], in run order: plugins owing the same steps and fix setting share one
+    convert.py, but never one that runs before a group holding one of their masters.
 
-    `owed` is {plugin: [step keys]}, in load order; each group becomes one convert.py process.
+    `owed` is {plugin: [step keys]}, masters first (`games.masters_first`); `masters` is {plugin: [masters]}.
     """
-    groups = {}
+    groups, group_of = [], {}
     for plugin, steps in owed.items():
         if not steps:
             continue
         key = (tuple(k for k, *_ in STEPS if k in set(steps)), session.winding_on(plugin))
-        groups.setdefault(key, []).append(plugin)
-    return [(plugins, list(steps), winding) for (steps, winding), plugins in groups.items()]
+        floor = max((group_of.get(m.lower(), -1) for m in (masters or {}).get(plugin, ())), default=-1)
+        at = next((i for i in range(len(groups) - 1, floor - 1, -1) if i >= 0 and groups[i][0] == key), None)
+        if at is None:
+            groups.append((key, []))
+            at = len(groups) - 1
+        groups[at][1].append(plugin)
+        group_of[plugin.lower()] = at
+    return [(plugins, list(steps), winding) for (steps, winding), plugins in groups]
 
 
 def _cmd_start_mod(session) -> list:
-    """Zip the prebuilt starter mod."""
+    """Build the starter mod's folder."""
     return _with_out(_tool("tools", "release", "package_start_mod.py"), session.output)
 
 
 def _cmd_runtime_dll(session) -> list:
-    """Zip the built runtime DLLs as one SKSE mod."""
+    """Write the built runtime DLLs as one SKSE mod folder."""
     return _with_out(_tool("tools", "release", "package_runtime_dll.py"), session.output)
 
 
@@ -431,44 +437,48 @@ def global_label(key: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _artifact_convert_ui():
-    """The UI mod's zip name, spelled once in the tool that produces it."""
+    """The UI mod's folder, named once in the tool that produces it."""
     from tools.misc.convert_ui import MOD_NAME
 
-    return f"{MOD_NAME}.zip"
+    return MOD_NAME
 
 
 def _artifact_pack_lod():
-    """The LOD mod's zip name."""
+    """The LOD mod's zip, in Finished Mods."""
     from asset_convert.lod.sibling_lod import LOD_DIR_NAME
 
-    return f"{LOD_DIR_NAME}.zip"
+    return f"{FINISHED_DIR_NAME}/{LOD_DIR_NAME}.zip"
 
 
-#: Load-order action -> the file under Finished Mods that proves it ran.
+#: Load-order action -> the mod folder (or zip) under the output folder that proves it ran.
 _ARTIFACTS = {
-    "package_start_mod": lambda: "TESGameSelect.zip",
-    "package_runtime_dll": lambda: "TESRuntime.zip",
+    "package_start_mod": lambda: "TESGameSelect",
+    "package_runtime_dll": lambda: MOD_NAME,
     "convert_ui": _artifact_convert_ui,
     "pack_lod": _artifact_pack_lod,
-    "modify_body_meshes": lambda: f"{BODY_SLOTS_PATCH}.zip",
+    "modify_body_meshes": lambda: BODY_SLOTS_PATCH,
 }
 
 
 def global_artifact(session, key: str):
-    """The file this action produces, or None when it has no single one (never creates the folder)."""
+    """The folder or file this action produces, or None when it has no single one."""
     name_fn = _ARTIFACTS.get(key)
     if name_fn is None:
         return None
-    return Path(session.out_root()) / FINISHED_DIR_NAME / name_fn()
+    return Path(session.out_root()) / name_fn()
 
 
 #: Field separator inside a stamp; never appears in a path or a name.
 SEP = "\x1f"
 
 
-def _master_flags_done(stamp: str) -> bool:
-    """True when every plugin in a make_master stamp reads back as ESM."""
+def _all_flags_done(stamp: str) -> bool:
+    """True when every `name:flag` part of a stamp read back off disk ends in 1."""
     return bool(stamp) and all(part.endswith(":1") for part in stamp.split(SEP))
+
+
+#: Actions whose result is read back off disk each time: their stamp's parts are `name:flag`.
+_READ_BACK = ("make_master", "package_runtime_dll")
 
 
 def global_is_current(session, key: str, last_stamp: dict) -> bool:
@@ -480,8 +490,8 @@ def global_is_current(session, key: str, last_stamp: dict) -> bool:
         stamp = global_stamp(session, key)
     except Exception:
         return False
-    if key == "make_master":
-        done = _master_flags_done(stamp)
+    if key in _READ_BACK:
+        done = _all_flags_done(stamp)
         if done:
             last_stamp[key] = stamp
         return done
@@ -519,11 +529,12 @@ def _stamp_start_mod(_session) -> str:
             + _stat_part(REPO_ROOT / "tools" / "release" / "make_game_select_esp.py", "gen", "missing"))
 
 
-def _stamp_runtime_dll(_session) -> str:
-    """The built DLL, and whether a Morrowind install is registered (the Morrowind menu needs it)."""
+def _stamp_runtime_dll(session) -> str:
+    """Whether each built DLL and ini matches its packaged copy, and the Morrowind menus are in when an install is."""
+    folder = Path(session.out_root()) / MOD_NAME
     morrowind = bool(source_registry.directory_for(EXPORT_DIR, "Morrowind.esm"))
-    return (_stat_part(REPO_ROOT / "tes_runtime" / "dist" / "TESRuntime.dll", "dll", "missing")
-            + f"|morrowind:{int(morrowind)}")
+    parts = [f"{arc}:{int(same)}" for arc, same in packaged_state(folder)]
+    return SEP.join(parts + [f"menus:{int(not morrowind or (folder / DIALOGUE_MENU).is_file())}"])
 
 
 def _convert_ui_wanted(ui, cur, ob_dir, sk_dir) -> list:
@@ -583,11 +594,25 @@ def converted_names(out_dir) -> list:
         return []
 
 
+def lod_plugins(session) -> list:
+    """The plugins Create LOD reads, in order: the confirmed choice, else every converted one."""
+    from core.gui.loadorder import default_lod_plugins
+    return list(session.selection.lod_plugins or default_lod_plugins(session))
+
+
+def lod_sources(session) -> list:
+    """The plugins Create LOD reads land from: each chosen worldspace's owner and every plugin adding to one."""
+    from asset_convert.lod.sibling_lod import merge_worldspaces, owner_map, worldspaces_by_plugin
+    names, out = lod_plugins(session), session.out_root()
+    by_plugin = worldspaces_by_plugin(names, EXPORT_DIR, out)
+    worlds = set(session.selection.lod_worldspaces or merge_worldspaces(names, by_plugin))
+    owners = {owner for owner in owner_map(worlds, names, EXPORT_DIR, out).values() if owner}
+    return sorted(owners | {n for n in names if worlds & set(by_plugin.get(n, ()))})
+
+
 def _lod_extra(session) -> list:
     """Create LOD's own inputs: the plugin order, then the worldspace filter or each plugin's stat."""
-    from core.gui.loadorder import default_lod_plugins
-
-    names = session.selection.lod_plugins or default_lod_plugins(session)
+    names = lod_plugins(session)
     parts = ["|"] + list(names)
     if session.selection.lod_worldspaces:
         return parts + ["|"] + list(session.selection.lod_worldspaces)
@@ -625,38 +650,6 @@ def global_stamp(session, key: str) -> str:
     """A fingerprint of everything `key`'s result depends on."""
     fn = _STAMP_FNS.get(key)
     return fn(session) if fn is not None else _stamp_converted_set(session, key)
-
-
-# ---------------------------------------------------------------------------
-#  How long steps took
-# ---------------------------------------------------------------------------
-
-#: Where each step's last duration is kept, per plugin set, for the next run's estimate.
-DURATIONS_FILE = DATA_ROOT / "logs" / "step_times.json"
-
-
-def _durations() -> dict:
-    """Every recorded duration; {} when none or unreadable."""
-    try:
-        return json.loads(DURATIONS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def estimate(plugins, step: str):
-    """Seconds `step` last took for this plugin set, or None when never timed."""
-    return _durations().get(",".join(sorted(p.lower() for p in plugins)), {}).get(step)
-
-
-def record_duration(plugins, step: str, seconds: float) -> None:
-    """Remember how long `step` took for this plugin set."""
-    data = _durations()
-    data.setdefault(",".join(sorted(p.lower() for p in plugins)), {})[step] = round(seconds, 1)
-    try:
-        DURATIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        DURATIONS_FILE.write_text(json.dumps(data, indent=1), encoding="utf-8")
-    except OSError:
-        pass
 
 
 # ---------------------------------------------------------------------------

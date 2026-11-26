@@ -274,7 +274,7 @@ def check(verbose: bool = True) -> tuple[bool, list[str], list[str]]:
     # was simply never rebuilt.  A cache that is already correct passes here,
     # so the only cost of checking always is the read itself.
     drifted = [p for p in nc.discover_plugins()
-               if not cache_matches_tag(p, nc.source_tag(p))]
+               if not nc.cache_matches_tag(p, nc.source_tag(p))]
 
     if not touched and not drifted:
         if verbose:
@@ -302,34 +302,9 @@ def check(verbose: bool = True) -> tuple[bool, list[str], list[str]]:
         if not info['ok']:
             stale.append(plugin)
             continue
-        if not cache_matches_tag(plugin, info['tag']):
+        if not nc.cache_matches_tag(plugin, info['tag']):
             stale.append(plugin)
     return True, touched, stale
-
-
-def cache_matches_tag(plugin: str, tag: str | None) -> bool:
-    """Was the cache built by the CURRENT navmesh code?
-
-    Exact, not heuristic: the import stamps the tag it used into
-    `navmesh_geom_cache/CACHE_TAG` (import_main._navmesh_geom_cache), and the
-    tag is a hash of the navmesh sources.  Equal stamp means the entries were
-    produced by exactly this code, whatever their mtimes say.
-
-    This is deliberately NOT an mtime comparison.  mtimes are rewritten by a
-    checkout, a branch switch or an unzip, so an mtime rule rejects caches that
-    are perfectly valid -- and the gate is only useful if it never cries wolf
-    on a correct cache.  An unstamped cache (built before this existed, or
-    hand-copied) is treated as stale, which is the safe direction: the cost is
-    one regeneration, not wrong geometry.
-    """
-    if tag is None:
-        return False
-    stamp = os.path.join(nc.cache_dir(plugin), 'CACHE_TAG')
-    try:
-        with open(stamp) as fh:
-            return fh.read().strip() == tag
-    except OSError:
-        return False
 
 
 def run_publish(tag: str | None = None, dry_run: bool = False) -> int:

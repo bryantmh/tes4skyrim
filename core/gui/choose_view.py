@@ -6,7 +6,10 @@ its mode before anything else, and is refused outright on a Skyrim older than 1.
 See: docs/commentary/core_gui.md#choose
 """
 
-from core.gui import games, mods, morrowind, runner
+import os
+
+from asset_convert.sources.source_registry import label_for_directory
+from core.gui import eta, games, mods, morrowind, runner
 from core.gui.config import STEPS, scan_mesh_subdirs
 from core.gui.window import Pick, model, paint_rail, pick_row
 
@@ -43,23 +46,27 @@ class ChooseView:
         self.games = []
         self.by_game = {}
         self.rows = {}
+        self.filter_chosen = False
         self.game = None
         self.ticked = set()
         self.pending = set()
         self.import_pick = None
+        self.plan_seconds = None
+        self.planned = 0
         ui = ctx.ui
         ui.pick_game = lambda i: self.select(self.games[i])
         ui.add_game = self._add_game
         ui.remove_game = self._remove_game
         ui.filter_keys = model(key for key, _label in FILTERS)
-        ui.set_filter = lambda f: (setattr(ui, "filter", f), self.paint_list())
-        ui.set_query = lambda q: (setattr(ui, "query", q), self.paint_list())
+        ui.set_filter = lambda f: self._narrow("filter", f)
+        ui.set_query = lambda q: self._narrow("query", q)
         ui.toggle_plugin = self._toggle
         ui.tick_shown = self._tick_shown
         ui.add_archive = lambda: self.add_mod(ctx.pick_file("Add a mod archive", ARCHIVES))
         ui.add_folder = lambda: self.add_mod(ctx.pick_folder("Add a mod folder"))
         ui.manage_mods = self._manage
         ui.plugin_parts = self._parts
+        ui.clear_plugin = self._clear
         ui.use_mode = self._use_mode
         ui.mode_switch = self._switch_mode
         ui.start_run = self.start
@@ -70,11 +77,20 @@ class ChooseView:
 
 
     def setup_changed(self) -> None:
-        """Setup finished a check: read the games the first time, repaint after that."""
-        if not self.games:
-            self.reload()
-        else:
+        """Setup finished a check: read the games the first time (asking which to keep once), repaint after."""
+        if self.games:
             self.paint_game()
+            return
+        self.reload()
+        if not self.ctx.session.cfg.get(games.GAMES_ASKED_KEY):
+            self.ctx.work(lambda: games.found_game_dirs(self.ctx.session.cfg), self._ask_games)
+
+    def _ask_games(self, found: list) -> None:
+        """Ask which of the game folders found to keep; with none found there is nothing to ask."""
+        if found:
+            self.ctx.open_pick(FoundGames(self, found))
+        else:
+            self.ctx.session.save(games.GAMES_ASKED_KEY, True)
 
     def reload(self, keep=None) -> None:
         """Read every game and its plugins on a worker, then show `keep` (or the last game)."""
@@ -112,9 +128,12 @@ class ChooseView:
         rows = self.rows.get(game["id"], [])
         names = {r["name"] for r in rows}
         wanted = self.pending & names
-        self.ticked = wanted or {r["name"] for r in rows if r["status"] == "out" or (r["status"] == "new" and r["base"])}
+        self.ticked = wanted or {r["name"] for r in rows if games.steps_for(r)
+                                 and (r["status"] == "out" or (r["root"] and r["status"] == "new"))}
         self.pending -= wanted
-        self.ctx.ui.filter = "out" if wanted else "all"
+        self.ctx.ui.pending_mode = morrowind.mode_index(morrowind.saved_mode(self.ctx.session.cfg))
+        if not self.filter_chosen:
+            self.ctx.ui.filter = "out" if wanted or any(r["status"] == "out" for r in rows) else "all"
         self.ctx.ui.query = ""
         self.paint_game()
 
@@ -147,9 +166,8 @@ class ChooseView:
         ui.game_mode = morrowind.mode_name(mode) if mode else ""
         ui.game_error = ("Morrowind needs Skyrim 1.6 or later. Oblivion, Nehrim and Fallout games still work."
                          if g["tes3"] and not self.ctx.screens["setup"].morrowind_ok else "")
-        ui.ask_mode = g["tes3"] and mode is None
-        ui.mode_options = model({"key": k, "name": n, "lines": lines, "need": need}
-                                for k, n, lines, need in morrowind.MODES)
+        ui.ask_mode = g["tes3"] and not morrowind.mode_asked(self.ctx.session.cfg)
+        ui.mode_options = model(morrowind.mode_options())
         ui.mode_note = "Changeable later; converted Morrowind plugins then convert again."
         self.paint_list()
         paint_rail(self.ctx)
@@ -172,10 +190,10 @@ class ChooseView:
             self.ctx.confirm("Remove " + game["name"], text, "Remove", "Keep",
                              lambda: (games.remove_game(game["path"]), self.reload()))
             return
-        plugins = mod_names(game["mod"])
-        text = f"The added mod {game['name']} and its imported files are removed; converted output stays."
+        plugins, out_root = mod_names(game["mod"]), self.ctx.session.out_root()
+        text = f"The added mod {game['name']}, its imported files and its converted output are deleted."
         self.ctx.confirm("Remove " + game["name"], text, "Remove", "Keep",
-                         lambda: self.run.start_task("Removing mods", lambda log: mods.remove(plugins, log),
+                         lambda: self.run.start_task("Removing mods", lambda log: games.remove_mod(plugins, out_root, log),
                                                      lambda _r: self.reload()))
 
     def current_rows(self) -> list:
@@ -194,26 +212,50 @@ class ChooseView:
         return {"all": True, "done": row["status"] != "new", "out": row["status"] == "out",
                 "new": row["status"] == "new", "arch": row["archive"], "on": row["name"] in self.ticked}[key]
 
+    def _narrow(self, what: str, value: str) -> None:
+        """Set the filter or the search text, then show the list it leaves; a chosen filter stays across games."""
+        self.filter_chosen = self.filter_chosen or what == "filter"
+        setattr(self.ctx.ui, what, value)
+        self.paint_list()
+
     def paint_list(self) -> None:
         """The filtered plugin list, the filter counts and the go bar."""
+        self.ctx.ui.plugins = model(self._plugin_row(r) for r in self.shown())
+        self.paint_counts()
+
+    def paint_counts(self) -> None:
+        """Each filter's count, the header tick, then the go bar."""
         rows = self.current_rows()
+        shown = self.shown()
+        self.ctx.ui.all_shown_ticked = bool(shown) and all(r["name"] in self.ticked for r in shown)
         counts = {key: sum(self._filter_keeps(key, r) for r in rows) for key, _label in FILTERS}
         self.ctx.ui.filter_labels = model(f"{label} · {counts[key]}" for key, label in FILTERS)
-        self.ctx.ui.plugins = model({"name": r["name"], "origin": r["origin"], "archive": r["archive"],
-                                     "base": r["base"], "parts": r["parts"], "status": STATUS[r["status"]][0],
-                                     "tone": STATUS[r["status"]][1], "checked": r["name"] in self.ticked,
-                                     "locked": False} for r in self.shown())
         self.replan()
+
+    def _plugin_row(self, r: dict) -> dict:
+        """One PluginRow for the list; a plugin the Morrowind mode never converts is locked and unticked."""
+        locked = self._skipped(r)
+        return {"name": r["name"], "origin": "Replaced by the compatibility patch in Morroblivion mode" if locked
+                else r["origin"], "archive": r["archive"], "base": r["base"],
+                "parts": r["parts"], "status": STATUS[r["status"]][0], "tone": STATUS[r["status"]][1],
+                "checked": r["name"] in self.ticked and not locked, "locked": locked,
+                "clearable": r["status"] != "new" and r["mod"] is None}
+
+    def _skipped(self, r: dict) -> bool:
+        """True when the saved Morrowind mode never converts row `r`."""
+        return bool(self.game and self.game["tes3"]
+                    and morrowind.mode_skips(morrowind.saved_mode(self.ctx.session.cfg), r["name"]))
 
     def _toggle(self, index: int, on: bool) -> None:
         """Tick or untick one shown plugin."""
-        name = self.shown()[index]["name"]
-        (self.ticked.add if on else self.ticked.discard)(name)
-        self.replan()
+        row = self.shown()[index]
+        (self.ticked.add if on else self.ticked.discard)(row["name"])
+        self.ctx.ui.plugins.set_row_data(index, self._plugin_row(row))
+        self.paint_counts()
 
     def _tick_shown(self, on: bool) -> None:
         """Tick or untick every shown plugin."""
-        names = {r["name"] for r in self.shown()}
+        names = {r["name"] for r in self.shown() if not self._skipped(r)}
         self.ticked = self.ticked | names if on else self.ticked - names
         self.paint_list()
 
@@ -225,14 +267,19 @@ class ChooseView:
     def owed(self) -> dict:
         """{plugin: steps} for every ticked plugin, in the game's order."""
         manual = self.ctx.session.selection.steps
-        return {r["name"]: games.steps_for(r, self.ctx.session.pack_default, manual)
-                for r in self.current_rows() if r["name"] in self.ticked}
+        return {r["name"]: games.steps_for(r, manual)
+                for r in self.current_rows() if r["name"] in self.ticked and not self._skipped(r)}
 
     def auto_steps(self) -> list:
         """The steps the ticked plugins owe, ignoring any manual choice."""
         keys = {k for r in self.current_rows() if r["name"] in self.ticked
-                for k in games.steps_for(r, self.ctx.session.pack_default)}
+                for k in games.steps_for(r)}
         return [k for k, *_ in STEPS if k in keys]
+
+    def listed_steps(self) -> list:
+        """The step keys worth listing: those some ticked plugin can run (all of them when nothing is ticked)."""
+        rows = [r for r in self.current_rows() if r["name"] in self.ticked]
+        return [k for k, *_ in STEPS if not rows or any(k in games.runnable(r) for r in rows)]
 
     def current_steps(self) -> list:
         """The steps the next run does (manual or automatic)."""
@@ -240,7 +287,17 @@ class ChooseView:
         return [k for k, *_ in STEPS if k in keys]
 
     def replan(self) -> None:
-        """Recompute the go bar."""
+        """Recompute the go bar, then (on a worker) the ticked plugins' idle steps and the time estimate."""
+        self._paint_go()
+        self.planned += 1
+        ask, workers = self.planned, self.ctx.session.worker_count()
+        ticked = sorted(self.ticked)
+        self.ctx.work(lambda: self._estimate(ticked, workers), lambda seconds: self._timed(ask, seconds),
+                      lambda _exc: None, counted=False)
+        paint_rail(self.ctx)
+
+    def _paint_go(self) -> None:
+        """The go bar's title, button and second line from what the ticked plugins owe now."""
         ui = self.ctx.ui
         owed = {p: s for p, s in self.owed().items() if s}
         rows = {r["name"]: r for r in self.current_rows()}
@@ -251,13 +308,29 @@ class ChooseView:
         ui.go_title = block or (f"{verb} plugin{'s' if len(owed) != 1 else ''}" if owed else "Nothing to do")
         ui.go_label = verb if owed else "Convert"
         ui.go_enabled = bool(owed) and not block
-        steps = len(self.current_steps())
-        seconds = sum(runner.estimate([p], k) or 0 for p, ks in owed.items() for k in ks)
-        mode = ui.game_mode
-        ui.go_sub = " · ".join(x for x in (f"{steps} of {len(STEPS)} steps" if owed else "Tick plugins above",
-                                          f"last time about {runner.format_elapsed(seconds)}" if seconds else "",
-                                          mode) if x)
-        paint_rail(self.ctx)
+        self._paint_go_sub()
+
+    def _estimate(self, ticked: list, workers: int) -> float:
+        """On a worker: learn the ticked plugins' idle steps, then estimate what they owe."""
+        games.read_idle(ticked)
+        owed = {p: s for p, s in self.owed().items() if s}
+        return sum(sum(eta.plugin_estimate(p, ks, workers).values()) for p, ks in owed.items())
+
+    def _timed(self, ask: int, seconds: float) -> None:
+        """The estimate for plan `ask` arrived (idle steps now known); shown only if no newer plan replaced it."""
+        if ask == self.planned:
+            self.plan_seconds = seconds
+            self._paint_go()
+            paint_rail(self.ctx)
+
+    def _paint_go_sub(self) -> None:
+        """The go bar's second line: steps, the time estimate once known, the Morrowind mode."""
+        owed = {p: s for p, s in self.owed().items() if s}
+        idle = "The ticked plugins are up to date" if self.owed() else "Tick plugins above"
+        seconds = self.plan_seconds
+        self.ctx.ui.go_sub = " · ".join(x for x in (
+            f"{len(self.current_steps())} of {len(self.listed_steps())} steps" if owed else idle,
+            f"about {runner.format_elapsed(seconds)}" if owed and seconds else "", self.ctx.ui.game_mode) if x)
 
     def _blocker(self) -> str:
         """Why the ticked plugins can't be converted right now, or ""."""
@@ -283,9 +356,12 @@ class ChooseView:
         owed = {p: s for p, s in self.owed().items() if s}
         if not owed or self._blocker() or self.run.busy():
             return
-        groups = runner.group_plugins(self.ctx.session, owed)
+        rows = {r["name"]: r for r in self.current_rows()}
+        masters = {p: mods.plugin_masters(rows[p]["path"]) for p in owed}
+        groups = runner.group_plugins(self.ctx.session, games.masters_first(owed, masters), masters)
         self.run.start_conversion(groups, self.game["name"], set(owed) - {r["name"] for r in self.current_rows()
-                                                                            if r["status"] != "new"})
+                                                                            if r["status"] != "new"},
+                                  self.listed_steps())
 
     def run_import_for(self, plugin: str) -> None:
         """Re-run only Import for `plugin` (after placing navmesh pins)."""
@@ -328,7 +404,7 @@ class ChooseView:
         """The change-mode dialog."""
         ui = self.ctx.ui
         ui.mode_choice = morrowind.mode_index(morrowind.saved_mode(self.ctx.session.cfg))
-        ui.patch_state = ("Morroblivion compatibility patch: built" if morrowind.patch_built() else "")
+        ui.patch_state = ("(already built)" if morrowind.patch_built() else "")
         ui.patch_rebuild = False
         ui.dialog = "mode"
 
@@ -343,6 +419,7 @@ class ChooseView:
         from tes4_export.export_morrowind import MORROWIND_SOURCE_KEY
 
         self.ctx.session.save(MORROWIND_SOURCE_KEY, key)
+        self.ctx.session.save(morrowind.MODE_ASKED_KEY, True)
         if morrowind.needs_patch(key) and morrowind.morroblivion_converted() and (rebuild or not morrowind.patch_built()):
             self._build_patch()
         self.paint_game()
@@ -452,6 +529,33 @@ class ChooseView:
             return
         self.ctx.open_pick(ManageMods(self, game_mods))
 
+    def _clear(self, index: int) -> None:
+        """Ask, then delete one converted Data-folder plugin's files and records; refused while a converted
+        plugin of this game still uses it as a master."""
+        name, out_root = self.shown()[index]["name"], self.ctx.session.out_root()
+        users = self._converted_users(name)
+        if users:
+            self.ctx.info("Clear " + name, f"{name} is a master of {', '.join(users[:4])}"
+                          f"{f' and {len(users) - 4} more' if len(users) > 4 else ''}. Clear those first.")
+            return
+        found = ", ".join(str(p) for p in games.converted_files(name, out_root)) or "no files are left"
+        text = (f"Deletes {name}'s converted files ({found}) and its conversion records, so it reads as not "
+                "converted and is no longer reported out of date. The plugin in your game's Data folder and any "
+                "copy installed in your mod manager stay.")
+        self.ctx.confirm("Clear " + name, text, "Clear", "Keep", lambda: self.run.start_task(
+            f"Clearing {name}", lambda log: games.clear_converted(name, out_root, log), lambda _r: self.reload()))
+
+    def _converted_users(self, master: str) -> list:
+        """The converted Data-folder plugins of this game that list `master` among their masters."""
+        out = []
+        for row in self.current_rows():
+            if row["status"] == "new" or row["mod"] is not None:
+                continue
+            masters = mods.plugin_masters(os.path.join(self.game["path"], row["name"]))
+            if master.lower() in {m.lower() for m in masters}:
+                out.append(row["name"])
+        return out
+
     def _parts(self, index: int) -> None:
         """Change which parts of the plugin's mod are installed."""
         mod = self.shown()[index]["mod"]
@@ -467,6 +571,42 @@ class ChooseView:
 # ---------------------------------------------------------------------------
 #  Pickers
 # ---------------------------------------------------------------------------
+
+class FoundGames(Pick):
+    """First start: which game folders, already listed or found on this PC, to keep."""
+
+    title, ok = "Games found", "Keep these"
+    blurb = "Tick the games to convert from. Add a game brings back any you leave out."
+
+    def __init__(self, view, paths):
+        """Every folder starts ticked."""
+        self.view, self.paths = view, paths
+        self.on = set(paths)
+
+    def rows(self) -> list:
+        """One row per folder: its install name, then its path."""
+        return [pick_row(label_for_directory(p), p in self.on, p) for p in self.paths]
+
+    def toggle(self, index, on) -> None:
+        """Tick or untick a folder."""
+        (self.on.add if on else self.on.discard)(self.paths[index])
+
+    def set_all(self, on) -> None:
+        """All or none."""
+        self.on = set(self.paths) if on else set()
+
+    def accept(self, ctx) -> None:
+        """List the ticked folders, hide the rest, and remember the question was answered."""
+        ctx.ui.dialog = ""
+        games.keep_game_dirs([p for p in self.paths if p in self.on], [p for p in self.paths if p not in self.on])
+        ctx.session.save(games.GAMES_ASKED_KEY, True)
+        self.view.reload()
+
+    def cancel(self, ctx) -> None:
+        """Close without changing the games, and never ask again."""
+        ctx.ui.dialog = ""
+        ctx.session.save(games.GAMES_ASKED_KEY, True)
+
 
 class MeshFolders(Pick):
     """Which mesh folders the Meshes step converts."""
@@ -507,7 +647,7 @@ class MeshFolders(Pick):
 class ManageMods(Pick):
     """The mods added to one game: remove them, or change their parts."""
 
-    title, blurb, ok, extra = "Added mods", "Tick mods to remove. Their converted output stays.", "Remove", \
+    title, blurb, ok, extra = "Added mods", "Tick mods to remove. Their converted output is deleted too.", "Remove", \
         "Change parts"
 
     def __init__(self, view, game_mods):
@@ -535,7 +675,8 @@ class ManageMods(Pick):
             return
         ctx.ui.dialog = ""
         plugins = [p for m in doomed for p in mod_names(m)]
-        self.view.run.start_task("Removing mods", lambda log: mods.remove(plugins, log),
+        out_root = self.view.ctx.session.out_root()
+        self.view.run.start_task("Removing mods", lambda log: games.remove_mod(plugins, out_root, log),
                                  lambda _r: self.view.reload())
 
     def extra_clicked(self, ctx) -> None:

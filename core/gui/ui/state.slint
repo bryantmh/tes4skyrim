@@ -4,15 +4,15 @@
 export struct RailStep { key: string, num: string, title: string, sub: string, state: string }
 export struct CheckItem { key: string, title: string, detail: string, status: string, tone: string, action: string, action2: string, highlight: bool, mono: bool }
 export struct GameRow { key: string, name: string, sub: string, status: string, tone: string }
-export struct PluginRow { name: string, origin: string, archive: bool, base: bool, parts: bool, status: string, tone: string, checked: bool, locked: bool }
-export struct ModeOpt { key: string, name: string, lines: string, need: string }
-export struct Lane { label: string, sub: string, start: float, end: float, state: string, selected: bool, done-mark: bool }
+export struct PluginRow { name: string, origin: string, archive: bool, base: bool, parts: bool, status: string, tone: string, checked: bool, locked: bool, clearable: bool }
+export struct ModeOpt { key: string, name: string, lines: string, need: string, ok: bool, tag: string }
+export struct Lane { label: string, sub: string, start: float, end: float, state: string, selected: bool, done-mark: bool, bar-text: string, bar-short: string }
+export struct LogLine { text: string, tag: string }
 export struct Tick { pos: float, label: string }
 export struct KV { k: string, v: string }
-export struct LogLine { text: string, tag: string }
 export struct LoadItem { key: string, title: string, detail: string, status: string, tone: string, include: bool, toggle: bool, tag: string, action: string }
-export struct WorldRow { name: string, plugins: string, status: string, tone: string }
-export struct InstallRow { order: string, name: string, detail: string, status: string, tone: string }
+export struct WorldRow { name: string, plugins: string, status: string, tone: string, checked: bool }
+export struct InstallRow { order: string, name: string, detail: string, status: string, tone: string, checked: bool, removable: bool }
 export struct PickRow { name: string, detail: string, tag: string, checked: bool, enabled: bool }
 
 export global Ui {
@@ -82,11 +82,14 @@ export global Ui {
     callback set-filter(string);
     callback set-query(string);
     callback toggle-plugin(int, bool);
+    // Whether every plugin the list shows is ticked (the header box).
+    in property <bool> all-shown-ticked;
     callback tick-shown(bool);
     callback add-archive();
     callback add-folder();
     callback manage-mods();
     callback plugin-parts(int);
+    callback clear-plugin(int);
     callback use-mode(int);
     callback start-run();
 
@@ -106,40 +109,57 @@ export global Ui {
     in-out property <string> detail-tone;
     in-out property <string> detail-text;
     in-out property <[KV]> detail-rows;
-    in-out property <[LogLine]> log;
+    // The last lines of the run's log, each with its classify tag (err, warn, ok, head, cmd) for its color.
+    in-out property <[LogLine]> log-lines;
+    // The running bar's stripes' offset in pixels, moved a step each redraw.
+    in-out property <int> stripe-phase;
+    // Whether the log view sits at its end; while it does not, new lines wait (`log-caught-up` brings them).
+    in-out property <bool> log-follow: true;
     in-out property <string> workers-text;
     callback cancel-run();
     callback run-again();
     callback select-lane(int);
     callback clear-log();
+    callback log-caught-up();
+    // The Copy button: `copy-log` puts the log lines on screen in `log-copy` as one text.
+    in-out property <string> log-copy;
+    callback copy-log();
     callback open-run-log();
 
-    // ---- Load order
+    // ---- Shared mods
     in-out property <[LoadItem]> lo-items;
     in-out property <[LoadItem]> lo-extras;
     in-out property <[WorldRow]> worlds;
-    in-out property <string> lod-warn;
     in-out property <string> build-label;
     in-out property <bool> build-enabled;
     callback lo-include(string, bool);
     callback lo-action(string);
     callback build-ready();
-    callback lod-update-waiting();
-    callback lod-build-anyway();
+    // Distant LOD's worldspace ticks, and why none is offered.
+    in-out property <string> lod-why;
+    callback lod-tick-world(int, bool);
+    callback lod-all-worlds(bool);
 
     // ---- Install
     in-out property <int> manager;
     in-out property <[string]> manager-options;
     in-out property <string> manager-where;
+    in-out property <string> manager-detail;
+    // The button opening the chosen way's folder: its text, and whether that folder is known.
+    in-out property <string> folder-label;
+    in-out property <bool> folder-enabled;
     in-out property <[InstallRow]> installs;
     in-out property <string> install-label;
     in-out property <bool> install-enabled;
     in-out property <string> launch-label;
+    in-out property <string> drive-notice;
     callback set-manager(int);
+    callback install-toggle(int, bool);
+    callback install-select(bool);
     callback install();
     callback launch();
-    callback uninstall();
-    callback open-finished();
+    callback uninstall(int);
+    callback open-target();
 
     // ---- Dialogs: info and confirm
     in-out property <string> info-title;
@@ -148,7 +168,10 @@ export global Ui {
     in-out property <string> confirm-text;
     in-out property <string> confirm-yes;
     in-out property <string> confirm-no;
+    // An optional third button ("" hides it).
+    in-out property <string> confirm-alt;
     callback confirm-answer(bool);
+    callback confirm-alt-clicked();
 
     // ---- Dialog: list picker (masters, body patch, mesh folders, parts, Oblivion UI, added mods)
     in-out property <string> pick-title;
@@ -161,6 +184,7 @@ export global Ui {
     callback pick-toggle(int, bool);
     callback pick-all(bool);
     callback pick-accept();
+    callback pick-cancel();
     callback pick-extra-clicked();
     callback pick-row-action(int);
 
@@ -168,17 +192,14 @@ export global Ui {
     in-out property <[string]> lod-details;
     in-out property <int> lod-detail;
     in-out property <[PickRow]> lod-plugins;
-    in-out property <[PickRow]> lod-worlds;
     in-out property <bool> lod-force;
-    in-out property <string> lod-why;
     callback lod-set-detail(int);
     callback lod-toggle-plugin(int, bool);
     callback lod-move(int, int);
-    callback lod-toggle-world(int, bool);
+    callback lod-all-plugins(bool);
     callback lod-set-force(bool);
     callback lod-reset();
     callback lod-accept();
-    callback lod-pack-only();
 
     // ---- Dialog: import a mod
     in-out property <string> import-title;
@@ -214,7 +235,6 @@ export global Ui {
     in-out property <[string]> worker-options;
     in-out property <int> workers;
     in-out property <string> logs-kept;
-    in-out property <bool> pack-default;
     callback adv-step(int, bool);
     callback adv-steps-all(bool);
     callback adv-auto();
@@ -226,7 +246,6 @@ export global Ui {
     callback set-nav-cache(bool);
     callback set-workers(int);
     callback set-logs-kept(string);
-    callback set-pack-default(bool);
     callback open-folder(string);
 
     // ---- Dialog: navmesh editor

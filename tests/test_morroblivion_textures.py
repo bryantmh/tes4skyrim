@@ -17,7 +17,7 @@ from asset_convert.nif import morroblivion_textures as mbt
 from asset_convert.nif.tex_paths import rewrite_tex_path
 from asset_convert.nif.geometry_shader import _twin_alpha
 from asset_convert.nif.sse_nif import NifFormat
-from tes4_export.morroblivion_texture_map import pair_set, proven_twins, shared_cutoff
+from tes4_export.morroblivion_texture_map import pair_set, proven_twins, scope_cutoff, shared_cutoff, twins_and_worn
 
 #: The patch whose export carries the map.
 PATCH = 'Morrowind-Morroblivion-Compatibility.esp'
@@ -215,13 +215,29 @@ def test_the_bitter_coast_leaves_carry_morroblivions_alpha_test():
     assert cutoffs == {(0x1200, 32)}
 
 
+#: Bitter Coast tree 08, whose moss Morroblivion's standalone moss meshes test at 0 instead.
+VANILLA_TREE_08 = 'export/Morrowind.esm/meshes/f/flora_bc_tree_08.nif'
+MORRO_TREE_08 = 'export/Morrowind_ob.esm/meshes/morro/f/floraubcutreeu08.nif'
+
+
+@pytest.mark.skipif(not (os.path.isfile(VANILLA_TREE_08)
+                         and os.path.isfile(MORRO_TREE_08)),
+                    reason='needs the Morrowind and Morroblivion exports')
+def test_the_bitter_coast_tree_moss_is_cut_at_its_own_trees_threshold():
+    """Tree 08's own counterpart cuts every moss texture at 32, though its moss geometry differs."""
+    worn = twins_and_worn(VANILLA_TREE_08, MORRO_TREE_08)[1]
+    for key in ('tx_bc_moss_01', 'tx_bc_moss_02', 'tx_bc_moss_03'):
+        assert scope_cutoff(('f\\flora_bc_tree_08.nif', key), worn[key]) == (0x1200, 32)
+
+
 class TestTwinAlpha:
     """The alpha test Morroblivion authored with a twin follows the swap."""
 
     @pytest.fixture
     def armed(self, tree):
         """The Tamriel map armed, its twin cut at 32 by Morroblivion."""
-        mbt.write_alpha(tree['map'], {'tx_hlaalu_wall2_01': (0x1200, 32)})
+        mbt.write_alpha(tree['map'], {(mbt.ANY_MESH, 'tx_hlaalu_wall2_01'): (0x1200, 0),
+                                      ('x\\tree_01.nif', 'tx_hlaalu_wall2_01'): (0x1200, 32)})
         mbt.activate(tree['tamriel'])
         return tree
 
@@ -235,14 +251,28 @@ class TestTwinAlpha:
 
     def test_the_list_round_trips(self, tmp_path):
         """Every cutoff written comes back unchanged."""
-        alpha = {'tx_a': (0x1200, 32), 'f\\tx_b': (0x1AEC, 192)}
+        alpha = {(mbt.ANY_MESH, 'tx_a'): (0x1200, 32), ('f\\tree.nif', 'f\\tx_b'): (0x1AEC, 192)}
         mbt.write_alpha(tmp_path, alpha)
         assert mbt.read_alpha(tmp_path) == alpha
 
     def test_a_blend_only_shape_gains_the_test(self, armed):
         """Vanilla's blend keeps; Morroblivion's test and threshold join it."""
         out = _twin_alpha(self._alpha(0x00ED), b'tx_hlaalu_wall2_01.tga', None)
-        assert (int(out.flags), int(out.threshold)) == (0x12ED, 32)
+        assert (int(out.flags), int(out.threshold)) == (0x12ED, 0)
+
+    def test_the_paired_mesh_threshold_wins(self, armed):
+        """A mesh takes its own counterpart's threshold over the texture-wide lowest."""
+        assert mbt.twin_cutoff(b'tx_hlaalu_wall2_01.tga', 'X/Tree_01.nif') == (0x1200, 32)
+        assert mbt.twin_cutoff(b'tx_hlaalu_wall2_01.tga', 'x\\other.nif') == (0x1200, 0)
+
+    def test_a_paired_mesh_without_a_test_stays_untested(self, tree):
+        """A counterpart wearing the twin with no test overrides the texture-wide one."""
+        mbt.write_alpha(tree['map'], {(mbt.ANY_MESH, 'tx_hlaalu_wall2_01'): (0x1200, 32),
+                                      ('x\\rug.nif', 'tx_hlaalu_wall2_01'): mbt.NO_TEST})
+        mbt.activate(tree['tamriel'])
+        assert mbt.twin_cutoff(b'tx_hlaalu_wall2_01.tga', 'x\\rug.nif') is None
+        assert scope_cutoff(('x\\rug.nif', 'tx_a'), {None}) == mbt.NO_TEST
+        assert scope_cutoff((mbt.ANY_MESH, 'tx_a'), {None}) is None
 
     def test_an_opaque_shape_stays_opaque(self, armed):
         """No authored alpha means opaque, whatever the twin's other shapes do."""

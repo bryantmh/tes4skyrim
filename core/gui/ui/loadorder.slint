@@ -33,45 +33,47 @@ component ItemList {
                         horizontal-stretch: 0;
                         if item.toggle: HorizontalLayout {
                             spacing: 6px;
-                            Tick { y: (parent.height - 18px) / 2; checked: item.include; toggled(on) => { Ui.lo-include(item.key, on); } }
+                            Tick { checked: item.include; label: "Include " + item.title; toggled(on) => { Ui.lo-include(item.key, on); } }
                             Text { text: "Include"; font-size: 13px; color: Theme.fg; vertical-alignment: center; }
                         }
-                        VerticalLayout { alignment: center; Pill { text: item.status; tone: item.tone; } }
-                        if item.action != "": Btn { text: item.action; small: true; clicked => { Ui.lo-action(item.key); } }
+                        HorizontalLayout { width: 110px; alignment: start; VerticalLayout { alignment: center; Pill { text: item.status; tone: item.tone; } } }
+                        HorizontalLayout {
+                            width: 120px;
+                            alignment: end;
+                            if item.action != "": VerticalLayout { alignment: center; Btn { text: item.action; small: true; clicked => { Ui.lo-action(item.key); } } }
+                        }
                     }
                 }
-                if item.key == "lod": VerticalLayout {
+                if item.key == "lod" && item.include: VerticalLayout {
                     padding: 12px;
                     padding-top: 0px;
-                    spacing: 8px;
-                    Box {
+                    spacing: 6px;
+                    if Ui.worlds.length > 0: HorizontalLayout {
+                        spacing: 6px;
+                        padding-left: 4px;
+                        Text { text: "Worldspaces to build"; font-size: 12.5px; color: Theme.muted; vertical-alignment: center; horizontal-stretch: 1; }
+                        Btn { text: "All"; small: true; clicked => { Ui.lod-all-worlds(true); } }
+                        Btn { text: "None"; small: true; clicked => { Ui.lod-all-worlds(false); } }
+                    }
+                    if Ui.worlds.length > 0: Box {
                         VerticalLayout {
-                            for w[j] in Ui.worlds: VerticalLayout {
-                                if j > 0: Divider { }
+                            for w[j] in Ui.worlds: Rectangle {
+                                TouchArea { mouse-cursor: pointer; clicked => { Ui.lod-tick-world(j, !w.checked); } }
+                                Divider { y: 0; width: parent.width; visible: j > 0; }
                                 HorizontalLayout {
                                     padding: 8px;
                                     padding-left: 12px;
                                     padding-right: 12px;
-                                    spacing: 12px;
+                                    spacing: 10px;
+                                    Tick { checked: w.checked; label: w.name; toggled(on) => { Ui.lod-tick-world(j, on); } }
                                     Text { text: w.name; color: Theme.fg; font-size: 13px; horizontal-stretch: 2; preferred-width: 0px; vertical-alignment: center; overflow: elide; }
                                     Text { text: w.plugins; color: Theme.muted; font-size: 12.5px; horizontal-stretch: 3; preferred-width: 0px; vertical-alignment: center; overflow: elide; }
-                                    Pill { text: w.status; tone: w.tone; }
+                                    HorizontalLayout { width: 170px; alignment: end; VerticalLayout { alignment: center; Pill { text: w.status; tone: w.tone; } } }
                                 }
                             }
                         }
                     }
-                    if Ui.lod-warn != "": Rectangle {
-                        border-radius: Theme.r-md;
-                        background: Theme.warn-soft;
-                        HorizontalLayout {
-                            padding: 10px;
-                            padding-left: 12px;
-                            spacing: 8px;
-                            Text { text: Ui.lod-warn; font-size: 13px; color: Theme.fg; wrap: word-wrap; vertical-alignment: center; }
-                            Btn { text: "Update them"; small: true; clicked => { Ui.lod-update-waiting(); } }
-                            Btn { text: "Build anyway"; small: true; clicked => { Ui.lod-build-anyway(); } }
-                        }
-                    }
+                    if Ui.worlds.length == 0 && Ui.lod-why != "": Muted { text: Ui.lod-why; }
                 }
             }
         }
@@ -88,8 +90,8 @@ export component LoadOrderView {
             spacing: 8px;
             HorizontalLayout {
                 VerticalLayout {
-                    Heading { text: "Load order"; }
-                    Muted { text: "Built once for every converted game together."; }
+                    Heading { text: "Shared mods"; }
+                    Muted { text: "Built once and used by every converted game."; }
                 }
                 HorizontalLayout {
                     alignment: end;

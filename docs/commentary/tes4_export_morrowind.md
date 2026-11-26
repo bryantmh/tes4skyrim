@@ -762,11 +762,11 @@ mesh swaps by default.
 - A swapped model's references take Morroblivion's measured pitch and Z
   corrections and the [origin shift](#morroblivion-origin-shift), as in
   Morroblivion mode, including references to a master's swapped bases.
-- **Assets ship with the plugin.** Each swapped mesh and every texture it names
-  (with `_n`/`_g` maps) is copied into the plugin's own asset tree, unless a
-  master's tree already holds it, so the mode never needs Morroblivion's output
-  installed. The copies are listed in `morroblivion_hybrid_assets.txt` and
-  deleted by the next export in any mode.
+- **Assets ship in one shared mod** ([below](#hybrid-shared-assets)). Each
+  swapped mesh and every texture it names (with `_n`/`_g` maps) is borrowed, not
+  copied: the export lists it, and the Meshes step converts it into
+  `Morroblivion Hybrid Assets`, so the mode never needs Morroblivion's output
+  installed.
 - **Textures use the [one map](asset_convert_texture.md#one-map)**, which a
   hybrid export proves itself when it is missing or stale (the patch is never
   needed) and ships the twins, each with its `_n`/`_g` maps (`with_maps`): the
@@ -830,6 +830,65 @@ planes at -25, Dwemer stools turned about 87 degrees, and 1 to 5 unit offsets
 on sacks, urns and pitchers. The corrections the hybrid applies come only from
 the placement audit's applied rows (80% agreement), and the origin shift
 measures mesh bottoms, which cannot place a mesh hung from above.
+
+### <a id="hybrid-shared-assets"></a>Borrowed assets ship in one shared mod
+
+**Code:** `asset_convert/sources/hybrid_assets.py`; the build in `asset_convert/hybrid_build.py`.
+
+The export is a fixed dump, so a hybrid export writes no asset anywhere. It lists each Morroblivion
+file it uses in `morroblivion_hybrid_assets.txt` (`<rel>\t<owner plugin>`, rel under the owner's asset
+root) and each two-handed item to halve in `morroblivion_hybrid_splits.json`; deciding a split writes
+its halves to a temporary folder only. It used to copy them into the plugin's own tree: about 900 meshes
+and, for a root, 4,782 twin texture files, which overwrote any plugin file at the same path, made a
+grass mod's export take minutes, and was reconverted by every hybrid game under its own namespace.
+
+Morroblivion mode never copies either: its dependents name Morroblivion's paths and Morrowind_ob.esm
+converts them once. Hybrid cannot use Morrowind_ob's output, whose archives load only with
+Morrowind_ob.esm active. So each hybrid plugin's Meshes step converts the borrowed files the shared mod
+lacks into `output/Morroblivion Hybrid Assets/`, loose, under the `morroblivion` namespace:
+
+- **Paths route by namespace.** `game_paths.asset_namespace` answers `morroblivion` for a path the
+  plugin's chain borrows (the lists of the plugin and its hybrid masters) and the plugin's namespace
+  otherwise; `prefix_path` (records) and `rewrite_tex_path` (mesh textures, the twins included) use it.
+  A path the plugin ships itself is never borrowed.
+- **Caches are the shared mod's own**, in `export/morrowind_assets/hybrid/`, scanned from its output. A
+  hybrid chain loads them first (`asset_cache_chain`), and each entry also answers under the plugin's
+  namespace (`alias_borrowed`), so the navmesh's collision keys find it unchanged.
+- **Lookups see the owners**: the companion's furniture markers, the import's furniture seats and the
+  door axes read a borrowed mesh from its owner's tree (`owner_roots`).
+- **A split half borrows its source model's textures.** The half has no owner tree to read, so
+  `borrow_assets` lists the textures of each split item's models instead. Without this, the 18 gauntlet
+  textures of Morrowind, Tribunal and Bloodmoon's 20 split items were never copied, and the halves showed
+  Skyrim's missing-texture purple.
+
+An old copy list (no tab) names real copies; the next export deletes each one that is byte-identical
+to its Morroblivion source or is a generated split half, and reports the rest.
+
+### <a id="hybrid-lod-meshes"></a>Morroblivion's hand-made LOD meshes
+
+**Code:** `lod_of`, `kept_lods` in `tes4_export/morroblivion_hybrid.py`; `_kept_lods` in
+`asset_convert/hybrid_build.py`.
+
+Morroblivion ships 97 hand-made `_far.nif` meshes. Hybrid used none of them: it borrowed only the swapped
+mesh and its textures, so the LOD bake decimated every model's own `_far.nif`. Architecture is mostly not
+swapped (collision problems), but its LOD mesh never collides with anything, so every vanilla mesh with
+a record-paired Morroblivion twin takes the twin's LOD:
+
+- **A swapped mesh** borrows its `_lod`/`_far` beside it, into the shared mod under the `morroblivion`
+  namespace (3 for Morrowind.esm: the Dwemer ruins 10, 20 and tower 00).
+- **A kept vanilla mesh** lists the pair in `morroblivion_hybrid_lods.txt` (`<plugin rel>\t<owner>\t<owner
+  rel>`). The plugin's Meshes step converts it into the plugin's OWN output at the vanilla name
+  (`x\ex_vivec_h_01_far.nif`), because the LOD bake reads a model's LOD from the tree holding its full
+  mesh (`_far_owner_dirs`). Only a mesh the plugin ships as vanilla's file, with no LOD of its own,
+  takes one. Morrowind.esm: 96, among them the Vivec cantons, Velothi temples, Dwemer bridges, the Azura
+  statue, West Gash and Ashland rocks and the emperor parasols.
+- **Every texture a borrowed LOD names is borrowed.** All 546 name `textures\lowres\...`, which
+  Morroblivion does not ship, so the full-res twin is borrowed with it and `full_res_twin` routes the
+  twin through `asset_namespace`, into the shared mod.
+
+The frames match: across the 99 pairs, the hand-made LOD's render bounds sit within 1.5% of the vanilla
+mesh's for 81 and within 4.2% for all but `ex_v_vivecstatue_02` (9%) and the interior `in_lava_oval`
+(13%, no LOD indoors). Every pair but the three lava planes has no origin shift.
 
 ### <a id="hybrid-companion"></a>The companion plugin: furniture and grass
 
@@ -2662,6 +2721,27 @@ The height alone is not sufficient — the cell also needs an `XCLL`, which
 these cells have no `AMBI` to supply
 ([why](tes5_import_world.md#every-interior-gets-an-xcll)).
 
+## <a id="hybrid-weathers"></a>Hybrid mode copies Morroblivion's weathers
+
+**Code:** `tes4_export/morroblivion_weather.py`
+
+Authored mode has no weather records, so its regions stand on Skyrim's
+weathers ([below](#region-weather)). A hybrid export of a masterless plugin
+copies Morroblivion's eleven `mw*` weathers and `mwMorrowindClimate` into the
+plugin (FormIDs derived from Morroblivion's EditorIDs), points every region's
+bare TES3 type at the copy and the worldspace's climate at the copied one. A
+dependent's regions find them through the master's EditorID index, as they
+found Morrowind_ob's.
+
+The sky (colors, fog, clouds, HDR) is Morroblivion's, and its cloud, sun and
+glare textures are borrowed into the [shared mod](#hybrid-shared-assets). The
+sounds are not: Morroblivion's name Oblivion's SOUN records, which a hybrid game
+does not have. Each weather instead takes the sounds `Morrowind.ini` names for
+its `[Weather ...]` section (`Rain Loop Sound ID=Rain`, `Thunder Sound ID 0..3`,
+`Ambient Loop Sound ID=ashstorm`, ...), the same fallback values OpenMW reads,
+resolved to the plugin's own SOUN records; a sound the plugin does not hold
+(`BM Blizzard` lives in Bloodmoon) is left out.
+
 ## <a id="region-weather"></a>Region weather
 
 **Code:** `tes4_export/morrowind_region.py`
@@ -2855,7 +2935,8 @@ Kept as Morroblivion's, and why:
   blight scripts read and nothing else writes.
 - **Icarian Flight, the ghost ability, Fenrick's Doorjam and the summons:** each
   script does something, and the vanilla effect's Skyrim mapping is only a
-  stand-in. Fortify Acrobatics lands on Stamina and Chameleon on Invisibility.
+  stand-in. Fortify Acrobatics lands on JumpingBonus (as Jump does) with no
+  fall protection, and Chameleon on Invisibility.
 
 `PlayerInMorrowind`, which Recall sets, passes: `mwMorroDefaultQuestScript`
 writes it every frame from the worldspace. The Mark marker and the

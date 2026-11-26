@@ -23,7 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
-from core.plugin_masters import master_dirs
+from core.plugin_masters import master_dirs, masters_from_export_header
+from core.worldspace_names import converted_worldspace_edid, renames_for
 from core.worker_budget import worker_count
 
 # Apply all PyFFI patches (time.clock fix, nif.xml condition fixes) before import
@@ -375,6 +376,14 @@ def worldspace_edids(export_dir):
     return edid_by_fid
 
 
+def world_renames(export_dir) -> dict:
+    """The importer's worldspace renames for this record dir's plugin and its masters (LOD names converted EDIDs).
+
+    See: docs/commentary/asset_convert_terrain.md#converted-worldspace-names
+    """
+    return renames_for([Path(export_dir).name, *masters_from_export_header(str(export_dir))])
+
+
 def shipped_lod_worldspaces(export_dir: Path):
     """Return the worldspace EditorIDs the SOURCE game shipped distant-LOD for.
 
@@ -413,13 +422,10 @@ def shipped_lod_worldspaces(export_dir: Path):
         return []
 
     edid_by_fid = worldspace_edids(export_dir)
+    renames = world_renames(export_dir)
 
-    # The importer renames Oblivion's 'Tamriel' worldspace to 'TES4Tamriel'
-    # (tes5_import/record_types/world.py) so it doesn't override Skyrim's
-    # Tamriel. LOD generation looks worldspaces up by EDID in the CONVERTED
-    # ESM, so return the post-rename name to match.
     def _converted_edid(name):
-        return 'TES4Tamriel' if name == 'Tamriel' else name
+        return converted_worldspace_edid(name, renames)
 
     result = [(_converted_edid(edid_by_fid.get(fid, f'{fid:08X}')), fid)
               for fid in counts]

@@ -221,6 +221,7 @@ AV_NIGHT_EYE = 55
 AV_DETECT_LIFE_RANGE = 56
 AV_WATER_BREATHING = 57
 AV_WATER_WALKING = 58
+AV_JUMPING_BONUS = 62
 
 # TES4 magic school (DATA.School) → TES5 skill actor value.
 # Mysticism has no Skyrim counterpart; Oblivion's mysticism effects (Dispel,
@@ -270,7 +271,7 @@ SKILL_TO_AV = {
     23: AV_ILLUSION,       # Illusion
     24: AV_ALTERATION,     # Mysticism → Alteration
     25: AV_RESTORATION,    # Restoration
-    26: AV_STAMINA,        # Acrobatics (no Skyrim skill)
+    26: AV_JUMPING_BONUS,
     27: AV_LIGHT_ARMOR,    # Light Armor
     28: AV_ARCHERY,        # Marksman
     29: AV_SPEECH,         # Mercantile

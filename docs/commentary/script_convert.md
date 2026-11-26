@@ -819,6 +819,50 @@ was a multi-second stutter as the lift started. The body now lives in
 flag is set. It is a function so that a TES4 `return` inside the body still
 clears the flag. After the fix, the same run made one autosave.
 
+<a id="player-trigger-loop"></a>**A player-only trigger runs a loop, not the per-frame event
+(2026-11-24, unconfirmed in game).** Skyrim sends `OnTrigger` every frame for EVERY
+occupant, and each one is a new Papyrus stack even when the body returns at once.
+Measured in Xedilian (SE03A chamber one): a static tapestry (`SEDungeonTapestryD01`,
+REFR 000805C6) rests inside `SE03WaitingRoomExitTrigger`, and the player stands in
+`SE03XedilianTriggerC1` while pressing a chamber button; in 27 minutes the VM made
+2.17 million stacks and logged "Suspended stack count is over our warning threshold"
+three times, starving every poll in the cell. So when every TES4 block feeding the
+event is `begin OnTrigger player` (Oblivion 126 of 188 trigger blocks, Nehrim 257 of
+359), the script handles no `OnTrigger` at all: `OnTriggerEnter` for the player runs
+the body once per frame (`Utility.Wait(0.0)`) until `OnTriggerLeave` bumps
+`TES4_PlayerInside` (or the trigger unloads). Per-frame counters such as Nehrim's
+Magieverbot cooldowns keep counting frames. A script that authors its own
+`OnTriggerEnter`/`OnTriggerLeave`, or mixes in an unfiltered trigger block, keeps the
+per-frame event.
+**REVERTED the same day (main-quest regression).** With the loop compiled into the four
+chargen player triggers, `walk_marker_f` failed 3 of 3 (Baurus's stage-50 torch greeting
+never came) where the per-frame form passed 3 of 3 on the same instance; later loop runs
+passed 2 of 3 more, so the loop changed a race rather than breaking the greeting outright.
+The cause of the regression was not proven. The per-frame form (`trigger_events.py`) is back,
+and the Xedilian flood is open again.
+
+<a id="watched-writes-wake-the-reader"></a>**An event that writes a variable another poll reads wakes
+that poll (2026-11-24, unconfirmed in game).** TES4 ran every GameMode block once a frame,
+so a state another script held for one frame was seen. A converted poll passes every
+0.1 real seconds, so at any game speed above real time a shorter state is missed.
+Measured in Xedilian (SE03A chamber one, the Mania Gnarl): `SE03GnarlScript` fades the
+Gnarl when `SELewinRef.LewinGo == 2 && SESyndelRef.SyndelGo == 2 && SEGrommokRef.GrommokGo == 2`;
+each flag is set in its actor's `OnPackageEnd`, and Lewin's goes on to 3 after one more
+597-unit leg. All three stood at 2 for about 1.5 game seconds (0.07 real seconds at the
+test pace) and the poll never saw it (stage 15 never came in about half the runs). The
+cross-reference index now records, per script, every `Owner.var` its GameMode blocks
+read (`cross_ref.gamemode_reads`); a script whose variable is read that way, by a poll
+carried by ONE named quest or placed reference, wakes that carrier after each write in
+an event block: `(Carrier as ReaderScript).RegisterForSingleUpdate(0.0)`. The carrier is
+a property of the reader's script type. Writes inside the writer's own poll are left
+alone.
+**REVERTED the same day (suspected main-quest regression, not proven).** Three runs built with
+the wake (3 of about 10) had a new silence after the Emperor's "You ... I've seen you ..." in
+the chargen cell (32.7, 15.7, 19.7 game seconds; 2-3.6 before). The game ran at full test pace
+through the 19.7 one (pace log 22-25x), so the Charactergen poll that ends the pause ran
+late; it was not a machine stall. The wake is removed (`watched_reads.py` deleted); the Gnarl's
+race is open again.
+
 ### Physical-trap damage: TES4's ENGINE read the script's variables (2026-08-09, in-game confirmed)
 
 A converted swinging mace, swinging log, falling log or cave-in fired, swung
@@ -2625,6 +2669,31 @@ inventory category and opens an empty page on every click.
 The two log errors from the holder re-arm at the top of `OnEquipped` remain;
 they are harmless.
 
+### <a id="carried-gamemode-runs-in-event"></a>A carried item's GameMode runs from its own events
+
+**Code:** `assemble._carried_pass_loop`, `assemble._carried_passes`,
+`pipeline.primed_converter` (`sc.on_item`), `constants.CARRIED_SIGNATURES`.
+
+The same missing native object stops a carried item's GameMode poll: its
+`OnContainerChanged` runs, but the `RegisterForSingleUpdate` that should
+start the poll fails, so nothing in the GameMode block ever runs while the
+item sits in an inventory. TES4 ran it every frame there.
+
+For a script attached to an inventory item type, the poll body is
+`TES4_PollPass()` and `OnContainerChanged` / `OnEquipped` end by calling
+`TES4_CarriedPasses()`: a pass every update interval while the holder is
+loaded, through `Utility.Wait`, which stands still in menus as GameMode did.
+It calls no native on `Self`; a newer run (the next container change) ends an
+older one through a counter, and it ends when the item leaves for the world
+(no holder). It idles while `OnUpdate` has finished a pass within two
+intervals (`TES4_LastPass`), so an item that does have a native object does
+not run twice.
+
+**Measured (Shivering Isles SE03, case se03_crystal1):** the Focus Crystal's
+`OnAdd` raised `SE03.FocusCrystals` to 1, but stage 20 comes from its GameMode
+(`FocusCrystals == 1 && CrystalDone == 0`) and never came; the Papyrus log
+showed `Unable to call RegisterForSingleUpdate - no native object bound`.
+
 ### <a id="message-rewrites-one-line"></a>`Message` rewrites one HUD line (2026-09-27)
 
 **Code:** `commands._message_function`, `assemble.notify_helper`.
@@ -3872,10 +3941,10 @@ actor attacking B fights on. Removing B from Victims would take away its
 attacker's hostility and end a fight Oblivion continues. The first version
 removed Victims too, and the blast-radius review caught it.
 
-## SE02 Gatekeeper killed by his ally: three stop-timing attempts, all reverted
+## SE02 Gatekeeper killed by his ally: two foes stopped together
 <a id="se02-gatekeeper-killed-by-his-ally"></a>
 
-**Code:** none shipped (`TES4Polyfill.EndCombatApproach`, `TES4_CombatQueue` as before).
+**Code:** `TES4_CombatQueue` (`NoteStop`, called for every drained StopCombat).
 
 **Symptom (Shivering Isles SE02, run si_2c and scratch replays, about 1 run in
 5):** the Gatekeeper dies offstage right after the orc scene (stage 10), so
@@ -3906,9 +3975,57 @@ leftover `TES4ForceCombat` factions (removed by console: still dies).
 **Confirmed:** console `StopCombatAlarmOnActor` on BOTH actors right after
 stage 10 -> 12 of 12 clean. Each StopCombat ends only its own actor's fight, the
 other side is still attacking it, so it re-enters to defend; Oblivion stopped
-both in one frame. The fix (not built): a TES4 stopCombat that is part of a
-mutual stop must also end the opponent's fight against this actor, without
-breaking the victim rule above.
+both in one frame.
+
+**Fix (shipped):** the queue notes each drained stop with the foe the actor was
+fighting (`GetCombatTarget` before the stop). When an actor stopped less than a
+second earlier was its foe, or had it as its foe, the two are a mutual stop and
+both get `StopCombatAlarm`, which ends every fight against either one,
+including a fight restarted by a swing already in flight. The player is never
+part of a mutual stop (`StopCombatAlarm` on the player ends every fight against
+them). A stop with no mutual partner is unchanged, so the victim rule above
+holds.
+
+**Measured (12-run replays from the SE01 end save, scratch case checking that
+the Gatekeeper and the captain are alive and SE02 < 150 after the scene):**
+before, the Gatekeeper died about 1 run in 5. A first version that only re-stopped
+a pair seen fighting again (polled every 0.05 s for 2 s) lost the captain in 2
+of 6. Traces showed the captain's last swing landing after both stops, the
+Gatekeeper turning on him and killing him with ONE hit, because the captain was
+essential through the scene and stage 10 makes him mortal with almost no health.
+With `StopCombatAlarm`: 12 of 12, and in the traces swings already in flight
+still land but the Gatekeeper never re-engages the captain.
+
+**Blast radius (blocks that stop two or more actors at once; the rule fires only
+if two of them were fighting each other):** Oblivion 7 scripts (Arena kicked-out,
+which already calls `StopCombatAlarm` on the player; Dark05, Dark18: stops in
+separate blocks, no mutual pair; MS22 stage 75, which already alarms Srazirr;
+SE02 captain; SE06 Golden Saints, never fighting each other; SEMiriliUlven, her
+and the creature she caught), Nehrim 3 (NQ00 battle mages, NQ01 Theophil and
+the bandits, the nightmare troll). Each ends its scene's whole fight, as the
+authored stops intend.
+
+## TES4 EquipItem never adds a missing item
+<a id="equipitem-never-adds"></a>
+
+**Code:** `script_convert/command_rows.py` (`equipitem` and its OBSE
+variants), `TES4Polyfill.EquipOwned`
+
+Oblivion's `EquipItem` equips only an item the actor already carries: the
+engine lineage's `Actor::EquipObject` returns when the inventory count is 0
+(`references/fnv_decomp`, `Actor_EquipObject`, `aabb2 > 0` else return).
+Skyrim's `Actor.EquipItem` adds a missing item first. Every converted
+`EquipItem` now goes through `EquipOwned`, which equips only when
+`GetItemCount > 0`.
+
+**Measured (Shivering Isles SE03, case se03_crystal1):** every Grummite Shaman
+variant carries one Obelisk staff (01 to 05), and the template's
+`SE03GrummiteStaffHoldingSCRIPT` runs `EquipItem` on all five on load,
+relying on Oblivion skipping the four it lacks. Converted, each shaman got
+all five; the level-1 shaman's corpse gave the player staffs 04 and 05, each
+staff's `OnAdd` handed out a Focus Crystal (player held 5), and
+`SE03.FocusCrystals` jumped to 3 at once, so `SE03FocusCrystalScript`'s
+GameMode, which steps 1 -> 20, 2 -> 30, 3 -> 40, never set stage 20.
 
 ## `SetAV Speed` becomes a SpeedMult ratio
 <a id="speed-write-becomes-speedmult"></a>
@@ -3919,9 +4036,12 @@ breaking the victim rule above.
 
 TES4 walk speed is `Min + (Max - Min) * Speed / 100`. For creatures the
 GMSTs are `fMoveCreatureWalkMin/Max`, for NPCs `fMoveCharWalkMin/Max`. Nehrim
-overrides the creature pair to 60/160. The converted actor already moves at
-its authored Speed, so a write to Speed becomes
-`SpeedMult = 100 * walk(new) / walk(authored)`.
+overrides the creature pair to 60/160. A write to Speed becomes
+`SpeedMult = 100 * walk(new) / walk(authored)`, taking the converted actor's
+SpeedMult 100 as its authored speed. That baseline is an assumption, not a fact:
+every converted NPC is written with SpeedMult 100 (`npc.npc_acbs`), so two
+actors with different authored Speed and Athletics move alike in Skyrim
+(measured in Xedilian, 2026-11-24: oblivion_quest_runs.md, SI rows).
 
 Example: the rope troll is authored at Speed 10, and its script writes 19 on
 the rope, so it gets SpeedMult ≈ 113. A SpeedMult change only applies when

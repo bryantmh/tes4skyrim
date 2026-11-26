@@ -16,6 +16,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import version as v
 
 
+# ---------------------------------------------------------------------------
+#  Shared fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _saved_table_in_tmp(tmp_path, monkeypatch):
+    """Keep the saved release table out of the developer's data folder."""
+    monkeypatch.setattr(v, "TABLE_FILE", tmp_path / "release_steps.json")
+
+
 # ── Tag numbering: two schemes on one scale ───────────────────────────────
 # Tags through 0.58 are MAJOR.MM (hundredths); 0.581 onward are MAJOR.MMM.
 # Ranking the minor field as a bare int sorts 0.59 below 0.581 and an upgrade
@@ -208,9 +218,9 @@ def test_skipping_releases_unions_every_entry_in_range(monkeypatch):
 
 
 def test_result_is_in_run_order_not_table_order(monkeypatch):
-    _table(monkeypatch, {"0.51": ["10. Pack Mod Zip", "1. Export", "6. Import"]})
+    _table(monkeypatch, {"0.51": ["9. Pack BSAs", "1. Export", "6. Import"]})
     assert v.steps_between("0.50", "0.51") == [
-        "1. Export", "6. Import", "10. Pack Mod Zip"]
+        "1. Export", "6. Import", "9. Pack BSAs"]
 
 
 def test_releases_outside_the_range_are_excluded(monkeypatch):
@@ -269,39 +279,6 @@ def test_every_global_action_is_a_global_step():
     import gui
     for key, *_ in gui.GLOBAL_ACTIONS:
         assert key in v.GLOBAL_STEPS
-
-
-def test_pack_default_setting_gates_the_packing_steps():
-    """Settings > Pack by default decides whether the packing pair starts ticked.
-
-    Only that pair moves: turning the setting off must not disturb any other
-    step's default.
-    """
-    import gui
-    on  = gui.default_on_steps(True)
-    off = gui.default_on_steps(False)
-    assert set(gui.PACKING_STEPS) <= on
-    assert not (set(gui.PACKING_STEPS) & off)
-    assert on - off == set(gui.PACKING_STEPS)
-
-
-def test_upgrade_plan_cannot_re_tick_packing_when_the_setting_is_off():
-    """The upgrade plan must be filtered through the Pack-by-default setting.
-
-    Selecting a plugin auto-applies its upgrade plan, and a plan legitimately
-    includes the packing steps whenever packaging code changed.  Applying it
-    unfiltered re-ticked the two boxes the setting had just cleared -- the
-    setting appeared to do nothing, because merely picking a plugin undid it.
-    """
-    import gui
-    plan_steps = ["export", "meshes", "pack", "pack_zip"]
-
-    ticked = set(plan_steps) & gui.default_on_steps(False)
-    assert ticked == {"export", "meshes"}
-
-    # With the setting ON the plan is applied verbatim, so a genuine packaging
-    # upgrade still selects the work it owes.
-    assert set(plan_steps) & gui.default_on_steps(True) == set(plan_steps)
 
 
 def test_labels_match_release_notes_step_order():
@@ -515,11 +492,11 @@ def test_a_step_that_never_ran_is_owed_even_without_an_upgrade(state, monkeypatc
 
 def test_steps_are_returned_in_run_order(state, monkeypatch):
     monkeypatch.setattr(v, "current_version", lambda: "0.58")
-    _table(monkeypatch, {"0.58": ["10. Pack Mod Zip", "1. Export", "6. Import"]})
+    _table(monkeypatch, {"0.58": ["9. Pack BSAs", "1. Export", "6. Import"]})
     for key, _ in v.STEP_KEYS:
         v.record_step_run(key, "Oblivion.esm", "0.57")
     assert v.upgrade_plan("Oblivion.esm")["steps"] == [
-        "export", "import_", "pack_zip"]
+        "export", "import_", "pack"]
 
 
 def test_a_step_already_run_at_the_current_version_is_not_reselected(
@@ -661,6 +638,17 @@ def test_archive_of_an_untagged_commit_is_a_dev_build(tmp_path, monkeypatch):
     monkeypatch.setattr(v, "_git_version", lambda: None)
     monkeypatch.setattr(v, "_CURRENT", [None])
     assert v.current_version() == v.DEV_VERSION
+    assert v.is_dev_version() is True
+
+
+def test_compiled_dev_build_keeps_its_build_stamp(tmp_path, monkeypatch):
+    """A compiled development build has no .git; its `<tag>+g<sha>` stamp is its version, still a dev build.
+
+    Reading it as 0.0-dev made every plan compare against 0.0 and the Choose screen offer nothing to do.
+    """
+    _version_file(tmp_path, monkeypatch, "0.689+g3bafe55\n")
+    monkeypatch.setattr(v, "_git_version", lambda: None)
+    assert v.current_version() == "0.689+g3bafe55"
     assert v.is_dev_version() is True
 
 
@@ -938,3 +926,24 @@ def test_a_data_directory_plugin_is_unaffected(tmp_path, monkeypatch):
 
     assert v.steps_run_at("Oblivion.esm").get("meshes") == "0.600"
     assert v.steps_run_at("A.esm").get("meshes") is None
+
+
+def test_a_saved_table_listing_this_release_skips_the_network(monkeypatch):
+    """Startup reads the saved table: a release's checklist never changes once cut."""
+    _serve(monkeypatch, [("0.581", _body("3. Meshes"))])
+    monkeypatch.setattr(v, "current_version", lambda: "0.581")
+    v.steps_table()
+    monkeypatch.setattr(v, "_TABLE", [None])
+    _serve(monkeypatch, fail=True)
+    assert v.steps_table() == ({"0.581": ["3. Meshes"]}, True)
+
+
+def test_a_saved_table_older_than_this_release_is_fetched_again(monkeypatch):
+    """A build newer than the saved table asks GitHub, then saves what it got."""
+    _serve(monkeypatch, [("0.581", _body("3. Meshes"))])
+    monkeypatch.setattr(v, "current_version", lambda: "0.581")
+    v.steps_table()
+    _serve(monkeypatch, [("0.581", _body("3. Meshes")), ("0.582", _body("6. Import"))])
+    monkeypatch.setattr(v, "current_version", lambda: "0.582")
+    assert v.steps_table()[0]["0.582"] == ["6. Import"]
+    assert "0.582" in json.loads(v.TABLE_FILE.read_text(encoding="utf-8"))

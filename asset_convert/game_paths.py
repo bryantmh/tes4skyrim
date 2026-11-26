@@ -21,6 +21,7 @@ import unicodedata
 from pathlib import Path
 
 from core.plugin_masters import master_dir, masters_from_export_header
+from asset_convert.sources.hybrid_assets import NAMESPACE as HYBRID_NAMESPACE, asset_key, borrowed_keys, owner_dirs, owner_roots
 
 __all__ = ["win_join", "find_nocase", "folder_names", "DEFAULT_NAMESPACE",
            "namespace_for", "set_namespace", "current_namespace",
@@ -36,6 +37,12 @@ COMPANION_ROOTS = ('morrowind-morroblivion-compatibility',)
 NAMESPACE_ENV = 'TESCONV_ASSET_NAMESPACE'
 
 _ACTIVE = {'ns': (os.environ.get(NAMESPACE_ENV) or DEFAULT_NAMESPACE).lower()}
+
+#: Carries the record dir whose hybrid chain's borrowed list is active into spawned processes.
+BORROWED_ENV = 'TESCONV_HYBRID_BORROWED'
+
+#: The active borrowed keys and the record dir they were read for.
+_BORROWED = {}
 
 
 def _chain_root(export_dir: Path) -> Path:
@@ -101,6 +108,53 @@ def set_namespace(ns: str) -> None:
 def current_namespace() -> str:
     """The namespace in force for the plugin being converted."""
     return _ACTIVE['ns']
+
+
+def set_borrowed(record_dir) -> None:
+    """Make the hybrid borrowed list of `record_dir`'s chain active here and in spawned processes ('' clears).
+
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-shared-assets
+    """
+    os.environ[BORROWED_ENV] = str(record_dir or '')
+    _BORROWED.clear()
+
+
+def _borrowed() -> frozenset:
+    """The active chain's borrowed keys, read once per process."""
+    folder = os.environ.get(BORROWED_ENV, '')
+    if _BORROWED.get('dir') != folder:
+        _BORROWED.update(dir=folder, keys=borrowed_keys(folder) if folder else frozenset())
+    return _BORROWED['keys']
+
+
+def asset_namespace(rel: str) -> str:
+    """The namespace authored path `rel` ships under: the shared mod's when the chain borrows it."""
+    return HYBRID_NAMESPACE if asset_key(rel) in _borrowed() else current_namespace()
+
+
+def borrowed_dirs() -> list:
+    """The record dirs of the owners the active chain borrows from; [] outside hybrid."""
+    folder = os.environ.get(BORROWED_ENV, '')
+    return [str(d) for d in owner_dirs(folder)] if folder else []
+
+
+def borrowed_roots(part: str) -> list:
+    """`part` ('meshes' or 'textures') of each tree the active chain borrows from; [] outside hybrid."""
+    folder = os.environ.get(BORROWED_ENV, '')
+    return [str(r) for r in owner_roots(folder, part)] if folder else []
+
+
+def alias_borrowed(entries: dict) -> dict:
+    """Cache `entries` with each shared-mod key also under the active namespace; a real key wins.
+
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-shared-assets
+    """
+    head, ns = HYBRID_NAMESPACE + '/', current_namespace()
+    if ns == HYBRID_NAMESPACE:
+        return entries
+    out = {ns + '/' + k[len(head):]: v for k, v in entries.items() if k.startswith(head)}
+    out.update(entries)
+    return out
 
 
 def ascii_path(path: str) -> str:

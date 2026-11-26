@@ -37,8 +37,8 @@ _HELLO = (1, struct.unpack('<I', b'HELO')[0])
 #: StartGameEnabled | StartsEnabled, as the TES4PlayerScripts quest writes.
 _SGE_FLAGS = 0x0011
 
-#: Above a standing schedule's quest packages, so the greeting wins the alias stack.
-_PRIORITY = 90
+#: Top priority: a forced greet or flee outranks the host. See: docs/commentary/tes5_import_package.md#package-hosts
+POOL_PRIORITY = 100
 
 #: Optional | Allow Reuse in Quest: starts EMPTY, filled by ForceRefTo at runtime.
 _ALIAS_FNAM = 0x0000000A
@@ -106,7 +106,7 @@ def alias_quest(fid: int, edid: str, full: str, alias_bodies: list, vmad: bytes 
         subs += pack_subrecord('VMAD', vmad)
     subs += pack_string_subrecord('FULL', full)
     subs += pack_subrecord('DNAM', struct.pack('<HBBII', _SGE_FLAGS,
-                                               _PRIORITY, 0, 0, 0))
+                                               POOL_PRIORITY, 0, 0, 0))
     subs += pack_subrecord('NEXT', b'')
     subs += pack_uint32_subrecord('ANAM', len(alias_bodies))
     for alias_id, body in enumerate(alias_bodies):

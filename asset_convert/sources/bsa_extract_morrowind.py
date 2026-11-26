@@ -85,14 +85,18 @@ def _tables(head: bytes, bsa_path) -> list:
     return out
 
 
-def read_index(bsa_path) -> dict:
-    """{lower-case stored path: (absolute start, size)} without reading the data."""
+def read_table(bsa_path) -> list:
+    """[(stored path, absolute start, size)] for every file, without reading the data."""
     with open(bsa_path, 'rb') as fh:
         head = fh.read(_HEADER_SIZE)
         hash_offset = struct.unpack_from('<I', head, 4)[0]
         head += fh.read(hash_offset)
-    return {name.lower(): (start, size)
-            for name, start, size in _tables(head, bsa_path)}
+    return _tables(head, bsa_path)
+
+
+def read_index(bsa_path) -> dict:
+    """{lower-case stored path: (absolute start, size)} without reading the data."""
+    return {name.lower(): (start, size) for name, start, size in read_table(bsa_path)}
 
 
 def read_entry(bsa_path, start: int, size: int) -> bytes:

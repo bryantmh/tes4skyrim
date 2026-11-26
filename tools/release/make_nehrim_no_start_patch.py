@@ -10,7 +10,7 @@ menu lands where asked with no Nehrim quest running:
 
 Every record is copied verbatim from the converted Nehrim.esm but for those
 fields. Run by hand only; the plugin is written beside TESGameSelect.esp, and
-package_start_mod.py leaves it out of the zip.
+Install & play leaves it out of the installed mod (`install_mods.SIDECAR_NAMES`).
 
 Usage:
   python tools/release/make_nehrim_no_start_patch.py   # -> output/TESGameSelect/

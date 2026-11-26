@@ -820,6 +820,23 @@ End
         loop = result.split('Function TES4_MenuPasses()', 1)[1].split('EndFunction', 1)[0]
         assert 'Utility.WaitMenuMode(' in loop
         assert 'RegisterForSingleUpdate' not in loop
+        assert 'TES4_LastPass' not in result and 'TES4_CarriedPasses' not in result
+
+    def test_carried_gamemode_runs_from_the_holder_events(self, converter):
+        """An inventory item's GameMode runs from a Wait loop its holder events start (SE03's Focus Crystal).
+
+        See: docs/commentary/script_convert.md#carried-gamemode-runs-in-event
+        """
+        converter.sc.on_item = True
+        source = "ScriptName CrystalScript\nBegin OnAdd Player\n  set x to 1\nEnd\nBegin GameMode\n  set x to 2\nEnd\n"
+        result = converter.convert_standalone('CrystalScript', source, 'ObjectReference', 'CrystalScript')
+        changed = result.split('Event OnContainerChanged(', 1)[1].split('EndEvent', 1)[0]
+        assert changed.rstrip().endswith('TES4_CarriedPasses()')
+        update = result.split('Event OnUpdate()', 1)[1].split('EndEvent', 1)[0]
+        assert update.index('TES4_PollPass()') < update.index('TES4_LastPass = Utility.GetCurrentRealTime()')
+        loop = result.split('Function TES4_CarriedPasses()', 1)[1].split('EndFunction', 1)[0]
+        assert 'Utility.Wait(' in loop and 'RegisterForSingleUpdate' not in loop
+        assert 'TES4_LastPass > 2 *' in loop and 'SafeGameModeGate(TES4_Holder)' in loop
 
     def test_plain_poll_keeps_its_body_in_onupdate(self, converter):
         """A GameMode-only item has no menu loop and no pass function."""
@@ -3938,6 +3955,38 @@ class TestStartCombatIsForced:
         adds = adds[:adds.index('EndFunction')]
         assert 'HeldTargets[n].IsDead()' in adds and 'HeldAt[n] < 1.0' in adds
 
+    def test_two_foes_stopped_together_end_every_fight_against_both(self):
+        """A drained stop notes the foe it fought; two foes stopped within a second both get
+        StopCombatAlarm (SE02's captain and Gatekeeper), never the player.
+
+        See: docs/commentary/script_convert.md#se02-gatekeeper-killed-by-his-ally
+        """
+        src = open('script_convert/static_scripts/TES4_CombatQueue.psc', encoding='utf-8').read()
+        update = src[src.index('Event OnUpdate()'):src.index('EndEvent')]
+        assert (update.index('Actor foe = attacker.GetCombatTarget()')
+                < update.index('TES4Polyfill.EndCombat(attacker') < update.index('NoteStop(attacker, foe)'))
+        note = src[src.index('Function NoteStop('):]
+        note = note[:note.index('EndFunction')]
+        assert 'now - StoppedAt[i] < 1.0' in note and 'StoppedFoes[i] == akActor || akFoe == other' in note
+        assert 'akActor != player && other != player' in note
+        assert 'akActor.StopCombatAlarm()' in note and 'other.StopCombatAlarm()' in note
+
+    def test_equipitem_equips_only_a_carried_item(self, converter):
+        """TES4 EquipItem goes through EquipOwned (no add), lock flag kept, NS variants silent.
+
+        See: docs/commentary/script_convert.md#equipitem-never-adds
+        """
+        assert conv_line(converter, 'EquipItem SE03ObeliskStaff01 1', 'Actor') == \
+            'TES4Polyfill.EquipOwned(Self, SE03ObeliskStaff01, true)'
+        assert conv_line(converter, 'BaurusRef.EquipItem CGTorch') == \
+            'TES4Polyfill.EquipOwned(BaurusRef, CGTorch, false)'
+        assert conv_line(converter, 'player.EquipItemNS SomeSword') == \
+            'TES4Polyfill.EquipOwned(Game.GetPlayer(), SomeSword, false, True)'
+        src = open('script_convert/static_scripts/TES4Polyfill.psc', encoding='utf-8').read()
+        body = src[src.index('Function EquipOwned('):]
+        body = body[:body.index('EndFunction')]
+        assert 'akActor.GetItemCount(akItem) > 0' in body
+
     def test_queue_pair_count_matches_the_importer(self):
         """The queue's fixed pair count is the number of alias pairs the importer writes."""
         from tes5_import.actors.combat_approach import PAIRS
@@ -4722,8 +4771,7 @@ end
         assert 'OnTrigger(akActionRef)' in entry
 
     def test_block_filter_survives_the_delegation(self, converter):
-        """The filter guard lives in the OnTrigger body, so the entry path
-        inherits it rather than running unfiltered."""
+        """The filter guard lives in the body, so every path into it stays filtered."""
         src = "scn T\nshort x\nbegin onTrigger player\n  set x to 1\nend\n"
         out = converter.convert_standalone('T', src, 'ObjectReference', 'T')
         body = out.split('Function TES4_OnTriggerBody(')[1].split('EndFunction')[0]

@@ -85,7 +85,12 @@ bridge DLL and the converted **plugins** (`.esm`/`.esp`/`.esl`) are copies for
 the same reason: a linked bridge DLL could not be relinked while any instance
 ran, and the game holds its plugin open, so a linked plugin made the next
 `--import-only` fail at its final rename ("file is locked"). Assets and
-scripts stay hard links.
+scripts stay hard links. A packed output's root **archives** are copies too
+(skipped when size and time match), and `build` removes any file in Data at a
+path those archives hold that it did not link this time: a link to a loose
+copy the pack has since deleted would override the archive
+([archive-only output](asset_convert_bsa.md#archive-only-output)). `--mod`
+also takes an absolute output folder, for a scratch output root.
 Instance N's `Saves` is a **junction** to
 instance 1's, so a checkpoint saved by one loads in the other. Never run the
 same folder with `--checkpoints` in both at once (same checkpoint names), and
@@ -216,6 +221,23 @@ A `coc` keeps the console's print mode on through the cell load, and every
 condition evaluated then echoes: 10.5 MB for one `coc QASmoke`. Capture is
 capped at 64 KB (`[output truncated]`).
 
+### <a id="adjusting-a-kept-game"></a>Adjusting a kept game: the bridge, never a relaunch
+
+A run with `--keep` leaves the game up. Anything still to set up for a look (camera, pose, an item) goes
+through the instance's own bridge pipe, `test_instance.PIPE` (`\\.\pipe\tes_test_bridge`, plus ` N` for
+instance N): `Bridge(pipe=PIPE).console(...)` or `.call(...)`, then `shot`. Each command takes seconds,
+whereas editing the case and rerunning means a relaunch and the whole file over again. The bridge CLI's
+`--pipe` flag loses a backslash through the shell wrapper, so import `PIPE` from Python instead.
+
+Seeing the player in third person (measured on the hybrid split-gauntlet check):
+
+- The console has no third-person command, and `cgf` is not a console command here ("unknown console
+  command"). MWScript `PCForce3rdPerson` compiles but the runtime does nothing with it.
+- `bridge.call(id=55565, args_=[0, 0, 0])` calls `Game.ForceThirdPerson` by its Address Library id
+  (result 1); the camera switches.
+- Then `tfc` frees the camera where it stands, and `player.setpos x ...` / `player.setangle z ...` put the
+  player in front of it, facing it. A first-person player stays invisible in front of a `tfc` camera.
+
 ## <a id="mwscript-cases"></a>MWScript opcode cases
 
 ```bash
@@ -230,6 +252,16 @@ in `package_runtime_dll.py`. It also writes the menus the package composes
 movie: `LoadMovie('morrowind_dialogue') FAILED`, and the conversation closes the
 moment it opens. A file is removed before it is written, so a write can never
 go through a hard link into `output/`.
+
+<a id="hybrid-shared-assets"></a>A plugin exported in hybrid mode names its
+borrowed Morroblivion meshes under `meshes\morroblivion\`, which only the loose
+`output/Morroblivion Hybrid Assets` ships, so `build` links that mod too
+(`hybrid_mods`). Without it, `Morrowind.esm` crashed the game in Seyda Neen:
+a placed `ex_de_railing_02` had no 3D, and the engine's queued reference task
+(ID 13023 calling ID 19116, `SkyrimSE+0x2bff03`) read through the null. That
+happened both loading a save there and on `chargen_hatch`'s move onto the ship.
+New Game also needs `--mod TESGameSelect`: without its prompt, Skyrim's own
+chargen opens the RaceSex menu.
 
 `mwtest` launches with `TES_MW_TEST_CASES`/`TES_MW_TEST_RESULTS` set, `coc`s,
 and waits for the `done` line. MorrowindRuntime's test runner

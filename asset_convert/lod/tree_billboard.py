@@ -34,6 +34,7 @@ from asset_convert.nif.pyffi_monkey_patch import apply_patches
 apply_patches()
 from pyffi.formats.nif import NifFormat
 from asset_convert.game_paths import current_namespace, win_join
+from asset_convert.sources import output_files
 
 BS = chr(92)
 
@@ -157,9 +158,10 @@ def _load_texture(rel, tex_roots):
         r = r[9:]
     for root in tex_roots:
         p = win_join(root, r)
-        if p.exists():
+        if output_files.exists(p):
             try:
-                return Image.open(p).convert('RGBA')
+                with output_files.open_binary(p) as fh:
+                    return Image.open(fh).convert('RGBA')
             except Exception:
                 return None
     return None
@@ -168,7 +170,7 @@ def _load_texture(rel, tex_roots):
 def render_billboard(nif_path: Path, tex_roots, size=256, supersample=2):
     """Orthographic front render as RGBA, or None if nothing was drawn."""
     data = NifFormat.Data()
-    with open(nif_path, 'rb') as f:
+    with output_files.open_binary(nif_path) as f:
         data.read(f)
     shapes = collect_textured_geometry(data)
     if not shapes:

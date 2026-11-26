@@ -5,7 +5,7 @@ module that needs them.
 """
 import re
 
-from asset_convert.game_paths import ascii_path, current_namespace
+from asset_convert.game_paths import ascii_path, asset_namespace, current_namespace
 
 
 def bs_pp_texture_slots(prop):
@@ -75,8 +75,8 @@ def rewrite_tex_path(raw_bytes):
 
     See: docs/commentary/asset_convert_shader.md#rewrite-tex-path
     """
-    return ('Textures\\' + current_namespace() + '\\'
-            + as_dds(texture_rel_path(raw_bytes)))
+    rel = as_dds(texture_rel_path(raw_bytes))
+    return 'Textures\\' + asset_namespace(rel) + '\\' + rel
 
 
 def full_res_twin(tex):
@@ -84,10 +84,10 @@ def full_res_twin(tex):
 
     See: docs/commentary/asset_convert_shader.md#lowres-textures
     """
-    prefix = 'Textures\\' + current_namespace() + '\\'
-    lowres = prefix + 'lowres\\'
+    lowres = 'Textures\\' + current_namespace() + '\\lowres\\'
     if tex.lower().startswith(lowres.lower()):
-        return prefix + tex[len(lowres):]
+        rel = tex[len(lowres):]
+        return 'Textures\\' + asset_namespace(rel) + '\\' + rel
     return None
 
 

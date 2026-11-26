@@ -55,6 +55,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from asset_convert.sources import output_files
 from core.subprocess_flags import windows_cmd
 
 MARKER = 'tools/script/script_debug.py'
@@ -709,6 +710,7 @@ def main():
         return subprocess.call([sys.executable, 'convert.py',
                                 '--scripts-only', '-f', args.file])
     d = src_dir(args.file)
+    output_files.unpack(d, '.psc')
     if not os.path.isdir(d):
         print(f'ERROR: no converted scripts at {d}')
         return 1

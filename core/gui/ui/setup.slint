@@ -123,6 +123,16 @@ export component SetupView {
                 }
             }
             SectionLabel { text: "OUTPUT AND MOD MANAGER"; }
+            if Ui.drive-notice != "": Box {
+                tint: Theme.warn-soft;
+                edge: Theme.warn;
+                HorizontalLayout {
+                    padding: 12px;
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    Text { text: Ui.drive-notice; color: Theme.fg; wrap: word-wrap; }
+                }
+            }
             CheckList { items: Ui.place-checks; }
         }
     }

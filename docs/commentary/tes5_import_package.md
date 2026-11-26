@@ -1059,8 +1059,12 @@ exists only while its quest runs, so every package of a quest died at that quest
 work to do). And `AddScriptPackage` puts a package ABOVE the actor's list from the call until the
 package completes, is removed, or another is added.
 
-* **One host quest** (`TES4Packages`): start-game-enabled, never stopped, priority 100, no
-  stages. An actor with any quest-gated package gets ONE alias there carrying its WHOLE authored
+* **One host quest** (`TES4Packages`): start-game-enabled, never stopped, priority 99, no
+  stages. The force-greet / force-flee pool (`TES4ForceGreets`, a script's `StartConversation`)
+  sits at 100 above it: at 90 under a host of 100, Kiliban's always-valid wander from his own
+  list (SE03A, run si_3f) outranked his StartConversation slot and he never greeted; TES4
+  StartConversation interrupts whatever the actor is doing. `TES4ForceFlees` and
+  `TES4CombatApproaches` share the pool builder and its priority. An actor with any quest-gated package gets ONE alias there carrying its WHOLE authored
   package list in authored order, ungated packages included, because Oblivion picks the first
   package in the list whose conditions hold. `PACK.QNAM` and the alias indices in PTDA / PLDT name
   the host; a source quest keeps only its objective aliases. Each package alias runs

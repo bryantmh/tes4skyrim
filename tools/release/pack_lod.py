@@ -27,17 +27,19 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+from asset_convert.lod.bake_record import BAKE_RECORD_NAME
 from asset_convert.lod.sibling_lod import LOD_DIR_NAME
 from output_layout import DATA_ROOT, finished_dir, tree_members, write_mod_zip
 
 
 def package(out_root: Path) -> int:
+    """Zip the LOD mod folder (its bake record left out) into Finished Mods; 0 on success, 1 when nothing to pack."""
     src_root = out_root / LOD_DIR_NAME
     if not src_root.is_dir():
         print(f"ERROR: {src_root} not found — run Create LOD first.")
         return 1
 
-    files = tree_members(src_root)
+    files = [(name, path) for name, path in tree_members(src_root) if path.name != BAKE_RECORD_NAME]
     if not files:
         print(f"ERROR: {src_root} is empty — run Create LOD first.")
         return 1

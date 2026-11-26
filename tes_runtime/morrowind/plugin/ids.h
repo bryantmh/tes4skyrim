@@ -1174,6 +1174,41 @@ constexpr std::size_t kOffHighActorCount = 0x40;
 constexpr std::size_t kOffControllerFlags = 0x218;
 constexpr std::uint32_t kControllerNoSim = 1u << 17;
 
+// Whether an NPC's body touches any collision: the walk the engine's own
+// hkpCharacterRigidBody::getSupportInfo (0xb7c0d0, "TtgetSupportInfo",
+// vtable 0x1976e30 slot 4) makes over its contacts, without its test of which
+// way they push -- a support test reads a body sunk into a chair as
+// unsupported while it touches the chair (Arktwend's tavern).
+//   bhkCharRigidBodyController (an NPC's; measured on Tarhiel): vtable
+//        0x19ee668 (ID 240580; 1.7.104 0x1a89bf0); its slot 13 (0xed4a10)
+//        reads the hkpCharacterRigidBody at +0x350
+//   hkpCharacterRigidBody +0x20: the hkpRigidBody, whose linked collidable
+//        is at +0x20 and its collision entries at collidable +0x70
+//        (0xbe6ed0 returns that address): data, then an int count
+//   each entry is 0x10 bytes, the agent entry first; its contact manager is
+//        at +8, type at +0x10 (0: a constraint contact manager), its
+//        constraint atom at +0x68, whose uint16 at +4 is the contact count
+//   the walk holds the world's lock as slot 13 does: the bhkCharacterRigidBody
+//        at +0x340, its slot 39 (+0x138), [that +0x430], its slot 40
+//        (+0x140), then [that +0x430] is the bhkWorld, read-locked by 0xe8a370
+//        (ID 77926, the BSReadWriteLock at +0xc598) and unlocked by 0xe8a390
+//        (ID 77927), the lock the engine holds for this same walk
+constexpr std::uint64_t kRigidBodyControllerVtable = 240580;
+constexpr std::uint64_t kWorldLockRead = 77926;
+constexpr std::uint64_t kWorldUnlockRead = 77927;
+constexpr std::size_t kOffRigidBodyControllerBody = 0x340;
+constexpr std::size_t kBodyWorldSlot = 39;
+constexpr std::size_t kWorldLinkSlot = 40;
+constexpr std::size_t kOffWorldLink = 0x430;
+constexpr std::size_t kOffRigidBodyControllerCharacter = 0x350;
+constexpr std::size_t kOffCharacterBody = 0x20;
+constexpr std::size_t kOffBodyCollisionEntries = 0x20 + 0x70;
+constexpr std::size_t kCollisionEntrySize = 0x10;
+constexpr std::size_t kOffAgentContactManager = 0x8;
+constexpr std::size_t kOffContactManagerType = 0x10;
+constexpr std::size_t kOffContactManagerAtom = 0x68;
+constexpr std::size_t kOffAtomContactCount = 0x4;
+
 // PlayerControlsData.moveInputVec: strafe then forward, -1..1. The input sink
 // (0x79a970) zeroes it, then hands `this+0x24` to each handler, and
 // MovementHandler writes x at +0 and y at +4 -- on 1.7.104 too.

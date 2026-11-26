@@ -1,31 +1,32 @@
-"""Step 4, Load order: what is built once for every converted game together.
+"""Step 4, Shared mods: what is built once for every converted game together.
 
 Each mod here reads as up to date while its stamp (runner) still matches what it was built
-from. Distant LOD bakes one pass over every worldspace, so it waits until every plugin that
-changes a worldspace is up to date: building earlier bakes their old versions.
+from. Distant LOD builds the ticked worldspaces, the out-of-date ones unless the user changes the ticks,
+and asks first when one of their plugins is itself out of date.
 See: docs/commentary/core_gui.md#load-order
+See: docs/commentary/core_gui.md#distant-lod-worldspaces
 """
 
 from asset_convert.lod.mesh_decimate import LOD_DETAIL_DEFAULT
 from core.gui import journal, loadorder, runner
 from core.gui.config import LOD_DETAIL_CONFIG_KEY, lod_detail_labels
-from core.gui.session import INCLUDE_PREFIX
+from core.gui.session import INCLUDE_PREFIX, MASTERS_CONFIG_KEY
 from core.gui.window import Pick, model, paint_rail, pick_row
-from output_layout import FINISHED_DIR_NAME
 
 #: The load-order mods: (key, actions run in order, title, detail, optional?, recommended tag, action button).
 ITEMS = (
     ("runtime", ("package_runtime_dll",), "SKSE runtime",
-     "TESRuntime, CreatureRuntime, FalloutRuntime, HavokWorldSize and MorrowindRuntime", False, "", ""),
-    ("body", ("modify_body_meshes",), "Body slot patch", "Fixes body slot 44 for your Skyrim plugins", True, "",
+     "TESRuntime, ArchiveLoader, CreatureRuntime, FalloutRuntime, HavokWorldSize and MorrowindRuntime", False, "", ""),
+    ("body", ("modify_body_meshes",), "Body patch", "Creates a patch for the Skyrim NPC model and all your Skyrim plugins to enable seamless pants, pauldrons, and split gauntlets. Must be last in your load order", True, "",
      "Plugins"),
-    ("start", ("package_start_mod",), "Start mod", "New Game asks which converted world to start in", True, "", ""),
+    ("start", ("package_start_mod",), "Start mod", "A plugin that allows choosing which converted game to start, and gives your player an Elder Scroll to allow switching between games in one save", True, "", ""),
     ("journal", (), "Quest journal stage text", "Click a quest objective to read the text its stage had",
      True, "Recommended for Morrowind", ""),
     ("masters", ("make_master",), "Masters",
      "Flag big plugins ESM so their references load per cell; past 1,048,576 always-loaded references the game "
      "hangs on the main menu", True, "Recommended", "Choose"),
-    ("lod", ("create_lod", "pack_lod"), "Distant LOD", "One mod for every worldspace", True, "", "Order & detail"),
+    ("lod", ("create_lod",), "Distant LOD", "One mod for every worldspace; builds the ticked ones", True, "",
+     "Order & detail"),
 )
 #: Optional extras, built only when turned on.
 EXTRAS = (("ui", ("convert_ui",), "Oblivion UI", "Message boxes and menu cursor with Oblivion's art", True, "",
@@ -36,101 +37,147 @@ EXTRAS = (("ui", ("convert_ui",), "Oblivion UI", "Message boxes and menu cursor 
 # ---------------------------------------------------------------------------
 
 class LoadOrderView:
-    """The Load order screen."""
+    """The Shared mods screen."""
 
     def __init__(self, ctx, run):
         """Wire the screen; statuses are read when the plugins are known."""
         self.ctx = ctx
         self.run = run
         self.status = {}
-        self.owners = {}
         self.plugin_status = {}
+        self.reading = False
         self.queue = []
         self.lod = None
+        self.edit = None
+        self.world_rows = []
+        self.world_ticks = {}
         ui = ctx.ui
         ui.lo_include = self._include
         ui.lo_action = self._action
-        ui.build_ready = lambda: self.build(self.ready_keys())
-        ui.lod_update_waiting = lambda: ctx.screens["choose"].mark_for_update(self.waiting_plugins())
-        ui.lod_build_anyway = lambda: self.build(["lod"])
+        ui.build_ready = self._build_ready
+        ui.lod_tick_world = lambda i, on: self._tick_worlds([self.world_rows[i][0]], on)
+        ui.lod_all_worlds = lambda on: self._tick_worlds([w for w, *_r in self.world_rows], on)
         ui.lod_set_detail = self._detail
-        ui.lod_toggle_plugin = lambda i, on: (self.lod.toggle_plugin(i, on), self._paint_lod())
-        ui.lod_move = lambda a, b: (self.lod.move(a, b), self._paint_lod())
-        ui.lod_toggle_world = lambda i, on: (self.lod.toggle_world(self.lod.worlds()[i][0], on), self._paint_lod())
-        ui.lod_set_force = lambda on: (setattr(self.lod, "force", on), self._paint_lod())
+        ui.lod_toggle_plugin = lambda i, on: self._lod_change(self.edit.toggle_plugin, i, on)
+        ui.lod_move = lambda a, b: self._lod_change(self.edit.move, a, b)
+        ui.lod_all_plugins = lambda on: self._lod_change(self.edit.all_plugins, on)
+        ui.lod_set_force = lambda on: self._lod_change(setattr, self.edit, "force", on)
         ui.lod_reset = self._lod_reset
         ui.lod_accept = self._lod_accept
-        ui.lod_pack_only = lambda: (setattr(ui, "dialog", ""), self._run([("pack_lod", runner.global_cmd(
-            ctx.session, "pack_lod"))]))
 
     def included(self, key: str) -> bool:
         """Whether a load-order mod is built and installed."""
         return key == "runtime" or self.ctx.session.included(key)
 
     def plugins_changed(self, rows: dict) -> None:
-        """The plugin statuses changed: reread what is up to date."""
-        self.plugin_status = {name: row["status"] for name, row in rows.items()}
-        self.refresh()
+        """New plugin statuses: reread what is up to date if they changed, else repaint (a read running paints)."""
+        known, self.plugin_status = self.plugin_status, {name: row["status"] for name, row in rows.items()}
+        if self.reading:
+            return
+        if known and known != self.plugin_status:
+            self.refresh()
+        else:
+            self.paint()
 
     def refresh(self) -> None:
-        """Read every mod's status and the worldspace owners on a worker, then paint."""
+        """Read every mod's status and each worldspace's LOD state on a worker, then paint."""
         session = self.ctx.session
         stamps = self.run.last_stamp
 
         def _read():
-            """Which actions are current, and which plugins ship LOD for each worldspace."""
+            """Which actions are current, the LOD choice, and each worldspace's plugins and staleness."""
             current = {}
             for _k, actions, *_r in ITEMS + EXTRAS:
                 for action in actions:
                     current[action] = runner.global_is_current(session, action, stamps)
-            journal_zip = session.out_root() / FINISHED_DIR_NAME / f"{journal.MOD_NAME}.zip"
-            return current, journal_zip.exists(), loadorder.worldspace_owners(session)
+            built = (session.out_root() / journal.MOD_NAME).is_dir()
+            pick = loadorder.LodPick(session)
+            return current, built, pick, loadorder.world_rows(session, pick)
 
+        self.reading = True
         self.ctx.work(_read, self._read_done)
 
     def _read_done(self, got) -> None:
-        """Paint what `refresh` read."""
-        current, journal_built, self.owners = got
+        """Paint what `refresh` read; LOD reads the saved plugin choice, and is up to date when no worldspace is stale."""
+        self.reading = False
+        current, journal_built, self.lod, self.world_rows = got
+        if self.ctx.session.selection.lod_order:
+            self.ctx.session.selection.lod_plugins[:] = self.lod.checked()
         self.status = {key: (journal_built if key == "journal" else all(current[a] for a in actions))
                        for key, actions, *_r in ITEMS + EXTRAS}
+        self.status["lod"] = not any(stale for *_r, stale in self.world_rows)
         self.paint()
 
+    def ticked_worlds(self) -> list:
+        """The worldspaces Distant LOD builds: the user's ticks, else the out-of-date ones."""
+        return [w for w, _owners, stale in self.world_rows if self.world_ticks.get(w, stale)]
+
     def waiting_plugins(self) -> list:
-        """Plugins that change a worldspace and are out of date."""
-        return sorted({p for owners in self.owners.values() for p in owners if self.plugin_status.get(p) == "out"})
+        """Out-of-date plugins that ship LOD for a ticked worldspace."""
+        ticked = set(self.ticked_worlds())
+        return sorted({p for w, owners, _s in self.world_rows if w in ticked for p in owners
+                       if self.plugin_status.get(p) == "out"})
+
+    def _wants_build(self, key: str) -> bool:
+        """Whether an included mod has work: LOD when a worldspace is ticked, the rest when out of date."""
+        return bool(self.ticked_worlds()) if key == "lod" else not self.status.get(key, False)
 
     def ready_keys(self) -> list:
-        """Included mods that are out of date and can be built now (LOD waits for its plugins)."""
-        return [key for key, *_r in ITEMS + EXTRAS if self.included(key) and not self.status.get(key, False)
-                and (key != "lod" or not self.waiting_plugins())]
+        """Included mods with work to do."""
+        return [key for key, *_r in ITEMS + EXTRAS if self.included(key) and self._wants_build(key)]
 
     def paint(self) -> None:
         """The two lists, the worldspaces and the build button."""
         ui = self.ctx.ui
         ui.lo_items = model(self._item(row) for row in ITEMS)
         ui.lo_extras = model(self._item(row) for row in EXTRAS)
-        worlds = []
-        for world, owners in sorted(self.owners.items()):
-            out = [p for p in owners if self.plugin_status.get(p) == "out"]
-            names = ", ".join(owners[:3]) + (f" and {len(owners) - 3} more" if len(owners) > 3 else "")
-            worlds.append({"name": world, "plugins": names, "status": f"{len(out)} to update" if out else "Ready",
-                           "tone": "warn" if out else "good"})
-        ui.worlds = model(worlds)
-        waiting = self.waiting_plugins()
-        ui.lod_warn = (f"{len(waiting)} plugin{'s' if len(waiting) != 1 else ''} that change a worldspace "
-                       "still need updating. Building now bakes their old versions into LOD." if waiting else "")
+        ticked = set(self.ticked_worlds())
+        ui.worlds = model(self._world(w, owners, stale, w in ticked) for w, owners, stale in self.world_rows)
+        ui.lod_why = self.lod.why_empty() if self.lod is not None and not self.world_rows else ""
         ready = self.ready_keys()
         ui.build_label = f"Build {len(ready)} ready" if ready else "All built"
         ui.build_enabled = bool(ready)
         paint_rail(self.ctx)
+
+    def _world(self, world: str, owners: list, stale: bool, ticked: bool) -> dict:
+        """One WorldRow: its plugins, and why it needs building (its own out-of-date plugins first)."""
+        out = sum(1 for p in owners if self.plugin_status.get(p) == "out")
+        names = ", ".join(owners[:3]) + (f" and {len(owners) - 3} more" if len(owners) > 3 else "")
+        status, tone = ((f"{out} plugin{'s' if out != 1 else ''} out of date", "warn") if out else
+                        ("Out of date", "warn") if stale else ("Up to date", "good"))
+        return {"name": world, "plugins": names, "status": status, "tone": tone, "checked": ticked}
+
+    def _tick_worlds(self, worlds: list, on: bool) -> None:
+        """Tick or untick worldspaces until the next run ends."""
+        self.world_ticks.update(dict.fromkeys(worlds, on))
+        self.paint()
+
+    def _build_ready(self) -> None:
+        """Build every ready mod, first asking when a ticked worldspace's plugins are out of date."""
+        keys = self.ready_keys()
+        waiting = self.waiting_plugins() if "lod" in keys else []
+        if not waiting:
+            self.build(keys)
+            return
+        many = len(waiting) != 1
+        names = ", ".join(waiting[:4]) + (f" and {len(waiting) - 4} more" if len(waiting) > 4 else "")
+        self.ctx.confirm(
+            "Plugins out of date",
+            f"{len(waiting)} plugin{'s' if many else ''} that change{'' if many else 's'} a ticked worldspace "
+            f"{'are' if many else 'is'} out of date: {names}.\n\nBuilding now bakes the old "
+            f"version{'s' if many else ''} into distant LOD.",
+            "Build anyway", "Cancel", lambda: self.build(keys),
+            alt="Update them first", on_alt=lambda: self.ctx.screens["choose"].mark_for_update(waiting))
 
     def _item(self, row) -> dict:
         """One LoadItem."""
         key, _actions, title, detail, optional, tag, action = row
         on = self.included(key)
         built = self.status.get(key, False)
-        status, tone = ("Up to date", "good") if built else ("Off", "idle") if not on else (
-            ("Waiting", "warn") if key == "lod" and self.waiting_plugins() else ("Out of date", "warn"))
+        status, tone = ("Up to date", "good") if built else ("Off", "idle") if not on else ("Out of date", "warn")
+        if key == "lod" and on and self.ticked_worlds():
+            count = len(self.ticked_worlds())
+            status, tone = f"{count} to build", "warn"
         if key == "masters":
             chosen = self.ctx.session.selection.master_plugins
             detail = ("Flag: " + ", ".join(chosen[:4]) + (" …" if len(chosen) > 4 else "")) if chosen else detail
@@ -163,9 +210,10 @@ class LoadOrderView:
             self.ctx.open_pick(OblivionUi(self.ctx.session, self))
 
     def build(self, keys: list) -> None:
-        """Build `keys` one after another: their commands, then the journal patch (done in-process)."""
+        """Build `keys` one after another (LOD: the ticked worldspaces), then the journal patch, in-process."""
         if self.run.busy() or not keys:
             return
+        self.ctx.session.selection.lod_worldspaces[:] = self.ticked_worlds()
         items = [(a, runner.global_cmd(self.ctx.session, a)) for key, actions, *_r in ITEMS + EXTRAS
                  if key in keys for a in actions]
         self.queue = ["journal"] if "journal" in keys else []
@@ -177,7 +225,7 @@ class LoadOrderView:
     def _run(self, items: list) -> None:
         """Run load-order actions as one run, recording each that succeeds."""
         record = {a: (lambda a=a: self.run.record_global(a)) for a, _c in items}
-        self.run.start_commands([(runner.global_label(a), cmd, a) for a, cmd in items], "Building the load order",
+        self.run.start_commands([(runner.global_label(a), cmd, a) for a, cmd in items], "Building the shared mods",
                                 record)
 
     def _next(self) -> None:
@@ -186,61 +234,74 @@ class LoadOrderView:
             return
         self.queue.pop(0)
         session = self.ctx.session
-        self.run.start_task("Quest journal stage text", lambda log: self._journal(session, log))
+        self.run.start_task("Quest journal stage text", lambda log: self._journal(session, log), foreground=True)
 
     @staticmethod
     def _journal(session, log) -> None:
-        """Patch the journal movies the game loads into a mod zip."""
-        results, zip_path = journal.build_journal_mod(session.tes5, session.out_root())
-        for line in journal.report_body(results, zip_path).splitlines():
+        """Patch the journal movies the game loads into a mod folder."""
+        results, folder = journal.build_journal_mod(session.tes5, session.out_root())
+        for line in journal.report_body(results, folder).splitlines():
             log(line)
         headline, _tone = journal.report_status([outcome for outcome, _ in results])
-        if zip_path is None:
+        if folder is None:
             raise RuntimeError(headline)
 
     def run_finished(self) -> None:
-        """A run ended: continue the queue, else reread the statuses."""
+        """A run ended: continue the queue, else drop the user's worldspace ticks and reread the statuses."""
         if self.queue and self.run.code == 0:
             self._next()
             return
         self.queue = []
+        self.world_ticks = {}
         self.refresh()
 
     def _open_lod(self, pick) -> None:
         """Show the LOD dialog."""
-        self.lod = pick
+        self.edit = pick
         ui = self.ctx.ui
         ui.lod_details = model(lod_detail_labels())
         session = self.ctx.session
         ui.lod_detail = session.lod_detail if session.lod_detail >= 0 else LOD_DETAIL_DEFAULT
-        ui.lod_force = False
         self._paint_lod()
         ui.dialog = "lod"
 
     def _paint_lod(self) -> None:
-        """The LOD dialog's two lists."""
+        """The LOD dialog's plugin list and its force tick."""
         ui = self.ctx.ui
-        ui.lod_plugins = model(pick_row(n, on, "", "", enabled) for n, on, enabled in self.lod.plugin_rows())
-        ui.lod_worlds = model(pick_row(w, on) for w, on in self.lod.worlds())
-        ui.lod_why = self.lod.why_empty()
+        ui.lod_force = self.edit.force
+        ui.lod_plugins = model(pick_row(n, on, "", "", enabled) for n, on, enabled in self.edit.plugin_rows())
 
     def _detail(self, index: int) -> None:
         """Save the LOD detail preset."""
         self.ctx.session.lod_detail = index
         self.ctx.session.save(LOD_DETAIL_CONFIG_KEY, index)
 
+    def _lod_change(self, change, *args) -> None:
+        """Apply one change to the LOD choice, then repaint the dialog."""
+        change(*args)
+        self._paint_lod()
+
     def _lod_reset(self) -> None:
-        """Back to the computed order and every worldspace."""
+        """Back to the computed order, every plugin and no Force."""
         self.ctx.session.selection.lod_plugins.clear()
-        self.ctx.session.selection.lod_worldspaces.clear()
-        self.ctx.work(lambda: loadorder.LodPick(self.ctx.session), self._open_lod)
+        self.ctx.session.selection.lod_off.clear()
+        self.ctx.session.selection.lod_order.clear()
+        self.ctx.session.selection.lod_force = False
+        self.ctx.work(lambda: loadorder.LodPick(self.ctx.session), self._reset_read)
+
+    def _reset_read(self, pick) -> None:
+        """Show the rescanned choice, if the dialog is still open (never reopen one the user closed)."""
+        if self.ctx.ui.dialog == "lod":
+            self.edit = pick
+            self._paint_lod()
 
     def _lod_accept(self) -> None:
-        """Keep the LOD choice for the next build."""
-        problem = self.lod.confirm(self.ctx.session)
+        """Keep the LOD choice for the next build and the next launch."""
+        problem = self.edit.confirm(self.ctx.session)
         if problem:
             self.ctx.toast(problem)
             return
+        self.ctx.session.save_lod_choice()
         self.ctx.ui.dialog = ""
         self.refresh()
 
@@ -308,6 +369,7 @@ class Masters(Pick):
         if self.pick.problems():
             return
         ctx.session.selection.master_plugins[:] = self.pick.chosen()
+        ctx.session.save(MASTERS_CONFIG_KEY, self.pick.chosen())
         ctx.session.save(INCLUDE_PREFIX + "masters", bool(self.pick.chosen()))
         ctx.ui.dialog = ""
         self.view.refresh()

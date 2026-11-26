@@ -15,6 +15,9 @@ See: docs/commentary/tes4_export_morrowind.md#coordinates-and-cell-splitting
 #: Oblivion/Skyrim exterior cell size in world units.
 TES4_CELL_SIZE = 4096
 
+#: Morrowind's exterior cell size in world units: one covers 2x2 Oblivion cells.
+TES3_CELL_SIZE = 8192
+
 #: The worldspace every converted Morrowind exterior joins.
 WORLDSPACE_EDID = 'WrldMorrowind'
 

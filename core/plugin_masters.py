@@ -164,12 +164,17 @@ def topological_order(files: list, resolve) -> list:
     module free of the pipeline's path resolution.
     """
     names = [f if isinstance(f, str) else f['name'] for f in files]
-    deps = {}
-    for name in names:
-        source = resolve(name)
-        deps[name] = (get_masters_from_binary(source)
-                      if source and os.path.isfile(source) else [])
 
+    def masters(name):
+        """`name`'s masters, read from its binary."""
+        source = resolve(name)
+        return get_masters_from_binary(source) if source and os.path.isfile(source) else []
+    return masters_first(names, masters)
+
+
+def masters_first(names: list, masters_of) -> list:
+    """`names` in their own order, except that each comes after every master of it in `names` (`masters_of(name)`)."""
+    deps = {name: masters_of(name) for name in names}
     order, visited = [], set()
     for name in names:
         _visit(name, deps, visited, order)

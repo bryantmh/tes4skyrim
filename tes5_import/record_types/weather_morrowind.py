@@ -10,6 +10,7 @@ See: docs/commentary/tes5_import_weather.md#morrowind-weather-types
 
 import os
 import re
+import struct
 
 from tes4_export.morrowind_region import WEATHER_EDITOR_IDS
 
@@ -47,6 +48,16 @@ def _named_types(export_dir: str) -> set:
                 if int(kind) < len(VANILLA_WEATHERS)}
 
 
+def _editor_ids(records) -> dict:
+    """{EditorID, lower case: FormID} of packed records whose first subrecord is their EDID."""
+    out = {}
+    for blob in records:
+        if blob[24:28] == b'EDID':
+            size = struct.unpack_from('<H', blob, 28)[0]
+            out[blob[30:30 + size].rstrip(bytes(1)).decode('latin-1').lower()] = struct.unpack_from('<I', blob, 12)[0]
+    return out
+
+
 def with_weather_masters(masters: list, export_dir: str) -> list:
     """`masters` with each vanilla plugin past Skyrim.esm that a region weather names, after Skyrim.esm."""
     listed = {name.lower() for name in masters}
@@ -72,16 +83,18 @@ def vanilla_weather(kind: int) -> int:
     return (names.index(plugin.lower()) << 24) | local
 
 
-def weather_rows(plugin: str, masters: list, master_index) -> list:
+def weather_rows(plugin: str, masters: list, master_index, own_records=()) -> list:
     """`weather<type>=Plugin|FormID` per TES3 weather type, for MorrowindRuntime.
 
-    Morroblivion's WTHR when a converted master holds it, else the vanilla
-    stand-in, which the runtime finds by name whether or not it is a master.
+    Morroblivion's WTHR when a converted master or the plugin itself (its
+    `own_records`, packed WTHR) holds it, else the vanilla stand-in, which the
+    runtime finds by name whether or not it is a master.
+    See: docs/commentary/tes4_export_morrowind.md#hybrid-weathers
     """
-    rows = []
+    rows, own = [], _editor_ids(own_records)
     for kind, (vanilla, local, _edid) in enumerate(VANILLA_WEATHERS):
-        found = (master_index.find_by_edid(b'WTHR', WEATHER_EDITOR_IDS[kind])
-                 if master_index is not None else 0)
+        found = own.get(WEATHER_EDITOR_IDS[kind].lower()) or (
+            master_index.find_by_edid(b'WTHR', WEATHER_EDITOR_IDS[kind]) if master_index is not None else 0)
         rows.append(owner_row(f'weather{kind}', found, plugin, masters) if found
                     else f'weather{kind}={vanilla}|{local:08X}')
     return rows

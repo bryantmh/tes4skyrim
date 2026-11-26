@@ -36,7 +36,7 @@ import tools.esm.tes5_esm_reader as t5r
 from asset_convert import paths
 from asset_convert.sources.bsa_extract import read_bsa_files
 from asset_convert.character.body_slots import SECTIONS, SPLIT_STEMS, split_mesh_path, write_split_meshes
-from output_layout import BODY_SLOTS_PATCH, finished_dir
+from output_layout import BODY_SLOTS_PATCH
 from tes5_import.base.tes5_reader import subrecords
 from tes5_import.base.writer import (
     FORM_VERSION_SSE,
@@ -562,7 +562,7 @@ def main():
     if args.meshes_root:
         written = write_split_meshes(args.meshes_root)
         print(f'{len(written)} split skin meshes written under {args.meshes_root}')
-    out = args.output or str(finished_dir(paths.OUTPUT) / f'{BODY_SLOTS_PATCH}.esp')
+    out = args.output or os.path.join(paths.OUTPUT, BODY_SLOTS_PATCH, f'{BODY_SLOTS_PATCH}.esp')
     patch_plugins(args.plugins, out, language=args.language, esl=not args.no_esl)
     return 0
 

@@ -986,6 +986,16 @@ changes can't bake in.
 **Code:** `navmesh/pool.py`. The parent-side scheduling around `navm_worker` —
 gathering jobs, the indexes their carving needs, the cache tag, and the pool.
 
+#### <a id="exe-tag"></a>TESRACT.exe ships its tag
+
+The compiled exe carries no `.py` sources, so hashing them there gave the SHA-1 of nothing: a tag
+that never matched a published cache and never changed between exe versions, so a cache built by
+older navmesh code was reused as current. `tools/release/build_exe.py` now hashes the sources while
+building and writes `{generator: tag}` to `tes5_import/navmesh/navmesh_tags.json` in the app;
+`pool.navmesh_geom_cache` reads it when it finds no sources. The tag check the import runs
+(`navmesh_cache.cache_matches_tag`) moved out of the git hook module, which reads `pool.py`'s source
+when it is imported and so failed inside the exe ("Navmesh cache: skipped (... pool.py)").
+
 #### <a id="no-pathgrids-no-gather"></a>A plugin with no pathgrids builds no carving indexes
 
 Jobs are driven only by the plugin's own PGRDs, so with none `gather_navm_jobs`

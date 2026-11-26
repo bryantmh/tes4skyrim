@@ -20,8 +20,9 @@ from pathlib import Path
 import numpy as np
 
 from asset_convert.nif.flipbook import read_dds_header
-from asset_convert.nif.morroblivion_textures import (ALPHA_NAME, ALPHA_TEST_BITS, ALPHA_TEST_ENABLE, MAP_NAME,
-                                                     map_dir, texture_key, write_alpha, write_map)
+from asset_convert.nif.morroblivion_textures import (ALPHA_NAME, ALPHA_TEST_BITS, ALPHA_TEST_ENABLE, ANY_MESH,
+                                                     LEGACY_ALPHA_NAME, MAP_NAME, NO_TEST, map_dir, mesh_key,
+                                                     texture_key, write_alpha, write_map)
 from asset_convert.nif.sse_nif import NifFormat, read_nif
 from asset_convert.nif.tex_paths import as_dds, texture_rel_path
 from asset_convert.sources.morrowind_assets import find_archived_mesh
@@ -94,19 +95,31 @@ def _file_name(key: str) -> str:
     return key.rpartition('\\')[2]
 
 
-def proven_twins(vanilla, morroblivion) -> list:
-    """[(vanilla texture key, Morroblivion texture, its shape's alpha cutoff)] for shapes the two share exactly."""
+def twins_and_worn(vanilla, morroblivion) -> tuple:
+    """(proven twins, worn cutoffs) of one record-paired mesh.
+
+    Proven twins: [(vanilla texture key, Morroblivion texture, its shape's alpha cutoff)] for
+    shapes the two share exactly. Worn cutoffs: {vanilla texture key: {alpha cutoffs}} of every
+    Morroblivion shape wearing that texture's twin name, matched geometry or not.
+    See: docs/commentary/asset_convert_texture.md#twin-alpha-cutoff
+    """
     theirs = [(_file_name(texture_key(tex)), tex, pairs, cutoff)
               for tex, pairs, cutoff in shape_signatures(morroblivion)]
-    out = []
+    out, worn = [], {}
     for tex, pairs, _cutoff in shape_signatures(vanilla):
         key = texture_key(tex)
         want = _file_name(key).replace('_', 'u')
-        match = next(((m_tex, cutoff) for name, m_tex, m_pairs, cutoff in theirs
-                      if name == want and m_pairs == pairs), None)
+        named = [(m_tex, m_pairs, cutoff) for name, m_tex, m_pairs, cutoff in theirs if name == want]
+        worn.setdefault(key, set()).update(cutoff for _tex, _pairs, cutoff in named)
+        match = next(((m_tex, cutoff) for m_tex, m_pairs, cutoff in named if m_pairs == pairs), None)
         if match is not None:
             out.append((key, *match))
-    return out
+    return out, {key: cuts for key, cuts in worn.items() if cuts}
+
+
+def proven_twins(vanilla, morroblivion) -> list:
+    """[(vanilla texture key, Morroblivion texture, its shape's alpha cutoff)] for shapes the two share exactly."""
+    return twins_and_worn(vanilla, morroblivion)[0]
 
 
 def _worker_init() -> None:
@@ -116,11 +129,12 @@ def _worker_init() -> None:
 
 
 def _proven_twins_task(job) -> tuple:
-    """Pool task: (ok, twins) for one (vanilla bytes, Morroblivion path) pair."""
+    """Pool task: (ok, mesh key, twins, worn) for one (vanilla mesh key, vanilla bytes, Morroblivion path) job."""
+    mesh, vanilla, morroblivion = job
     try:
-        return True, proven_twins(*job)
+        return (True, mesh, *twins_and_worn(vanilla, morroblivion))
     except Exception:
-        return False, []
+        return False, mesh, [], {}
 
 
 def twin_meshes(export_dir: str, morroblivion, vanilla_esm: str, index) -> dict:
@@ -175,17 +189,22 @@ def _choose(candidates: set, roots) -> str:
 
 
 def _prove_all(jobs) -> tuple:
-    """({vanilla texture key: {Morroblivion textures}}, {key: {alpha cutoffs}}, unreadable count) over `jobs`."""
+    """({texture key: {Morroblivion textures}}, {(mesh or ANY_MESH, texture key): {alpha cutoffs}}, unreadable).
+
+    Texture-wide cutoffs come from the proven shapes; a mesh's own from every counterpart shape wearing the twin.
+    """
     found, cutoffs, unreadable = {}, {}, 0
     if not jobs:
         return found, cutoffs, unreadable
     with mp.Pool(processes=min(worker_count(), len(jobs)),
                  initializer=_worker_init) as pool:
-        for ok, pairs in pool.imap_unordered(_proven_twins_task, jobs, 16):
+        for ok, mesh, pairs, worn in pool.imap_unordered(_proven_twins_task, jobs, 16):
             unreadable += not ok
             for key, tex, cutoff in pairs:
                 found.setdefault(key, set()).add(tex)
-                cutoffs.setdefault(key, set()).add(cutoff)
+                cutoffs.setdefault((ANY_MESH, key), set()).add(cutoff)
+            for key, cuts in worn.items():
+                cutoffs[(mesh, key)] = cuts
     return found, cutoffs, unreadable
 
 
@@ -199,22 +218,28 @@ def shared_cutoff(cutoffs: set):
     return min(cutoffs, key=lambda cutoff: cutoff[1])
 
 
+def scope_cutoff(scope: tuple, cutoffs: set):
+    """`shared_cutoff`, except that a mesh whose counterpart never tests the twin records NO_TEST."""
+    return NO_TEST if scope[0] != ANY_MESH and cutoffs == {None} else shared_cutoff(cutoffs)
+
+
 def build_map(meshes: dict, twins: dict, export_dir: str, morroblivion,
               progress=print) -> tuple:
-    """({vanilla texture key: Morroblivion path}, {key: alpha cutoff}) proven over every paired mesh.
+    """({vanilla texture key: Morroblivion path}, {(mesh or ANY_MESH, key): alpha cutoff}) over every paired mesh.
 
     `meshes` holds the archived vanilla bytes of each key in `twins`.
     """
-    jobs = [(meshes[key], str(twins[key])) for key in sorted(meshes)]
+    jobs = [(mesh_key(key[len(MESH_PREFIX):]), meshes[key], str(twins[key])) for key in sorted(meshes)]
     found, cutoffs, unreadable = _prove_all(jobs)
     roots = [asset_root(export_dir, name) for name in morroblivion]
     table = {key: _choose(texs, roots) for key, texs in found.items()}
     table = {key: path for key, path in table.items() if path}
-    alpha = {key: shared_cutoff(cutoffs[key]) for key in table}
-    alpha = {key: cutoff for key, cutoff in alpha.items() if cutoff}
+    alpha = {scope: scope_cutoff(scope, cuts) for scope, cuts in cutoffs.items() if scope[1] in table}
+    alpha = {scope: cutoff for scope, cutoff in alpha.items() if cutoff}
     progress(f"  {len(table)} vanilla textures proven to fit Morroblivion's "
              f'twin over {len(jobs)} paired meshes ({unreadable} unreadable); '
-             f'{len(alpha)} carry its alpha test')
+             f'{sum(scope[0] == ANY_MESH for scope in alpha)} carry its alpha test everywhere, '
+             f'{sum(scope[0] != ANY_MESH for scope in alpha)} on a paired mesh')
     return table, alpha
 
 
@@ -233,6 +258,7 @@ def prove_map(export_dir: str, morroblivion, vanilla_esm: str, index, progress=p
     table, alpha = build_map(meshes, {k: twins[k] for k in meshes}, export_dir, morroblivion, progress)
     write_map(map_dir(export_dir), table)
     write_alpha(map_dir(export_dir), alpha)
+    (Path(map_dir(export_dir)) / LEGACY_ALPHA_NAME).unlink(missing_ok=True)
     return len(table)
 
 

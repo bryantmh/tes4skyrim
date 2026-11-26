@@ -19,11 +19,11 @@ from pathlib import Path
 from asset_convert.collision.mesh_scan_fragments import set_fragment_dir
 from asset_convert.nif.fixture_plan import FIXTURE_KEY
 from asset_convert.nif.nif_converter import convert_nif
-from asset_convert.game_paths import ascii_dest, current_namespace, set_namespace
+from asset_convert.game_paths import ascii_dest, borrowed_roots, current_namespace, set_namespace
 from asset_convert.nif.shaders import (default_normal_texture, SPEC_STRENGTH,
                                        master_texture_roots)
 from core.process_job import join_pool_job
-from core.worker_budget import worker_count
+from core.worker_budget import MemoryGate, memory_workers, worker_count
 
 #: Path segments (case-insensitive) whose NIFs batch conversion never touches.
 SKIP_PATHS = frozenset({
@@ -34,6 +34,10 @@ SKIP_PATHS = frozenset({
 
 #: Pool size for a batch run. See: docs/commentary/performance.md
 WORKER_COUNT = worker_count()
+#: Progress lines per batch (the window's countdown follows them).
+PROGRESS_LINES = 50
+#: A mesh worker's private (commit) MB at 29 workers, measured: 230-260 across Tribunal, Nehrim, FNV (Morrowind 390).
+MESH_WORKER_MB = 260
 
 
 #: Warnings seen so far, reset per file. Each worker process has its own copy.
@@ -236,18 +240,22 @@ def _run_batch(work_args, stats, skipped_list, mesh_path, workers,
             _progress(stats, mesh_path, nif_str, done, total)
 
     ns = current_namespace()
+    every = max(1, total // PROGRESS_LINES)
+    workers = memory_workers(workers, MESH_WORKER_MB)
     if workers > 1:
+        gate = MemoryGate(work_args)
         with mp.Pool(processes=workers,
                      initializer=pyffi_capture_init,
                      initargs=(ns, scan_dir)) as pool:
             for done, (status, nif_str, payload) in enumerate(
-                    pool.imap_unordered(_batch_worker, work_args), 1):
-                handle(done, status, nif_str, payload, 500)
+                    pool.imap_unordered(_batch_worker, gate), 1):
+                gate.done()
+                handle(done, status, nif_str, payload, every)
         return
     pyffi_capture_init(ns, scan_dir)
     for done, args in enumerate(work_args, 1):
         status, nif_str, payload = _batch_worker(args)
-        handle(done, status, nif_str, payload, 200)
+        handle(done, status, nif_str, payload, every)
 
 
 def _report_warnings(stats):
@@ -346,14 +354,15 @@ def _report_batch(stats, skipped_list, total, parallax):
 
 def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
                   remap_skeleton=None, subdir_filter=None, wearable_plan=None,
-                  parallax=False, textures_only=False, scan_dir=None):
+                  parallax=False, textures_only=False, scan_dir=None, extra_textures=()):
     """Convert every NIF under mesh_dir into output_dir; return run stats.
 
     Skip reasons are VER (unsupported version), RD (read failure) and WR
     (write failure). subdir_filter names root subfolders to include;
     wearable_plan says which _0/_1/plain variants each armor mesh needs;
     parallax carries Oblivion's height field across; textures_only analyses
-    every mesh and emits none.
+    every mesh and emits none. `extra_textures` are texture trees searched
+    first, for a mesh tree that sits outside its plugin's export.
     See: docs/commentary/performance.md#parallelism-rules
     """
     mesh_path = Path(mesh_dir)
@@ -365,7 +374,7 @@ def batch_convert(mesh_dir, output_dir, *, fix_textures=True,
     skipped_list = []
 
     workers = WORKER_COUNT
-    tex_fallback = master_texture_roots(mesh_dir)
+    tex_fallback = tuple(extra_textures) + tuple(master_texture_roots(mesh_dir)) + tuple(borrowed_roots('textures'))
     print(f'Found {total} NIF files in {mesh_dir} (workers={workers})')
     if tex_fallback:
         names = ', '.join(os.path.basename(os.path.dirname(r))

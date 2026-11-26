@@ -23,13 +23,11 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 from core.collision_options import WINDING_FIX_DEFAULT_PLUGINS
 from core.gui.config import (
     GLOBAL_ACTIONS,
-    PACKING_STEPS,
     STEPS,
     WINDING_AUTO,
     WINDING_MODES,
     WINDING_OFF,
     WINDING_ON,
-    default_on_steps,
     scan_converted,
     scan_plugins,
     winding_enabled_for,
@@ -39,12 +37,13 @@ from core.gui.splash import Splash
 from core.process_job import create_pool_job
 from core.python_cmd import python_cmd, run_from_argv
 from core.subprocess_flags import POPEN_FLAGS as _POPEN_FLAGS
+from core.subprocess_flags import ensure_std_handles
 
 #: Re-exported for callers that import `gui` directly.
 __all__ = [
-    "GLOBAL_ACTIONS", "PACKING_STEPS", "STEPS",
+    "GLOBAL_ACTIONS", "STEPS",
     "WINDING_AUTO", "WINDING_FIX_DEFAULT_PLUGINS", "WINDING_MODES",
-    "WINDING_OFF", "WINDING_ON", "default_on_steps", "gui_main", "main",
+    "WINDING_OFF", "WINDING_ON", "gui_main", "main",
     "scan_converted", "scan_plugins", "winding_enabled_for",
 ]
 
@@ -109,6 +108,7 @@ def _relaunch_windowless() -> bool:
 
 def main():
     """Entry point: run a module TESRACT.exe was asked to run, else open the GUI or forward `--cli`."""
+    ensure_std_handles()
     if run_from_argv(sys.argv):
         return 0
     parser = argparse.ArgumentParser(description="TES4 Auto-Convert GUI")

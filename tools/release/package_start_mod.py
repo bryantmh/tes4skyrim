@@ -1,18 +1,17 @@
-"""Package the TESGameSelect starter mod as a distributable zip.
+"""Build the TESGameSelect starter mod as a mod folder.
 
 TESGameSelect ("Threads of Prophecy") is the new-game game selector: it
 intercepts MQ101 so the player picks which converted world to start in. It is
-not converted from a TES4 plugin — it is BUILT here, then zipped: the MQ101
+not converted from a TES4 plugin — it is BUILT here: the MQ101
 override is spliced from the installed Skyrim.esm and the two scripts are
 compiled, so packaging always ships what the current source produces rather
 than a committed artifact that can fall behind it.
 
-The archive mirrors what `convert.py --pack-zip-only` produces for a converted
-plugin — output/Finished Mods/<name>.zip, contents rooted as a Data folder — so
-a user installs it exactly the same way and a mod manager sees the same shape.
+The folder, output/TESGameSelect/, is rooted as a Data folder, so Install &
+play installs it like any converted plugin (and zips it for a manual install).
 
 Usage:
-  python tools/release/package_start_mod.py     # -> output/Finished Mods/TESGameSelect.zip
+  python tools/release/package_start_mod.py     # -> output/TESGameSelect/
   python tools/release/package_start_mod.py --output-dir PATH
 """
 
@@ -23,19 +22,16 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from output_layout import DATA_ROOT, finished_dir, tree_members, write_mod_zip
+from output_layout import DATA_ROOT, FINISHED_DIR_NAME
 from tools.release.make_game_select_esp import build as build_start_mod
-from tools.release.make_nehrim_no_start_patch import PATCH_NAME as DEV_PATCH_NAME
 
 MOD_NAME = "TESGameSelect"
 
 
 def package(out_root: Path) -> int:
-    """Build the starter mod, then zip what the build produced.
+    """Build the starter mod into output/TESGameSelect, rooted at the Data folder.
 
-    Archive paths are relative to the build root, so the archive root IS the
-    Data folder: the .esp, scripts and seq all sit at top level. A hand-built
-    developer patch sitting beside the .esp stays out.
+    The zip an older build made in Finished Mods is deleted: Manual install zips the folder.
     """
     build_dir = out_root / MOD_NAME
 
@@ -46,31 +42,16 @@ def package(out_root: Path) -> int:
         print("ERROR: the starter mod did not build — nothing to package.")
         return 1
 
-    files = [(arc, path) for arc, path in tree_members(build_dir)
-             if path.name != DEV_PATCH_NAME]
-    if not files:
-        print(f"ERROR: {build_dir} is empty — nothing to package.")
-        return 1
-
-    zip_path = finished_dir(out_root) / f"{MOD_NAME}.zip"
+    (out_root / FINISHED_DIR_NAME / f"{MOD_NAME}.zip").unlink(missing_ok=True)
     print()
-    print(f"  Source: {build_dir}")
-    print(f"  Output: {zip_path}")
-    print()
-
-    write_mod_zip(zip_path, files, lambda _i, arc: print(f"  + {arc}"))
-
-    size = zip_path.stat().st_size
-    print()
-    print(f"Packaged {len(files)} file(s) -> {zip_path} ({size:,} bytes)")
-    print("Install it like any other converted mod: the archive root is the "
-          "Data folder.")
+    print(f"Built -> {build_dir}")
+    print("Install it on Install & play like any other converted mod.")
     return 0
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Package the TESGameSelect starter mod as a zip.")
+        description="Build the TESGameSelect starter mod as a mod folder.")
     ap.add_argument("--output-dir", metavar="PATH",
                     help="Output directory (default: output/ in project root)")
     args = ap.parse_args()

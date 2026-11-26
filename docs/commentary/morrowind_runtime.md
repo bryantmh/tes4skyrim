@@ -3,7 +3,7 @@
 **Code:** `tes_runtime/morrowind/`, `external/openmw/`, `tools/generators/vendor_openmw.py`
 
 MorrowindRuntime: its own source folder and its own DLL, beside the other
-runtimes under `tes_runtime/`, shipping in the same `TESRuntime.zip`. Journal
+runtimes under `tes_runtime/`, shipping in the same `TESRuntime` mod. Journal
 stage text, which used to live here, works on every quest and moved to
 TESRuntime: [tes_runtime_journal.md](tes_runtime_journal.md#journal-stage-text).
 
@@ -392,7 +392,7 @@ texture goes where, at what size — and never the art.
 
 That includes the built movie: it embeds the composed art, so it is never
 committed either. `tools/release/package_runtime_dll.py` composes it from the
-player's own install when `TESRuntime.zip` is packaged and writes it straight
+player's own install when the `TESRuntime` mod is packaged and writes it straight
 into the archive (no install, no menu); the generator's default output folder,
 `tes_runtime/morrowind/interface/`, is git-ignored.
 `tests/test_morrowind_menu_art.py` checks git tracks nothing there, because a
@@ -3126,6 +3126,28 @@ journals, so 89 journals with pages showed raw ids like `A_I_TAVERNE`. Their
 names live in the authored file, taken from a title the first page carries
 where it has one ("The Patriarch Inn"), else composed from the pages.
 
+### <a id="objective-lines"></a>Objective lines come from Morroblivion's short-text table
+
+**Code:** `quest_morrowind.py:objective_line`, `objective_text.py`, `tes5_import/generated/objective_short_text_tes3.json`
+
+A page's NNAM (the HUD objective, 71-character cap) is looked up by page text
+in the short-objective tables before being derived. Morroblivion's
+Morrowind_ob.esm copies most TES3 journal pages verbatim, and the curated
+`objective_short_text.json` already holds a hand-written short line for each of
+its stages, so an exact text match covers most vanilla pages for free. There is
+no authored id link: Morroblivion renamed and regrouped the quests (`fbmw*`).
+
+For pages Morroblivion reworded (`%Name gave me...` → `I was given...`, `'no-name,'`
+→ `'no-name',`, spelling fixes), `objective_short_text_tes3.json` holds the line. It
+was built once and is edited in place, never regenerated. Of the 387 distinct
+Morrowind, Tribunal and Bloodmoon pages with no exact key, 184 took the nearest
+curated key at a difflib ratio of at least 0.85. A match was rejected when its short
+line named a capitalized word the page lacks, which catches sibling pages that
+differ only by a book or NPC name. The other 200 were written by hand. Only the 3
+pages that are nothing but a title (`VA_VampChild`, `Colony_update`, `CO_Estate`)
+have no entry; they show that title. TR and Arktwend pages that are not vanilla
+text keep the derived line: the first sentence, else a word-boundary cut with "...".
+
 ### <a id="game-calls"></a>Natives, found at their registrations
 
 `lea rdx, ["SetCurrentStageID"]` is followed by `lea rax, [callback]`; the
@@ -3551,8 +3573,15 @@ DIALOGUE. See [scripted Say](#scripted-say).
 * **A speaker with no mouth plays the file as a sound.** Doors, activators, a
   script no actor carries and `Player->Say` cannot lip-sync, so the export also
   mints a SOUN (`MWSaySound<id>`) for such a line and `SayLine` falls back to
-  `Sound.Play` at the reference. Measured in the exports: Morrowind.esm mints
-  92 Say topics and 3 Say sounds, TR_Mainland 144 and 3.
+  `Sound.Play` at the reference. **The player is mouthless by id**, whatever
+  record the plugin gives it: Morrowind.esm carries an NPC_ named `player`,
+  which made all 35 of its `Player->Say` lines (Tarhiel's fall screams, the
+  Daedric shrine voices, the Dagoth Ur taunts) topics gated on that record --
+  no Skyrim actor is it, so each played silence. `SayLine` also never hands
+  the player a topic, for a line it shares with a real actor; its log line
+  names the channel (`(topic)` or `(sound instance N)`). Measured in the
+  exports: Morrowind.esm mints 54 Say topics and 51 Say sounds (after the
+  player fix); TR_Mainland 144 and 3 before it.
 
 `say_formid.txt` carries the way back:
 `path=Plugin.esm|TOPIC FormID|seconds|SOUN id`, keyed by the path lowercased
@@ -4218,6 +4247,60 @@ their own, a group's Loop Start/Loop Stop split, `Sound:` cues inside a group,
 and `SkipAnim` on an actor. An actor knocked into ragdoll while seated is pulled
 back by the next repeat.
 
+## <a id="a-hold-needs-a-floor"></a>A hold needs a floor
+
+**Code:** `plugin/npc_anim.cpp` (`StepHeld`), `plugin/game_calls_still.cpp`
+(`ControllerTouches`), `plugin/game_calls_anim.cpp` (`OnFloor`); layout in
+`plugin/ids.h`.
+
+An NPC with no AI package is held on its spot: a TranslateTo glide, plus the
+controller taken out of the physics simulation (`kControllerNoSim`). A held
+controller is never stepped, so gravity never reaches it. Morrowind's Tarhiel
+(`agronian guy`) is placed 3,132 units above the Bitter Coast, standing on the
+invisible `fallguy_collision_unique`; `fallingScript` disables it 2 seconds
+after the player comes within 2,000 units. He stayed in the sky (Z 3132.97
+after 600 ticks, headless instance).
+
+**The rule: a held NPC that touches no collision falls free.** Each
+evaluation, `StepHeld` asks whether the NPC's body has a contact point with
+anything. With none it ends the glide (`Release`), forgets its authored spot,
+and the next tick puts the controller back into the simulation; once it
+touches again it is held where it stands. Tarhiel now falls and dies, as in
+Morrowind (`chargen_tarhiel`, 3/3).
+
+**Contact, not support.** The NPC's controller is a
+`bhkCharRigidBodyController`, not the player's proxy controller. Its body's
+collision entries are live: Havok removes the agent the moment the other
+object leaves the world, so a frozen NPC still loses its floor's contacts. The
+count is read the way the engine's own `hkpCharacterRigidBody::getSupportInfo`
+walks them. Its support verdict is not used: it asks whether the contacts
+hold the body UP, and read a seated NPC sunk into its chair
+(`ANFTaverneNpc09`) as unsupported twice in 7 seconds while it touched the
+chair. Each drop handed it to physics, which pushed it out onto the table.
+
+**Things that did not work** (all measured on the headless instance):
+
+- Recording the controller's last InAir/OnGround step: a held controller is
+  never stepped, so it never saw its floor go; mid-glide, 3,000 units up, his
+  controller read OnGround.
+- Letting go of every packageless NPC on each `Disable` and reading them
+  again: it fired on any Disable in the cell (a pot, `Topf01`, let 15 NPCs go
+  in the tavern).
+- Only changing the physics hold: he fell for 22 steps and the glide slid him
+  back up to his authored spot.
+
+Measured on Arktwend's Fur Seal Tavern (`taverne_gate`): 2 NPCs
+(`ANFTaverneBote`, `ANFBurger09`) fall free once as the cell loads, before
+their bodies have any contact, and are held one step later; no NPC falls free
+afterwards. Six screenshots a second apart show every seated and standing NPC
+at the same height.
+
+The walk holds the bhkWorld's read lock, as the engine's own support check
+does for the same entries.
+
+Not covered: a packageless NPC that survives a fall and is reloaded is held
+at its authored spot again.
+
 ## <a id="object-animation"></a>`PlayGroup`, `LoopGroup` and `SkipAnim` on objects
 
 **Code:** `plugin/script_ops_anim.cpp`, `plugin/game_calls_anim.cpp`,
@@ -4333,7 +4416,7 @@ MIT, everything under `external/` carries its own license.
 
 MorrowindRuntime is **its own DLL**, like every runtime under `tes_runtime/`:
 its own source folder, built by `tes_runtime/build.bat` into `tes_runtime/dist/`
-and shipped in the same `TESRuntime.zip`. That boundary is what keeps the
+and shipped in the same `TESRuntime` mod. That boundary is what keeps the
 license contained. `CreatureRuntime.dll`, `FalloutRuntime.dll`,
 `HavokWorldSize.dll` and `TESGameBridge.dll` never link OpenMW code, so they
 stay MIT; linking OpenMW into any of them would make that whole binary

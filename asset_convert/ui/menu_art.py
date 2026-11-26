@@ -25,7 +25,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from asset_convert.sources import source_registry
-from asset_convert.sources.bsa_extract import read_bsa_directory, read_bsa_files
+from asset_convert.sources.bsa_extract import bsa_has, read_bsa_directory, read_bsa_files
 from asset_convert.sources.bsa_extract_morrowind import (is_morrowind_bsa,
                                                          read_entry, read_index)
 from asset_convert.ui.morrowind_menu_art import (FRAME, TEXTURES, MorrowindArt,
@@ -184,10 +184,34 @@ def effect_icons(export_root, paths: dict) -> dict:
     return out
 
 
+def install_has(data_dir, rel: str) -> bool:
+    """Whether the install at `data_dir` ships `rel`, loose or in any archive, without indexing them all.
+
+    See: docs/commentary/asset_convert_bsa.md#bsa-name-hash
+    """
+    root = Path(data_dir)
+    if (root / _norm(rel)).is_file():
+        return True
+    for bsa in sorted(root.glob('*.bsa')):
+        if is_morrowind_bsa(bsa):
+            if _norm(rel) in read_index(bsa):
+                return True
+        elif bsa_has(bsa, _norm(rel)):
+            return True
+    return False
+
+
+@functools.lru_cache(maxsize=None)
+def _available(export_root: str) -> tuple:
+    """(Morrowind art installed, Oblivion art installed) over the registered installs. Read once per run."""
+    dirs = [row['path'] for row in source_registry.directories(export_root) if Path(row['path']).is_dir()]
+    return (any(install_has(d, MORROWIND_MARK) for d in dirs), any(install_has(d, OBLIVION_MARK) for d in dirs))
+
+
 def available(export_root) -> dict:
     """`{'morrowind': bool, 'oblivion': bool}`: whose menu art an install supplies."""
-    morrowind, oblivion = art_sources(str(export_root))
-    return {ICONS_MORROWIND: bool(morrowind), ICONS_OBLIVION: bool(oblivion)}
+    morrowind, oblivion = _available(str(export_root))
+    return {ICONS_MORROWIND: morrowind, ICONS_OBLIVION: oblivion}
 
 
 # ---------------------------------------------------------------------------

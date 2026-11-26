@@ -1140,6 +1140,15 @@ Function RestoreFallDamage(Actor akActor, Spell akFallSpell) Global
   EndIf
 EndFunction
 
+; TES4 EquipItem: equips only an item the actor carries (Oblivion does nothing
+; otherwise); Skyrim's EquipItem adds a missing item first.
+; See docs/commentary/script_convert.md#equipitem-never-adds
+Function EquipOwned(Actor akActor, Form akItem, Bool abLock = False, Bool abSilent = False) Global
+  If akActor && akItem && akActor.GetItemCount(akItem) > 0
+    akActor.EquipItem(akItem, abLock, abSilent)
+  EndIf
+EndFunction
+
 ; TES4 re-dressed an NPC whenever its inventory changed: the best wearable per
 ; slot, the upper-body piece first.  Skyrim never does, so a converted
 ; AddItem / RemoveItem of armor on an actor is followed by this pass over its

@@ -31,6 +31,8 @@ from pathlib import Path
 
 import numpy as np
 
+from asset_convert.sources import output_files
+
 from tes5_import.record_types.common import landscape_texture_path
 
 # Specular mask value written into the new alpha channel.  Oblivion DXT5
@@ -225,6 +227,7 @@ def ensure_ltex_normals(rec_dir, textures_root, output_dir,
     for rel in sorted(rels):
         parts = (rel.rsplit('.', 1)[0] + '_n.dds').split('\\')
         if any(find_nocase(tree, 'textures', *parts, listing=seen.__getitem__)
+               or output_files.member(tree.joinpath('textures', *parts))
                for tree in trees):
             continue
         dest = Path(textures_root).joinpath(*parts)

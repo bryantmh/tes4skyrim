@@ -5,7 +5,9 @@ See: docs/plans/morrowind_object_scripts.md#cumulative-gather-must-go
 
 import os
 
+from tes5_import.dialogue.objective_text import load_objective_text
 from tes5_import.dialogue.quest_morrowind import (QUESTS_TABLE, journal_quests,
+                                                  objective_line,
                                                   write_journal_quests)
 
 
@@ -96,3 +98,15 @@ def test_a_deleted_page_is_not_a_stage(tmp_path):
     own = _sidecar(tmp_path / 'Child', ['CQ'],
                    [_page('CQ', 5, 'Mine.'), _page('CQ', 9, '', Deleted=1)])
     assert sorted(journal_quests(own)['cq']['stages']) == [5]
+
+
+def test_a_page_morroblivion_shortened_takes_its_line():
+    """A vanilla page in either short-objective table gets that line as NNAM."""
+    load_objective_text(quiet=True)
+    verbatim = ("I'm told that Addhiranirr is hiding because a Census and Excise "
+                "agent is in the area. She's probably down in the underworks.")
+    reworded = ('%Name gave me a copy of "The Pilgrim\'s Path" and asked me to '
+                'make the Pilgrimages of the Seven Graces.')
+    assert objective_line(verbatim) == 'Search the underworks for Addhiranirr'
+    assert objective_line(reworded) == 'Make the Pilgrimage of the Seven Graces'
+    assert objective_line('Not in any table. Second.') == 'Not in any table.'

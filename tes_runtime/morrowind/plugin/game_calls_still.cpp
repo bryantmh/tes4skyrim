@@ -16,6 +16,11 @@
 // with the engine's own paired-animation flag (ids::kControllerNoSim), which
 // skips the controller's whole step and the move onto the navmesh. The flag
 // is cleared again the tick after the hold is released.
+//
+// A controller out of the simulation feels no floor go, so ControllerTouches
+// reads whether its body touches any collision: a contact point in its live
+// collision entries, which Havok drops the moment the other object leaves.
+// See: docs/commentary/morrowind_runtime.md#a-hold-needs-a-floor
 
 #include "game_calls_internal.h"
 
@@ -40,6 +45,12 @@ constexpr float kStillSpeed = 0.01f;
 
 void** g_processLists = nullptr;
 void* g_proxyVtable = nullptr;
+void* g_rigidBodyVtable = nullptr;
+
+// bhkWorld's read lock and unlock (ids::kWorldLockRead).
+using WorldLockFn = void (*)(void* world);
+WorldLockFn g_lockWorld = nullptr;
+WorldLockFn g_unlockWorld = nullptr;
 
 // The engine's own recovery speed, read off the player's proxy; 0 until read.
 std::atomic<float> g_engineSpeed{0.0f};
@@ -100,6 +111,33 @@ void SetNoSim(void* actor, void* controller, bool held) {
     }
 }
 
+// The bhkWorld a rigid body controller's body is in, by the chain its own
+// support check (slot 13) takes to the world's lock; null when not in one.
+void* WorldOf(void* controller) {
+    void* body = &At<char>(controller, ids::kOffRigidBodyControllerBody);
+    void* first = VCall<void* (*)(void*)>(body, ids::kBodyWorldSlot)(body);
+    void* link = first ? At<void*>(first, ids::kOffWorldLink) : nullptr;
+    void* second = link ? VCall<void* (*)(void*)>(link, ids::kWorldLinkSlot)(link) : nullptr;
+    return second ? At<void*>(second, ids::kOffWorldLink) : nullptr;
+}
+
+// Whether the character body has a contact point; the world's lock is held.
+bool TouchesLocked(void* controller) {
+    void* character = At<void*>(controller, ids::kOffRigidBodyControllerCharacter);
+    void* body = character ? At<void*>(character, ids::kOffCharacterBody) : nullptr;
+    if (!body) return true;
+    char* entries = At<char*>(body, ids::kOffBodyCollisionEntries);
+    const std::int32_t count = At<std::int32_t>(body, ids::kOffBodyCollisionEntries + 8);
+    for (std::int32_t i = 0; i < count; ++i) {
+        void* agent = At<void*>(entries, i * ids::kCollisionEntrySize);
+        void* manager = agent ? At<void*>(agent, ids::kOffAgentContactManager) : nullptr;
+        if (!manager || At<std::int32_t>(manager, ids::kOffContactManagerType) != 0) continue;
+        void* atom = At<void*>(manager, ids::kOffContactManagerAtom);
+        if (atom && At<std::uint16_t>(atom, ids::kOffAtomContactCount) > 0) return true;
+    }
+    return false;
+}
+
 }  // namespace
 
 void HoldStill(void* controller, bool isPlayer) {
@@ -107,6 +145,19 @@ void HoldStill(void* controller, bool isPlayer) {
     const float engine = g_engineSpeed.load();
     if (!speed || isPlayer || engine <= 0.0f || !g_processLists) return;
     *speed = SpeedFor(controller, engine);
+}
+
+bool ControllerTouches(void* controller) {
+    if (!controller || !g_rigidBodyVtable || !g_lockWorld || !g_unlockWorld ||
+        At<void*>(controller, 0) != g_rigidBodyVtable) {
+        return true;
+    }
+    void* world = WorldOf(controller);
+    if (!world) return true;
+    g_lockWorld(world);
+    const bool touches = TouchesLocked(controller);
+    g_unlockWorld(world);
+    return touches;
 }
 
 void ForEachHighActor(const std::function<void(void*)>& fn) {
@@ -148,8 +199,13 @@ void InstallStillCalls() {
         Resolve("ProcessLists singleton", ids::kProcessListsSingleton, nullptr));
     g_proxyVtable = reinterpret_cast<void*>(
         Resolve("bhkCharProxyController vtable", ids::kProxyControllerVtable, nullptr));
-    Log("still: process lists %s, proxy controller %s", g_processLists ? "ok" : "MISSING",
-        g_proxyVtable ? "ok" : "MISSING");
+    g_rigidBodyVtable = reinterpret_cast<void*>(Resolve(
+        "bhkCharRigidBodyController vtable", ids::kRigidBodyControllerVtable, nullptr));
+    g_lockWorld = Native<WorldLockFn>("bhkWorld read lock", ids::kWorldLockRead);
+    g_unlockWorld = Native<WorldLockFn>("bhkWorld read unlock", ids::kWorldUnlockRead);
+    Log("still: process lists %s, proxy controller %s, rigid body controller %s, "
+        "world lock %s", g_processLists ? "ok" : "MISSING", g_proxyVtable ? "ok" : "MISSING",
+        g_rigidBodyVtable ? "ok" : "MISSING", g_lockWorld && g_unlockWorld ? "ok" : "MISSING");
 }
 
 }  // namespace gamecalls

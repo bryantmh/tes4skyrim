@@ -5,24 +5,55 @@ import { Theme } from "theme.slint";
 import { Ui } from "state.slint";
 import { Btn, Box, Divider, Heading, Muted, Pill } from "widgets.slint";
 
+// Diagonal stripes across a bar, `phase` pixels along: the running bar's moves a step each redraw, a queued
+// bar's stand still. One Path per stripe, as many as the bar is wide.
+component Stripes inherits Rectangle {
+    in property <brush> ink;
+    in property <length> phase;
+    property <length> period: 16px;
+    clip: true;
+    for i in ceil(root.width / root.period) + 2: Path {
+        x: (i - 1) * root.period + root.phase;
+        y: 0;
+        width: root.period;
+        height: root.height;
+        viewbox-width: 16;
+        viewbox-height: 28;
+        commands: "M 0 28 L 10 0 L 16 0 L 6 28 Z";
+        fill: root.ink;
+    }
+}
+
 component Timeline {
     property <length> name-w: 200px;
+    property <length> track: root.width - root.name-w;
+    property <length> now-x: root.name-w + root.track * Ui.now-pos;
+    // The red time label sits right of the now line, or left of it near the axis's end.
+    property <bool> now-flip: root.now-x + 5px + now-m.preferred-width > root.width;
+    property <length> now-l: root.now-flip ? root.now-x - 5px - now-m.preferred-width : root.now-x + 5px;
+    property <length> now-r: root.now-l + now-m.preferred-width;
+    now-m := Text { visible: false; text: Ui.now-label; font-size: 11px; font-weight: 600; }
     Box {
         VerticalLayout {
             Rectangle {
                 height: 28px;
                 background: Theme.surface-2;
                 for t in Ui.ticks: Text {
-                    x: root.name-w + (parent.width - root.name-w) * t.pos + 4px;
+                    x: root.name-w + root.track * t.pos + 4px;
                     y: 6px;
                     text: t.label;
                     font-size: 11px;
                     color: Theme.muted;
+                    // A tick label the now label would cover is left out.
+                    visible: !Ui.running || self.x > root.now-r + 6px || self.x + self.preferred-width < root.now-l - 6px;
                 }
                 Text { x: 12px; y: 6px; text: "Step"; font-size: 11px; color: Theme.muted; }
+                // The now line runs through the header and the lanes with bars, never across a skipped lane's text.
+                if Ui.running: Rectangle { x: root.now-x; width: 2px; background: Theme.bad; }
+                if Ui.running: Text { x: root.now-l; y: 4px; text: Ui.now-label; font-size: 11px; font-weight: 600; color: Theme.bad; }
             }
             for lane[i] in Ui.lanes: Rectangle {
-                height: 46px;
+                height: lane.state == "skip" ? 32px : 46px;
                 Divider { y: 0; width: parent.width; }
                 Rectangle {
                     x: 0;
@@ -30,6 +61,7 @@ component Timeline {
                     background: lane.selected ? Theme.accent-soft : transparent;
                     VerticalLayout {
                         padding-left: 12px;
+                        padding-right: 8px;
                         alignment: center;
                         Text {
                             text: (lane.done-mark ? "✓  " : "") + lane.label;
@@ -37,13 +69,13 @@ component Timeline {
                             font-weight: 600;
                             color: lane.state == "skip" ? Theme.muted : Theme.fg;
                         }
-                        Text { text: lane.sub; font-size: 11.5px; color: Theme.muted; overflow: elide; }
+                        if lane.state != "skip": Text { text: lane.sub; font-size: 11.5px; color: lane.state == "run" ? Theme.accent : Theme.muted; overflow: elide; }
                     }
                     TouchArea { mouse-cursor: pointer; clicked => { Ui.select-lane(i); } }
                 }
                 Rectangle { x: root.name-w; width: 1px; background: Theme.line; }
                 for t in Ui.ticks: Rectangle {
-                    x: root.name-w + (parent.width - root.name-w) * t.pos;
+                    x: root.name-w + root.track * t.pos;
                     width: 1px;
                     background: Theme.line;
                     opacity: 0.6;
@@ -56,32 +88,81 @@ component Timeline {
                     color: Theme.muted;
                 }
                 if lane.state != "skip" && lane.end > lane.start: Rectangle {
-                    x: root.name-w + (parent.width - root.name-w) * lane.start;
-                    width: max(4px, (parent.width - root.name-w) * (lane.end - lane.start) - 2px);
+                    x: root.name-w + root.track * lane.start;
+                    width: max(4px, root.track * (lane.end - lane.start) - 2px);
                     y: 9px;
                     height: 28px;
                     border-radius: 5px;
-                    border-width: 1px;
-                    border-color: Theme.line;
-                    background: lane.state == "done" ? Theme.lane-done : lane.state == "run" ? Theme.accent : Theme.sunken;
+                    background: lane.state == "done" ? Theme.lane-done : lane.state == "run" ? Theme.accent : transparent;
                     clip: true;
+                    if lane.state == "run": Stripes {
+                        width: parent.width;
+                        height: parent.height;
+                        ink: Theme.accent-fg.with-alpha(0.14);
+                        phase: Ui.stripe-phase * 1px;
+                    }
+                    if lane.state == "idle": Stripes {
+                        width: parent.width;
+                        height: parent.height;
+                        ink: Theme.muted.with-alpha(0.16);
+                        phase: 0px;
+                    }
+                    Rectangle {
+                        border-radius: 5px;
+                        border-width: 1px;
+                        border-color: lane.state == "idle" ? Theme.muted.with-alpha(0.45) : Theme.line;
+                    }
+                    // The text that fits: the whole of it, the short form, or none, never a word cut short.
+                    full-m := Text { visible: false; text: lane.bar-text; font-size: 11px; }
+                    short-m := Text { visible: false; text: lane.bar-short; font-size: 11px; }
                     Text {
                         x: 6px;
-                        text: lane.state == "run" ? "Running" : lane.state == "done" ? "" : "Queued";
+                        text: full-m.preferred-width + 12px <= parent.width ? lane.bar-text
+                            : short-m.preferred-width + 12px <= parent.width ? lane.bar-short : "";
                         font-size: 11px;
                         color: lane.state == "run" ? Theme.accent-fg : Theme.muted;
                         vertical-alignment: center;
                         height: parent.height;
                     }
                 }
+                if Ui.running && lane.state != "skip": Rectangle { x: root.now-x; width: 2px; background: Theme.bad; }
             }
             Rectangle { height: 0px; }
         }
-        if Ui.running: Rectangle {
-            x: root.name-w + (parent.width - root.name-w) * Ui.now-pos;
-            width: 2px;
-            background: Theme.bad;
-            Text { x: 5px; y: 4px; text: Ui.now-label; font-size: 11px; font-weight: 600; color: Theme.bad; }
+    }
+}
+
+// The log: one read-only, selectable line per row, colored by its tag; it follows its end while the reader
+// is there, and holds still (new lines wait) while they read further up.
+component LogView {
+    pure function log-color(tag: string) -> color {
+        if (tag == "err") { return Theme.bad; }
+        if (tag == "warn") { return Theme.warn; }
+        if (tag == "ok") { return Theme.good; }
+        if (tag == "head") { return Theme.accent; }
+        if (tag == "cmd") { return Theme.info; }
+        return Theme.fg;
+    }
+    lines := ListView {
+        width: 100%;
+        height: 100%;
+        property <bool> at-end: self.content-y <= self.visible-height - self.content-height + 4px;
+        changed content-height => { if (Ui.log-follow) { self.content-y = min(0px, self.visible-height - self.content-height); } }
+        changed at-end => { Ui.log-follow = self.at-end; if (self.at-end) { Ui.log-caught-up(); } }
+        for line in Ui.log-lines: HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            TextInput {
+                text: line.text;
+                read-only: true;
+                single-line: false;
+                wrap: word-wrap;
+                color: root.log-color(line.tag);
+                selection-background-color: Theme.accent-soft;
+                selection-foreground-color: Theme.fg;
+                font-family: Theme.mono-font;
+                font-size: 12px;
+            }
         }
     }
 }
@@ -127,7 +208,7 @@ export component ConvertView {
                         Rectangle { x: 0; width: parent.width * Ui.run-frac; border-radius: 4px; background: Theme.accent; }
                     }
                 }
-                if Ui.run-done: Btn { text: "Next: load order"; kind: "primary"; clicked => { Ui.go("loadorder"); } }
+                if Ui.run-done: Btn { text: "Next: shared mods"; kind: "primary"; clicked => { Ui.go("loadorder"); } }
                 if !Ui.run-done: Text { text: Ui.workers-text; color: Theme.muted; vertical-alignment: center; }
             }
         }
@@ -141,15 +222,23 @@ export component ConvertView {
                 VerticalLayout {
                     padding: 16px;
                     spacing: 10px;
-                    alignment: start;
                     HorizontalLayout {
                         Text { text: Ui.detail-title; font-weight: 600; font-size: 15px; color: Theme.fg; }
                         HorizontalLayout { alignment: end; Pill { text: Ui.detail-status; tone: Ui.detail-tone; } }
                     }
                     Muted { text: Ui.detail-text; }
-                    for kv in Ui.detail-rows: HorizontalLayout {
-                        Text { text: kv.k; color: Theme.muted; font-size: 13px; }
-                        Text { text: kv.v; color: Theme.fg; font-size: 13px; horizontal-alignment: right; wrap: word-wrap; }
+                    // The rows scroll when a step's sub-steps outgrow the card.
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            for kv in Ui.detail-rows: HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: kv.k; color: Theme.muted; font-size: 13px; overflow: elide; }
+                                Text { text: kv.v; color: Theme.fg; font-size: 13px; horizontal-alignment: right; wrap: word-wrap; }
+                            }
+                        }
                     }
                 }
             }
@@ -160,6 +249,11 @@ export component ConvertView {
                     HorizontalLayout {
                         alignment: end;
                         spacing: 8px;
+                        Btn {
+                            text: "Copy";
+                            small: true;
+                            clicked => { Ui.copy-log(); copy-buf.text = Ui.log-copy; copy-buf.select-all(); copy-buf.copy(); copy-buf.clear-selection(); }
+                        }
                         Btn { text: "Clear"; small: true; clicked => { Ui.clear-log(); } }
                         Btn { text: "Full log"; small: true; clicked => { Ui.open-run-log(); } }
                     }
@@ -167,21 +261,11 @@ export component ConvertView {
                 Box {
                     tint: Theme.sunken;
                     min-height: 200px;
-                    log-view := ListView {
-                        property <int> count: Ui.log.length;
-                        changed count => { self.content-y = min(0px, self.visible-height - self.content-height); }
-                        for line in Ui.log: Text {
-                            x: 10px;
-                            width: parent.width - 20px;
-                            text: line.text;
-                            color: Theme.log-color(line.tag);
-                            font-family: Theme.mono-font;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                        }
-                    }
+                    LogView { width: 100%; height: 100%; }
                 }
             }
         }
     }
+    // The Copy button's clipboard route: a hidden text field takes the lines, selects all and copies.
+    copy-buf := TextInput { visible: false; width: 0px; height: 0px; single-line: false; read-only: true; }
 }

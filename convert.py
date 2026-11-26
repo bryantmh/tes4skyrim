@@ -61,9 +61,9 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 SCRIPT_DIR = Path(__file__).parent.resolve()  # TESConversion root
 
 
-from output_layout import (BODY_SLOTS_PATCH, DATA_ROOT, configured_output, finished_dir,
+from output_layout import (BODY_SLOTS_PATCH, DATA_ROOT, configured_output, finished_dir, forget_summary,
                            paths, plugin_out_root, record_dir, tree_members,
-                           write_mod_zip)
+                           write_mod_folder, write_mod_zip)
 from papyrus_compile import phase_compile
 from tes4_export.tes3_reader import is_tes3
 from tes4_export.morroblivion_companion import export_companion
@@ -88,6 +88,7 @@ from core.process_job import create_pool_job, describe_limit
 from core.heavy_lock import SUPERVISED_ENV_VAR, hold_heavy_lock
 from core.collision_options import WINDING_FIX_ENV_VAR, default_for_plugin
 from core.navmesh_options import set_navmesh_generator, set_navmesh_pins_dir
+from tools.esm.make_master import reflag_if_chosen
 
 # multiprocessing.Pool workers (nif/lod conversion) must also inherit a hidden
 # console — configure before any pool is created.
@@ -103,7 +104,7 @@ create_pool_job()
 
 from source_paths import (get_paths, is_asset_only,
                           load_config, resolve_plugin_path)
-from asset_convert.sources import source_registry
+from asset_convert.sources import hybrid_assets, source_registry
 from asset_convert.sources.source_registry import companion_name
 from asset_convert import video
 from convert_cli import (SCOPED_STEPS, apply_config_overrides, build_parser,
@@ -784,7 +785,11 @@ def phase_import(file_name: str, tes4_data: str, tes5_data: str,
         print(f"[{file_name}] ERROR: {e}")
         return False
 
-    return errors == 0 and _import_companion(file_name, export_dir, out_root)
+    ok = errors == 0 and _import_companion(file_name, export_dir, out_root)
+    for plugin in (output_path, str(paths(companion_name(file_name), export_dir, out_root).esm)):
+        if reflag_if_chosen(plugin, config):
+            print(f"  {os.path.basename(plugin)} flagged ESM again (chosen in Masters)")
+    return ok
 
 
 def _import_companion(file_name: str, export_dir: str, out_root: str) -> bool:
@@ -900,13 +905,12 @@ def phase_scripts(file_name: str, config: dict, output_dir: str = None):
 
 def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
                              output_dir: str = None):
-    """Write the body-slot patch over the selected Skyrim load order, as one zip.
+    """Write the body-slot patch over the selected Skyrim load order, as one mod folder.
 
-    The zip holds the patch plugin (tools/creature/patch_body_slots.py) and
+    The folder (output/Body Slots Patch) holds the patch plugin (tools/creature/patch_body_slots.py) and
     the split skin meshes it points the vanilla skin addons at. `plugins`
     defaults to Skyrim.esm; the GUI passes the whole selected load order, and
-    a plugin missing from tes5_data is skipped with a warning. It patches the
-    load order, not a conversion, so the zip goes into Finished Mods.
+    a plugin missing from tes5_data is skipped with a warning.
     See: docs/commentary/asset_convert_armor.md#body-slot-layout
     """
     if not tes5_data:
@@ -930,8 +934,7 @@ def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
         cwd=str(SCRIPT_DIR), capture_output=True, text=True, **_POPEN_FLAGS)
     print(ret.stdout + ret.stderr, end="")
     if ret.returncode == 0:
-        write_mod_zip(finished_dir(out_root) / f"{BODY_SLOTS_PATCH}.zip",
-                      tree_members(stage))
+        write_mod_folder(out_root, BODY_SLOTS_PATCH, tree_members(stage))
     shutil.rmtree(stage, ignore_errors=True)
     return ret.returncode == 0
 
@@ -941,33 +944,27 @@ def phase_modify_body_meshes(tes5_data: str = None, plugins: list = None,
 # ===========================================================================
 
 def phase_pack(file_name: str, config: dict, output_dir: str = None):
-    """Pack converted output assets into Skyrim SE BSA archives.
+    """Pack converted output assets into Skyrim SE BSA archives, then delete their loose copies.
 
-    Textures nothing references are filtered out as the archive is staged, so
-    output/ keeps the full loose tree for testing (see bsa_pack).
+    Blacklisted textures are left out as the archive is written and stay
+    loose. `"deleteLooseAfterPack": false` (or `--keep-loose`) keeps every
+    loose copy. See: docs/commentary/asset_convert_bsa.md#archive-only-output
     """
     from asset_convert.sources.bsa_pack import pack_bsas
 
     out_dir = output_dir or str(DATA_ROOT / "output")
-    bsarch  = config.get("bsarchPath") or None
-    export_root = str(DATA_ROOT / "export")
-    export_dir = record_dir(export_root, file_name)
-
     print(f"[{file_name}] Packing BSAs...")
-    results = pack_bsas(
-        source_file=file_name,
-        output_dir=out_dir,
-        bsarch_path=bsarch,
-        # Two different roots, and they must not be confused: the RECORD dir
-        # drives the texture keep-set, the export ROOT resolves which output
-        # folder this plugin converted into.
-        export_dir=str(export_dir) if export_dir.is_dir() else None,
-        export_root=export_root,
-    )
-    packed  = len(results['packed'])
-    skipped = len(results['skipped'])
-    errors  = len(results['errors'])
-    print(f"[{file_name}] BSA pack complete: {packed} packed, {skipped} skipped, {errors} errors")
+    results = pack_bsas(source_file=file_name, output_dir=out_dir,
+                        export_root=str(DATA_ROOT / "export"))
+    packed, kept = len(results['packed']), len(results['kept'])
+    errors = len(results['errors'])
+    print(f"[{file_name}] BSA pack complete: {packed} written, {kept} unchanged, "
+          f"{len(results['skipped'])} skipped, {errors} errors")
+    if errors == 0 and config.get("deleteLooseAfterPack", True):
+        from asset_convert.sources.bsa_pack import delete_packed_loose
+        files, freed = delete_packed_loose(file_name, out_dir, str(DATA_ROOT / "export"))
+        print(f"[{file_name}] Loose copies of packed files deleted: {files} files, "
+              f"{freed / 1_073_741_824:.2f} GB freed")
     return errors == 0
 
 
@@ -1170,6 +1167,16 @@ def _work(steps, order, run) -> dict:
                      a.no_engine_branches, a.patch_plugins]}
 
 
+def _forget_summaries(order, run) -> None:
+    """Drop the Install list's saved file summary of each folder the run changes: every plugin's own, and the
+    shared Morroblivion Hybrid Assets mod when a hybrid plugin runs."""
+    out_root = Path(run.output_dir) if run.output_dir else DATA_ROOT / "output"
+    for fn in order:
+        forget_summary(plugin_out_root(out_root, fn, run.export_dir))
+    if any(hybrid_assets.is_hybrid(record_dir(run.export_dir, fn)) for fn in order):
+        forget_summary(out_root / hybrid_assets.MOD_NAME)
+
+
 def _run_steps(steps, order, run) -> tuple:
     """Run each step over its plugins: ({record key: {plugin: ok}}, all succeeded),
     once any other heavy job on the machine has finished.
@@ -1177,8 +1184,10 @@ def _run_steps(steps, order, run) -> tuple:
     A filtered mesh run converts only some subfolders, so it never certifies
     the Meshes step as rebuilt at this version.
     """
+    _forget_summaries(order, run)
     hold_heavy_lock(" ".join(["convert.py"] + sys.argv[1:]),
                     _work(steps, order, run))
+    _forget_summaries(order, run)
     asset_only = {fn for fn in order if is_asset_only(fn, run.export_dir)}
     if asset_only:
         print(f"  Asset-only (no plugin): {', '.join(sorted(asset_only))}")

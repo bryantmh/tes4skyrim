@@ -1030,9 +1030,6 @@ named by any mesh:
 | rule | files | MB | false positives |
 |---|---|---|---|
 | `faces` | 11,068 | 496.6 | 0 |
-| `menus` | 6,701 | 400.0 | 0 |
-| `menus80` | 3,669 | 177.8 | 0 |
-| `menus50` | 3,787 | 52.9 | 0 |
 | `landscapelod` | 264 | 213.1 | 0 |
 | `distantlod` | 0 | 0.0 | 0 |
 | non-`.dds`/`.tga` | 150 | 1,120.3 | 0 |
@@ -1042,9 +1039,15 @@ held only because mesh conversion stripped the `lowres` segment from every
 path; `_far` meshes now name `lowres` textures that have no full-res twin, so
 the tree ships. See [lowres textures](asset_convert_shader.md#lowres-textures).
 
+`menus`, `menus80` and `menus50` were once on this list as "Oblivion UI
+atlases". Their 0 false positives counted only mesh references: book text
+names `img://textures/<ns>/menus/book/...` (`equipment.py`, Nehrim has 124
+book pictures there), so the trees ship.
+
 `faces/` is FaceGen output keyed `<formid>_0.dds`, which Skyrim regenerates
 from NPC records; `landscapelod/` is superseded by our own bake into
-`AutoConvertLOD`; the `menus*` trees are Oblivion UI atlases.
+`AutoConvertLOD`. Excluded files are deleted with the packed loose copies
+([archive-only output](asset_convert_bsa.md#archive-only-output)).
 
 The extension rule exists because mods ship build junk under `textures/`: one
 nests an entire Oblivion `Data` folder (`.bsa`, `.esp`, `dlclist.txt` --
@@ -1212,8 +1215,8 @@ vanilla setting drew those texels as a dark haze over every leaf card in hybrid
 mode.
 
 So `prove_map` records, beside the map, the alpha test of the Morroblivion
-shapes that proved each twin (`morroblivion_texture_alpha.txt`:
-`<vanilla texture>\t<test flag bits 9-12>\t<threshold>`), and `_twin_alpha` in
+shapes that proved each twin (`morroblivion_texture_alpha_by_mesh.txt`:
+`<vanilla mesh or *>\t<vanilla texture>\t<test flag bits 9-12>\t<threshold>`), and `_twin_alpha` in
 `geometry_shader.py` applies it wherever the swap happens, to a shape that only
 blends: it gains the test bits and threshold. A shape that already tests keeps
 its own, and a shape with no NiAlphaProperty stays opaque, because no alpha is
@@ -1231,6 +1234,21 @@ are tested on some shapes and not others (`tx_bm_ice_05`, `tx_dwrv_lens00`,
 ...) and keep the vanilla setting. Hybrid Morrowind.esm: 1,184 blend-only
 shapes in 259 meshes gain the test (1,078 at threshold 32, 105 at 0, one at
 132); no shape without alpha changes.
+
+**Morroblivion sets the threshold per mesh, not per texture.** The texture-wide
+lowest threshold left the haze on Bitter Coast tree moss: Morroblivion's trees
+(`floraubcutreeu01-08.nif`) cut `txubcumossu01/02/03` at 32, while its
+standalone moss meshes (`floraubcumossu01-21.nif`) cut the same textures at 0.
+The lowest is 0, and a test at 0 still draws the twins' alpha 1-31 texels
+(1.0-1.5% of each moss card). So each record-paired vanilla mesh now also
+records its own counterpart's test (`twins_and_worn`, rows keyed by the mesh
+below `meshes\`). The per-mesh row takes every counterpart shape that wears the
+twin's name, matched geometry or not: tree 08's moss shapes differ from
+Morroblivion's, so tree 08 never proves its moss twins, but its counterpart
+still authors the cut for them. `twin_cutoff` takes the mesh's own row first.
+A counterpart that wears the twin untested records `NO_TEST`, which keeps the
+shape blend-only. A mesh whose shapes disagree, or that has no paired
+counterpart (Tamriel Rebuilt, for example), falls back to the texture-wide row.
 
 ### <a id="pairing-meshes-through-records"></a>Pairing meshes through their records
 
@@ -1290,3 +1308,14 @@ the same way the namespace is: `activate` puts the map's folder in
 first version kept an on/off flag in module state, which a spawned worker never
 sees, so a real build would have swapped nothing while every in-process test
 passed. `test_the_map_reaches_a_spawned_worker` spawns one.
+
+### <a id="hybrid-twin-copies"></a>Where the twins ship
+
+A hybrid export no longer copies anything: every hybrid plugin lists the map's twins (4,782 files with their
+normal and glow maps) as borrowed, and the [shared mod](tes4_export_morrowind.md#hybrid-shared-assets)
+converts each once, so the list costs a dependent nothing. Copying them into every hybrid plugin's export
+had put 3,199 unused textures into the Aesthesia grass mod and made its export take minutes; copying them
+into the root only left a dependent's meshes naming the root's namespace. A twin a mesh takes is always
+named under the shared `morroblivion` namespace (`rewrite_tex_path` via `asset_namespace`). Arktwend, a root
+that is not vanilla, names all 1,594 vanilla textures of the map in its meshes (an earlier count that matched
+Morroblivion's twin file names against mesh names, which are spelled differently, wrongly suggested a third).

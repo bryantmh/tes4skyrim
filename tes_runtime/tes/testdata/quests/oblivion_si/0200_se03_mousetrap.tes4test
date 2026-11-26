@@ -53,6 +53,8 @@ player.moveto SEHaskillREF
 wait 120
 approach SEHaskillREF
 talk SEHaskillREF
+# "Reactivated" is added by his "Xedilian" answer (INFO 0008E94A).
+ask "Xedilian"
 ask "Reactivated"
 until 300 GetStage SE03 >= 10
 bye if open
@@ -79,7 +81,8 @@ player.moveto 0003B9CA
 wait 30
 activate 0003B9CA
 wait 300
-walk 0007F456
+run
+player.moveto 0007F456
 wait 60
 run
 player.moveto 0003B9FB
@@ -129,6 +132,10 @@ end
 # Crystal three: the Shaman 0006972F in XPXedilian02 beside nexus three 00013CA2: 40, 45 ("the path to the Resonator
 # is now clear").
 case se03_crystal3
+# The shaman is not persistent: load its cell before moving to it.
+run
+coc XPXedilian02
+wait 120
 run
 player.moveto 0006972F
 wait 120
@@ -192,7 +199,9 @@ walk -4050 4930 352
 until 3600 GetStage SE03A >= 12
 activate 00014347
 until 600 SE03A.SwitchOne >= 1
-until 9000 GetStage SE03A >= 15
+until 18000 GetStage SE03A >= 15
+# The quest waits for the player once Grommok stands at chamber 2's start (his OnPackageDone moves him there).
+until 9000 SEGrommokRef.GetDistance Chamber2GrommokStarts <= 200
 end
 
 # Chamber two. SE03AScript opens control room one's exit gate (SE03ControlRoom01ExitGateREF) when Grommok stands within
@@ -204,19 +213,22 @@ case se03a_chamber2
 run
 player.moveto 0007E965
 wait 60
-until 3600 SEGrommokRef.GetDistance Chamber2GrommokStarts <= 200
 run
 player.moveto 00011EF3
 wait 30
 activate 00011EF3
 wait 120
+# Crossing the chamber-2 trigger (SE03XedilianC2TriggerScript) sends Grommok and Syndelius in.
 walk 2651 6500 -672
 wait 30
-walk 2651 5800 -672
+walk 2651 6020 -672
+until 3600 SEGrommokRef.GetDistance Chamber2GrommokStarts <= 200
 until 3600 GetStage SE03A >= 18
 activate 000142C5
 until 600 SE03A.SwitchTwo >= 1
 until 9000 GetStage SE03A >= 20
+# The quest waits for the player once Grommok stands at chamber 3's start.
+until 9000 SEGrommokRef.GetDistance Chamber3GrommokStarts <= 200
 end
 
 # Chamber three. The exit gate of control room two opens when Grommok is within 200 of Chamber3GrommokStarts; the pad
@@ -228,7 +240,6 @@ case se03a_chamber3
 run
 player.moveto 0007E967
 wait 60
-until 3600 SEGrommokRef.GetDistance Chamber3GrommokStarts <= 200
 run
 player.moveto 00011F0F
 wait 30
@@ -241,11 +252,8 @@ until 3600 GetStage SE03A >= 47
 activate 00014360
 until 600 SE03A.SwitchThree >= 1
 until 9000 GetStage SE03A >= 50
-end
-
-# Kiliban force-greets (KiliMeetOne, SE03A >= 50, within 300): "You've made short work of the intruders. ..." (INFO
-# 00019858, no topics, result SetStage SE03A 55).
-case se03a_kiliban_done
+# Kiliban force-greets at once (KiliMeetOne, SE03A >= 50, within 300): "You've made short work of the intruders. ..."
+# (INFO 00019858, no topics, result SetStage SE03A 55) -- in this case, not across a checkpoint save.
 hear 1800 SEKilibanRef made short work of the intruders
 until 300 GetStage SE03A >= 55
 bye if open

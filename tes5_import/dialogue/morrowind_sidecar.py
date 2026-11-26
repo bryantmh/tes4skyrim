@@ -58,7 +58,7 @@ SIDECAR_DIR = os.path.join('SKSE', 'Plugins', 'MorrowindRuntime')
 DIALOGUE_FILES = ('DIAL.txt', 'INFO.txt')
 
 #: The same two in the EXPORT, which keeps tes4_export's TES3 signatures.
-_EXPORT_DIALOGUE = ('MWDI.txt', 'MWIN.txt')
+EXPORT_DIALOGUE = ('MWDI.txt', 'MWIN.txt')
 
 #: The FormID -> TES3 id index the activation hook routes on.
 ACTOR_INDEX = 'NPC__index.txt'
@@ -780,7 +780,7 @@ def _stage_dialogue(export_dir: str, out_dir: str, present: list,
     """
     if not chain:
         for name in present:
-            staged_as = DIALOGUE_FILES[_EXPORT_DIALOGUE.index(name)]
+            staged_as = DIALOGUE_FILES[EXPORT_DIALOGUE.index(name)]
             shutil.copyfile(os.path.join(export_dir, name),
                             os.path.join(out_dir, staged_as))
         return len(present) + _write_lines(
@@ -1043,7 +1043,7 @@ def _teleport_tables(export_dir: str, output_path: str, plugin_name: str,
                            + brawl_rows(plugin_name, writer.masters)
                            + vampirism_rows(plugin_name, writer.masters)
                            + weather_rows(plugin_name, writer.masters,
-                                          master_index)))
+                                          master_index, writer.records_of('WTHR'))))
 
 
 def _apparatus(export_dir: str, output_path: str, plugin_name: str,
@@ -1071,7 +1071,7 @@ def write_morrowind_sidecar(export_dir: str, output_path: str,
     if not (is_tes3_export(export_dir)
             or os.path.basename(plugin_name) == PATCH_NAME):
         return _apparatus(export_dir, output_path, plugin_name)
-    present = [name for name in _EXPORT_DIALOGUE
+    present = [name for name in EXPORT_DIALOGUE
                if os.path.isfile(os.path.join(export_dir, name))]
     out_dir = sidecar_dir(output_path, plugin_name)
     os.makedirs(out_dir, exist_ok=True)

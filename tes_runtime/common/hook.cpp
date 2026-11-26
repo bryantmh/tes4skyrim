@@ -72,20 +72,25 @@ std::uint8_t* NearStub(std::uintptr_t site, std::uintptr_t dest) {
 
 }  // namespace
 
-std::uintptr_t FindCallTo(std::uintptr_t fn, std::size_t scanLen, std::uintptr_t target) {
+int FindCallsTo(std::uintptr_t fn, std::size_t scanLen, std::uintptr_t target,
+                std::uintptr_t* out, int max) {
     if (!fn || !target) return 0;
     std::uintptr_t begin = 0, end = 0;
     if (!TextRange(begin, end)) return 0;
     if (fn < begin || fn + scanLen > end) return 0;
-    std::uintptr_t found = 0;
+    int found = 0;
     const auto* p = reinterpret_cast<const std::uint8_t*>(fn);
     for (std::size_t i = 0; i + 5 <= scanLen; ++i) {
-        if (p[i] != 0xE8) continue;
-        if (CallTarget(p + i) != target) continue;
-        if (found) return 0;              // ambiguous: refuse
-        found = fn + i;
+        if (p[i] != 0xE8 || CallTarget(p + i) != target) continue;
+        if (found < max) out[found] = fn + i;
+        ++found;
     }
     return found;
+}
+
+std::uintptr_t FindCallTo(std::uintptr_t fn, std::size_t scanLen, std::uintptr_t target) {
+    std::uintptr_t site = 0;
+    return FindCallsTo(fn, scanLen, target, &site, 1) == 1 ? site : 0;   // ambiguous: refuse
 }
 
 int PatchAllCalls(std::uintptr_t target, void* replacement, const char* what) {

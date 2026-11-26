@@ -8,13 +8,13 @@ under SKSE/Plugins/FalloutRuntime, the crime sidecar under
 SKSE/Plugins/TESRuntime, and a Morrowind plugin's dialogue under
 SKSE/Plugins/MorrowindRuntime -- which these DLLs read at load.
 
-The archive mirrors what `convert.py --pack-zip-only` produces -- output/
-Finished Mods/<name>.zip, contents rooted as a Data folder -- so a user
-installs it exactly like any converted plugin.
+It is written as a mod folder, output/<name>/, rooted as a Data folder, so
+Install & play installs it exactly like any converted plugin (and zips it on
+demand for a manual install).
 
 MorrowindRuntime's menus -- the dialogue window, the stats window and the
 level-up dialog -- are composed here in the `menuStyle` the config chooses
-(`--menu-style` overrides it) and go straight into the archive: Morrowind's
+(`--menu-style` overrides it) and go straight into the mod folder: Morrowind's
 art is Bethesda's, so the repo never holds a built copy. A forced Morrowind
 style with no registered install skips the menus and the rest still packages.
 So is the ONE class and birthsign table every game's menus share, from the
@@ -23,7 +23,7 @@ See: docs/commentary/morrowind_runtime.md#menu-styles
 See: docs/commentary/morrowind_runtime.md#chargen-menus
 
 Usage:
-  python tools/release/package_runtime_dll.py   # -> output/Finished Mods/TESRuntime.zip
+  python tools/release/package_runtime_dll.py   # -> output/TESRuntime/
   python tools/release/package_runtime_dll.py --output-dir PATH
   python tools/release/package_runtime_dll.py --mod HavokWorldSize   # standalone
   python tools/release/package_runtime_dll.py --mod CreatureRuntime  # standalone
@@ -41,21 +41,18 @@ from asset_convert.ui.menu_art import (ICON_SETS, MENU_ICONS_KEY, MENU_STYLE_KEY
                                        STYLES, effect_icons, menu_art, resolve)
 from asset_convert.ui.morrowind_menu_art import MissingArtError
 from asset_convert.ui.skyrim_skills import SKILL_TABLE, skill_table_text
-from output_layout import DATA_ROOT, finished_dir, write_mod_zip
+from output_layout import DATA_ROOT, write_mod_folder
 from core.chargen_source import CHARGEN_SOURCE_KEY, SHARED_CHARGEN, shared_lines
 from tools.generators.gen_morrowind_chargen_swf import (BIRTH_MOVIE, CLASS_MOVIE,
                                                         birth_window, class_window)
 from tools.generators.gen_morrowind_menu_swf import dialogue_window
+from tools.release.runtime_files import DIALOGUE_MENU, DIST_DIR, MOD_NAME, MODS
 from tools.generators.gen_morrowind_stats_swf import (BUTTON_MOVIE,
                                                       LEVELUP_MOVIE,
                                                       STATS_MOVIE,
                                                       levelup_dialog,
                                                       perks_button,
                                                       stats_window)
-
-MOD_NAME = "TESRuntime"
-
-SRC_DIR = SCRIPT_DIR / "tes_runtime"
 
 #: Where the pipeline's exports and the source registry live.
 EXPORT_ROOT = DATA_ROOT / "export"
@@ -64,7 +61,7 @@ EXPORT_ROOT = DATA_ROOT / "export"
 CONFIG_FILE = DATA_ROOT / "conversion_config.json"
 
 #: MorrowindRuntime's menus as the game loads them, each with the function that composes it.
-MENUS = ((Path("Interface") / "morrowind_dialogue.swf", dialogue_window),
+MENUS = ((DIALOGUE_MENU, dialogue_window),
          (Path("Interface") / STATS_MOVIE, stats_window),
          (Path("Interface") / LEVELUP_MOVIE, levelup_dialog),
          (Path("Interface") / BUTTON_MOVIE, perks_button),
@@ -72,34 +69,6 @@ MENUS = ((Path("Interface") / "morrowind_dialogue.swf", dialogue_window),
 
 #: The birthsign menu, which also carries the shared table's effect icons.
 BIRTH_MENU = Path("Interface") / BIRTH_MOVIE
-
-#: Where tes_runtime/build.bat puts every finished DLL.
-DIST_DIR = SRC_DIR / "dist"
-
-PLUGINS = Path("SKSE") / "Plugins"
-
-CREATURE_RUNTIME = ((DIST_DIR / "CreatureRuntime.dll", PLUGINS / "CreatureRuntime.dll"),)
-
-HAVOK_WORLD_SIZE = (
-    (DIST_DIR / "HavokWorldSize.dll", PLUGINS / "HavokWorldSize.dll"),
-    (SRC_DIR / "havok_world_size" / "HavokWorldSize.ini",
-     PLUGINS / "HavokWorldSize.ini"),
-)
-
-#: Mod name -> (required files, optional files), each file a (source, archive path) pair.
-MODS = {
-    MOD_NAME: (
-        ((DIST_DIR / "TESRuntime.dll", PLUGINS / "TESRuntime.dll"),),
-        (*CREATURE_RUNTIME,
-         (DIST_DIR / "FalloutRuntime.dll", PLUGINS / "FalloutRuntime.dll"),
-         *HAVOK_WORLD_SIZE,
-         (DIST_DIR / "MorrowindRuntime.dll", PLUGINS / "MorrowindRuntime.dll"),
-         (SRC_DIR / "morrowind" / "MorrowindRuntime.ini",
-          PLUGINS / "MorrowindRuntime" / "MorrowindRuntime.ini")),
-    ),
-    "CreatureRuntime": (CREATURE_RUNTIME, ()),
-    "HavokWorldSize": (HAVOK_WORLD_SIZE, ()),
-}
 
 
 def configured(key: str):
@@ -152,7 +121,7 @@ def morrowind_menus(export_root: Path, choice: tuple = (None, None), chargen=Non
 
 def package(out_root: Path, mod_name: str = MOD_NAME,
             export_root: Path = EXPORT_ROOT, choice: tuple = (None, None), chargen=None) -> int:
-    """Zip `mod_name`'s files into <out_root>/Finished Mods/<mod_name>.zip,
+    """Write `mod_name`'s files as the mod folder <out_root>/<mod_name>,
     with the chargen menus of the game `chargen` (the config's when None).
 
     Every runtime is its own DLL, so a fault in one cannot take the others
@@ -168,13 +137,11 @@ def package(out_root: Path, mod_name: str = MOD_NAME,
               f"tes_runtime\\build.bat.")
         return 1
 
-    zip_path = finished_dir(out_root) / f"{mod_name}.zip"
-
     print("=" * 54)
     print("  PACKAGE RUNTIME DLL")
     print("=" * 54)
     print(f"  Source: {DIST_DIR}")
-    print(f"  Output: {zip_path}")
+    print(f"  Output: {Path(out_root) / mod_name}")
     print()
 
     members = [(str(arc), src) for src, arc in required]
@@ -192,13 +159,12 @@ def package(out_root: Path, mod_name: str = MOD_NAME,
             print(f"  menus: {style} look, {icons or 'no'} icons")
             members += [(str(arc), data) for arc, data in menus]
         members += [(str(arc), data) for arc, data in chargen_table(export_root, chargen)]
-    write_mod_zip(zip_path, members, lambda _i, arc: print(f"  + {arc}"))
+    folder = write_mod_folder(out_root, mod_name, members, lambda _i, arc: print(f"  + {arc}"))
 
-    size = zip_path.stat().st_size
     print()
-    print(f"Packaged -> {zip_path} ({size:,} bytes)")
-    print("Install it like any other converted mod: the archive root is the "
-          "Data folder.")
+    print(f"Packaged {len(members)} file(s) -> {folder}")
+    print("Install it on Install & play like any other converted mod: the folder "
+          "is rooted at the Data folder.")
     return 0
 
 
@@ -209,7 +175,7 @@ def main() -> int:
     ap.add_argument("--output-dir", metavar="PATH",
                     help="Output directory (default: output/ in project root)")
     ap.add_argument("--mod", choices=sorted(MODS), default=MOD_NAME,
-                    help=f"Which archive to build (default: {MOD_NAME})")
+                    help=f"Which mod to build (default: {MOD_NAME})")
     ap.add_argument("--export-root", metavar="PATH", default=str(EXPORT_ROOT),
                     help="Where the Morrowind install is registered "
                          "(default: export/ in project root)")

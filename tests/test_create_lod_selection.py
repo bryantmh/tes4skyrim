@@ -245,7 +245,6 @@ class TestModAddedWorldspacesAreOffered:
     def test_owner_falls_back_to_terrain_when_nobody_shipped(self, shipped,
                                                              tmp_path):
         """The bake must not skip a mod-added worldspace."""
-        from asset_convert.lod import sibling_lod
         from asset_convert.lod import terrain_lod
 
         out = tmp_path / 'out'
@@ -258,6 +257,24 @@ class TestModAddedWorldspacesAreOffered:
                 'ModWorld', ['Mod.esp'], Path('.'), out) == 'Mod.esp'
         finally:
             del terrain_lod.detect_terrain_worldspaces
+
+    def test_a_master_owns_a_worldspace_its_dependent_also_defines(self, shipped, monkeypatch, tmp_path):
+        """With no shipped LOD, the base owns the worldspace even when a dependent comes first in the order.
+
+        See: docs/commentary/asset_convert_terrain.md#lod-owner-is-the-base
+        """
+        for name, masters in (('Morrowind.esm', ''), ('Tamriel_Data.esm', 'Master[0]=Morrowind.esm\n')):
+            (tmp_path / 'export' / name).mkdir(parents=True)
+            (tmp_path / 'export' / name / '_HEADER.txt').write_text(masters, encoding='utf-8')
+            (tmp_path / 'out' / name).mkdir(parents=True)
+            (tmp_path / 'out' / name / name).write_bytes(b'')
+        monkeypatch.setattr(sibling_lod, '_out_root', lambda out, n, e=None: Path(out) / n)
+        monkeypatch.setattr(sibling_lod, '_defined_edids', lambda esm: frozenset({'WrldMorrowind'}))
+        order = ['Tamriel_Data.esm', 'Morrowind.esm']
+        assert sibling_lod.owner_map(['WrldMorrowind'], order, tmp_path / 'export',
+                                     tmp_path / 'out') == {'WrldMorrowind': 'Morrowind.esm'}
+        monkeypatch.setattr(sibling_lod, 'plugins_txt_order', lambda: ['Tamriel_Data.esm'])
+        assert sibling_lod.create_lod_order(order, tmp_path / 'export') == ['Morrowind.esm', 'Tamriel_Data.esm']
 
     def test_shipped_owner_still_wins_over_a_terrain_extender(self, shipped,
                                                              tmp_path):
@@ -343,6 +360,44 @@ class TestModAddedWorldspacesAreOffered:
 
         by, _why = worldspaces_by_plugin_diagnosed(['TR.esm'], tmp_path)
         assert by['TR.esm'] == []
+
+    def test_a_renamed_exterior_never_joins_the_source_name(self, monkeypatch, tmp_path):
+        """Arktwend's cells sit in an export WrldMorrowind the importer renames WrldArktwend.
+
+        See: docs/commentary/asset_convert_terrain.md#converted-worldspace-names
+        """
+        from asset_convert.lod import terrain_lod
+        monkeypatch.setattr(terrain_lod, 'lod_capable_worldspaces',
+                            lambda d, o=None, plugin=None: ([('WrldMorrowind', 0x380000)], None)
+                            if plugin == 'Morrowind.esm' else ([], 'none.'))
+        monkeypatch.setattr(terrain_lod, 'worldspace_edids', lambda d: {0x380000: 'WrldMorrowind'})
+        for name in ('Arktwend_English.esm', 'TR.esm'):
+            (tmp_path / name).mkdir()
+            (tmp_path / name / 'CELL.txt').write_text('ParentWRLD=00380000\n', encoding='utf-8')
+        by, _why = sibling_lod.worldspaces_by_plugin_diagnosed(
+            ['Morrowind.esm', 'Arktwend_English.esm', 'TR.esm'], tmp_path)
+        assert by['Arktwend_English.esm'] == [] and by['TR.esm'] == ['WrldMorrowind']
+
+    def test_a_morrowind_format_exterior_always_gets_lod(self, monkeypatch, tmp_path):
+        """Arktwend's WrldArktwend is offered without Force; a TES4 plugin's worlds are untouched.
+
+        See: docs/commentary/asset_convert_terrain.md#morrowind-format-worldspaces
+        """
+        from asset_convert.lod import terrain_lod
+        monkeypatch.setattr(terrain_lod, 'lod_capable_worldspaces',
+                            lambda d, o=None, plugin=None: ([], f'{plugin}: none.'))
+        monkeypatch.setattr(sibling_lod, '_defined_edids',
+                            lambda esm: frozenset({'WrldArktwend', 'TestWorld'}))
+        for name, source in (('Ark.esm', 'TES3'), ('Obl.esm', '')):
+            (tmp_path / 'export' / name).mkdir(parents=True)
+            (tmp_path / 'export' / name / '_HEADER.txt').write_text(f'Source={source}\n', encoding='utf-8')
+            (tmp_path / 'out' / name).mkdir(parents=True)
+            (tmp_path / 'out' / name / name).write_bytes(b'')
+        monkeypatch.setattr(sibling_lod, '_out_root', lambda out, n, e=None: out / n)
+        by, why = sibling_lod.worldspaces_by_plugin_diagnosed(
+            ['Ark.esm', 'Obl.esm'], tmp_path / 'export', tmp_path / 'out')
+        assert by == {'Ark.esm': ['WrldArktwend'], 'Obl.esm': []}
+        assert list(why) == ['Obl.esm']
 
     def test_a_raising_scan_is_reported_not_swallowed(self, monkeypatch,
                                                      tmp_path):

@@ -1,10 +1,10 @@
 """Build > Quest Journal Stage Text: the journal movies the game loads, patched
-into an installable mod zip.
+into an installable mod folder.
 
 For each journal movie name the copy the game would load is found -- a loose
 file in `Data/Interface` beats every archive, and among archives the one whose
-plugin loads last wins -- patched, and zipped into `Finished Mods` with the
-archive root as the Data folder. Nothing in the game folder is written;
+plugin loads last wins -- patched, and written to the mod folder `output/<MOD_NAME>`
+rooted at the Data folder. Nothing in the game folder is written;
 uninstalling the mod is the undo.
 
 The patch replaces any earlier copy of itself, so a movie that is already this
@@ -22,7 +22,7 @@ import struct
 from asset_convert.sources.bsa_extract import read_bsa_files
 from asset_convert.ui.journal_patch import is_patched, patch_movie
 from core.gui.config import scan_skyrim_load_order
-from output_layout import finished_dir, write_mod_zip
+from output_layout import write_mod_folder
 
 #: The journal movies: vanilla's and SkyUI's, and Quest Journal Overhaul's.
 MOVIE_NAMES = ('quest_journal.swf', 'questjournal.swf')
@@ -30,7 +30,7 @@ MOD_NAME = 'Quest Journal Stage Text'
 TIP = ("Make quest objectives clickable in Skyrim's journal: clicking one shows "
        "the journal text its stage had, clicking it again the current text. "
        "Patches the journal your game loads (vanilla, SkyUI or Quest Journal "
-       f"Overhaul) into output/Finished Mods/{MOD_NAME}.zip; install it after "
+       f"Overhaul) into output/{MOD_NAME}; install it after "
        "that UI mod. Needs TESRuntime.dll")
 
 #: What happened to one movie, which picks the dialog's headline.
@@ -101,9 +101,9 @@ def patch_one(data_dir: str, name: str) -> tuple:
 
 
 def build_journal_mod(data_dir: str, out_root) -> tuple:
-    """Patch every loaded journal movie and zip them: ([(outcome, line)], zip).
+    """Patch every loaded journal movie into the mod folder: ([(outcome, line)], folder).
 
-    The zip path is None when nothing was patched or anything failed, so a
+    The folder is None when nothing was patched or anything failed, so a
     partial mod is never written over a good one.
     """
     results, members = [], []
@@ -117,9 +117,7 @@ def build_journal_mod(data_dir: str, out_root) -> tuple:
             members.append(('Interface/' + name, data))
     if not members or any(outcome == FAILED for outcome, _ in results):
         return results, None
-    zip_path = finished_dir(out_root) / f'{MOD_NAME}.zip'
-    write_mod_zip(zip_path, members)
-    return results, zip_path
+    return results, write_mod_folder(out_root, MOD_NAME, members)
 
 
 def report_status(outcomes: list) -> tuple:
@@ -131,12 +129,12 @@ def report_status(outcomes: list) -> tuple:
     return 'Nothing Patched', 'warn'
 
 
-def report_body(results: list, zip_path) -> str:
+def report_body(results: list, folder) -> str:
     """The dialog text: one line per movie, then where the mod went."""
     body = '\n'.join(line for _, line in results)
-    if zip_path is None:
+    if folder is None:
         return body
-    return (body + f'\n\nWrote {zip_path}\n\nInstall it with your mod manager '
+    return (body + f'\n\nWrote {folder}\n\nInstall it on Install & play '
             'and load it after your UI mod (SkyUI or Quest Journal Overhaul). '
             'Clicking an objective then shows the journal text its stage had; '
             'click it again for the current text. Needs TESRuntime.dll, '

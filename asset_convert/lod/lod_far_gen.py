@@ -48,6 +48,7 @@ from asset_convert.game_paths import (current_namespace,
                                       set_namespace, win_join)
 from asset_convert.nif.pyffi_monkey_patch import apply_patches
 from asset_convert.texture.parallax import strip_alpha_to_bc1
+from asset_convert.sources import output_files
 apply_patches()
 from pyffi.formats.nif import NifFormat
 from asset_convert.lod.mesh_decimate import (compute_tangents,
@@ -80,7 +81,7 @@ def find_texture(tex_roots, rel) -> 'Path | None':
     """
     for root in tex_roots:
         p = win_join(root, rel)
-        if p.exists():
+        if output_files.exists(p):
             return p
     return None
 
@@ -654,7 +655,7 @@ def generate_far_nif(src_path: Path, dst_path: Path,
     pipeline knows this file was auto-generated (and may be overwritten on
     subsequent runs) rather than being a hand-crafted LOD mesh.
     """
-    if not src_path.exists():
+    if not output_files.exists(src_path):
         return False
 
     nif_data = _read_skyrim_nif(src_path)
@@ -674,7 +675,7 @@ def _read_skyrim_nif(src_path: Path):
     """
     nif_data = NifFormat.Data()
     try:
-        with open(src_path, 'rb') as fh:
+        with output_files.open_binary(src_path) as fh:
             nif_data.inspect(fh)
             if nif_data.version != _SKYRIM_VER:
                 return None
@@ -741,7 +742,7 @@ def _write_opaque_copy(src: Path, dst: Path) -> bool:
     if dst.exists():
         return True
     try:
-        data = src.read_bytes()
+        data = output_files.read_bytes(src)
     except OSError:
         return False
     blob = strip_alpha_to_bc1(data)
@@ -854,7 +855,7 @@ def _write_decimated(nif_data, src_stem: str, dst_path: Path, tex_roots=None,
 
 def _is_generated(far_path: Path) -> bool:
     """Return True if far_path was written by generate_far_nif (has marker)."""
-    return far_path.with_suffix('.nif.generated').exists()
+    return output_files.exists(far_path.with_suffix('.nif.generated'))
 
 
 def is_tree_model(stat: dict) -> bool:
@@ -870,7 +871,22 @@ def is_tree_model(stat: dict) -> bool:
 def has_authored_lod(src_meshes_dir, far_rel) -> bool:
     """True when the source tree ships a hand-made _far/_lod here."""
     authored = win_join(src_meshes_dir, far_rel)
-    return authored.exists() and not _is_generated(authored)
+    return output_files.exists(authored) and not _is_generated(authored)
+
+
+def drop_generated(meshes_dir, far_rel) -> int:
+    """Delete a generated `far_rel` and its generated tiers from bake tree `meshes_dir`; how many went.
+
+    A plugin that ships a hand-made LOD since the last bake must not be shadowed by the old derived copy.
+    See: docs/commentary/asset_convert_terrain.md#generated-far-nif-belong-to-the-lod-mod
+    """
+    far, gone = win_join(meshes_dir, far_rel), 0
+    for path in (far, tier_path(far, TIER8['suffix']), tier_path(far, TIER16['suffix'])):
+        if _is_generated(path):
+            path.unlink(missing_ok=True)
+            path.with_suffix('.nif.generated').unlink(missing_ok=True)
+            gone += 1
+    return gone
 
 
 def _plan_far_tasks(stats, src_meshes_dir, gen_meshes_dir, referenced_models,
@@ -908,7 +924,7 @@ def _plan_far_tasks(stats, src_meshes_dir, gen_meshes_dir, referenced_models,
             continue
 
         tree = is_tree_model(stat)
-        if not src.exists() and not tree:
+        if not output_files.exists(src) and not tree:
             continue
         need8 = need16 = (not tree) and obnd_max_dim(stat) >= LOD8_MIN_SIZE
         tasks.append((src, dst, tree, stat.get('obnd'), rel, tex_roots,
@@ -1002,7 +1018,7 @@ def _render_missing_billboard(src: Path, model_rel: str, tex_roots) -> bool:
     """
     from asset_convert.lod.tree_billboard import (render_billboard, write_dds_rgba,
                                  billboard_dir)
-    if not Path(src).exists():
+    if not output_files.exists(src):
         return False
     stem = os.path.splitext(os.path.basename(
         str(model_rel).replace('\\', '/')))[0].lower()
@@ -1014,7 +1030,7 @@ def _render_missing_billboard(src: Path, model_rel: str, tex_roots) -> bool:
         parent = roots[-1].parent.parent
         if parent.is_dir():
             roots += [d / 'textures' for d in sorted(parent.iterdir())
-                      if (d / 'textures').is_dir()
+                      if output_files.is_dir(d / 'textures')
                       and (d / 'textures') not in roots]
         img = render_billboard(Path(src), roots, 512)
         if img is None:
@@ -1040,7 +1056,7 @@ def _far_nif_worker(args: tuple) -> bool:
             if generate_tree_billboard_far(dst, obnd, model_rel, tex_roots):
                 return True
     if not dst.exists() or _is_generated(dst):
-        if not src.exists():
+        if not output_files.exists(src):
             return False
         if not generate_far_nif(src, dst, tex_roots=tex_roots,
                                 overlays=overlays):

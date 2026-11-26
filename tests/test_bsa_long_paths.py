@@ -1,17 +1,16 @@
-"""Staged BSA paths must survive Windows' 260-character MAX_PATH.
+"""Packing must read source files past Windows' 260-character MAX_PATH.
 
-Each archive is staged as a hardlink tree under
-`output/<plugin>/_bsa_staging_<type>/`, which is LONGER than the source tree it
-mirrors.  For a plugin with a long folder name plus creature animdata that
-crosses MAX_PATH, and BSArch then fails with a disguised
-`EAggregateException` under `-mt`.
+A long plugin folder name plus creature animdata crosses the limit, so every
+source is listed and opened through `long_path`.
 See: docs/commentary/asset_convert_bsa.md#staging-past-the-path-limit
 """
 
 import os
 import sys
 
-from asset_convert.sources.bsa_pack import long_path, _stage_bin
+from asset_convert.sources import bsa_pack
+from asset_convert.sources.bsa_extract import iter_bsa
+from asset_convert.sources.bsa_write import long_path
 
 WIN_ONLY = sys.platform != 'win32'
 
@@ -42,25 +41,16 @@ class TestLongPath:
         assert '/' not in long_path('C:/Users/x/a.nif')
 
 
-class TestStagingBeyondMaxPath:
-    """The staging tree is built even where the result exceeds MAX_PATH."""
-
-    def test_stage_bin_links_a_path_over_260_chars(self, tmp_path):
-        """A staged path longer than MAX_PATH is still linked, with content.
-
-        The relative path is built deep enough that the staged result crosses
-        the limit, which is the shape of the real Unique Landscapes failure.
-        """
-        if WIN_ONLY:
-            return
-        src = tmp_path / 'src.nif'
-        src.write_bytes(b'NIF')
-
-        deep = os.path.join(*(['d' * 40] * 5), 'f' * 40 + '.nif')
-        stage = tmp_path / '_bsa_staging_main_0'
-        staged = stage / deep
-        assert len(str(staged)) > 260, 'test must exercise the limit'
-
-        assert _stage_bin([(src, deep, 3)], stage) == 1
-        assert os.path.exists(long_path(staged))
-        assert open(long_path(staged), 'rb').read() == b'NIF'
+def test_a_source_past_max_path_is_packed(tmp_path):
+    """A source file whose absolute path exceeds MAX_PATH is collected, packed and reads back."""
+    if WIN_ONLY:
+        return
+    rel = os.path.join('meshes', *(['d' * 40] * 4), 'f' * 40 + '.nif')
+    src = tmp_path / rel
+    assert len(str(src)) > 260, 'test must exercise the limit'
+    os.makedirs(long_path(src.parent))
+    with open(long_path(src), 'wb') as fh:
+        fh.write(b'NIF' * 100)
+    results = {'packed': [], 'kept': [], 'skipped': [], 'errors': []}
+    bsa_pack._pack(tmp_path, 'Long', bsa_pack.BSA_SIZE_LIMIT, results)
+    assert dict(iter_bsa(tmp_path / 'Long.bsa')) == {rel.lower(): b'NIF' * 100}

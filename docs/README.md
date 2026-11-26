@@ -63,7 +63,7 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [asset_convert_animation.md](commentary/asset_convert_animation.md) | asset_convert/havok/hkx_anim.py — animation and behaviour graphs |
 | [asset_convert_armor.md](commentary/asset_convert_armor.md) | asset_convert/character/body_wrap.py — worn armor, skin and fitting |
 | [asset_convert_audio.md](commentary/asset_convert_audio.md) | asset_convert/audio/audio_converter.py - sound and music |
-| [asset_convert_bsa.md](commentary/asset_convert_bsa.md) | asset_convert/sources/bsa_pack.py — BSA packing and staging |
+| [asset_convert_bsa.md](commentary/asset_convert_bsa.md) | asset_convert/sources/bsa_pack.py — BSA packing, and archive-only output: dropping loose copies and reading packed output |
 | [asset_convert_collision.md](commentary/asset_convert_collision.md) | asset_convert/collision/collision.py — Havok collision |
 | [asset_convert_creature.md](commentary/asset_convert_creature.md) | asset_convert/havok/creature_pipeline.py - creature conversion |
 | [asset_convert_facegen.md](commentary/asset_convert_facegen.md) | asset_convert/character/facegen_tri.py - faces, skin tone and tints |
@@ -111,6 +111,7 @@ Why the SHIPPED code is the way it is. Named after the code it explains; opens w
 | [tesgameselect.md](commentary/tesgameselect.md) | tools/release/make_game_select_esp.py, TESGameSelect/ - the new-game menu, held openings, starting gear and the Elder Scroll travel item |
 | [tes_runtime_alchemy.md](commentary/tes_runtime_alchemy.md) | tes_runtime/tes/alchemy*.cpp, tes_runtime/tes/crafting.cpp, tes5_import/record_types/apparatus.py - alchemy apparatus open Skyrim's menu and scale the potion; the shared crafting bench |
 | [tes_runtime_anim.md](commentary/tes_runtime_anim.md) | tes_runtime/tes/anim_playing.cpp - TES4 IsAnimPlaying answered from an object's own NIF sequences |
+| [tes_runtime_archives.md](commentary/tes_runtime_archives.md) | tes_runtime/archive_loader/ (ArchiveLoader.dll) - mounts each active plugin's "<stem> - Part N.bsa" archives in the engine's own per-plugin mount |
 | [tes_runtime_crime.md](commentary/tes_runtime_crime.md) | tes_runtime/tes/crime.cpp, tes5_import/record_types/crime.py - bounty realms, jails and the arrest |
 | [tes_runtime_dialogue.md](commentary/tes_runtime_dialogue.md) | tes_runtime/tes/exit_hold.cpp - a converted conversation cannot be left while a line's choices are offered |
 | [tes_runtime_guns.md](commentary/tes_runtime_guns.md) | tes_runtime/fallout/fire.cpp - the gun shot, reload key and ammo restriction in FalloutRuntime |
@@ -144,6 +145,7 @@ A dated sweep over a corpus, with counts. Frozen once written; a re-audit is a N
 | [edit_gate_refusals.md](audits/edit_gate_refusals.md) | What agents hit at the code-rules and shell gates, the four shell holes closed, and a replay of the fix |
 | [diagnosis_sources.md](audits/diagnosis_sources.md) | Which sources actually solved bugs, from 46 fixes across 35 sessions — the evidence for CLAUDE.md's source order |
 | [headless_quest_runs.md](audits/headless_quest_runs.md) | Every fix from the headless Morrowind and Arktwend quest runs, by quest, and the findings left open |
+| [quest_test_coverage.md](audits/quest_test_coverage.md) | How many of each game's journal quests the headless quest cases check, and which questlines pass |
 | [fallout_nv_mesh_conversion.md](audits/fallout_nv_mesh_conversion.md) | Fallout NV / FO3 mesh conversion — what already works, and the particle-NIF defect |
 | [morroblivion_mesh_axis_rotation.md](audits/morroblivion_mesh_axis_rotation.md) | Morroblivion's hand-authored pitch and Z re-seat fixes, and which a dependent plugin must re-apply |
 | [morrowind_opcode_testplan.md](audits/morrowind_opcode_testplan.md) | The fewest TR_Mainland quests that exercise every MWScript opcode, with quest giver and `coc` target |

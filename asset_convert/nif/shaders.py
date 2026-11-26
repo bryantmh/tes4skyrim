@@ -7,7 +7,7 @@ masks, flip-book atlases and the UV-transform controllers that drive them.
 See: docs/commentary/asset_convert_shader.md
 """
 
-from asset_convert.game_paths import (current_namespace, find_nocase,
+from asset_convert.game_paths import (HYBRID_NAMESPACE, current_namespace, find_nocase,
                                       folder_names)
 import os
 import time
@@ -145,7 +145,7 @@ def resolve_source_texture(tex_rel, src_nif_path, fallback_roots=()):
     rel = tex_rel.replace('/', '\\')
     low = rel.lower()
     for prefix in ('textures\\' + current_namespace() + '\\',
-                   'textures\\'):
+                   'textures\\' + HYBRID_NAMESPACE + '\\', 'textures\\'):
         if low.startswith(prefix):
             rel = rel[len(prefix):]
             break
