@@ -248,6 +248,13 @@ constexpr std::uint32_t kUnarmedWeapon = 0x000001F4;
 // Keeps the player's and each watched actor's Sanctuary faction rank at its
 // summed Sanctuary. game_calls_sanctuary.cpp.
 void TickSanctuary(void* player);
+// The engine's float game setting `name`, read and written in place; null when
+// absent. Game thread. game_calls_query.cpp.
+float* GameSettingFloat(const char* name);
+// Scales the jump height by what the player's Jump and Acrobatics effects add
+// in OpenMW's getJump. game_calls_jump.cpp.
+// See: docs/commentary/morrowind_runtime.md#jump-and-acrobatics
+void TickJump(void* player);
 // Game thread: notes which actors our follow slots have following the player,
 // for the Follow procedure's spacing hook, and resumes a paused follow once the
 // player is back near that follower. game_calls_ai.cpp.

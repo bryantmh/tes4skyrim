@@ -4015,6 +4015,39 @@ and the player keeps Skyrim's falling animation while levitating.
 saved in the co-save as a `V` line. `TribunalMain` disables levitation in
 Mournhold and Sotha Sil.
 
+### <a id="jump-and-acrobatics"></a>Jump and Acrobatics
+
+**Code:** `plugin/game_calls_jump.cpp`; `MW_JUMP` and `MW_ACROBATICS_EFFECTS` in
+`tes5_import/record_types/magic_morrowind.py`
+
+Confirmed on the headless instance. Not yet confirmed in the user's game.
+
+Jump (9), and Fortify and Drain Skill on Acrobatics (83, 21), keep landing on
+`JumpingBonus`. Skyrim's own jump reads no actor value for its height: on
+1.6.1170 the JumpUp handler (`0x7ba6d0`) sets the controller's jump height
+(`+0x23c`, via `0xe9ea30`) to `fJumpHeightMin` times the actor's scale. The
+input JumpHandler only sends the graph event. Measured: one rise at
+JumpingBonus 0, 100, 500, 1000 and 2000, and with the scroll active.
+
+So `teleports_formid.txt` lists them too: Jump as `9`, and the Acrobatics
+variants and their clones as `83:s20` / `21:s20` (TES3 skill 20). Each tick,
+while any is active, `fJumpHeightMin` becomes its vanilla value times
+(OpenMW `Npc::getJump` speed with the effects ÷ without)². Both speeds use the
+player's own Acrobatics, load and fatigue, since height goes with speed
+squared. With none active, the vanilla value is back. Landing and fall
+damage stay Skyrim's, so a big jump kills on landing as in Morrowind.
+Damage Acrobatics is left out: OpenMW lowers the skill by it each second,
+and no runtime store carries that loss.
+
+Measured with `icarian_flight` (Fortify Acrobatics 500 for 5 s):
+`fJumpHeightMin` 76 → 9334 (×122.82), back to 76 after; take-off speed
+51.7 havok/s, about 9,500 units of apex. Outdoors near Seyda Neen the
+player rose 3,377 units before hitting something, and the landing killed
+them.
+
+The setting is global, so an NPC that jumps while the player's effect is
+active jumps as high.
+
 ### <a id="sanctuary"></a>Sanctuary
 
 **Code:** `plugin/game_calls_sanctuary.cpp`, `ApplyHook` in `plugin/game_calls_teleport.cpp`

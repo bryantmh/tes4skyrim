@@ -208,7 +208,7 @@ export component ConvertView {
                         Rectangle { x: 0; width: parent.width * Ui.run-frac; border-radius: 4px; background: Theme.accent; }
                     }
                 }
-                if Ui.run-done: Btn { text: "Next: shared mods"; kind: "primary"; clicked => { Ui.go("loadorder"); } }
+                if Ui.run-done: Btn { text: Ui.next-text; kind: "primary"; clicked => { Ui.go(Ui.next-view); } }
                 if !Ui.run-done: Text { text: Ui.workers-text; color: Theme.muted; vertical-alignment: center; }
             }
         }

@@ -136,6 +136,14 @@ def test_key_flag_and_tools_change_signature():
     assert tes4_signature(_rec('LEVC', 'l_crea')) == 'LVLC'
 
 
+def test_a_tool_keeps_its_source_signature():
+    """LOCK/PROB/REPA export as MISC marked with the signature the importer keys lockpicks on."""
+    pick = _rec('LOCK', 'pick_apprentice_01',
+                _sub('LKDT', struct.pack('<fifi', 0.25, 10, 1.0, 25)))
+    lines = convert_plugin([pick], MorrowindContext())['MISC'][0][1]
+    assert 'MorrowindTool=LOCK' in lines and 'DATA.Value=10' in lines
+
+
 def test_leveled_item_flags_swap_bits():
     """Morrowind's Each/AllLevels bits are TES4's the other way round.
 

@@ -141,6 +141,22 @@ def test_the_effect_table_names_each_attribute_variant_and_its_clones():
                     'Morrowind.esm|05000003=79:7', 'Morrowind.esm|05000004=42']
 
 
+def test_the_effect_table_lists_jump_and_the_acrobatics_skill_effects():
+    """Jump is 9; Fortify and Drain Acrobatics and their clones are 83:s20 and 21:s20; Fortify Blade is not listed."""
+    magic_variants.reset()
+    try:
+        fortify = f'TES4{effect_editor_id(83)}Acrobatics'
+        for fid, edid in ((0x05000001, fortify), (0x05000002, f'{fortify}FFSelf'),
+                          (0x05000003, f'TES4{effect_editor_id(21)}Acrobatics'),
+                          (0x05000004, f'TES4{effect_editor_id(83)}Blade')):
+            magic_variants._parts[fid] = (edid, b'', b'', b'')
+        rows = teleport_lines(['9=Morrowind.esm|05000009|Jump'], 'Morrowind.esm', 5)
+    finally:
+        magic_variants.reset()
+    assert rows == ['Morrowind.esm|05000009=9', 'Morrowind.esm|05000001=83:s20',
+                    'Morrowind.esm|05000002=83:s20', 'Morrowind.esm|05000003=21:s20']
+
+
 def test_tes4_attribute_variants_are_the_same_runtime_effects():
     """Oblivion's Fortify Luck (TES4FOATLuck) and its clones are 79:7, as Morrowind's are."""
     magic_variants.reset()

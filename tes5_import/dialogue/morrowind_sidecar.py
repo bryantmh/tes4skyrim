@@ -38,6 +38,7 @@ from .morrowind_sidecar_source import (forget_gathered, gather,
                                        own_dialogue_blocks, source_chain,
                                        spell_kinds, weapon_kinds)
 from .morrowind_temples import skyrim_rows
+from ..base.equivalents import tes3_lockpick_form
 from ..record_types.magic_morrowind import effect_form_rows
 from ..record_types.weather_morrowind import weather_rows
 from ..actors.brawl import brawl_rows
@@ -568,6 +569,19 @@ def _weapon_types(gathered: dict) -> dict:
             in weapon_kinds(gathered.get('table_records', [])).items()}
 
 
+def item_lines(dirs: list, root: str, gathered: dict) -> list:
+    """The items table, each TES3 lockpick naming the Skyrim.esm form it becomes.
+
+    See: docs/commentary/tes5_import_pipeline.md#morrowind-lockpicks
+    """
+    picks = gathered.get('lockpicks', set())
+    lines = _owned_lines(dirs, root, gathered.get('items', {}), _ITEM_EXPORTS,
+                         _ITEM_TYPES, _weapon_types(gathered))
+    return [f'{edid}=Skyrim.esm|{tes3_lockpick_form(edid):08X}'
+            if edid.lower() in picks else line for edid, line in
+            ((line.split('=', 1)[0], line) for line in lines)]
+
+
 def _line_ids(gathered: dict, table: str) -> dict:
     """`{lower id: id}` for a gathered table whose values are `id=...` lines."""
     return {key: line.split('=', 1)[0]
@@ -730,9 +744,7 @@ def write_script_tables(export_dir: str, out_dir: str, plugin_name: str,
                                                            by_formid),
                                            plugin_name))
             + _write_lines(os.path.join(out_dir, ITEMS_TABLE),
-                           _owned_lines(dirs, root, ids.get('items', {}),
-                                        _ITEM_EXPORTS, _ITEM_TYPES,
-                                        _weapon_types(ids)))
+                           item_lines(dirs, root, ids))
             + _write_lines(os.path.join(out_dir, REFS_TABLE),
                            _ref_lines(dirs, root, ids.get('objects', {})))
             + _write_lines(os.path.join(out_dir, BASES_TABLE),

@@ -263,6 +263,17 @@ saved setting; `--no-engine-branches` forces the Python SpeedTree generator;
 (saved: `"deleteLooseAfterPack": false`; see
 [archive-only output](../commentary/asset_convert_bsa.md#archive-only-output)).
 
+<a id="morrowind-mode-guard"></a>**A `--morrowind-source` other than the
+configured mode asks first** (`convert_cli.confirm_mode_change`): it prints a
+notice naming both modes and asks `Really build in '<mode>' mode? [y/N]`.
+Anything but `y`, or no console to answer (an agent's shell), stops the run before any
+stage starts. `--confirm-mode-change` answers yes. Naming the configured mode
+(vanilla when none is saved) never asks. The guard exists because building in
+the wrong mode rewrites `export/` and `output/` for that mode and removes what
+only the configured mode builds: a vanilla rebuild of Morrowind.esm under a
+hybrid config deleted `Morrowind - Morroblivion Hybrid.esp`. The GUI has no
+guard; it always builds in the saved mode.
+
 **A hybrid companion plugin** `<plugin> - Morroblivion Hybrid.esp` (furniture
 and grass) is written by each hybrid plugin's own Export and Import steps, into
 that plugin's own export and output folders; it is never a `-f` target

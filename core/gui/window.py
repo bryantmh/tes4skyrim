@@ -501,6 +501,7 @@ def build():
     ctx.screens["advanced"] = Advanced(ctx, choose)
     ctx.screens["navmesh"] = Navmesh(ctx, choose.run_import_for)
     ui.open_dialog = lambda name: _open_dialog(ctx, name)
+    ui.reload = lambda: _reload(ctx)
     _bind_about(ctx)
     drops = native.DropTarget()
     timer = slint.Timer()
@@ -513,6 +514,17 @@ def _start_checks(ctx) -> None:
     ctx.screens["setup"].refresh(first=True)
     ctx.screens["loadorder"].refresh()
     ctx.work(exe_update.clean_after_update)
+
+
+def _reload(ctx) -> None:
+    """Ctrl+R: reread every screen from the disk, for changes made outside the GUI."""
+    ctx.screens["setup"].refresh()
+    ctx.screens["choose"].run_finished()
+    ctx.screens["loadorder"].refresh()
+    ctx.screens["install"].run_finished()
+    if ctx.ui.view == "install":
+        ctx.screens["install"].shown()
+    ctx.toast("Reloaded")
 
 
 def _open_dialog(ctx, name: str) -> None:

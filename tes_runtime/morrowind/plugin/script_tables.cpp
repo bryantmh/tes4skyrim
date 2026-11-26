@@ -361,12 +361,18 @@ float Number(const std::string& text) {
     return static_cast<float>(std::atof(text.c_str()));
 }
 
-// `index` or `index:attribute`.
+// `index`, `index:attribute` or `index:sSkill`.
 RuntimeEffect ParseRuntimeEffect(const std::string& value) {
     RuntimeEffect out;
     out.index = std::atoi(value.c_str());
     const std::size_t colon = value.find(':');
-    if (colon != std::string::npos) out.attribute = std::atoi(value.c_str() + colon + 1);
+    if (colon == std::string::npos) return out;
+    const char* target = value.c_str() + colon + 1;
+    if (*target == 's') {
+        out.skill = std::atoi(target + 1);
+    } else {
+        out.attribute = std::atoi(target);
+    }
     return out;
 }
 

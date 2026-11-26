@@ -27,6 +27,7 @@ The layer rules and the decision procedure are in
 - [Phase 0 — hunt chains and script-forced packages](#phase-0-hunt-chains-and-script-packages)
 - [Phase 0 — hair lengths and race skin tones index the masters](#phase-0-hair-and-skin-index-masters)
 - [Phase 0c — combat music is reachable only through DOBJ BTMS](#phase-0c-dobj-btms)
+- [Morrowind lockpicks become Skyrim's Lockpick or Skeleton Key](#morrowind-lockpicks)
 - [Work the export shows is unneeded is skipped](#skip-what-the-export-does-not-need)
 - [Phase 1 is serial on purpose](#phase-1-is-serial-on-purpose)
 - [A master-dependent plugin may own an entire world](#master-dependent-plugin-owns-a-world)
@@ -515,6 +516,38 @@ The engine reaches combat music **ONLY** through DOBJ's BTMS default object
 (hardcoded to vanilla `MUSCombat`), so a Battle MUSC that nothing points at can
 never play. The master's DOBJ is overridden, copying every other entry unchanged
 — the same full-array override each official DLC ships.
+
+## <a id="morrowind-lockpicks"></a>Morrowind lockpicks become Skyrim's Lockpick or Skeleton Key
+
+**Code:** `base/equivalents.py` (`set_run_item_substitutions`,
+`morrowind_lockpick_substitutions`), `pipeline.py:_register_run_tables`,
+`dialogue/morrowind_sidecar.py:item_lines`.
+
+Skyrim's lockpicking minigame uses exactly one item, the form DOBJ `LKPK` names
+(Skyrim.esm `Lockpick`, 0x0A). Oblivion's own Lockpick sits at the same FormID,
+so every reference to it is substituted to Skyrim's. Morrowind has several
+lockpick records (LOCK), each with its own quality and uses, which Skyrim
+cannot express, so for now every one is replaced the same way. The exception is
+Morrowind's `skeleton_key`, which goes to Skyrim's Skeleton Key
+(`TG08SkeletonKey`, 0x3A070, DOBJ `SKLK`), as Oblivion's key does
+(`tes3_lockpick_form`). Its id is the only thing that sets it apart: OpenMW has
+no skeleton-key logic, and its LKDT (quality 5.0, 50 uses) is otherwise an
+ordinary pick's. It is the only key in vanilla, Tamriel_Data and TR_Mainland
+(measured: Tamriel_Data and TR_Mainland author one plain pick each).
+
+- The export writes each TES3 tool (LOCK, PROB, REPA) as MISC clutter with
+  `MorrowindTool=<signature>`, the authored marker the importer keys on.
+- At import, every MISC with `MorrowindTool=LOCK` in the plugin **and its
+  masters** (keyed by the FormID this plugin uses) joins the run's item
+  substitutions, so a reference from a container, leveled list, NPC inventory,
+  placed REFR, condition or script property lands on Skyrim's Lockpick. The
+  lockpick's own MISC record is still written, unreferenced, like Oblivion's.
+- The runtime items table maps each lockpick id to that same Skyrim.esm form, so
+  MWScript `AddItem`/`RemoveItem`/`GetItemCount` on a pick use the real lockpick.
+
+The record-conversion worker pool converts only LAND, which names no item, so
+the substitutions are not replayed into workers. A pool that converts
+item-referencing records must replay them.
 
 ## <a id="skip-what-the-export-does-not-need"></a>Work the export shows is unneeded is skipped
 

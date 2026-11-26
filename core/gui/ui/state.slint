@@ -38,6 +38,7 @@ export global Ui {
     callback close-dialog();
     callback theme-changed(string);
     callback tick();
+    callback reload();
 
     // ---- Setup
     in-out property <[CheckItem]> skyrim-checks;
@@ -99,6 +100,8 @@ export global Ui {
     in-out property <float> run-frac;
     in-out property <bool> running;
     in-out property <bool> run-done;
+    in-out property <string> next-view: "loadorder";
+    in-out property <string> next-text: "Next: shared mods";
     in-out property <[Lane]> lanes;
     in-out property <[Tick]> ticks;
     in-out property <float> now-pos;

@@ -113,6 +113,7 @@ void FlightTick(void* player) {
 void EffectTick() {
     void* player = PlayerRef();
     FlightTick(player);
+    TickJump(player);
     TickStillActors(player);
     TickSanctuary(player);
     TickAttributeEffects(player);

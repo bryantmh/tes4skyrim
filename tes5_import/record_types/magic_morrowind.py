@@ -191,6 +191,13 @@ MW_CURES = (69, 70, 71, 100)
 MW_RUNTIME_EFFECTS = frozenset(MW_TELEPORTS + MW_CURES
                                + (MW_SWIFT_SWIM, MW_LEVITATE, MW_SLOW_FALL, MW_SANCTUARY))
 
+#: Jump: kept on JumpingBonus, and listed for MorrowindRuntime, which raises the jump height by it.
+MW_JUMP = 9
+
+#: Drain and Fortify Skill on Acrobatics (TES3 skill 20, TES4 actor value 26): listed for the jump height too.
+MW_ACROBATICS_EFFECTS = (21, 83)
+MW_ACROBATICS, TES4_ACROBATICS = 20, 26
+
 #: Drain, Damage, Restore, Fortify, Absorb Attribute: script effects MorrowindRuntime sums per attribute.
 MW_ATTRIBUTE_EFFECTS = frozenset((17, 22, 74, 79, 85))
 

@@ -391,16 +391,18 @@ const std::string* FindInteriorRegion(const std::string& cell);
 // staged it: a dependent re-stages its masters' rows, which repeat harmlessly.
 void ForEachTeleportMarker(const std::function<void(const TeleportMarker&)>& fn);
 void ForEachCellAnchor(const std::function<void(const CellAnchor&)>& fn);
-// A runtime-carried effect: its TES3 effect index, and for an attribute
-// effect the TES3 attribute its variant targets (-1 for any other).
+// A runtime-carried effect: its TES3 effect index, and for an attribute or
+// skill effect the TES3 attribute or skill its variant targets (-1 for none).
 struct RuntimeEffect {
     int index = -1;
     int attribute = -1;
+    int skill = -1;
 };
 
 // Every MGEF a runtime-carried effect lands as: teleports_formid.txt, each
-// delivery clone included. A row's value is `index`, or `index:attribute`
-// for an attribute effect's per-attribute variant.
+// delivery clone included. A row's value is `index`, `index:attribute` for an
+// attribute effect's per-attribute variant, or `index:sSkill` for a skill
+// effect's per-skill variant.
 void ForEachTeleportEffect(
     const std::function<void(const FormRef&, const RuntimeEffect&)>& fn);
 // Each child worldspace and its parent: worlds_formid.txt. A walled city

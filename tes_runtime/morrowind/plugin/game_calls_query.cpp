@@ -518,8 +518,9 @@ float NextPaceStep(float step, float speed) {
 
 std::uintptr_t g_gameSettings = 0;
 
-// The float setting `name` in the game's settings, or null. The map's hash is
-// the engine's, so every bucket is scanned; done once per setting.
+}  // namespace
+
+// The map's hash is the engine's, so every bucket is scanned; done once per setting.
 float* GameSettingFloat(const char* name) {
     void* collection = g_gameSettings ? *reinterpret_cast<void**>(g_gameSettings) : nullptr;
     if (!collection) return nullptr;
@@ -535,6 +536,8 @@ float* GameSettingFloat(const char* name) {
     }
     return nullptr;
 }
+
+namespace {
 
 // How long an NPC stays in dialogue with an idle player, in game seconds. The
 // speed-up would end a conversation in a few real seconds that a person has a

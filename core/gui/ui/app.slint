@@ -85,6 +85,16 @@ export component App inherits Window {
         Ui.theme-changed(Theme.mode);
     }
 
+    forward-focus: keys;
+    keys := FocusScope {
+    key-pressed(event) => {
+        if (event.modifiers.control && (event.text == "r" || event.text == "R")) {
+            Ui.reload();
+            return accept;
+        }
+        reject
+    }
+
     VerticalLayout {
         HorizontalLayout {
             vertical-stretch: 1;
@@ -164,5 +174,6 @@ export component App inherits Window {
     if Ui.busy: Rectangle {
         background: transparent;
         TouchArea { mouse-cursor: wait; }
+    }
     }
 }

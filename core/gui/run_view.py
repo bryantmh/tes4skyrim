@@ -15,7 +15,7 @@ import version as version_info
 from core.gui import eta, native, runner
 from core.gui.config import STEPS, step_names
 from core.gui.tasks import REFRESHED, Task, Tasks
-from core.gui.window import model, paint_rail
+from core.gui.window import RAIL, model, paint_rail
 from core.process_job import RC_CANCELLED
 from output_layout import DATA_ROOT
 from preflight import RC_MISSING_DEP
@@ -330,9 +330,19 @@ class RunView:
         job.start()
         self.ctx.ui.running = True
         self.ctx.ui.run_done = False
+        self._aim_next(self.ctx.ui.view)
         self.ctx.go("convert")
         self.paint(force=True)
 
+    def _aim_next(self, origin: str) -> None:
+        """Point the finished run's button at the rail step after `origin`; a run started here keeps its aim."""
+        steps = [step for step in RAIL if step[0] != "convert"]
+        index = next((i for i, (key, _title) in enumerate(steps) if key == origin), None)
+        if index is None:
+            return
+        key, title = steps[min(index + 1, len(steps) - 1)]
+        self.ctx.ui.next_view = key
+        self.ctx.ui.next_text = f"{'Back to' if key == origin else 'Next:'} {title.lower()}"
 
     def tick(self) -> None:
         """Take the quiet jobs' and the run's events and redraw (called on the UI thread)."""

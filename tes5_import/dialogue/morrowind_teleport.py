@@ -19,7 +19,9 @@ from tes4_export.record_types.morrowind_magic import effect_editor_id
 
 from .morrowind_placements import MARKER_KINDS, export_records, folder_tables
 from ..base.tes5_reader import read_record
-from ..record_types.magic_morrowind import (MW_ATTRIBUTE_EFFECTS, MW_RUNTIME_EFFECTS,
+from ..record_types.magic_morrowind import (MW_ACROBATICS, MW_ACROBATICS_EFFECTS,
+                                            MW_ATTRIBUTE_EFFECTS, MW_JUMP,
+                                            MW_RUNTIME_EFFECTS, TES4_ACROBATICS,
                                             TES4_ATTRIBUTE_EFFECTS)
 from ..record_types.magic_variants import av_variant_editor_id, copy_editor_ids, known_effects
 
@@ -37,6 +39,9 @@ ANCHORS_TABLE = 'anchors_formid.txt'
 
 #: `plugin|child worldspace=plugin|parent worldspace`, one row per child.
 WORLDS_TABLE = 'worlds_formid.txt'
+
+#: Every TES3 effect index listed whole: the runtime-carried ones, and Jump.
+_LISTED_EFFECTS = MW_RUNTIME_EFFECTS | {MW_JUMP}
 
 _WORLD_KEYS = ('FormID', 'WNAM.Parent')
 
@@ -89,10 +94,15 @@ def _copy_values() -> dict:
 
     A runtime effect's delivery and Ability clones are `index`; an attribute
     effect's per-attribute variant and its clones, a Morrowind one's or a TES4
-    one's (`TES4FOATStrength`), are `index:attribute`.
+    one's (`TES4FOATStrength`), are `index:attribute`; an Acrobatics skill
+    effect's variant and its clones are `index:s20`.
     """
-    values = {name.lower(): str(index) for index in MW_RUNTIME_EFFECTS
+    values = {name.lower(): str(index) for index in _LISTED_EFFECTS
               for name in copy_editor_ids(effect_editor_id(index))}
+    for index in MW_ACROBATICS_EFFECTS:
+        edid = av_variant_editor_id(effect_editor_id(index), TES4_ACROBATICS)
+        values.update({name.lower(): f'{index}:s{MW_ACROBATICS}'
+                       for name in [edid] + copy_editor_ids(edid)})
     codes = [(effect_editor_id(index), index) for index in MW_ATTRIBUTE_EFFECTS]
     for code, index in codes + list(TES4_ATTRIBUTE_EFFECTS.items()):
         for attribute in range(8):
@@ -122,7 +132,7 @@ def teleport_lines(effect_lines: list, plugin: str, own: int) -> list:
     rows = []
     for line in effect_lines:
         index, _, value = line.partition('=')
-        if int(index) in MW_RUNTIME_EFFECTS:
+        if int(index) in _LISTED_EFFECTS:
             rows.append(f"{'|'.join(value.split('|')[:2])}={index}")
     return rows + copy_rows(plugin, own)
 

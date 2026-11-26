@@ -385,6 +385,10 @@ def _take(out: dict, rec, topic: str) -> str:
         _take_script(out, rec)
     if rec.type in _ITEM_TYPES:
         out['items'][rec.record_id.lower()] = rec.record_id
+        if rec.type == 'LOCK':
+            out['lockpicks'].add(rec.record_id.lower())
+        else:
+            out['lockpicks'].discard(rec.record_id.lower())
     if rec.type == 'SOUN':
         out['sounds'][rec.record_id.lower()] = rec.record_id
     if rec.type == 'SPEL':
@@ -479,7 +483,7 @@ def spell_kinds(table_records: list) -> dict:
 def _gather(chain: tuple, whole: bool) -> dict:
     """The chain's tables, each plugin read ONCE and a later one overriding
     an earlier: `factions` / `gmsts` `{lower id: line}`, `items` / `objects`
-    / `sounds` / `spells` `{lower id: id}`, `cells` lower ids. `npcs` /
+    / `sounds` / `spells` `{lower id: id}`, `cells` / `lockpicks` lower ids. `npcs` /
     `actors`, `own_factions` / `own_gmsts`, `skills` `{index: line}`,
     `own_dialogue` `[(topic, rec)]` and `start_scripts` are the LAST
     plugin's own alone; `whole` keeps every plugin's. `table_records` is
@@ -489,7 +493,7 @@ def _gather(chain: tuple, whole: bool) -> dict:
            'skills': {}, 'gmsts': {}, 'factions': {}, 'items': {},
            'objects': {}, 'object_scripts': {}, 'sounds': {}, 'spells': {}, 'exteriors': {},
            'quasi_exteriors': {}, 'regions': {}, 'cells': set(),
-           'table_records': []}
+           'lockpicks': set(), 'table_records': []}
     _reset_own(out)
     for _name, path in chain:
         topic = ''

@@ -77,6 +77,27 @@ def unscoped_steps(args, steps: list) -> list:
     return [step for step in steps if step not in SCOPED_STEPS | {'pack_bsa'}] if args.only else []
 
 
+def confirm_mode_change(args, config: dict) -> None:
+    """Stop the run unless a --morrowind-source that differs from the configured mode is confirmed.
+
+    Confirmation is `--confirm-mode-change` or a `y` at the prompt; no answer (no console) refuses.
+    See: docs/reference/pipeline.md#morrowind-mode-guard
+    """
+    current = str(config.get(MORROWIND_SOURCE_KEY) or SOURCE_VANILLA).strip().lower()
+    if args.morrowind_source == current or args.confirm_mode_change:
+        return
+    print(f"NOTICE: the configured Morrowind source is '{current}', but this run asks for "
+          f"'{args.morrowind_source}'.\nBuilding in another mode rewrites export/ and output/ "
+          f"for that mode and removes what only '{current}' builds (such as the Hybrid.esp).")
+    try:
+        answer = input(f"Really build in '{args.morrowind_source}' mode? [y/N] ")
+    except (EOFError, OSError):
+        answer = ''
+    if answer.strip().lower() not in ('y', 'yes'):
+        raise SystemExit("Stopped: not confirmed. Drop --morrowind-source to build in the "
+                         "configured mode, or pass --confirm-mode-change if you are sure.")
+
+
 def apply_config_overrides(args, config: dict) -> None:
     """Let this run's flags override conversion_config.json, without saving it,
     and hand the source text encoding setting to every stage."""
@@ -85,6 +106,7 @@ def apply_config_overrides(args, config: dict) -> None:
     if args.keep_loose:
         config["deleteLooseAfterPack"] = False
     if args.morrowind_source:
+        confirm_mode_change(args, config)
         config[MORROWIND_SOURCE_KEY] = args.morrowind_source
     if args.source_encoding:
         config[text_encoding.CONFIG_KEY] = args.source_encoding
@@ -144,7 +166,10 @@ def _add_run_args(parser) -> None:
                         help="Export Morrowind-engine plugins in this mode for "
                              "this run only, instead of the configured "
                              "Settings > Morrowind source (which is left "
-                             "unchanged).")
+                             "unchanged). A mode other than the configured "
+                             "one asks for confirmation first.")
+    parser.add_argument("--confirm-mode-change", action="store_true",
+                        help="Answer yes to the --morrowind-source confirmation.")
     parser.add_argument("--source-encoding",
                         choices=(text_encoding.AUTO,) + text_encoding.CODECS,
                         help="Code page the source plugins' text is in, for "

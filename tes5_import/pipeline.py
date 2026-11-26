@@ -42,7 +42,7 @@ from asset_convert.game_paths import namespace_for, set_borrowed, set_namespace
 from asset_convert.sources import hybrid_assets, output_files
 from .registry import IMPORT_DISPATCH, RUNTIME_ONLY_TYPES, SKIP_TYPES
 from .navmesh.pool import collision_cache_chain
-from .base.master_export import values_of
+from .base.master_export import records_of, values_of
 from .overrides.adoption import MasterAdoption
 from .overrides.nested import (DELETED_FLAG as OVERRIDE_DELETED_FLAG,
                         detect_injected_records, open_masters)
@@ -96,7 +96,8 @@ from .base.owned_records import (
     create_tes4_special_records,
     create_vtyp_records,
 )
-from .base.equivalents import VTYP_EDID_BY_FID
+from .base.equivalents import (VTYP_EDID_BY_FID, morrowind_lockpick_substitutions,
+                               set_run_item_substitutions)
 from .base.race_factions import build_race_factions
 from .base.race_lookup import register_races
 from .record_types.world import (
@@ -281,8 +282,13 @@ def _bind_formid_space(all_records: list, by_type: dict, masters: list,
 
 
 def _register_run_tables(by_type: dict, ctx, writer) -> None:
-    """Register the tables record conversion reads: races, cell families, adoptable master records."""
-    master_races = values_of(getattr(ctx, 'master_export', None), 'RACE')
+    """Register the tables record conversion reads: races, cell families,
+    adoptable master records, and the lockpicks Skyrim's one Lockpick replaces."""
+    master_export = getattr(ctx, 'master_export', None)
+    set_run_item_substitutions(morrowind_lockpick_substitutions(
+        records_of(master_export, 'MISC')
+        + [(rec.get('FormID', '0'), rec) for rec in by_type.get('MISC', ())]))
+    master_races = values_of(master_export, 'RACE')
     register_races(master_races + list(by_type.get('RACE', ())))
     if ctx:
         writer.adoption = MasterAdoption(ctx.master_index)

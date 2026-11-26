@@ -717,12 +717,46 @@ TES4_MARKER_FORMID_TO_SKYRIM = {
 }
 
 # ---------------------------------------------------------------------------
-# Engine-hardcoded ITEM substitutions: raw TES4 FormID -> Skyrim.esm FormID.
-TES4_ITEM_FORMID_TO_SKYRIM = {
-    0x0000000F: 0x0000000F,  # Gold001 → Skyrim.esm Gold001 (currency)
-    0x0000000A: 0x0000000A,  # Lockpick/BobbyPin → Skyrim.esm Lockpick (LKPK)
-    0x0000000B: 0x0003A070,  # DASkeletonKey → Skyrim.esm TG08SkeletonKey (SKLK)
-}
+#: Skyrim.esm's Lockpick, the one lockpick the minigame accepts (DOBJ LKPK)
+SKYRIM_LOCKPICK = 0x0000000A
+
+#: Skyrim.esm's TG08SkeletonKey, the unbreakable pick the minigame accepts (DOBJ SKLK)
+SKYRIM_SKELETON_KEY = 0x0003A070
+
+#: Morrowind's skeleton key; only its id sets it apart from the other LOCK records.
+_TES3_SKELETON_KEY = 'skeleton_key'
+
+#: Engine-hardcoded items: raw TES4 FormID -> the Skyrim.esm form a reference to it lands on.
+_FIXED_ITEM_SUBSTITUTIONS = (
+    (0x0000000F, 0x0000000F),
+    (0x0000000A, SKYRIM_LOCKPICK),
+    (0x0000000B, SKYRIM_SKELETON_KEY),
+)
+
+#: The fixed substitutions plus this run's (`set_run_item_substitutions`); read by every reference resolver.
+TES4_ITEM_FORMID_TO_SKYRIM = dict(_FIXED_ITEM_SUBSTITUTIONS)
+
+
+def set_run_item_substitutions(extra: dict) -> None:
+    """Reset the item substitutions to the fixed ones plus `extra` (raw id -> Skyrim id).
+
+    See: docs/commentary/tes5_import_pipeline.md#morrowind-lockpicks
+    """
+    TES4_ITEM_FORMID_TO_SKYRIM.clear()
+    TES4_ITEM_FORMID_TO_SKYRIM.update(_FIXED_ITEM_SUBSTITUTIONS)
+    TES4_ITEM_FORMID_TO_SKYRIM.update(extra)
+
+
+def tes3_lockpick_form(record_id: str) -> int:
+    """The Skyrim.esm form a TES3 LOCK record becomes: the Skeleton Key, else the Lockpick."""
+    return (SKYRIM_SKELETON_KEY if record_id.lower() == _TES3_SKELETON_KEY
+            else SKYRIM_LOCKPICK)
+
+
+def morrowind_lockpick_substitutions(records) -> dict:
+    """`{raw FormID: Skyrim form}` per TES3 lockpick in `(key, record)` pairs."""
+    return {int(key, 16): tes3_lockpick_form(rec.get('EditorID', ''))
+            for key, rec in records if rec.get('MorrowindTool') == 'LOCK'}
 
 # ---------------------------------------------------------------------------
 #: Default Object Manager slot naming the form the engine uses for combat music
@@ -730,8 +764,8 @@ DOBJ_BATTLE_MUSIC_TAG = b'BTMS'
 
 #: DOBJ slots the lockpicking minigame resolves; see tes5_import_pipeline.md
 DOBJ_ITEM_TAGS = {
-    b'LKPK': 0x0000000A,
-    b'SKLK': 0x0003A070,
+    b'LKPK': SKYRIM_LOCKPICK,
+    b'SKLK': SKYRIM_SKELETON_KEY,
 }
 
 def _read_master_dobj(skyrim_esm: str):

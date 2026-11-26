@@ -493,10 +493,12 @@ def export_TOOL(rec: Tes3Record, ctx) -> list:
 
     Skyrim has no repair or probe items and the importer has no dispatch for
     these signatures; every one leads with weight then value.
+    `MorrowindTool` keeps the source signature.
     """
     lines = []
     emit_common(lines, rec)
     emit_icon(lines, rec)
+    lines.append(f'MorrowindTool={rec.type}')
     sig = {'REPA': 'RIDT', 'PROB': 'PBDT', 'LOCK': 'LKDT'}[rec.type]
     data = unpack(rec, sig, '<fi')
     if data:
