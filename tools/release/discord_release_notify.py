@@ -1,14 +1,16 @@
 #!/usr/bin/env python
 """Post a release changelog to a Discord channel via an incoming webhook.
 
-Used by .github/workflows/tag-on-push.yml right after the GitHub Release is
-created, but it runs standalone against any notes file:
+Used by tools/release/publish_release.py (and the fallback in
+.github/workflows/tag-on-push.yml) right after the GitHub Release is created,
+but it runs standalone against any notes file:
 
     python tools/release/discord_release_notify.py --notes notes.txt --tag 0.591 \
                                            --repo bryantmh/tes4skyrim
     python tools/release/discord_release_notify.py --notes notes.txt --tag 0.591 --dry-run
 
-The webhook URL comes from $DISCORD_WEBHOOK_URL (a repo secret in CI) and is
+The webhook URL comes from $DISCORD_WEBHOOK_URL (a repo secret in CI), else
+the gitignored file .discord_webhook in the repo root, and is
 never accepted on the command line -- an argv secret is visible to every other
 process on the machine via the process table, and CI would echo it into the log
 with `set -x`.
@@ -42,6 +44,9 @@ TRUNCATION_MARKER = "... (truncated -- read the full notes on the release page)"
 
 # GitHub's release-green, so the embed stripe matches the source of the notes.
 EMBED_COLOR = 0x2EA043
+
+#: The webhook URL on a developer machine when $DISCORD_WEBHOOK_URL is unset (gitignored).
+WEBHOOK_FILE = Path(__file__).resolve().parents[2] / ".discord_webhook"
 
 
 def truncate(body: str, budget: int = BODY_BUDGET) -> str:
@@ -120,6 +125,7 @@ def post(webhook_url: str, payload: dict, timeout: int = 20) -> None:
 
 
 def main() -> int:
+    """CLI: post (or with --dry-run, print) the notes file's announcement."""
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -139,22 +145,30 @@ def main() -> int:
         return 1
     notes = notes_path.read_text(encoding="utf-8")
 
-    payload = build_payload(notes, args.tag, args.repo)
-
     if args.dry_run:
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(build_payload(notes, args.tag, args.repo), indent=2))
         return 0
+    return announce(notes, args.tag, args.repo)
 
-    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
-    if not webhook_url:
-        print("ERROR: DISCORD_WEBHOOK_URL is not set.", file=sys.stderr)
+
+def webhook_url() -> str:
+    """$DISCORD_WEBHOOK_URL, else WEBHOOK_FILE's text; empty when neither is set."""
+    url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+    if not url and WEBHOOK_FILE.is_file():
+        url = WEBHOOK_FILE.read_text(encoding="utf-8").strip()
+    return url
+
+
+def announce(notes: str, tag: str, repo: str | None) -> int:
+    """Post release `tag`'s notes; 0 when posted, 1 (with the reason, Discord's HTTP error body included) otherwise."""
+    url = webhook_url()
+    if not url:
+        print("ERROR: no Discord webhook (DISCORD_WEBHOOK_URL or .discord_webhook).", file=sys.stderr)
         return 1
-
+    payload = build_payload(notes, tag, repo)
     try:
-        post(webhook_url, payload)
+        post(url, payload)
     except urllib.error.HTTPError as exc:
-        # Read the body: Discord explains a 400 ("embeds.0.description: Must be
-        # 4096 or fewer in length"), and without it the failure is unactionable.
         detail = exc.read().decode("utf-8", "replace")[:500]
         print(f"ERROR: Discord rejected the post: HTTP {exc.code} {detail}",
               file=sys.stderr)
@@ -163,7 +177,7 @@ def main() -> int:
         print(f"ERROR: could not reach Discord: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Announced {args.tag} on Discord.")
+    print(f"Announced {tag} on Discord.")
     return 0
 
 

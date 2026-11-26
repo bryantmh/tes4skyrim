@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 
 #: Scratch, vendored and generated trees are not judged.
 SKIP_PARTS = ('temp', 'references', 'external', 'output', 'export', 'build',
-              '.git', 'node_modules', '__pycache__', '.venv')
+              '.git', 'node_modules', '__pycache__', '.venv', '.release')
 
 #: Dataflow facts, not heuristics: ruff reports these with no false positives.
 RUFF_CODES = 'F401,F811,F841,F821'

@@ -1,5 +1,13 @@
 name: Tag master
 
+# The FALLBACK release.  A direct push to master is released before it lands by
+# the pre-push hook (tools/release/publish_release.py): it builds TESRACT from
+# the pushed commit, tags it, and creates the Release with TESRACT-<tag>.zip,
+# so when that push arrives here HEAD is already tagged and this job does
+# nothing.  Only a PR merged in GitHub's UI (no local hook) is tagged here, and
+# its Release carries just the source zip: TESRACT's Update cannot install it
+# until `publish_release.py --sha <commit>` attaches the build.
+#
 # Fires for BOTH ways code reaches master: a direct push, and a merged pull
 # request.  A merged PR *is* a push to master, so `on: push` alone already
 # covers it -- what previously broke the PR case was not the trigger but the

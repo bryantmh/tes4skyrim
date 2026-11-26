@@ -30,7 +30,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
 STEP_ORDER = [label for _key, label in STEP_KEYS]
 
 #: Steps that only repackage the per-plugin pipeline's output; added whenever a producing step fires.
-PACKAGING_STEPS = ["9. Pack BSAs", "10. Pack Mod Zip"]
+PACKAGING_STEPS = ["9. Pack BSAs"]
 
 #: The standalone LOD mod's packager, added only when its one producing step fires.
 LOD_PACKAGING_STEP = "Pack LOD"
@@ -101,6 +101,7 @@ RULES: list[tuple[str, list[str]]] = [
     (r"^CLAUDE\.md$|^README\.md$|^TODO\.txt$|^CK_WARNINGS", []),
     (r"^conversion_config\.json$|^pyproject\.toml$|^\.git\w+$", []),
     (r"^[^/]+\.code-workspace$", []),
+    (r"^TES Auto-Convert\.cmd$|^skyb_retarget/", []),
 ]
 
 #: The step each convert.py phase function produces. See: docs/commentary/version_upgrade_planning.md#convert-py
@@ -117,7 +118,7 @@ PHASE_STEPS: dict[str, list[str]] = {
     "phase_lod":                ["Create LOD"],
     "phase_modify_body_meshes": ["Body Slot Patch"],
     "phase_pack":               ["9. Pack BSAs"],
-    "phase_pack_zip":           ["10. Pack Mod Zip"],
+    "phase_pack_zip":           [],
 }
 
 #: The unit holding a file's top-level code that is not a def, class, assignment or import.

@@ -768,5 +768,38 @@ located xWMAEncode.exe are never in the manifest, so after the update the plugin
 steps the new version changed (`version.upgrade_plan`), as it does for a source update. Run from
 source, Update opens the release page.
 
-Every release must carry a `TESRACT.zip` asset built by `tools/release/build_exe.py --zip`;
-a release without one makes Update fail with "Release <tag> has no TESRACT.zip".
+Every release must carry a `TESRACT-<tag>.zip` asset (`exe_update.asset_name`), built by
+`tools/release/build_exe.py --zip --version <tag>`; a release without one makes Update fail with
+"Release <tag> has no TESRACT-<tag>.zip".
+
+## <a id="releases"></a>Publishing a release
+
+A release is built on the developer's machine, not by GitHub Actions, the way the navmesh cache is
+published: the machine has Python 3.14 (the `cp314` native modules in `native/dist` need it), the pinned
+Slint pre-release, MSVC for the launcher and a warm Nuitka cache (8-12 minutes against about 33 cold, which
+a fresh runner would pay every time). Install the step once with
+`python tools/release/publish_release.py --install`; it sits in `.git/hooks/pre-push` below the navmesh
+gate, whose prelude captures git's ref list.
+
+A push that moves master runs it before anything is sent:
+
+1. The next tag comes from `navmesh_cache_hook.next_tag()` (the same numbering as `tag-on-push.yml`), or
+   the release tag the commit already has when an earlier attempt failed after tagging.
+2. The pushed commit is checked out in the worktree `.release/src` and built there, so uncommitted edits in
+   the working tree (the user's or another session's) never ship. `--version <tag>` stamps `app/VERSION`;
+   reading the version from git would give `<tag>+g<sha>` before the tag exists, a development build that
+   offers its own release as an update forever. The build runs without git's hook variables (`GIT_DIR`
+   and kin would aim the worktree's forced checkout and clean at the real tree) and without
+   `TESRACT_DATA_ROOT` (it would name this checkout).
+3. The commit is tagged with `release_notes.py`'s notes, the tag alone is pushed (its own pre-push run
+   skips: no master ref), and the GitHub release is created from the tag with `TESRACT-<tag>.zip` and the
+   `git archive` source zip `tes4skyrim-<tag>.zip`, marked latest, then announced on Discord (webhook from
+   `DISCORD_WEBHOOK_URL` or the gitignored `.discord_webhook`; none means no announcement, never a
+   failure).
+4. Master's push then goes through; `tag-on-push.yml` finds HEAD tagged and does nothing.
+
+Any failure blocks the push. `git push --no-verify` pushes without a release, and `tag-on-push.yml` then
+tags the commit with only the source zip, as it does for a PR merged in GitHub's UI;
+`publish_release.py --sha <commit>` attaches the build to such a release afterwards (it reuses the tag the
+commit has and re-uploads to the existing release). `--sha HEAD --dry-run` builds and writes the notes
+without tagging or publishing.

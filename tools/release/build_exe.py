@@ -1,7 +1,7 @@
 """Build TESRACT: the whole converter as a Nuitka-compiled folder, `build/exe/TESRACT/`.
 
     pip install nuitka==4.3.5
-    python tools/release/build_exe.py [--out DIR] [--jobs N] [--zip] [--data-root DIR]
+    python tools/release/build_exe.py [--out DIR] [--jobs N] [--zip] [--data-root DIR] [--version TAG]
 
 The folder holds the launcher TESRACT.exe and app/: the compiled app (TESRACT.exe, its DLLs, the
 compiled Python) and every data file the pipeline reads (SHIPPED); nothing is unpacked at run time.
@@ -145,13 +145,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default=str(REPO_ROOT / "build" / "exe"), help="build folder")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 1), help="C compiler jobs")
-    ap.add_argument("--zip", action="store_true", help=f"also write the release zip ({exe_update.ASSET_NAME})")
+    ap.add_argument("--zip", action="store_true", help=f"also write the release zip ({exe_update.asset_name('<version>')})")
+    ap.add_argument("--version", help="the version to stamp (default: this checkout's, from VERSION or git)")
     ap.add_argument("--data-root", default=str(REPO_ROOT),
                     help="where this build reads and writes export/, output/ and logs/ (default: this checkout); "
                          f"'{RELEASE_DATA_ROOT}' is the TESRACT folder itself, as in a release")
     args = ap.parse_args()
     out = Path(args.out)
-    version = version_info.current_version()
+    version = args.version or version_info.current_version()
     count = stage(out / "data", version)
     print(f"Staged {count} data files for {version}", flush=True)
     code = subprocess.call(nuitka_cmd(out / "data", out, version, args.jobs), cwd=out)
@@ -162,7 +163,7 @@ def main() -> int:
     files = place(dist, folder, args.data_root)
     print(f"Built {folder} ({len(files)} files); data in {args.data_root}")
     if args.zip:
-        target = release_zip(folder, out / exe_update.ASSET_NAME)
+        target = release_zip(folder, out / exe_update.asset_name(version))
         print(f"Release zip {target} ({target.stat().st_size / 1048576:,.0f} MB)")
     return 0
 

@@ -137,7 +137,7 @@ def test_new_core_module_is_never_unmatched():
 # ---------------------------------------------------------------------------
 
 def test_packaging_follows_a_producing_step():
-    """Pack BSAs and Pack Mod Zip follow any per-plugin step."""
+    """Pack BSAs follows any per-plugin step."""
     assert set(rn.PACKAGING_STEPS) <= set(steps("tes5_import/pipeline.py"))
 
 

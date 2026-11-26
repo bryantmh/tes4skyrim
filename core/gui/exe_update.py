@@ -24,8 +24,6 @@ from pathlib import Path
 import version as version_info
 from core.python_cmd import RUN_FLAG, frozen
 
-#: The release asset every published version carries: the program folder, zipped under TESRACT/.
-ASSET_NAME = "TESRACT.zip"
 #: The compiled app's folder inside the install folder (the launcher sits above it).
 APP_DIR = "app"
 #: Every program file, relative to the install folder, one per line; written by tools/release/build_exe.py.
@@ -50,6 +48,11 @@ def install_root() -> Path:
     return exe_path().parent.parent
 
 
+def asset_name(tag: str) -> str:
+    """The zip release `tag` carries, the program folder under TESRACT/: "TESRACT-0.690.zip"."""
+    return f"TESRACT-{tag}.zip"
+
+
 def can_update() -> bool:
     """True inside TESRACT.exe, where the update replaces the program folder."""
     return frozen()
@@ -62,9 +65,9 @@ def release_asset(tag: str, timeout: int = 15) -> tuple:
     with urllib.request.urlopen(request, timeout=timeout) as response:
         release = json.load(response)
     for asset in release.get("assets", ()):
-        if asset.get("name") == ASSET_NAME:
+        if asset.get("name") == asset_name(tag):
             return asset["browser_download_url"], int(asset.get("size", 0))
-    raise RuntimeError(f"Release {tag} has no {ASSET_NAME}.")
+    raise RuntimeError(f"Release {tag} has no {asset_name(tag)}.")
 
 
 def download(url: str, size: int, target: Path, log) -> None:
@@ -103,7 +106,7 @@ def install_update(tag: str, log) -> Path:
     shutil.rmtree(stage, ignore_errors=True)
     stage.mkdir(parents=True)
     url, size = release_asset(tag)
-    archive = stage / ASSET_NAME
+    archive = stage / asset_name(tag)
     download(url, size, archive, log)
     log("Unpacking")
     unpack(archive, stage / "new")
